@@ -388,7 +388,7 @@ function checkReply(c, reply, userText, ctx) {
     const t = m[0].replace(/^0(\d)/, "$1");
     if (times.has(t)) continue;
     // «с 11:00 до 12:00»: время окончания услуги из расписания — не выдумка, но только как конец промежутка
-    if (ctx.softTimes && ctx.softTimes.has(t) && /(до|по|to|until|till|[–—-])\s*$/i.test(r.slice(Math.max(0, m.index - 8), m.index))) continue;
+    if (ctx.softTimes && ctx.softTimes.has(t) && /(\d{1,2}:\d{2}\s*[–—-]\s*|(^|[\s(,])(до|по|to|until|till)\s+)$/i.test(r.slice(Math.max(0, m.index - 12), m.index))) continue;
     return { text: r, why: "время " + m[0] };
   }
   const factPhones = new Set([...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
@@ -411,8 +411,11 @@ const MAX_TURNS = 24, MAX_MSGS_PER_SESSION = 40, MAX_LEN = 600, SESSIONS_PER_IP 
 // API онлайн-записи Altegio: нужен только ключ разработчика (ALTEGIO_PARTNER) и номер локации клиента.
 const ALT_API = "https://api.alteg.io/api/v1";
 const ALT_TTL = 120e3, ALT_BASE_TTL = 600e3, ALT_DAYS = 3;
-const ALT_MAX_ACTIVE = 4, ALT_MAX_DAY = 5; // записей на один чат и в сутки на один телефон или IP; сверх этого — заявка администратору
+// автоматических записей: на один чат; в сутки на один телефон или IP; в сутки на всю локацию. Сверх этого — заявка администратору
+const ALT_MAX_ACTIVE = 4, ALT_MAX_DAY = 5, ALT_MAX_LOC_DAY = 60;
+// ИИ утверждает, что записал клиента / что отменил или перенёс запись
 const ALT_CLAIM = /записал[аи]?\s+вас|вы\s+(уже\s+)?записаны|запись\s+(создана|оформлена|подтверждена)|забронировал[аи]?\s+вас|you(['’]re| are| have been)\s+booked|booking\s+is\s+confirmed|жаздым|жазып\s+қойдым|жазылдыңыз/i;
+const ALT_CHANGE = /отменил[аи]?\s+(вашу\s+)?запись|запись\s+(отменена|перенесена)|перенесл[аи]?\s|cancell?ed\s+your|moved\s+your|болдырмадым|ауыстырдым/i;
 const altCache = new Map(); // память изолята: у Altegio лимит 5 запросов в секунду
 const altLoc = (env, c) => +(env["ALTEGIO_LOC_" + String(c.id).toUpperCase()] || (c.altegio && c.altegio.location) || 0) || 0;
 const hm = t => String(t || "").trim().replace(/^0(\d)/, "$1").slice(0, 5); // «09:00» → «9:00»
@@ -520,8 +523,11 @@ async function altSnapshot(env, c, nowMs, userText) {
     dates = altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${isoDay(nowMs)}&date_to=${isoDay(nowMs + 21 * 86400e3)}`), nowMs).slice(0, ALT_DAYS);
     altCache.set(dk, { at: nowMs, v: dates });
   }
-  const days = async (staffId, list) => (await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs))))
-    .map((r, i) => altDay(list[i], r.status === "fulfilled" ? r.value.map(x => x.time) : [], nowMs)).filter(d => d.times.length);
+  const days = async (staffId, list) => {
+    const rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
+    if (list.length && rs.every(r => r.status === "rejected")) { if (!staffId) throw rs[0].reason; return null; } // время не читается совсем — это сбой, а не «свободных окон нет»
+    return rs.map((r, i) => altDay(list[i], r.status === "fulfilled" ? r.value.map(x => x.time) : [], nowMs)).filter(d => d.times.length);
+  };
   const any = await days(0, dates);
   // мастер, которого назвал клиент (последний из упомянутых): его время показываем отдельно
   const low = String(userText || "").toLowerCase();
@@ -533,7 +539,8 @@ async function altSnapshot(env, c, nowMs, userText) {
     for (let i = low.indexOf(st); i !== -1; i = low.indexOf(st, i + 1)) if (i === 0 || !/[a-zа-яёәғқңөұүһі]/.test(low[i - 1])) p = i;
     if (p > pos || (p !== -1 && p === pos && st.length > len)) { pos = p; len = st.length; named = m; }
   }
-  const own = named ? await days(named.id, dates.slice(0, 2)) : [];
+  let own = named ? await days(named.id, dates.slice(0, 2)) : [];
+  if (own === null) { own = []; named = null; } // время этого мастера сейчас не читается — не выдаём пустой список за «у него занято»
 
   const facts = (base.cut ? "- Услуги для записи (показана часть списка; если нужной услуги или мастера нет, предложи уточнить у администратора):\n" : "- Услуги для записи (других нет):\n") + (base.services.map(x => `  · ${x.title} — ${x.min ? `от ${money(x.min)} ₸` : "цену уточняет мастер"}${x.minutes ? `, около ${x.minutes} мин` : ""}`).join("\n") || "  · список услуг пуст") +
     "\n- Мастера" + (base.cut ? "" : " (других нет)") + ": " + (base.staff.map(m => m.name + (m.spec ? ` (${m.spec})` : "")).join(", ") || "список пуст") + ".";
@@ -609,18 +616,26 @@ async function altBook(env, A, q, nowMs, test) {
 }
 
 // защита от накрутки: не больше ALT_MAX_DAY автоматических записей в сутки с одного телефона и с одного IP
-const altLimKeys = (loc, ids, nowMs) => ids.filter(Boolean).map(x => `bk:${loc}:${x}:${isoDay(nowMs)}`);
-async function altOverLimit(store, loc, ids, nowMs) { for (const k of altLimKeys(loc, ids, nowMs)) if (+(await store.get(k) || 0) >= ALT_MAX_DAY) return true; return false; }
-async function altCount(store, loc, ids, nowMs) { for (const k of altLimKeys(loc, ids, nowMs)) await store.put(k, String(+(await store.get(k) || 0) + 1), { expirationTtl: 2 * 86400 }); }
+const ipKey = ip => { ip = String(ip || ""); return ip.includes(":") ? ip.split(":").slice(0, 4).join(":") : ip; }; // IPv6 считаем по подсети /64
+const altLimKeys = (loc, ids, nowMs) => [...ids.filter(Boolean).map(x => [`bk:${loc}:${x}:${isoDay(nowMs)}`, ALT_MAX_DAY]), [`bk:${loc}:all:${isoDay(nowMs)}`, ALT_MAX_LOC_DAY]];
+async function altOverLimit(store, loc, ids, nowMs) { for (const [k, max] of altLimKeys(loc, ids, nowMs)) if (+(await store.get(k) || 0) >= max) return true; return false; }
+async function altCount(store, loc, ids, nowMs) { for (const [k] of altLimKeys(loc, ids, nowMs)) await store.put(k, String(+(await store.get(k) || 0) + 1), { expirationTtl: 2 * 86400 }); }
 
 // как назвать запись клиенту: «Мужская стрижка, мастер Арман — завтра, воскресенье, 4 октября, в 11:00»
-function altLabel(b, lang, nowMs) {
+function altLabel(b, lang, nowMs, abs) {
   const ru = lang !== "kk" && lang !== "en", what = b.services + (b.staffName ? (ru ? ", мастер " : ", ") + b.staffName : "");
   if (!ru) return `${what} — ${b.date.slice(8, 10)}.${b.date.slice(5, 7)}, ${b.time}`;
   const d = altDay(b.date, [], nowMs);
-  return `${what} — ${d.rel ? d.rel + ", " : ""}${d.label}, в ${b.time}`;
+  return abs ? `${b.name}: ${what} — ${d.label} (${b.date}), в ${b.time}` : `${what} — ${d.rel ? d.rel + ", " : ""}${d.label}, в ${b.time}`;
 }
 const firstWord = s => clean(s).toLowerCase().split(" ")[0];
+// один и тот же человек: «Тимур» = «Тимур Ахметов» = «Тимура»; «Али» ≠ «Алихан»
+const sameName = (a, b) => {
+  a = firstWord(a); b = firstWord(b);
+  if (!a || !b) return false;
+  const sa = stem(a), sb = stem(b);
+  return a === b || (Math.abs(a.length - b.length) <= 2 && ((sa.length >= 4 && b.startsWith(sa)) || (sb.length >= 4 && a.startsWith(sb))));
+};
 const tagField = (line, k) => ((String(line || "").match(new RegExp(k + ":\\s*([^;]+)", "i")) || [])[1] || "").trim();
 
 async function altCancel(env, a) {
@@ -643,6 +658,9 @@ function altSay(lang, b) {
   if (b.reason === "moved") return [`Перенесла вашу запись. Теперь вы записаны: ${b.what}.`, `Жазбаңызды ауыстырдым. Енді: ${b.what}.`, `I've moved your booking. You're now booked: ${b.what}.`][L];
   if (b.reason === "movedAdmin") return [`Записала вас: ${b.what}. Прежнюю запись (${b.old}) отменит администратор.`, `Сізді жаздым: ${b.what}. Бұрынғы жазбаны (${b.old}) әкімші болдырмайды.`, `You're booked: ${b.what}. The administrator will cancel your previous booking (${b.old}).`][L];
   if (b.reason === "keepOld") return [" Прежняя запись остаётся.", " Бұрынғы жазба сақталады.", " Your previous booking stays."][L];
+  if (b.reason === "oldAdmin") return ["Прежнюю запись отменит администратор.", "Бұрынғы жазбаны әкімші болдырмайды.", "The administrator will cancel your previous booking."][L];
+  if (b.reason === "noop") return [`В расписании пока ничего не изменилось. Сейчас у вас: ${b.list}. Напишите, что сделать: отменить или перенести — и на какое время.`, `Кестеде әзірге ештеңе өзгерген жоқ. Қазір сізде: ${b.list}. Не істеу керек: болдырмау ма, әлде ауыстыру ма — қай уақытқа?`, `Nothing has changed in the schedule yet. You currently have: ${b.list}. Tell me what to do: cancel or move it, and to what time.`][L];
+  if (b.reason === "yours") return [`Сейчас у вас есть запись: ${b.list}. Если нужно записать ещё — назовите услугу, день и время.`, `Қазір сізде жазба бар: ${b.list}. Тағы жазылу керек болса — қызметті, күнді және уақытты айтыңыз.`, `You currently have a booking: ${b.list}. If you need another one, tell me the service, day and time.`][L];
   if (b.reason === "which") return [`У вас несколько записей: ${b.list}. Какую отменить?`, `Сізде бірнеше жазба бар: ${b.list}. Қайсысын болдырмайын?`, `You have several bookings: ${b.list}. Which one should I cancel?`][L];
   if (b.reason === "cancelOk") return [`Отменила вашу запись: ${b.what}. Если захотите, подберу другое время.`, `Жазбаңызды болдырмадым: ${b.what}. Қаласаңыз, басқа уақыт таңдап берейін.`, `I've cancelled your booking: ${b.what}. I can find another time if you like.`][L];
   if (b.reason === "cancelAdmin") return ["Передала администратору, он подтвердит отмену.", "Әкімшіге бердім, ол болдырмауды растайды.", "I've passed this to the administrator, who will confirm the cancellation."][L];
@@ -836,36 +854,43 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   }
 
   let lead = null, cancel = false, cancelDone = false, reply = checked.text;
+  // заявки клиента читаем и сохраняем один раз за сообщение: у KV лимит — одна запись ключа в секунду
+  let leadsBox = null, leadsDirty = false;
+  const getLeads = async () => leadsBox || (leadsBox = await loadLeads(store, c.id));
   const addLead = async (l, extra, head) => {
     lead = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now(), ...l, ...(extra || {}), source: c.name + " · " + source,
       at: hhmm(local(Date.now())) + " " + local(Date.now()).toISOString().slice(0, 10) };
-    const leads = await loadLeads(store, c.id);
-    leads.push(lead);
-    await saveLeads(store, c.id, leads);
+    (await getLeads()).push(lead);
+    leadsDirty = true;
     Object.assign(saved.profile, { leadId: lead.id, booked: `${l.service}, ${l.time}`, name: l.name, phone: l.phone });
     if (!opts.test) await notify(env, `${head} (${c.name})\n${l.name} · ${l.phone}\n${l.service}\n${l.time}${extra && extra.note ? "\n" + extra.note : ""}`, c.id);
   };
   const badName = n => !n || /^(имя|…|—|-)$/i.test(n) || JOKE.test(n);
+  const quote = `Сообщение: «${text.slice(0, 200)}»`;
 
   if (alt) {
     // ---- расписание Altegio: запись, отмена и перенос. Итог клиенту сообщает код по ответу Altegio, а не ИИ.
-    const src = /\[(ЗАЯВКА|ОТМЕНА)\]/i.test(raw) ? raw : raw0;
+    const src = raw === "" ? raw0 : raw; // защита заменила текст заготовкой — служебные строки берём из первого ответа ИИ
     const bt = src.match(/\[ЗАЯВКА\]([^\n]*)/i), ct = src.match(/\[ОТМЕНА\]([^\n]*)/i);
     const books = saved.profile.bookings = (saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)); // активные записи этого чата
     const say = (reason, extra) => altSay(lang, { reason, ...(extra || {}) });
-    const label = x => altLabel(x, lang, nowMs);
+    const label = x => altLabel(x, lang, nowMs) + (new Set(books.map(v => firstWord(v.name))).size > 1 ? ` (${x.name})` : ""); // имя — когда в чате записи разных людей
+    const listOf = arr => arr.map(label).join("; ");
+    const whenText = (date, time) => /^\d{4}-\d{2}-\d{2}$/.test(date) ? (d => `${d.rel ? d.rel + ", " : ""}${d.label}${time ? ", в " + time : ""}`)(altDay(date, [], nowMs)) : [date, time].filter(Boolean).join(" в ");
     let made = null, out = null;
     if (bt) {
       const g = k => tagField(bt[1], k);
       const l = { name: g("Имя"), service: g("Услуга"), time: g("Время"), phone: opts.phone || normPhone(g("Телефон")) || saved.profile.phone || "" };
-      const date = g("Дата"), same = books.find(x => x.date === date && x.time === hm(l.time) && firstWord(x.name) === firstWord(l.name));
+      const date = g("Дата"), time = hm(l.time), key = [date, time, firstWord(l.name)].join("|");
+      const same = books.find(x => x.date === date && x.time === time && sameName(x.name, l.name));
       if (badName(l.name)) out = "Подскажите, пожалуйста, ваше настоящее имя — оно нужно для записи.";
       else if (!l.phone) { saved.profile.name = l.name; out = "Оставьте, пожалуйста, номер телефона — он нужен для записи."; }
       else if (same) out = say("have", { what: label(same) }); // эта запись уже создана — второй раз не записываем
+      else if (saved.profile.pending && saved.profile.pendKey === key) out = say("pending", { what: saved.profile.pending }); // эта заявка уже у администратора
       else {
-        const ids = [opts.ip, l.phone];
+        const ids = [ipKey(opts.ip), l.phone];
         const over = books.length >= ALT_MAX_ACTIVE || await altOverLimit(store, alt.loc, ids, nowMs);
-        const r = over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку", date, time: hm(l.time) }
+        const r = over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку", date, time }
           : await altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff: g("Мастер"), date, time: l.time }, nowMs, opts.test);
         if (r.ok) {
           made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash };
@@ -873,64 +898,75 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
           await addLead(l, { altegio: { loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash }, note: r.dry ? "проверка без записи" : "записан в Altegio, № " + r.record_id }, "✅ Новая запись в Altegio");
           made.leadId = lead.id;
           books.push(made);
-          saved.profile.pending = null;
+          saved.profile.pending = saved.profile.pendKey = null;
           if (!r.dry) await altCount(store, alt.loc, ids, nowMs);
         } else if (r.soft) { // услуга, мастер, день или время не подошли — уточняем у клиента
           out = altSay(lang, r) + (ct && books.length ? say("keepOld") : "");
           for (const t of r.free || []) ctx.extraTimes.add(t);
         } else { // Altegio не принял запись — клиента не теряем: заявка администратору
-          Object.assign(l, { service: r.services || l.service, time: [r.date || date, r.time || l.time].filter(Boolean).join(" в ") });
-          await addLead(l, { note: "НЕ записан в Altegio: " + r.error }, "⚠️ Заявка без записи в Altegio — запишите вручную");
-          saved.profile.pending = `${l.service}, ${l.time}`;
-          out = say("admin", { what: saved.profile.pending });
+          Object.assign(l, { service: r.services || l.service, time: whenText(r.date || date, r.time || l.time) });
+          await addLead(l, { note: "НЕ записан в Altegio: " + r.error + (ct ? "; клиент просил перенос — прежняя запись не отменена" : "") }, "⚠️ Заявка без записи в Altegio — запишите вручную");
+          saved.profile.pending = `${l.service}, ${l.time}`; saved.profile.pendKey = key;
+          out = say("admin", { what: saved.profile.pending }) + (ct && books.length ? say("keepOld") : "");
         }
       }
     }
     if (ct && (!bt || made)) { // при переносе старую запись убираем только после того, как создана новая
       const g = k => tagField(ct[1], k), pool = books.filter(x => x !== made);
-      let target = pool.length === 1 ? pool[0] : null;
-      if (pool.length > 1) {
-        const n = firstWord(g("Имя")) || (made ? firstWord(made.name) : ""), d = g("Дата"), t = hm(g("Время"));
-        const hits = pool.filter(x => (!n || firstWord(x.name) === n) && (!d || x.date === d) && (!t || x.time === t));
-        if (hits.length === 1 && (n || d || t)) target = hits[0];
-      }
+      const n = g("Имя"), d = g("Дата"), t = hm(g("Время"));
+      // какая запись имеется в виду: по подробностям из строки; без них — запись того же человека (при переносе) или единственная
+      const hits = n || d || t ? pool.filter(x => (!n || sameName(x.name, n)) && (!d || x.date === d) && (!t || x.time === t))
+        : made ? pool.filter(x => sameName(x.name, made.name)) : pool;
+      const target = hits.length === 1 ? hits[0] : null;
       if (target) {
         let gone = !target.record_id; // пробная запись автотеста в Altegio не создавалась
-        if (!gone) { try { await altCancel(env, target); gone = true; } catch (e) { console.log("altegio cancel", String(e)); } }
-        const leads = await loadLeads(store, c.id), x = leads.find(v => v.id === target.leadId);
-        if (x) { x.status = "отменена"; x.note = gone ? "запись в Altegio удалена" : "в Altegio НЕ удалена — удалите вручную"; await saveLeads(store, c.id, leads); }
-        if (!opts.test) await notify(env, `❌ Отмена: ${target.name}, ${altLabel(target, "ru", nowMs)} (${c.name})\n${gone ? "запись в Altegio удалена" : "⚠️ в Altegio НЕ удалена — удалите вручную"}`, c.id);
-        if (gone) books.splice(books.indexOf(target), 1);
+        if (!gone) { try { await altCancel(env, target); gone = true; } catch (e) { console.log("altegio cancel", String(e)); if (e.status === 404) gone = true; } } // 404 — записи в Altegio уже нет
+        const x = (await getLeads()).find(v => v.id === target.leadId);
+        if (x) { x.status = "отменена"; x.note = gone ? "запись в Altegio удалена" : "в Altegio НЕ удалена — удалите вручную"; leadsDirty = true; }
+        if (!opts.test) await notify(env, `❌ Отмена: ${altLabel(target, "ru", nowMs, true)} (${c.name})\n${gone ? "запись в Altegio удалена" : "⚠️ в Altegio НЕ удалена — удалите вручную"}`, c.id);
+        books.splice(books.indexOf(target), 1); // в чате запись больше не числится; если Altegio её не удалил, это сделает администратор
         cancel = true; cancelDone = gone;
         out = made ? (gone ? say("moved", { what: label(made) }) : say("movedAdmin", { what: label(made), old: label(target) }))
           : (gone ? say("cancelOk", { what: label(target) }) : say("cancelAdmin"));
-      } else if (pool.length > 1) { // непонятно, какую из записей отменять — спрашиваем
-        out = (made ? say("booked", { what: label(made) }) + " " : "") + say("which", { list: pool.map(label).join("; ") });
-      } else if (made) {
-        out = say("booked", { what: label(made) });
+      } else if (hits.length > 1) { // непонятно, какую из записей отменять — спрашиваем
+        out = (made ? say("booked", { what: label(made) }) + " " : "") + say("which", { list: listOf(hits) });
+      } else if (made) { // новая запись создана, а прежней в этом чате нет — её отменит человек
+        if (!opts.test) await notify(env, `❓ Клиент перенёс запись, но прежней записи нет в этом чате — отмените её вручную — ${c.name}\n${who}\nНовая запись: ${altLabel(made, "ru", nowMs, true)}\n${quote}`, c.id);
+        out = say("booked", { what: label(made) }) + " " + say("oldAdmin") + (pool.length ? " " + say("also", { list: listOf(pool) }) : "");
       } else { // записи из этого чата нет — отменить может только человек
         cancel = true;
-        if (!opts.test) await notify(env, `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»`, c.id);
+        if (!opts.test) await notify(env, `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}\n${quote}`, c.id);
         out = say("cancelAdmin");
       }
     } else if (made) {
       const others = books.filter(x => x !== made);
-      out = say("booked", { what: label(made) }) + (others.length ? " " + say("also", { list: others.map(label).join("; ") }) : "");
+      out = say("booked", { what: label(made) }) + (others.length ? " " + say("also", { list: listOf(others) }) : "");
     }
     if (out) reply = out;
-    else if (!bt && !ct && ALT_CLAIM.test(reply) && !books.length) reply = saved.profile.pending ? say("pending", { what: saved.profile.pending }) : say("confirm"); // ИИ написал «записала», а записи нет
-    saved.profile.booked = books.length ? books.map(x => altLabel(x, "ru", nowMs)).join("; ")
+    else if (!bt && !ct) {
+      // ИИ написал «записала», «отменила» или «перенесла» без служебной строки — в расписании при этом ничего не изменилось
+      const flat = reply.replace(/(чтобы|если|когда|как только)[^.!?\n]*/gi, " ");
+      if (ALT_CHANGE.test(flat)) {
+        if (books.length) reply = say("noop", { list: listOf(books) });
+        else { cancel = true; if (!opts.test) await notify(env, `❓ Клиент просит отменить или перенести запись, которой нет в этом чате — ${c.name}\n${who}\n${quote}`, c.id); reply = say("cancelAdmin"); }
+      } else if (ALT_CLAIM.test(flat)) reply = books.length ? say("yours", { list: listOf(books) }) : saved.profile.pending ? say("pending", { what: saved.profile.pending }) : say("confirm");
+    }
+    saved.profile.booked = books.length ? books.map(x => altLabel(x, "ru", nowMs, true)).join("; ")
       : saved.profile.pending ? "запись ещё НЕ создана, заявка у администратора: " + saved.profile.pending : null;
   } else {
-    // ---- обычная заявка администратору
-    // отмена
+    // ---- обычная заявка администратору (и случай, когда расписание Altegio недоступно)
+    const books = altDown ? (saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)) : [];
     if (/\[ОТМЕНА\]/.test(raw)) {
-      const leads = saved.profile.leadId ? await loadLeads(store, c.id) : [];
-      const x = leads.find(l => l.id === saved.profile.leadId);
-      if (x) { x.status = "отменена"; await saveLeads(store, c.id, leads); if (!opts.test) await notify(env, `❌ Отмена: ${x.name}, ${x.time} (${c.name})`, c.id); }
-      else if (!opts.test) await notify(env, `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»`, c.id);
       cancel = true;
-      saved.profile.leadId = null; saved.profile.booked = null;
+      if (books.length) { // запись есть в Altegio, но расписание сейчас недоступно: отменит человек
+        if (!opts.test) await notify(env, `❌ Клиент просит отменить запись, а Altegio недоступен — удалите вручную — ${c.name}\n${who}\n${books.map(x => altLabel(x, "ru", nowMs, true)).join("; ")}\n${quote}`, c.id);
+        reply = altSay(lang, { reason: "cancelAdmin" });
+      } else {
+        const x = saved.profile.leadId ? (await getLeads()).find(l => l.id === saved.profile.leadId) : null;
+        if (x) { x.status = "отменена"; leadsDirty = true; if (!opts.test) await notify(env, `❌ Отмена: ${x.name}, ${x.time} (${c.name})`, c.id); }
+        else if (!opts.test) await notify(env, `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}\n${quote}`, c.id);
+        saved.profile.leadId = null; saved.profile.booked = null;
+      }
     }
     // заявка
     const m = raw.match(/\[ЗАЯВКА\]([^\n]*)/);
@@ -946,14 +982,15 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         await addLead(l, null, "✅ Новая заявка");
       }
     }
-    // расписание Altegio недоступно, а клиент оставил телефон: чтобы он не потерялся, просим администратора перезвонить
-    if (altDown && !lead && !saved.profile.cbLead && (opts.phone || saved.profile.phone)) {
+    // расписание Altegio недоступно, записи у клиента нет, а телефон он оставил: чтобы не потерялся, просим администратора перезвонить
+    if (altDown && !lead && !books.length && !saved.profile.cbLead && (opts.phone || saved.profile.phone)) {
       await addLead({ name: saved.profile.name || "имя не указано", service: "Перезвонить клиенту — бот не видит расписание Altegio", time: "как можно скорее", phone: opts.phone || saved.profile.phone },
         { note: "запись не создана" }, "📞 Перезвоните клиенту");
       saved.profile.cbLead = true;
       saved.profile.booked = "запись ещё НЕ создана: администратор перезвонит клиенту";
     }
   }
+  if (leadsDirty) { try { await saveLeads(store, c.id, leadsBox); } catch (e) { console.log("leads", String(e)); } }
   turns.push({ role: "model", text: reply });
   await store.put(histKey, JSON.stringify({ n: saved.n + 1, turns: turns.slice(-MAX_TURNS), profile: saved.profile }), { expirationTtl: 7 * 86400 });
   return { reply, lead, cancel, cancelDone, offer: lead ? [] : offers(cc, ctx, reply), guard, isNew };
@@ -1009,7 +1046,7 @@ async function notify(env, text, clientId) {
 // ================= лимит сессий на IP =================
 const burst = new Map();
 async function tooMany(request, env, c, sid) {
-  const ip = request.headers.get("cf-connecting-ip") || "local";
+  const ip = ipKey(request.headers.get("cf-connecting-ip") || "local");
   const now = Date.now(), b = (burst.get(ip) || []).filter(t => now - t < 60e3);
   b.push(now); burst.set(ip, b); if (burst.size > 5000) burst.clear();
   if (b.length > 12) return true; // больше 12 сообщений в минуту с одного IP

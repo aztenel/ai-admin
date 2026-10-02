@@ -3,7 +3,8 @@ import worker from "../worker.js";
 import { createHmac } from "node:crypto";
 
 const mem = new Map();
-const KV = { get: async k => mem.get(k) ?? null, put: async (k, v) => { mem.set(k, v); }, delete: async k => { mem.delete(k); } };
+const puts = new Map(); // сколько раз за прогон записан каждый ключ
+const KV = { get: async k => mem.get(k) ?? null, put: async (k, v) => { mem.set(k, v); puts.set(k, (puts.get(k) || 0) + 1); }, delete: async k => { mem.delete(k); } };
 const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite" };
 
 let geminiQueue = [], calls = { gemini: [], tg: [], wa: [] };
@@ -61,6 +62,7 @@ function altStub(url, init) {
   if (/^\/book_services\/\d+/.test(path)) return J({ success: true, data: { events: [], services: D.services, category: D.category }, meta: [] });
   if (/^\/book_staff\/\d+/.test(path)) return J({ success: true, data: D.staff, meta: [] });
   if (/^\/book_dates\/\d+/.test(path)) return J({ success: true, data: { booking_days: {}, booking_dates: [D1, D2], working_days: {}, working_dates: [D1, D2] }, meta: [] });
+  if (ALT.timesDown && /^\/book_times\//.test(path)) return J({ success: false, data: null, meta: { message: "Too Many Requests" } }, 429);
   if ((m = path.match(/^\/book_times\/\d+\/(\d+)\/(\d{4}-\d{2}-\d{2})/))) {
     const t = [D1, D2].includes(m[2]) ? D.times[m[1]] || [] : [];
     return J({ success: true, data: t.map(x => ({ time: x, seance_length: 3600, sum_length: 3600, datetime: `${m[2]}T${x}:00+05:00` })), meta: [] });
@@ -73,14 +75,22 @@ function altStub(url, init) {
     const id = 555000 + ALT.records.length;
     return J({ success: true, data: [{ id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
   }
-  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") { ALT.deleted.push(m[1] + "/" + m[2]); return new Response(null, { status: 204 }); }
+  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") {
+    if (ALT.delFail) return J({ success: false, data: null, meta: ALT.delFail === 404 ? {} : { message: "Server error" } }, ALT.delFail);
+    ALT.deleted.push(m[1] + "/" + m[2]); return new Response(null, { status: 204 });
+  }
   return J({ success: false, data: null, meta: {} }, 404);
 }
 
 const pending = [];
 const ctx = { waitUntil: p => pending.push(p) };
 const call = async (path, init) => worker.fetch(new Request("https://x.test" + path, init), env, ctx);
-const chat = async (c, sid, text) => (await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "10.0.0." + sid.replace(/\D/g, "") }, body: JSON.stringify({ c, sid, text }) })).json();
+const chatIp = async (c, sid, text, ip) => {
+  const r = await (await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify({ c, sid, text }) })).json();
+  if (process.env.SHOW) console.log(`      [${c}] ${text}\n        → ${r.reply}`); // SHOW=1 node test/smoke.mjs — показать ответы бота
+  return r;
+};
+const chat = (c, sid, text) => chatIp(c, sid, text, "10.0.0." + sid.replace(/\D/g, ""));
 
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = "") => { if (cond) { pass++; console.log("  ok   " + name); } else { fail++; console.log("  FAIL " + name + (extra ? "  → " + extra : "")); } };
@@ -411,6 +421,98 @@ const names = ["Арсен", "Бекзат", "Виктор", "Галым", "Да
 let lastL = null;
 for (let i = 0; i < 6; i++) { geminiQueue = ["Записала.\n" + tagAt(names[i], tms[i])]; lastL = await chat("alt", "a14" + i, `${names[i]}, +7 707 000 11 22, мужская стрижка завтра в ${tms[i]}`); }
 ok("шестая запись за сутки с одного телефона уходит администратору, а не в расписание", ALT.records.length === 5 && !!lastL.lead && !lastL.lead.altegio && /лимит/.test(lastL.lead.note || "") && /Передала вашу запись администратору/.test(lastL.reply), JSON.stringify([ALT.records.length, lastL]));
+
+// вторая проверка кода: какая запись отменяется, перенос, ложные «записала / отменила»
+env.ALTEGIO_LOC_ALT = "2014"; ALT.records.length = 0; ALT.deleted.length = 0; calls.tg.length = 0;
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00")];
+d = await chat("alt", "a150", "Тимур, +7 709 111 22 33, мужская стрижка завтра в 10:00");
+geminiQueue = [`Отменяю запись Алихана.\n[ОТМЕНА] Имя: Алихан; Дата: ${D1}; Время: 11:00`];
+d = await chat("alt", "a150", "Отмените запись Алихана на 11:00");
+ok("в строке отмены названа другая запись → единственная запись чата не удаляется", ALT.deleted.length === 0 && /Передала администратору/.test(d.reply) && calls.tg.some(x => x.includes("которой нет в этом чате")), JSON.stringify([d.reply, ALT.deleted]));
+calls.tg.length = 0;
+geminiQueue = [`Перенесла Алихана на 13:00.\n[ОТМЕНА] Имя: Алихан; Дата: ${D1}; Время: 11:00\n` + tagAt("Алихан", "13:00")];
+d = await chat("alt", "a150", "Алихана перенесите с 11:00 на 13:00");
+ok("перенос записи, которой нет в чате: новая создана, чужая не удалена, администратор предупреждён", ALT.records.length === 2 && ALT.deleted.length === 0 && /Записала вас/.test(d.reply) && /Прежнюю запись отменит администратор/.test(d.reply) && /У вас также есть запись/.test(d.reply) && calls.tg.some(x => x.includes("прежней записи нет в этом чате")), JSON.stringify([d.reply, ALT.deleted, calls.tg]));
+const putsBefore = puts.get("leads:alt") || 0;
+geminiQueue = [`Перенесла.\n[ОТМЕНА] Имя: Тимур\n` + tagAt("Тимур", "09:30")];
+d = await chat("alt", "a150", "А меня перенесите на 9:30");
+ok("перенос своей записи по имени: удалена именно она", ALT.deleted.length === 1 && ALT.deleted[0].startsWith("555001/") && /Перенесла вашу запись/.test(d.reply) && d.reply.includes("9:30"), JSON.stringify([d.reply, ALT.deleted]));
+ok("заявки за одно сообщение сохраняются в хранилище один раз", (puts.get("leads:alt") || 0) - putsBefore === 1, String((puts.get("leads:alt") || 0) - putsBefore));
+ALT.needCode = true; calls.tg.length = 0;
+geminiQueue = [`Перенесла.\n[ОТМЕНА] Имя: Тимур\n` + tagAt("Тимур", "11:00")];
+d = await chat("alt", "a150", "Нет, давайте на 11:00");
+ok("перенос, а Altegio не принял новую запись: старая остаётся, клиент и администратор это знают", ALT.deleted.length === 1 && /Передала вашу запись администратору/.test(d.reply) && /Прежняя запись остаётся/.test(d.reply) && calls.tg.some(x => x.includes("клиент просил перенос")), JSON.stringify([d.reply, calls.tg]));
+const tgN = calls.tg.length;
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "11:00")];
+d = await chat("alt", "a150", "Так записали или нет?");
+ok("повтор заявки, которая уже у администратора, не создаёт вторую заявку", !d.lead && calls.tg.length === tgN && /Ваша заявка у администратора/.test(d.reply), JSON.stringify([d.reply, calls.tg.length - tgN]));
+ALT.needCode = false;
+
+env.ALTEGIO_LOC_ALT = "2015"; ALT.records.length = 0; ALT.deleted.length = 0;
+geminiQueue = ["Записала.\n" + tagAt("Серик", "10:00")];
+d = await chat("alt", "a151", "Серик, +7 709 222 22 33, мужская стрижка завтра в 10:00");
+let callsN = ALT.calls.length;
+geminiQueue = ["Отменила вашу запись."];
+d = await chat("alt", "a151", "Отмените");
+ok("ИИ написал «отменила» без служебной строки → клиенту сказано, что ничего не изменилось", ALT.deleted.length === 0 && /ничего не изменилось/.test(d.reply) && d.reply.includes("10:00") && !/Отменила/.test(d.reply), d.reply);
+geminiQueue = ["Перенесла вашу запись на 13:00."];
+d = await chat("alt", "a151", "Перенесите на 13:00");
+ok("ИИ написал «перенесла» без служебных строк → то же самое", ALT.records.length === 1 && /ничего не изменилось/.test(d.reply), d.reply);
+geminiQueue = ["Записала вас ещё и на 13:00."];
+d = await chat("alt", "a151", "И ещё на 13:00 запишите");
+ok("ИИ написал «записала» без строки заявки, когда запись уже есть → показаны настоящие записи", ALT.records.length === 1 && /Сейчас у вас есть запись/.test(d.reply) && d.reply.includes("10:00") && !d.reply.includes("13:00"), d.reply);
+geminiQueue = ["Чтобы я записала вас ещё раз, назовите, пожалуйста, услугу."];
+d = await chat("alt", "a151", "Запишите ещё раз");
+ok("фраза «чтобы я записала вас…» не считается ложным обещанием", /Чтобы я записала вас/.test(d.reply), d.reply);
+ALT.delFail = 500; calls.tg.length = 0;
+geminiQueue = ["Отменяю.\n[ОТМЕНА]"];
+d = await chat("alt", "a151", "Отмените запись");
+ok("Altegio не удалил запись → клиенту сказано про администратора, тот получает «удалите вручную»", d.cancel === true && d.cancelDone === false && /Передала администратору/.test(d.reply) && calls.tg.some(x => x.includes("НЕ удалена")), JSON.stringify([d, calls.tg]));
+ALT.delFail = 0;
+geminiQueue = ["Записала.\n" + tagAt("Серик", "10:00")];
+d = await chat("alt", "a151", "Нет, всё же запишите на 10:00");
+ok("после неудачной отмены клиент не заблокирован: новая запись создаётся", ALT.records.length === 2 && !!d.lead, JSON.stringify([ALT.records.length, d.reply]));
+ALT.delFail = 404;
+geminiQueue = ["Отменяю.\n[ОТМЕНА]"];
+d = await chat("alt", "a151", "Отмените");
+ok("записи в Altegio уже нет (404) → считается отменённой", d.cancelDone === true && /Отменила вашу запись/.test(d.reply), JSON.stringify(d));
+ALT.delFail = 0;
+
+// расписание недоступно, а у клиента уже есть запись
+geminiQueue = ["Записала.\n" + tagAt("Серик", "11:00")];
+d = await chat("alt", "a151", "Запишите на 11:00");
+ALT.down = true; calls.tg.length = 0;
+geminiQueue = ["Передала администратору, он подтвердит отмену.\n[ОТМЕНА]"];
+d = await chat("alt", "a151", "Отмените мою запись");
+ok("Altegio недоступен, клиент отменяет запись → администратор получает «удалите вручную» с этой записью", d.cancel === true && calls.tg.some(x => x.includes("Altegio недоступен — удалите вручную") && x.includes("11:00")), JSON.stringify(calls.tg));
+geminiQueue = ["Пожалуйста!"];
+d = await chat("alt", "a151", "Спасибо");
+ok("Altegio недоступен, у клиента есть запись → лишняя заявка на звонок не создаётся", !d.lead);
+ALT.down = false;
+
+env.ALTEGIO_LOC_ALT = "2016"; calls.tg.length = 0; ALT.timesDown = true;
+geminiQueue = ["Оставьте, пожалуйста, имя и телефон — администратор перезвонит."];
+d = await chat("alt", "a152", "Есть время завтра?");
+ok("время не читается ни на один день → это сбой: бот не говорит «окон нет» молча", calls.gemini.at(-1).systemInstruction.parts[0].text.includes("Свободных окон нет") && !calls.gemini.at(-1).systemInstruction.parts[0].text.includes("Запись в расписание"), "нет режима сбоя");
+ALT.timesDown = false;
+
+env.ALTEGIO_LOC_ALT = "2017"; ALT.records.length = 0;
+const n6 = ["Айдар", "Берик", "Вадим", "Гани", "Данат", "Жанат"];
+for (let i = 0; i < 6; i++) { geminiQueue = ["Записала.\n" + tagAt(n6[i], tms[i])]; lastL = await chatIp("alt", "a16" + i, `${n6[i]}, +7 709 55${i} 22 33, мужская стрижка завтра в ${tms[i]}`, `2a03:d000:1:2:${i + 1}::${i + 7}`); }
+ok("адреса IPv6 из одной подсети считаются одним источником: шестая запись уходит администратору", ALT.records.length === 5 && !!lastL.lead && !lastL.lead.altegio, JSON.stringify([ALT.records.length, lastL.reply]));
+env.ALTEGIO_LOC_ALT = "2018"; ALT.records.length = 0;
+mem.set(`bk:2018:all:${iso(Date.now())}`, "60");
+geminiQueue = ["Записала.\n" + tagAt("Ринат", "10:00")];
+d = await chat("alt", "a170", "Ринат, +7 709 777 22 33, мужская стрижка завтра в 10:00");
+ok("суточный потолок автоматических записей на всю локацию соблюдается", ALT.records.length === 0 && !!d.lead && /лимит/.test(d.lead.note || ""), JSON.stringify(d));
+
+env.ALTEGIO_LOC_ALT = "2019"; ALT.records.length = 0;
+geminiQueue = ["Завтра — 12:00 свободно. Записать?", "Завтра — 12:00 свободно. Записать?"];
+d = await chat("alt", "a171", "Когда есть время?");
+ok("«завтра — 12:00» не считается концом промежутка: выдуманное время не проходит", !d.reply.includes("12:00"), d.reply);
+geminiQueue = ["Записала вас, стрижка всего 3 000 ₸!\n" + tagAt("Ильяс", "11:00"), "Уточните, пожалуйста, какая услуга нужна?"];
+d = await chat("alt", "a172", "Ильяс, +7 709 888 22 33, завтра в 11:00");
+ok("ИИ исправил ответ на вопрос → строка заявки из отклонённого черновика не исполняется", ALT.records.length === 0 && !d.lead && /какая услуга/.test(d.reply), JSON.stringify([ALT.records.length, d.reply]));
 
 // обычный клиент без Altegio: отмена, когда записи в чате нет
 calls.tg.length = 0;
