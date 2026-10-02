@@ -1,0 +1,9 @@
+{
+  "name": "ai-admin",
+  "private": true,
+  "type": "module",
+  "description": "AI-администратор: веб-чат и WhatsApp-бот для малого бизнеса (Cloudflare Worker)",
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  }
+}

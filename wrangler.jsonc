@@ -1,0 +1,15 @@
+{
+  // Имя должно совпадать с именем воркера в Cloudflare.
+  "name": "ai-admin",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-28",
+  // Переменные и секреты (GEMINI_KEY, LEADS_KEY, MODEL и др.) заданы в панели Cloudflare.
+  // keep_vars не даёт заливке их стереть.
+  "keep_vars": true,
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": { "enabled": true },
+  "kv_namespaces": [
+    { "binding": "KV", "id": "29debedd4b844096b1c5c55eb30dd271" }
+  ]
+}
