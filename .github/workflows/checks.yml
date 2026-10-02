@@ -5,6 +5,8 @@ on:
   push:
     branches: [main, dev]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,6 +19,19 @@ jobs:
       - name: Сценарии на заглушках
         run: node test/smoke.mjs
       - name: Пробная сборка без публикации
-        run: npx --yes wrangler@latest deploy --dry-run --outdir /tmp/out
-      - name: Справка по команде черновой выкладки
-        run: npx --yes wrangler@latest preview --help || true
+        run: npx --yes wrangler@latest deploy --dry-run --outdir /tmp/out 2>&1 | tee /tmp/dry.txt
+      - name: Справка по команде черновой выкладки (временно, для разбора сбоя)
+        if: github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '```'
+            npx --yes wrangler@latest --version 2>&1 | tail -3
+            echo '--- wrangler preview --help'
+            npx --yes wrangler@latest preview --help 2>&1 | head -120
+            echo '--- deploy --dry-run (хвост)'
+            tail -25 /tmp/dry.txt
+            echo '```'
+          } > /tmp/note.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@/tmp/note.md --jq .html_url
