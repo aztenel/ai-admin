@@ -92,6 +92,12 @@ ok("/selftest без ключа → 403", (await call("/selftest")).status === 4
 r = await call("/selftest?key=lk"); t = await r.text();
 ok("/selftest с ключом открывается, в списке есть барбершоп", r.status === 200 && t.includes("Демо Барбер"));
 
+// 2б. автотест одной ссылкой
+ok("/api/selftest по ссылке без ключа → 403", (await call("/api/selftest?i=0")).status === 403);
+geminiQueue = ["Имплантация под ключ от 300 000 ₸ за зуб. Записать вас завтра в 10:00 или 11:00?"];
+r = await call("/api/selftest?key=lk&i=0"); const st0 = await r.json();
+ok("/api/selftest по ссылке прогоняет сценарий и возвращает разбор", r.status === 200 && st0.t === "Цена импланта" && Array.isArray(st0.transcript) && st0.transcript.length === 1 && st0.pass === true, JSON.stringify(st0).slice(0, 400));
+
 // 3. чат барбершопа: обычный ответ
 geminiQueue = ["Мужская стрижка от 6 000 ₸, стрижка + борода от 9 000 ₸. Записать вас на завтра?"];
 let d = await chat("barber", "s1", "Сколько стоит стрижка?");
