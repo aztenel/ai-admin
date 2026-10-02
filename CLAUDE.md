@@ -8,6 +8,12 @@
 - `test/smoke.mjs` — сценарии на заглушках (KV, Gemini, Telegram, Meta подменены). Запуск: `npm test`.
 - `wrangler.jsonc` — конфигурация заливки. `keep_vars: true` обязателен: переменные и секреты заданы в панели Cloudflare.
 
+## Altegio
+- Используется публичный API онлайн-записи (`api.alteg.io/api/v1/book_*`): нужен только ключ разработчика (секрет `ALTEGIO_PARTNER` в Cloudflare) и номер локации клиента.
+- Локация клиента: `altegio.location` в его блоке `CLIENTS` или переменная `ALTEGIO_LOC_<ID>`. Тестовый клиент `alt` скрыт с витрины.
+- Если Altegio не принял запись, бот не теряет клиента: создаёт обычную заявку администратору с пометкой.
+- `/altegio?key=<LEADS_KEY>[&loc=<номер>]` — что бот видит в Altegio; записей не создаёт.
+
 ## Правила
 - Ветка `main` = боевой сайт: Cloudflare Workers Builds выкладывает каждый коммит в `main` (сначала `node test/smoke.mjs`, потом `npx wrangler deploy`).
 - Новое делай в отдельной ветке, проверяй `npm test`, в `main` — только проверенное.
