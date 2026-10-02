@@ -11,5 +11,14 @@
   "observability": { "enabled": true },
   "kv_namespaces": [
     { "binding": "KV", "id": "29debedd4b844096b1c5c55eb30dd271" }
-  ]
+  ],
+  // Черновые версии (Worker Previews): у каждой ветки, кроме main, свой адрес; рабочий сайт они не трогают.
+  // Без блока previews сборка черновой ветки падает с ошибкой «missing a previews block».
+  // Черновик не наследует настройки рабочего сайта, поэтому хранилище указано ещё раз.
+  // Переменные и секреты черновиков задаются в панели Cloudflare: Settings → Previews.
+  "previews": {
+    "kv_namespaces": [
+      { "binding": "KV", "id": "29debedd4b844096b1c5c55eb30dd271" }
+    ]
+  }
 }
