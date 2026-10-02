@@ -1,0 +1,22 @@
+# Вторая, независимая проверка каждого изменения: те же сценарии на заглушках и пробная сборка без публикации.
+# Публикует бота не этот файл, а Cloudflare (Workers Builds).
+name: checks
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Сценарии на заглушках
+        run: node test/smoke.mjs
+      - name: Пробная сборка без публикации
+        run: npx --yes wrangler@latest deploy --dry-run --outdir /tmp/out
+      - name: Справка по команде черновой выкладки
+        run: npx --yes wrangler@latest preview --help || true
