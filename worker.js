@@ -1001,6 +1001,8 @@ function altDateOf(s, nowMs) {
 // («Ваша заявка принята», «Отмена бесплатна») служебной строкой не становится: без скобок метка — это слово заглавными буквами либо слово с двоеточием, после которого идёт поле («Имя: …»)
 const TAGW_BOOK = "ЗАЯВК[АИУ]?|ЗАПИСЬ|БРОНЬ|БРОНИРОВАНИЕ|BOOKING|BOOK|ORDER|REQUEST|APPOINTMENT|ӨТІНІМ|ӨТІНІШ|ТАПСЫРЫС|ЖАЗЫЛУ";
 const TAGW_CANCEL = "ОТМЕН[АЫУ]?|ОТМЕНИТЬ|CANCEL|CANCELLATION|CANCELATION|БОЛДЫРМАУ";
+// без скобок «ОТМЕНИТЬ» и «CANCELLATION» меткой не были и раньше: это слова обычной фразы («Напишите одно слово: ПЕРЕНЕСТИ или ОТМЕНИТЬ»)
+const TAGW_BARE = TAGW_BOOK + "|ОТМЕН[АЫУ]?|CANCEL|БОЛДЫРМАУ";
 const TAGW = TAGW_BOOK + "|" + TAGW_CANCEL, TAG_LT = "A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
 const tagKeyAlt = pick => Object.keys(TAG_KEYS).filter(pick).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
 const TAG_KEY_ALT = tagKeyAlt(() => true), TAG_NAME_ALT = tagKeyAlt(k => TAG_KEYS[k] === "имя");
@@ -1012,9 +1014,9 @@ const TAG_SQ_IN = new RegExp(TAG_OPEN + "\\s*(?:([:=—–])\\s*|(?<=\\s)(?=(?:"
 const TAG_SQ_ANY = new RegExp("\\\\?\\[([^\\[\\]\\n]*?)(?<![" + TAG_LT + "])(ЗАЯВКА|ОТМЕНА)(?![" + TAG_LT + "])([^\\[\\]\\n]*)\\]", "g"); // метка заглавными где угодно в скобках: «[ОТМЕНА записи на 15:00]»
 const TAG_MARK = "[\\s*_`~>«\"“„'-]*";                                                                  // разметка и кавычки перед меткой
 // в других скобках и без скобок — только заглавными, в начале строки: «(ЗАЯВКА) …», «ЗАЯВКА: …», «**ЗАЯВКА №1:** …»
-const TAG_BARE = new RegExp("^[\\s*_`~>\"“„'-]*(?:[(<{【«]\\s*(" + TAGW + ")" + TAG_NUM + "\\s*[)>}】»]|«?(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM + ")[*_`]*\\s*[:—–-]?\\s*[*_`]*\\s*(.*)$");
-// слово «Заявка», «Отмена», «Booking» не заглавными — метка, только если после него двоеточие или тире, а дальше поле
-const TAG_SOFT = new RegExp("^" + TAG_MARK + "(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM + "[*_`]*\\s*[:—–=-]\\s*[*_`]*\\s*(.*)$", "i");
+const TAG_BARE = new RegExp("^[\\s*_`~>\"“„'-]*(?:[(<{【«]\\s*(" + TAGW + ")" + TAG_NUM + "\\s*[)>}】»]|«?(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + ")[*_`]*\\s*[:—–-]?\\s*[*_`]*\\s*(.*)$");
+// слово «Заявка», «Отмена», «Booking» не заглавными — метка, только если после него двоеточие или тире, а дальше поле «Имя: …» («Отмена: Время: за два часа до визита» — рассказ о правилах, а не отмена)
+const TAG_SOFT = new RegExp("^" + TAG_MARK + "(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + "[*_`]*\\s*[:—–=-]\\s*[*_`]*\\s*(.*)$", "i");
 const TAG_ITEM = "(?:(?:[-•*·]|\\d{1,2}[.)])\\s*)?";                                                    // пункт списка перед полем: «- Имя: …», «1. Имя: …»
 const TAG_KEY_START = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
 const TAG_KEY_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*[:=]", "i"), TAG_NAME_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_NAME_ALT + ")\\s*[:=]", "i");
@@ -1026,6 +1028,7 @@ const TAG_JSON = new RegExp("\\{\\s*\"(" + TAGW + ")\"\\s*:\\s*\\{([^{}]*)\\}\\s
 const TAG_JSON_AFTER = new RegExp("(\\[\\s*(?:" + TAGW + ")\\s*\\][*_`]*\\s*(?::\\s*)?)\\{([^{}]*)\\}", "gi"); // [ЗАЯВКА] {"Имя": "…", …}
 const TAG_LABEL = /(?:служебн[а-яё]*\s+строк[а-яё]*|строка\s+для\s+(?:системы|администратора)|service\s+line|system\s+line|метка|tag)\s*[:—–-]?/gi; // слова, которыми ИИ подписывает метку
 const TAG_HAS = /\[(?:ЗАЯВКА|ОТМЕНА)\]/, TAG_ONLY = /^\[(?:ЗАЯВКА|ОТМЕНА)\]$/, TAG_JSON_START = /^\{\s*"/;
+const TAG_PLAIN = new RegExp("^[\\s*_`>-]*(?:" + TAGW_BARE + ")\\s*[:—–-]?\\s*$"), TAG_LINE_START = /^[\s*_`~>«"“„'-]*(?:\\?\[|\{)/; // «ОТМЕНА», «ЗАЯВКА:» — слово без разметки после него; строка, которая начинается со скобки
 const TAG_TRAIL = " \t\r*_`~\\", TAG_PAIRS = [["[", "]"], ["«", "»"], ["(", ")"], ["{", "}"], ["“", "”"]]; // разметка в конце служебной строки; скобки и кавычки, которые могут остаться без пары
 // знаки из набора в конце строки — без регулярного выражения: «[…]+$» на длинной строке работает за квадрат её длины
 const rtrimSet = (s, set) => { let e = s.length; while (e > 0 && set.includes(s[e - 1])) e--; return e < s.length ? s.slice(0, e) : s; };
@@ -1040,16 +1043,18 @@ function tidyTags(raw) {
     .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, "") // границы блока кода клиенту не нужны
     .split("\n"), out = [];
   const nextText = i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
+  const tagNext = i => { const nx = nextText(i); return !nx || TAG_KEY_START.test(nx) || TAG_LINE_START.test(nx); }; // дальше — конец ответа, поле («Имя: …») или другая служебная строка
   for (let i = 0; i < lines.length; i++) {
     let ln = lines[i];
     if (ln.includes("[")) ln = ln.replace(TAG_SQ, (m, w) => canon(w))
       .replace(TAG_SQ_IN, (m, w, sep, at, s) => sep && w !== w.toUpperCase() && !TAG_KEY_COLON.test(s.slice(at + m.length)) ? m : canon(w) + " ") // «[Запись: завтра в 12:00]» — не метка
       .replace(TAG_SQ_ANY, (m, a, w, b) => { const rest = (a + " " + b).replace(/\\+$/, "").replace(/^[\s:—–=№#\d-]+/, "").trim(); return rest ? `[${w}] ${rest}` : `[${w}]`; });
     const m = ln.match(TAG_BARE);
-    if (m && (m[1] || !m[3] || TAG_KEY_START.test(m[3]) || TAG_JSON_START.test(m[3]))) ln = canon(m[1] || m[2]) + (m[3] ? " " + (TAG_JSON_START.test(m[3]) ? tagJson(m[3]) : m[3]) : "");
+    // слово заглавными без полей — метка, как и раньше («ОТМЕНА», «ЗАЯВКА:»). С разметкой или номером («**ОТМЕНА**», «ЗАЯВКА №1») — только если дальше нет обычного текста: так выглядит и заголовок в рассказе о правилах
+    if (m && (m[1] || TAG_KEY_START.test(m[3]) || TAG_JSON_START.test(m[3]) || (!m[3] && (TAG_PLAIN.test(ln) || tagNext(i))))) ln = canon(m[1] || m[2]) + (m[3] ? " " + (TAG_JSON_START.test(m[3]) ? tagJson(m[3]) : m[3]) : "");
     else if (!TAG_HAS.test(ln)) {
       const s = ln.match(TAG_SOFT);
-      if (s && ((TAG_IS_CANCEL.test(s[1]) ? TAG_KEY_COLON : TAG_NAME_COLON).test(s[2] || nextText(i)) || TAG_JSON_START.test(s[2]))) ln = canon(s[1]) + (s[2] ? " " + (TAG_JSON_START.test(s[2]) ? tagJson(s[2]) : s[2]) : "");
+      if (s && (TAG_NAME_COLON.test(s[2] || nextText(i)) || TAG_JSON_START.test(s[2]))) ln = canon(s[1]) + (s[2] ? " " + (TAG_JSON_START.test(s[2]) ? tagJson(s[2]) : s[2]) : "");
     }
     if (TAG_HAS.test(ln)) {
       const at = ln.search(TAG_HAS);
