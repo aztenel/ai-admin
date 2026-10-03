@@ -1454,7 +1454,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         : join([cl.before, pend.length ? say("pending", { what: pendText(pend[pend.length - 1], lang) }) : say("confirm")]);
     }
     // записать сейчас нельзя (свободного времени нет или день не читается), а клиент оставил телефон или просит запись — передаём администратору
-    if (!madeNow.length && !cancel && !alt.slots.length) {
+    if (!madeNow.length && !cancel && !alt.slots.length && !saved.profile.cxAsk) { // если бот только что спросил «Отменить запись …?», вопрос должен дойти до клиента как есть
       const ph = opts.phone || saved.profile.phone, made = callback("в расписании нет свободного времени", canned);
       if (canned) reply = say(ph ? "noSlotsCb" : "noSlotsPhone"); // ИИ называл время, которого нет: вместо общей заготовки говорим как есть
       else if (made) reply = outs.length ? say("noSlotsCb") : CB_PROMISE.test(reply) ? reply : join([reply, say("cbNote")]); // клиент должен знать, что ему перезвонят
