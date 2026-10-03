@@ -1543,6 +1543,9 @@ ok("«старт» после «стоп»: бот снова отвечает",
     ok("H1: чат со старым профилем (без списка) → последняя заявка попадает в список, ИИ видит её", (pf(s).leads || []).length === 1 && pf(s).leads[0].id === "old1" && pf(s).leadId === "old1" && sysOf().includes("уже есть бронь: чистка, завтра, 16:00"), JSON.stringify(pf(s)));
     geminiQueue = [cxTag]; d = await chat("dent", s, "Отмените мою запись");
     ok("…и отменяется по просьбе клиента", d.cancel === true && tgHas("Отмена: Азамат, чистка, завтра, 16:00") && !pf(s).leadId && !pf(s).leads, JSON.stringify([d.reply, calls.tg, pf(s)])); }
+  o = await open();
+  geminiQueue = [cxTag]; d = await chat("dent", o.s, "Отмените мою запись, я записывался по телефону");
+  ok("H1: «я записывался по телефону» — речь о записи не из этого чата: заявка чата цела, просьба уходит администратору", !st(o.id) && d.cancel === true && tgHas("которой нет в этом чате") && !tgHas("Отмена:") && d.reply.includes(o.T0) && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), calls.tg]));
   { const wc = env.WA_CLIENT; env.WA_CLIENT = "dent"; const from = "77016000031";
     geminiQueue = ["Какое время вам подойдёт?"]; await waText(from, "Хочу на чистку"); const W = winOf(), D = W[0].day, [T0, T1] = W[0].times;
     geminiQueue = [`Забронировала вас на ${D} в ${T0}. Администратор подтвердит запись.\n` + TAG("Азамат", `${D}, ${T0}`)]; await waText(from, "Азамат, в первое время");
