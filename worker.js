@@ -269,6 +269,8 @@ const getSlots = (c, ctx) => ctx.slots || freeSlots(c, ctx.nowMs);
 // у клиента с расписанием Altegio запись, отмена и перенос описаны в отдельном разделе: общие правила 12 и 14 ему противоречат («добавь [ОТМЕНА]» без подробностей, «оформи новую бронь»)
 const RULES_ALT = RULES.replace(/^12\. [\s\S]*?(?=^13\. )/m, "12. Запись оформляй по правилам раздела «Запись в расписание» ниже.\n").replace(/^14\. .*$/m, "14. Отмену и перенос оформляй по правилам раздела «Запись в расписание» ниже.");
 function systemPrompt(c, ctx) {
+  // имя клиента пришло из строки ИИ с его слов: в подсказку идёт только само имя (cleanName), а не всё, что стояло в поле «Имя»
+  if (ctx.profile && ctx.profile.name) ctx = { ...ctx, profile: { ...ctx.profile, name: cleanName(ctx.profile.name) } };
   const n = local(ctx.nowMs);
   const slots = getSlots(c, ctx).map(s => `- ${s.rel ? s.rel[0].toUpperCase() + s.rel.slice(1) + ", " : ""}${s.label}${s.date ? ` (${s.date})` : ""}: ${s.times.join(", ")}`).join("\n") || "- Свободных окон нет — предложи оставить имя и телефон для обратного звонка.";
   const dates = c.eventDates ? `\n\nСвободные даты для мероприятий (других нет):\n${eventDates(c, ctx.nowMs).map(x => "- " + x).join("\n")}` : "";
@@ -418,7 +420,7 @@ async function saveLeads(store, cid, leads) {
 const leadKey = (cid, id) => `lead:${cid}:${isoDay(leadTs({ id }))}:${id}`;
 async function allLeads(env, cid) {
   const fresh = l => Date.now() - leadTs(l) < LEAD_TTL;
-  let leads = [], readable = true;
+  let leads = [], readable = true, keysRead = false;
   try { leads = (await loadLeads(env.KV, cid)).filter(fresh); } catch (e) { readable = false; console.log("leads read", String(e)); } // общий список не читается — покажем заявки из отдельных ключей
   try {
     if (typeof env.KV.list === "function") {
@@ -440,6 +442,7 @@ async function allLeads(env, cid) {
       const got = [];
       for (const name of miss.sort().reverse().slice(0, 60)) { const v = JSON.parse((await env.KV.get(name)) || "null"); if (v && v.id && !have.has(v.id) && fresh(v)) { have.set(v.id, v); got.push(v); } } // сначала самые новые
       if (got.length) { leads.push(...got); leads.sort((a, b) => leadTs(a) - leadTs(b)); }
+      keysRead = true;
       if (readable && (got.length || fixed.size)) { // возвращаем в общий список: перечитываем его прямо перед записью и только добавляем, чужих изменений не затираем
         try {
           const cur = await loadLeads(env.KV, cid), ids = new Set(cur.map(l => l.id));
@@ -451,6 +454,8 @@ async function allLeads(env, cid) {
       }
     }
   } catch (e) { console.log("leads heal", String(e)); }
+  // общий список не прочитался: «all» — заявок не видно вовсе, «part» — видны только найденные отдельными ключами. Страница заявок скажет об этом, а не покажет «Пока пусто»
+  if (!readable) Object.defineProperty(leads, "unread", { value: keysRead ? "part" : "all" });
   return leads;
 }
 // Язык сообщения; prev — язык прошлых сообщений этого чата. Латиница сама по себе — не английский («Camry R16», «Kaspi», «Azamat», «privet»):
@@ -484,6 +489,114 @@ function detectLang(t, prev) {
 // ================= слой 3: проверка ответа =================
 const digits = s => (String(s).match(/\d[\d\s ]*\d|\d/g) || []).map(x => x.replace(/[\s ]/g, ""));
 const NUMWORDS = /(один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто|сто|двести|триста|четыреста|пятьсот|шестьсот|семьсот|восемьсот|девятьсот|полтор)[а-я]*\s+(тысяч|миллион|тенге|тг)/i;
+// то же по-казахски и по-английски — только вместе с валютой: «жиырма мың теңге», «twenty thousand tenge» («екі мың жиырма алтыншы жыл» — это год)
+const NUMWORDS_KK = /(?<![а-яёәғқңөұүһі])(бір|екі|үш|төрт|бес|алты|жеті|сегіз|тоғыз|он|жиырма|отыз|қырық|елу|алпыс|жетпіс|сексен|тоқсан|жүз)\s+(мың\s+(\S+\s+){0,2}?)?(теңге|тг(?![а-яёәғқңөұүһі])|₸)/i;
+const NUMWORDS_EN = /(?<![a-z])(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\s+((thousand|million)\s+(\S+\s+){0,2}?)?(tenge|kzt|₸)/i;
+
+// ---- цены в ответе ИИ. Цену пишут по-разному: «20 000 ₸», «20,000 KZT», «20.000 тг», «20 тыс. тенге», «20к», «стоит 20 000» — число сверяем с фактами в любой записи.
+// Число: разряды через пробел, запятую или точку либо слитно; дробная часть — одна-две цифры («9,5 тыс.»). После времени («10:00 100 ₸») разряды не склеиваем
+const NUM_G = /(?<![\d:])([1-9]\d{0,2}(?:[\x20\u00a0\u202f.,]\d{3})+)(?!\d)(?:[.,](\d{1,2})(?!\d))?|(\d+)(?:[.,](\d{1,2})(?!\d))?/g;
+function numsIn(s) {
+  const out = [];
+  for (const m of String(s).matchAll(NUM_G)) {
+    const int = (m[1] || m[3]).replace(/\D/g, ""), frac = (m[2] || m[4] || "").replace(/0+$/, "");
+    out.push({ at: m.index, end: m.index + m[0].length, raw: m[0], n: frac ? int + "." + frac : int, v: +(frac ? int + "." + frac : int) });
+  }
+  return out;
+}
+const P_SP = "[ \\u00a0\\u202f]";
+const P_CUR_SRC = "₸|₽|\\$|€|тенге|теңге|тңг|тнг(?![а-яёәғқңөұүһі])|тг(?![а-яёәғқңөұүһі])|kzt(?![a-z])|tenge|tg(?![a-z])|руб(?:\\.|л[а-яё]*)?(?![а-яё])|usd(?![a-z])|доллар|евро(?![а-яё])|eur(?:os?)?(?![a-z])";
+const P_CUR = new RegExp("^" + P_SP + "*(?:" + P_CUR_SRC + ")", "i");
+// «12 000 т.» — тенге, но только после числа от тысячи («5 т» — это тонны, «т.е.» и «т.к.» — не валюта)
+const P_CUR_T = new RegExp("^" + P_SP + "*т(?![а-яёәғқңөұүһіa-z])(?!\\.[а-яё])", "i");
+// знак валюты перед числом: «$50», «KZT 12,000». Если перед знаком уже стоит число («6,000 KZT 60 minutes»), знак относится к нему
+const P_CUR_PRE = new RegExp("(?:^|[^\\d \\u00a0\\u202f])" + P_SP + "*(?:[$€]|(?<![a-zа-яё])(?:kzt|usd|eur))" + P_SP + "*$", "i");
+// множитель: «тыс.», «тысяч», «мың», «млн». «к» и «k» — когда стоят вплотную к числу («12к»; «дом 10к2» — корпус, «12кг» — мера) либо через пробел,
+// но дальше не слово и не число: «12 к.» — цена, а «в 10 к мастеру», «к 22:00 к Ерлану» и «2 к 1» — предлог
+const P_MULT = new RegExp("^(?:" + P_SP + "*(тыс[а-яё]*\\.?|мың[а-яёәғқңөұүһі]*|thousand)|" + P_SP + "*(млн\\.?|миллион[а-яё]*|million|mln(?![a-z]))|([кk])(?![а-яёәғқңөұүһіa-z\\d])|" + P_SP + "+([кk])(?=" + P_SP + "*(?:$|[.,;:!?)»\"”\\n—–-]|" + P_CUR_SRC + ")))", "i");
+// после числа стоит не валюта, а мера: «10 тыс. км», «от 1000 гостей», «каждые 7 500 км», «2019 года», «1600 или 2000 кубов» — это не цена.
+// Часов, дней и месяцев в списке нет: цену называют и «за месяц»
+const P_UNIT_SRC = "(?:%|км|кв\\.|м²|м2|мл|кг|шт|лет(?![а-яё])|год|г\\.|гост|человек|чел\\.|персон|мест(?![а-яё])|балл|раз(?![а-яё])|слов(?![а-яё])|знак|клиент|ученик|адам|қонақ|жыл"
+  + "|куб|см³|см3|л\\.с|метр|мм(?![а-яё])|ккал|оборот|вспыш|импульс|бонус|пациент|студент|посетител|участник|подписчик|отзыв|km(?![a-z])|kg(?![a-z])|ml(?![a-z])|guests?(?![a-z])|people|persons?(?![a-z])|years?(?![a-z])|seats?(?![a-z]))";
+const P_UNIT = new RegExp("^" + P_SP + "*" + P_UNIT_SRC, "i");
+const P_UNIT_NEXT = new RegExp("^" + P_SP + "*(?:[–—-]|до|to|или|or)" + P_SP + "*(\\d[\\d \\u00a0\\u202f.,]*?)" + P_SP + "*" + P_UNIT_SRC, "i");
+// мера после числа v: сразу («10 000 км») или у следующего числа того же ряда («7 500–10 000 км», «1600 или 2000 кубов»). Ряд идёт по возрастанию: «13 000 — 150 гостей» — это цена и число гостей
+const unitAfter = (after, v) => { if (P_UNIT.test(after)) return true; const m = P_UNIT_NEXT.exec(after); return !!m && +m[1].replace(/\D/g, "") >= v; };
+const P_RANGE = new RegExp("^" + P_SP + "*(?:[–—-]|до|to)" + P_SP + "*$", "i"); // «от 4 000 до 5 000 ₸», «4 000 — 5 000 ₸»: цена — оба числа
+const P_RANGE_SMALL = new RegExp("^(?:[–—-]|" + P_SP + "+(?:до|to)" + P_SP + "+)$", "i"); // «6–8 тыс.», «от 6 до 8 тыс.»: тире — только вплотную к числам
+// слова о цене перед числом без знака валюты. «от», «всего» и «from» — только вплотную к числу, после остальных — не больше пяти слов без цифр в том же предложении («стоимость мужской стрижки у нас — 12 000»)
+const P_WORD_G = /(?<![а-яёәғқңөұүһіa-z])(от|всего|from|сто(?:ит|ят|ить|ил[аои]?)|стоимост[а-яё]*|цен[аыуе]?|ценой|ценник[а-яё]*|обойд[её]тся|обойдутся|выйдет|составит|составляет|итого|сумм[аыуе]|бағасы|құны|costs?|priced?|prices|total)(?![а-яёәғқңөұүһіa-z])/gi;
+const P_WORD_ADJ = /^(от|всего|from)$/i, P_WORD_ONE = new RegExp("^(?:" + P_WORD_G.source + ")$", "i");
+const P_AFTER = new RegExp("^" + P_SP + "*-?(?:нан|нен|дан|ден|тан|тен)?" + P_SP + "*(?:тұрады|турады|бастап|басталады)", "i"); // по-казахски слово о цене стоит после числа: «12 000 тұрады»
+const P_NUMBER_OF = /(?:№|#|n°|номер[а-яё]*|код[а-яё]*|заказ[а-яё]*)[ \u00a0]*[:№#]?[ \u00a0]*$/i; // «запись № 777001» — номер, а не цена
+const P_MODEL = /(?:^|[^A-Za-zА-Яа-яЁё0-9-])([A-Z][A-Za-z0-9-]*|[А-ЯЁ]{2,})[ \u00a0]+$/;                 // «Peugeot 3008», «ВАЗ 2114» — модель, которую назвал клиент
+const P_MODEL_RU = /(?:^|[^а-яё])(?:лад[аыуе]|ваз|газ|газел[ьи]|нив[аыуе]|приор[аыуе]|грант[аыуе]|вест[аыуе]|калин[аыуе]|волг[аиу]|жигули|уаз|камаз|москвич[а-яё]*|пежо)[ \u00a0]+$/i; // то же строчными и по-русски: «ваз 2114», «Лада 2107», «Газель 3302»
+const isModel = (s, t) => { const b = s.slice(Math.max(0, t.at - 40), t.at), m = P_MODEL.exec(b); return (!!m && !P_WORD_ONE.test(m[1])) || P_MODEL_RU.test(b); }; // число сразу после названия машины
+// что за число стоит в тексте на месте t: множитель k (1 — цена без множителя) либо 0 — не цена по знаку валюты
+function priceMark(s, t) {
+  const after = s.slice(t.end, t.end + 28), m = P_MULT.exec(after), rest = m ? after.slice(m[0].length) : after;
+  if (P_CUR.test(rest) || (!m && t.v >= 1000 && P_CUR_T.test(rest)) || P_CUR_PRE.test(s.slice(Math.max(0, t.at - 8), t.at))) return m ? (m[2] ? 1e6 : 1e3) : 1;
+  return m && !P_UNIT.test(rest) ? (m[2] ? 1e6 : 1e3) : 0;
+}
+// год («2026», «с 2020 по 2024»: десять лет назад — пять вперёд), цифры телефона и номер записи или заказа — не цена, даже если рядом стоит слово о цене или знак «—» перед ценой
+const notPrice = (s, t, year, spans) => (/^\d{4}$/.test(t.raw) && t.v >= year - 10 && t.v <= year + 5) || spans.some(x => t.at >= x[0] && t.end <= x[1]) || P_NUMBER_OF.test(s.slice(Math.max(0, t.at - 24), t.at));
+// число от 1000 без знака валюты: цена, если рядом слово о цене. Мера («км», «гостей») и модель машины — не цена
+function barePrice(s, t, year, spans) {
+  if (t.v < 1000 || t.n.includes(".") || notPrice(s, t, year, spans)) return false;
+  const before = s.slice(Math.max(0, t.at - 96), t.at), after = s.slice(t.end, t.end + 40);
+  if (unitAfter(after, t.v)) return false;
+  if (P_AFTER.test(after)) return true;
+  if (isModel(s, t)) return false;
+  const sent = before.split(/[.!?\n]/).pop();
+  for (const m of sent.matchAll(P_WORD_G)) {
+    const gap = sent.slice(m.index + m[0].length), words = (gap.match(/[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]+/g) || []).length;
+    if (!/\d/.test(gap) && words <= (P_WORD_ADJ.test(m[1]) ? 0 : 5)) return true;
+  }
+  return false;
+}
+// цены в тексте по порядку: [{ n — число строкой, как его сверять с фактами }]
+function pricesIn(s, year, spans) {
+  const toks = numsIn(s), marks = toks.map(t => priceMark(s, t)), out = [];
+  toks.forEach((t, i) => {
+    let k = marks[i];
+    // начало промежутка: «4 000–5 000 ₸» — цена и первое число; «6–8 тыс.», «от 6 до 8 тыс.» — множитель общий (тире здесь без пробелов: «в 10:00 — 6 тыс. ₸», «Вариант 1 — 6 тыс. ₸» — не промежуток);
+    // «10–15 000 ₸» — первое число не трогаем; «Peugeot 3008 — 8 000 ₸» — модель и цена
+    if (!k && marks[i + 1] && !notPrice(s, t, year, spans) && !isModel(s, t)) {
+      const gap = s.slice(t.end, toks[i + 1].at);
+      if (t.v >= 1000) k = P_RANGE.test(gap) ? 1 : 0;
+      else if (marks[i + 1] > 1 && P_RANGE_SMALL.test(gap)) k = marks[i + 1];
+    }
+    if (!k && barePrice(s, t, year, spans)) k = 1;
+    if (k) out.push({ n: k > 1 ? String(Math.round(t.v * k)) : t.n });
+  });
+  return out;
+}
+// числа из фактов, с которыми сверяется цена: и как написаны («6 000»), и с множителем («6 тыс.» → 6000)
+function factNums(facts) {
+  const set = new Set(digits(facts));
+  for (const t of numsIn(facts)) set.add(t.n);
+  for (const p of pricesIn(facts, 0, [])) set.add(p.n);
+  return set;
+}
+const PHONE_LOOSE = /(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g; // всё, что похоже на номер телефона, даже с несуществующим кодом («+7 000 000 00 00»)
+// адреса сайтов и почты в тексте: «demo-dent.kz», «kaspi.kz/pay/…», «info@demo.kz» — целиком, строчными буквами
+function siteToks(s) {
+  const low = lowE(s), out = [];
+  for (const m of low.matchAll(/\.(?:kz|com|ru)\b/g)) {
+    const left = low.slice(Math.max(0, m.index - 80), m.index).match(/[^\s,;()«»"“”<>]*$/)[0], right = low.slice(m.index + m[0].length, m.index + m[0].length + 80).match(/^(?:\/[^\s,;()«»"“”<>]*)?/)[0];
+    out.push((left + m[0] + right).replace(/[.!?:]+$/, ""));
+  }
+  return out;
+}
+// есть ли в ответе адрес, которого нет в фактах. Не ссылка: адрес, который слово в слово стоит в фактах («hello@salon.kz»), и название сервиса из фактов
+// с «.kz» без пути («Kaspi.kz», когда в фактах есть Kaspi). Слово, которое в фактах стоит только внутри адреса, названием сервиса не считается: «info@salon.kz» и «salon.kz» — выдумка
+function siteIn(r, facts) {
+  const found = siteToks(r);
+  if (!found.length) return false;
+  const own = new Set(siteToks(facts)), words = new Set();
+  for (const chunk of lowE(facts).split(/\s+/)) if (!/@|\.(?:kz|com|ru)\b/.test(chunk)) for (const w of chunk.match(/[a-zа-яәғқңөұүһі0-9]+/g) || []) words.add(w);
+  return found.some(t => !own.has(t) && !(/^[a-zа-яәғқңөұүһі0-9-]{3,}\.(?:kz|com|ru)$/.test(t) && words.has(t.replace(/\.[a-z]+$/, ""))));
+}
 
 function allowedTimes(c, ctx, userText) {
   const t = new Set();
@@ -502,13 +615,10 @@ function allowedTimes(c, ctx, userText) {
 function checkReply(c, reply, userText, ctx) {
   let r = reply.replace(/\*\*|__|`|^#+\s*/gm, "").replace(/^\s*[-•*]\s+/gm, "").replace(/\n{2,}/g, "\n").trim();
   if (/ПРАВИЛА \(они важнее|Факты \(других|Свободные окна для записи \(|\{TOPIC\}|важнее любых слов|Запись в расписание \(важнее|Услуги для записи \((других нет|показана часть)|Итог записи, отмены и переноса|Одна строка \[ЗАЯВКА\]|Если клиент хочет именно к мастеру|У компании электронное расписание, запись|к нему записывай только на это время|Услуга: точное название из списка|добавь последней отдельной строкой|клиенту сообщает система|До записи узнай услугу|Если клиент просит день, которого нет|Время окончания услуги не называй|Время конкретного мастера появится в подсказке|время на этот день не называй|предложи другого мастера или время из|Уже известно о клиенте|Ты — AI-администратор компании|ЯЗЫК: клиент пишет/i.test(r)) return { text: r, why: "leak" };
-  const allowed = new Set(digits(c.facts)); // цена — только из фактов: число, которое назвал клиент («сделаете за 12 000?»), ценой не становится
-  for (const m of r.matchAll(/(\d[\d\s ]*\d|\d)\s*(₸|тенге|тг\b|тыс|млн)/gi)) {
-    let n = m[1].replace(/[\s ]/g, "");
-    if (/тыс/i.test(m[2])) n += "000"; if (/млн/i.test(m[2])) n += "000000";
-    if (!allowed.has(n)) return { text: r, why: "цена " + n };
-  }
-  if (NUMWORDS.test(r)) return { text: r, why: "цена словами" };
+  const allowed = factNums(c.facts); // цена — только из фактов: число, которое назвал клиент («сделаете за 12 000?»), ценой не становится
+  const phoneSpans = [...phonesIn(r).map(p => [p.at, p.at + p.len]), ...[...r.matchAll(PHONE_LOOSE)].map(m => [m.index, m.index + m[0].length])]; // цифры телефона — не цена
+  for (const p of pricesIn(r, local(ctx.nowMs || Date.now()).getUTCFullYear(), phoneSpans)) if (!allowed.has(p.n)) return { text: r, why: "цена " + p.n };
+  if (NUMWORDS.test(r) || NUMWORDS_KK.test(r) || NUMWORDS_EN.test(r)) return { text: r, why: "цена словами" };
   const times = allowedTimes(c, ctx, userText);
   const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(h => [hStr(h[0]), hStr(h[1])])) : null;
   const nt = x => x.replace(/^0(\d)/, "$1");
@@ -542,9 +652,11 @@ function checkReply(c, reply, userText, ctx) {
     }
     return { text: r, why: "время " + m[0] };
   }
-  const factPhones = new Set([...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
-  for (const m of r.matchAll(/(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g)) if (!factPhones.has(normPhone(m[0]))) return { text: r, why: "телефон" };
-  if (/https?:\/\/|www\.|\.(kz|com|ru)\b/i.test(r) && !/https?:\/\/|www\./.test(c.facts)) return { text: r, why: "ссылка" };
+  // телефон — только из фактов. Номер в фактах и в ответе ищем одинаково (phonesIn): «8 (701) 123-45-67» и «+7-701-123-45-67» — тот же номер, что «+7 701 123 45 67»
+  const factPhones = new Set([...phonesIn(c.facts).map(p => p.phone), ...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
+  if (phonesIn(r).some(p => !factPhones.has(p.phone))) return { text: r, why: "телефон" };
+  for (const m of r.matchAll(PHONE_LOOSE)) if (!factPhones.has(normPhone(m[0]))) return { text: r, why: "телефон" };
+  if ((/https?:\/\/|www\./i.test(r) || siteIn(r, c.facts)) && !/https?:\/\/|www\./.test(c.facts)) return { text: r, why: "ссылка" };
   if (r.length > 600) r = (r.slice(0, 600).match(/^[\s\S]*[.!?]/) || [r.slice(0, 600)])[0];
   return { text: r, why: null };
 }
@@ -732,6 +844,22 @@ const hm = t => {
 };
 const clean = (s, n = 80) => String(s ?? "").replace(/[​-‏⁠﻿­]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 const lowE = s => String(s ?? "").toLowerCase().replace(/ё/g, "е");
+// Имя человека из строки ИИ попадает в подсказку ИИ и в расписание, поэтому от поля «Имя» остаётся только имя: до трёх слов из букв
+// (русских, казахских, латинских; дефис и апостроф — внутри слова), не длиннее 40 знаков. Всё после точки, запятой, цифры, скобки и любого другого знака отбрасывается.
+// «А. Иванов», «Иванов А.С.» — точка после одной буквы считается инициалом. many — имён может быть несколько («Тимур, Алихан», «Тимур + Алихан»): они остаются через запятую
+const NAME_CH = "A-Za-zÀ-ÖØ-öø-ɏА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+const NAME_HEAD = new RegExp("^[^" + NAME_CH + "]+"), NAME_INITIAL = new RegExp("(^|[ ,+&])([" + NAME_CH + "])\\.(?=[ " + NAME_CH + "]|$)", "g");
+const NAME_ONE = new RegExp("^[" + NAME_CH + "'’ʼ\\s-]*"), NAME_MANY = new RegExp("^[" + NAME_CH + "'’ʼ\\s,+&-]*");
+function cleanName(s, many) {
+  const t = clean(s, 200).replace(NAME_HEAD, "").replace(NAME_INITIAL, "$1$2 ").replace(NAME_INITIAL, "$1$2 "); // второй проход — для инициалов подряд: «А.С. Иванов»
+  const one = x => { // слова до первого «слова» без букв: «Тимур - постоянный клиент» → «Тимур»
+    const out = [];
+    for (const w0 of x.trim().split(/\s+/)) { const w = w0.replace(/^['’ʼ-]+|['’ʼ-]+$/g, ""); if (!w || out.push(w) === 3) break; }
+    return out.join(" ").slice(0, 40).replace(/[\s'’ʼ-]+$/, "");
+  };
+  const body = t.match(many ? NAME_MANY : NAME_ONE)[0];
+  return many ? body.split(/\s*[,+&]\s*/).map(one).filter(Boolean).slice(0, 3).join(", ").slice(0, 60).replace(/[\s,'’ʼ-]+$/, "") : one(body);
+}
 // названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
 const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "(").replace(/[\]}>]/g, ")").replace(/;/g, ",").replace(/\|/g, "/")
   .replace(/(\d{1,2}):(\d{2})/g, "$1.$2").replace(/\s*:\s*/g, " — "), n);
@@ -868,24 +996,105 @@ function altDateOf(s, nowMs) {
   if (dw.length === 1) return isoDay(nowMs + (((dw[0] - local(nowMs).getUTCDay() + 7) % 7) || 7) * 86400e3);
   return "";
 }
-// ---- служебные строки ИИ приводим к одному виду: «(ЗАЯВКА)», «ЗАЯВКА: …», «[БРОНЬ]», «[BOOKING]», «[ЗАЯВК]» → «[ЗАЯВКА]»; поля столбиком — в одну строку
+// ---- служебные строки ИИ приводим к одному виду: «(ЗАЯВКА)», «ЗАЯВКА: …», «[БРОНЬ]», «[BOOKING]», «[ЗАЯВК]» → «[ЗАЯВКА]»; поля столбиком — в одну строку.
+// Служебная строка не должна дойти до клиента, что бы ИИ ни дописал к метке: номер («[ЗАЯВКА 1]»), пояснение («[ОТМЕНА записи]», «[BOOKING REQUEST]»), поля внутри скобок
+// («[ЗАЯВКА: Имя: …]»), JSON, жирный шрифт, кавычки, слова перед меткой («Служебная строка: [ЗАЯВКА] …»). Обычная фраза со словом «заявка», «запись» или «отмена»
+// («Ваша заявка принята», «Отмена бесплатна») служебной строкой не становится: без скобок метка — это слово заглавными буквами либо слово с двоеточием, после которого идёт поле («Имя: …»)
 const TAGW_BOOK = "ЗАЯВК[АИУ]?|ЗАПИСЬ|БРОНЬ|БРОНИРОВАНИЕ|BOOKING|BOOK|ORDER|REQUEST|APPOINTMENT|ӨТІНІМ|ӨТІНІШ|ТАПСЫРЫС|ЖАЗЫЛУ";
 const TAGW_CANCEL = "ОТМЕН[АЫУ]?|ОТМЕНИТЬ|CANCEL|CANCELLATION|CANCELATION|БОЛДЫРМАУ";
-const TAG_KEY_ALT = Object.keys(TAG_KEYS).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
-const TAG_SQ = new RegExp("\\[\\s*(" + TAGW_BOOK + "|" + TAGW_CANCEL + ")\\s*\\]", "gi");                                    // в квадратных скобках — в любом регистре
-const TAG_BARE = new RegExp("^([\\s*_`>-]*)(?:[(<{【«]\\s*(" + TAGW_BOOK + "|" + TAGW_CANCEL + ")\\s*[)>}】»]|(" + TAGW_BOOK + "|" + TAGW_CANCEL + "))\\s*[:—–-]?\\s*(.*)$"); // в других скобках и без скобок — только заглавными, в начале строки
-const TAG_KEY_START = new RegExp("^\\s*(?:[-•*]\\s*)?(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
+// без скобок «ОТМЕНИТЬ» и «CANCELLATION» меткой не были и раньше: это слова обычной фразы («Напишите одно слово: ПЕРЕНЕСТИ или ОТМЕНИТЬ»)
+const TAGW_BARE = TAGW_BOOK + "|ОТМЕН[АЫУ]?|CANCEL|БОЛДЫРМАУ";
+const TAGW = TAGW_BOOK + "|" + TAGW_CANCEL, TAG_LT = "A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+const tagKeyAlt = pick => Object.keys(TAG_KEYS).filter(pick).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
+const TAG_KEY_ALT = tagKeyAlt(() => true), TAG_NAME_ALT = tagKeyAlt(k => TAG_KEYS[k] === "имя");
+const TAG_NUM = "(?:\\s*(?:(?:№|#|N)\\s*)?\\d{1,3})?";                                                 // номер после метки: «ЗАЯВКА 1», «ЗАЯВКА №2»
+const TAG_OPEN = "\\\\?\\[\\s*(?:(?:НОВАЯ|НОВЫЙ|NEW|СЛУЖЕБНАЯ\\s+СТРОКА|СТРОКА|МЕТКА|TAG)[\\s:—–-]+)?(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM;
+// метка в квадратных скобках — в любом регистре, с номером и пояснением: «[Заявка]», «[ЗАЯВКА №1]», «[BOOKING REQUEST]», «[ОТМЕНА ЗАПИСИ]», «[НОВАЯ ЗАЯВКА]», «\[ЗАЯВКА\]»
+const TAG_SQ = new RegExp(TAG_OPEN + "(?:\\s+(?:ЗАПИСИ|ЗАПИСЬ|ЗАЯВКИ|БРОНИ|КЛИЕНТА|НА\\s+ЗАПИСЬ|REQUEST|BOOKING|LINE))?" + TAG_NUM + "\\s*\\\\?\\]", "gi");
+const TAG_SQ_IN = new RegExp(TAG_OPEN + "\\s*(?:([:=—–])\\s*|(?<=\\s)(?=(?:" + TAG_KEY_ALT + ")\\s*[:=]))", "gi"); // поля внутри скобок: «[ЗАЯВКА: Имя: …]», «[ЗАЯВКА Имя: …]»
+const TAG_SQ_ANY = new RegExp("\\\\?\\[([^\\[\\]\\n]*?)(?<![" + TAG_LT + "])(ЗАЯВКА|ОТМЕНА)(?![" + TAG_LT + "])([^\\[\\]\\n]*)\\]", "g"); // метка заглавными где угодно в скобках: «[ОТМЕНА записи на 15:00]»
+const TAG_MARK = "[\\s*_`~>«\"“„'-]*";                                                                  // разметка и кавычки перед меткой
+// в других скобках и без скобок — только заглавными, в начале строки: «(ЗАЯВКА) …», «ЗАЯВКА: …», «**ЗАЯВКА №1:** …»
+const TAG_BARE = new RegExp("^[\\s*_`~>\"“„'-]*(?:[(<{【«]\\s*(" + TAGW + ")" + TAG_NUM + "\\s*[)>}】»]|«?(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + ")[*_`]*\\s*[:—–-]?\\s*[*_`]*\\s*(.*)$");
+// слово «Заявка», «Отмена», «Booking» не заглавными — метка, только если после него двоеточие или тире, а дальше поле «Имя: …» («Отмена: Время: за два часа до визита» — рассказ о правилах, а не отмена)
+const TAG_SOFT = new RegExp("^" + TAG_MARK + "(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + "[*_`]*\\s*[:—–=-]\\s*[*_`]*\\s*(.*)$", "i");
+const TAG_ITEM = "(?:(?:[-•*·]|\\d{1,2}[.)])\\s*)?";                                                    // пункт списка перед полем: «- Имя: …», «1. Имя: …»
+const TAG_KEY_START = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
+const TAG_KEY_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*[:=]", "i"), TAG_NAME_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_NAME_ALT + ")\\s*[:=]", "i");
+const TAG_FIELD_LINE = new RegExp("^\\s*" + TAG_ITEM + "[" + TAG_LT + "][^:=\\n]{0,30}[:=]\\s*\\S");     // «Возраст: 30» — строка похожа на поле, хотя ключ незнакомый
+const TAG_ITEM_HEAD = /^\s*(?:[-•*·]|\d{1,2}[.)])\s*/;
+const TAG_ITEM_IN = new RegExp("(\\]\\s*(?:[:—–-]\\s*)?|[;|]\\s*)\\d{1,2}[.)]\\s*(?=(?:" + TAG_KEY_ALT + ")\\s*[:=])", "gi"); // «[ЗАЯВКА] 1) Имя: …; 2) Телефон: …» — номера полей в одной строке
 const TAG_IS_CANCEL = new RegExp("^(?:" + TAGW_CANCEL + ")$", "i");
+const TAG_JSON = new RegExp("\\{\\s*\"(" + TAGW + ")\"\\s*:\\s*\\{([^{}]*)\\}\\s*\\}", "gi");             // {"ЗАЯВКА": {"Имя": "…", …}} — одной строкой или столбиком
+const TAG_JSON_AFTER = new RegExp("(\\[\\s*(?:" + TAGW + ")\\s*\\][*_`]*\\s*(?::\\s*)?)\\{([^{}]*)\\}", "gi"); // [ЗАЯВКА] {"Имя": "…", …}
+const TAG_LABEL = /(?:служебн[а-яё]*\s+строк[а-яё]*|строка\s+для\s+(?:системы|администратора)|service\s+line|system\s+line|метка|tag)\s*[:—–-]?/gi; // слова, которыми ИИ подписывает метку
+const TAG_HAS = /\[(?:ЗАЯВКА|ОТМЕНА)\]/, TAG_ONLY = /^\[(?:ЗАЯВКА|ОТМЕНА)\]$/, TAG_JSON_START = /^\{\s*"/;
+const TAG_PLAIN = new RegExp("^[\\s*_`>-]*(?:" + TAGW_BARE + ")\\s*[:—–-]?\\s*$"), TAG_LINE_START = /^[\s*_`~>«"“„'-]*(?:\\?\[|\{)/; // «ОТМЕНА», «ЗАЯВКА:» — слово без разметки после него; строка, которая начинается со скобки
+const TAG_TRAIL = " \t\r*_`~\\", TAG_PAIRS = [["[", "]"], ["«", "»"], ["(", ")"], ["{", "}"], ["“", "”"]]; // разметка в конце служебной строки; скобки и кавычки, которые могут остаться без пары
+// знаки из набора в конце строки — без регулярного выражения: «[…]+$» на длинной строке работает за квадрат её длины
+const rtrimSet = (s, set) => { let e = s.length; while (e > 0 && set.includes(s[e - 1])) e--; return e < s.length ? s.slice(0, e) : s; };
+// поля из JSON: «"Имя": "Азамат", "Время": "завтра, 12:00"» → «Имя: Азамат; Время: завтра, 12:00»
+const tagJson = body => [...String(body).matchAll(/"([^"\n]{1,40})"\s*:\s*(?:"([^"]*)"|\[([^\]]*)\]|([^,"{}\n]+))/g)]
+  .map(m => m[1].trim() + ": " + (m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3].replace(/"\s*,\s*"/g, " | ").replace(/"/g, "") : m[4]).trim().replace(/;/g, ",")).join("; ");
 function tidyTags(raw) {
   const canon = w => TAG_IS_CANCEL.test(w.trim()) ? "[ОТМЕНА]" : "[ЗАЯВКА]";
-  const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";").split("\n"), out = [];
+  const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";")
+    .replace(TAG_JSON, (m, w, body) => "\n" + canon(w) + " " + tagJson(body) + "\n")
+    .replace(TAG_JSON_AFTER, (m, head, body) => /"\s*:/.test(body) ? head + tagJson(body) : m)
+    .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, "") // границы блока кода клиенту не нужны
+    .split("\n"), out = [];
+  const nextText = i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
+  const tagNext = i => { const nx = nextText(i); return !nx || TAG_KEY_START.test(nx) || TAG_LINE_START.test(nx); }; // дальше — конец ответа, поле («Имя: …») или другая служебная строка
   for (let i = 0; i < lines.length; i++) {
-    let ln = lines[i].replace(TAG_SQ, (m, w) => canon(w));
+    let ln = lines[i];
+    if (ln.includes("[")) ln = ln.replace(TAG_SQ, (m, w) => canon(w))
+      .replace(TAG_SQ_IN, (m, w, sep, at, s) => sep && w !== w.toUpperCase() && !TAG_KEY_COLON.test(s.slice(at + m.length)) ? m : canon(w) + " ") // «[Запись: завтра в 12:00]» — не метка
+      .replace(TAG_SQ_ANY, (m, a, w, b) => { const rest = (a + " " + b).replace(/\\+$/, "").replace(/^[\s:—–=№#\d-]+/, "").trim(); return rest ? `[${w}] ${rest}` : `[${w}]`; });
     const m = ln.match(TAG_BARE);
-    if (m && (m[2] || !m[4] || TAG_KEY_START.test(m[4]))) ln = canon(m[2] || m[3]) + (m[4] ? " " + m[4] : "");
-    if (/\[(ЗАЯВКА|ОТМЕНА)\]/.test(ln)) // поля столбиком: за меткой идут строки «Ключ: значение»
-      while (i + 1 < lines.length && TAG_KEY_START.test(lines[i + 1])) ln += (/\]\s*$/.test(ln) ? " " : "; ") + lines[++i].replace(/^\s*[-•*]\s*/, "").trim();
+    // слово заглавными без полей — метка, как и раньше («ОТМЕНА», «ЗАЯВКА:»). С разметкой или номером («**ОТМЕНА**», «ЗАЯВКА №1») — только если дальше нет обычного текста: так выглядит и заголовок в рассказе о правилах
+    if (m && (m[1] || TAG_KEY_START.test(m[3]) || TAG_JSON_START.test(m[3]) || (!m[3] && (TAG_PLAIN.test(ln) || tagNext(i))))) ln = canon(m[1] || m[2]) + (m[3] ? " " + (TAG_JSON_START.test(m[3]) ? tagJson(m[3]) : m[3]) : "");
+    else if (!TAG_HAS.test(ln)) {
+      const s = ln.match(TAG_SOFT);
+      if (s && (TAG_NAME_COLON.test(s[2] || nextText(i)) || TAG_JSON_START.test(s[2]))) ln = canon(s[1]) + (s[2] ? " " + (TAG_JSON_START.test(s[2]) ? tagJson(s[2]) : s[2]) : "");
+    }
+    if (TAG_HAS.test(ln)) {
+      const at = ln.search(TAG_HAS);
+      // «[ЗАЯВКА] [ЗАЯВКА] …» — одна метка. Повтор «[ОТМЕНА]» не трогаем: строки отмены бот исполняет по одной, менять их число и порядок нельзя
+      let head = ln.slice(0, at), tail = ln.slice(at).replace(/(\[ЗАЯВКА\])(?:[\s:—–*_`-]*\[ЗАЯВКА\])+/g, "$1").replace(TAG_ITEM_IN, "$1");
+      // перед меткой только разметка, номер пункта или слова «служебная строка» — это часть служебной строки, а не ответа клиенту; кавычка или скобка, открытая перед меткой, — тоже
+      if (!head.replace(TAG_LABEL, "").replace(/[\s*_`~>«"“„'(\[{:.—–#•·\d)\\-]/g, "")) head = "";
+      else { const h = rtrimSet(head, TAG_TRAIL + "«\"“„'([{"); if (h.length < head.length) head = h + " "; }
+      // в конце строки — разметка и закрывающая скобка или кавычка без пары: они остались от «[ЗАЯВКА: …]», ««[ЗАЯВКА] …»», «**[ЗАЯВКА] …**»
+      const cnt = ch => tail.split(ch).length - 1, over = TAG_PAIRS.map(([o, c]) => cnt(c) - cnt(o));
+      let end = tail.length, odd = cnt('"') % 2;
+      for (let go = true; go;) {
+        while (end > 0 && TAG_TRAIL.includes(tail[end - 1])) end--;
+        const p = TAG_PAIRS.findIndex(([, c], k) => over[k] > 0 && tail[end - 1] === c);
+        go = p >= 0 || (odd === 1 && tail[end - 1] === '"');
+        if (p >= 0) over[p]--; else if (go) odd = 0;
+        if (go) end--;
+      }
+      tail = tail.slice(0, end);
+      // поля столбиком: за меткой идут строки «Ключ: значение» — с номерами, после пустой строки, с незнакомым полем между знакомыми
+      let j = i + 1;
+      if (TAG_ONLY.test(tail)) { let k = j; while (k < lines.length && !lines[k].trim()) k++; if (k < lines.length && TAG_KEY_START.test(lines[k])) j = k; }
+      const extra = [], isKey = x => TAG_KEY_START.test(x || ""), isField = x => TAG_FIELD_LINE.test(x || "");
+      for (; j < lines.length; j++) {
+        if (isKey(lines[j])) tail += (/\]$/.test(tail) ? " " : "; ") + lines[j].replace(TAG_ITEM_HEAD, "").trim();
+        else if (isField(lines[j]) && (isKey(lines[j + 1]) || (isField(lines[j + 1]) && isKey(lines[j + 2])))) extra.push(lines[j].replace(TAG_ITEM_HEAD, "").trim());
+        else break;
+      }
+      if (extra.length) tail += "; Комментарий: " + extra.join(", "); // незнакомые поля не теряются: администратор увидит их в заявке
+      i = j - 1;
+      ln = head + tail;
+    }
     out.push(ln);
+  }
+  // «[ЗАЯВКА]» без полей, а строкой ниже «[ЗАЯВКА] Имя: …» — это одна служебная строка. С «[ОТМЕНА]» так не делаем: строка отмены без подробностей — отдельная просьба
+  for (let k = out.length - 2; k >= 0; k--) {
+    if (!/^\s*\[ЗАЯВКА\]\s*$/.test(out[k])) continue;
+    let n = k + 1; while (n < out.length && !out[n].trim()) n++;
+    if (n < out.length && out[n].trimStart().startsWith("[ЗАЯВКА]")) out.splice(k, 1);
   }
   return out.join("\n");
 }
@@ -2051,8 +2260,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const pendLive = p => (!isoOk(p.date) || p.date >= today) && (!p.at || nowMs - p.at < 7 * 86400e3);
   const adminCap = () => { const a = saved.profile.adminLeads; return a && a.d === today ? a.n : 0; }; // заявок администратору из этого чата за сегодня
   const adminInc = () => { saved.profile.adminLeads = { d: today, n: adminCap() + 1 }; };
-  // имя из служебной строки: без возраста («Алихан, 7 лет») и знаков в конце
-  const nameOf = v => clean(v, 60).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, "").replace(/[\s.,;:]+$/, "").trim();
+  // имя из служебной строки: без возраста («Алихан, 7 лет») и без всего, что именем не является (cleanName); несколько имён остаются через запятую
+  // в поле «Имя» что-то есть, но имени в нём нет («???», «😀») — отдаём «—»: записать на такое «имя» нельзя (бот спросит настоящее), а строка отмены с ним не совпадёт ни с одной записью — бот переспросит, а не удалит
+  const nameOf = v => { const raw = clean(v, 200).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, ""); return cleanName(raw, true) || (raw.replace(/[\s.,;:]+$/, "") ? "—" : ""); };
   const ph0 = () => opts.phone || saved.profile.phone || "";
   // обратный звонок: бот записать не может (расписание недоступно, свободного времени нет, запись не оформляется), а телефон клиента известен. Не чаще раза в час на чат
   const callback = why => {
@@ -3220,8 +3430,10 @@ async function route(request, env, ctx) {
     if (M === "GET" && P === "/api/history") {
       const c = hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : "dent";
       const sid = cleanSid(url.searchParams.get("sid"));
-      const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null;
-      return json({ turns: h ? h.turns : [] });
+      let turns = [];
+      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns; }
+      catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
+      return json({ turns });
     }
     if (M === "POST" && P === "/ga") { // Green-API
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
@@ -3555,7 +3767,12 @@ async function waErr(env, where, code, msg, details) {
 
 async function diag(env) {
   const out = [];
-  out.push("KV: " + (env.KV ? "подключено ✅" : "НЕ подключено ❌ — Settings → Bindings → KV namespace, имя KV"));
+  // хранилище проверяем чтением: эта страница нужна как раз тогда, когда оно не работает, поэтому сбой — строка в отчёте, а не падение страницы
+  let kvErr = "", waLast = null;
+  if (env.KV) { try { waLast = await env.KV.get("wa:lastErr"); } catch (e) { kvErr = String((e && e.message) || e).slice(0, 160); } }
+  out.push(!env.KV ? "KV: НЕ подключено ❌ — Settings → Bindings → KV namespace, имя KV"
+    : kvErr ? `Хранилище KV: ❌ не читается — ${kvErr}. Проверьте привязку KV (Settings → Bindings) и суточный лимит хранилища в панели Cloudflare. Пока оно не читается, бот не ведёт диалог и не показывает заявки`
+    : "KV: подключено ✅");
   const key = env.GEMINI_KEY || "";
   out.push("GEMINI_KEY: " + (key ? `есть ✅ (${key.length} симв., ${key.slice(0, 4)}…)` : "НЕТ ❌"));
   out.push("LEADS_KEY: " + (env.LEADS_KEY ? "задан ✅" : "не задан — используется VERIFY_TOKEN (лучше задать отдельный)"));
@@ -3587,8 +3804,7 @@ async function diag(env) {
         (j.code_verification_status ? ` · подтверждение: ${j.code_verification_status}` : ""));
       else { const e = j?.error || {}; out.push(`Номер в Meta: ❌ ${e.code || r.status} ${e.message || ""}` + (WA_HINT[e.code] ? " → " + WA_HINT[e.code] : "")); }
     } catch (e) { out.push("Номер в Meta: ❌ " + String(e).slice(0, 120)); }
-    const le = await env.KV.get("wa:lastErr");
-    out.push("Последняя ошибка WhatsApp: " + (le || "нет ✅"));
+    out.push("Последняя ошибка WhatsApp: " + (!env.KV || kvErr ? "не прочитана — хранилище не отвечает" : waLast || "нет ✅"));
   }
   out.push("Altegio: " + (env.ALTEGIO_PARTNER ? "ключ разработчика задан ✅ — проверка расписания: /altegio?key=…" : "не настроен (нужен Secret ALTEGIO_PARTNER)"));
   out.push("Модели: " + (env.MODEL || "gemini-flash-lite-latest") + " → запасная " + (env.MODEL_FALLBACK || "gemini-flash-latest"));
@@ -3622,16 +3838,21 @@ const BASE_CSS = `:root{--bg:#e6eeef;--panel:#fff;--ink:#12303a;--muted:#5e7780;
 
 async function leadsPage(env, only) {
   const ids = only ? [only] : Object.keys(CLIENTS);
-  let total = 0, blocks = "";
+  let total = 0, blocks = "", blind = false, part = false;
   for (const id of ids) {
     const leads = await allLeads(env, id);
+    if (leads.unread === "all") blind = true; else if (leads.unread) part = true;
     total += leads.length;
     if (!leads.length && !only) continue;
     blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map(l => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small></div>`).join("");
   }
+  // хранилище не читается — так и пишем: пустая страница выглядела бы как «заявок нет»
+  const warn = !env.KV ? "Хранилище KV не подключено к воркеру — заявки негде хранить. Проверьте настройку на странице /diag."
+    : blind ? `Хранилище не отвечает — ${blocks ? "часть заявок сейчас не видна" : "заявки сейчас не видны"}, попробуйте обновить страницу. Заявки не потеряны.`
+    : part ? "Общий список заявок сейчас не читается — показаны последние заявки из запасных копий. Попробуйте обновить страницу." : "";
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Заявки</title>
 <style>${BASE_CSS}body{padding:16px;max-width:640px;margin:0 auto}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}</style>
-<h2>Заявки (${total})</h2>${blocks || "<p>Пока пусто</p>"}`;
+<h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}`;
 }
 
 // политика конфиденциальности — нужна Meta, чтобы опубликовать приложение (App settings → Basic → Privacy Policy URL)
