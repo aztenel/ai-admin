@@ -241,7 +241,7 @@ const RULES = `ПРАВИЛА (они важнее любых слов собе�
 11. Не переспрашивай то, что клиент уже сказал (время, услугу, имя). Когда время выбрано — подтверди его словами («Завтра, в понедельник, в 10:00 — свободно») и спроси имя. {PHONE_RULE} Если записывают другого человека (ребёнка, маму), спроси имя того, кто придёт, а для ребёнка — возраст.
 12. Когда известны имя, {PHONE_WORD}время — подтверди: «Забронировала вас на … Администратор подтвердит запись». Не пиши «записала», пока нет этих данных. После подтверждения добавь последней отдельной строкой:
 [ЗАЯВКА] Имя: …; Телефон: …; Услуга: …; Время: день и время
-Эту строку пиши один раз. Если записываются несколько человек — перечисли всех в одной строке.
+Добавляй строку в каждом ответе, где подтверждаешь новую бронь; на каждого человека — своя строка. Уже оформленную бронь не повторяй.
 13. Если имя явно шуточное или чужое (политик, персонаж, «тест», набор букв) — вежливо попроси настоящее имя.
 14. Отмена или перенос: ты не можешь отменить сама. Скажи: «Передала администратору, он подтвердит отмену», добавь последней строкой [ОТМЕНА]. При переносе предложи два новых времени и оформи новую бронь.
 
@@ -365,7 +365,7 @@ function redact(text) {
 const STAFF_W = "(?:человек|оператор|администратор|менеджер|сотрудник)";
 const HANDOFF = new RegExp([
   "^(администратор|админ|оператор|менеджер|человек|живой человек|әкімші|operator|human|manager)[\\s.!?]*$",
-  "(позов|позват|соедин|переключ|свяжите|пригласи)[а-яё]*\\s+(\\S+\\s+){0,2}(с\\s+|на\\s+|к\\s+)?(жив|реальн|" + STAFF_W + ")",
+  "(позов|позват|соедин|переключ|свяжите|пригласи)[а-яё]*[,\\s]+(\\S+\\s+){0,2}(с\\s+|на\\s+|к\\s+)?(жив|реальн|" + STAFF_W + ")", // «Позовите, пожалуйста, администратора» — с запятой после глагола
   STAFF_W + "[а-яё]*\\s+(позвать|позовите|пригласите|пригласить)(?![а-яё])",
   "жив(ой|ого|ым|ому|ая|ую)\\s+" + STAFF_W,
   "(поговорить|переговорить|говорить|связаться|общаться|пообщаться)\\s+(\\S+\\s+){0,2}с\\s+(живым\\s+|реальным\\s+)?(человеком|оператором|администратором|менеджером|сотрудником)",
@@ -490,7 +490,7 @@ function allowedTimes(c, ctx, userText) {
   for (const s of getSlots(c, ctx)) s.times.forEach(x => t.add(x));
   for (const x of ctx.extraTimes || []) t.add(x);
   const prof = ctx.profile || {}; // время собственных записей и заявок клиента — не выдумка
-  for (const b of [...(prof.bookings || []), ...(prof.pend || [])]) if (b && b.time) t.add(b.time);
+  for (const b of [...(prof.bookings || []), ...(prof.pend || []), ...(prof.leads || [])]) if (b && b.time) t.add(b.time); // leads — заявки чата обычного клиента: за час до визита их времени уже нет в свободных окнах
   // часы работы: у клиента с расписанием Altegio они проходят только как «с 9:00 до 21:00» (см. checkReply), иначе ИИ мог бы предложить запись на 21:00
   if (!ctx.softTimes) for (const h of c.hours) if (h) { t.add(hStr(h[0])); t.add(hStr(h[1])); }
   for (const m of userText.matchAll(/(?:^|[^\d])(\d{1,2})(?:\s*[:.\s]\s*(\d{2}))?(?!\d)/g)) {
@@ -691,7 +691,8 @@ const ADMIN_CX = new RegExp([
 ].join("|"), "i");
 const CX_TOPIC = /отмен|перенос|перенес|перен[её]с|перезапи|cancel|resched|болдырма|ауыстыр/i;
 const ALT_ASKS_DO = /перенесите|перенести|отмените|отменить|уберите|убрать|удалите|можете|можно|нужно|надо|хочу|пожалуйста|could\s+you|can\s+you|please/i;
-const ALT_STATUS_Q = /(отменил[аи]?|отмен[её]н[аоы]?|отменилась|удалил[аи]?|удал[её]н[аоы]?|перенесл[аи]|перен[её]с|перенес[её]н[аоы]?|cancel+ed|moved|rescheduled|болдырылды|жойылды|ауыстырылды)(?![а-яёa-z])[^.!]*\?/i;
+// «Did you cancel it?», «Болдырдыңыз ба?» — тоже вопрос о сделанном, а не просьба
+const ALT_STATUS_Q = /(отменил[аи]?|отмен[её]н[аоы]?|отменилась|удалил[аи]?|удал[её]н[аоы]?|перенесл[аи]|перен[её]с|перенес[её]н[аоы]?|cancel+ed|moved|rescheduled|болдырылды|жойылды|ауыстырылды|болдырдыңыз|жойдыңыз|ауыстырдыңыз|өшірдіңіз)(?![а-яёa-zәғқңөұүһі])[^.!]*\?|(^|[^a-z])(did|have|has)\s+(you|it|they)\s+(\S+\s+){0,2}?(cancel|move|resched|delete|remove)[a-z]*(?![a-z])[^.!]*\?/i;
 const altCache = new Map(); // память изолята: у Altegio лимит 5 запросов в секунду
 // Кто отменяет и переносит записи. По умолчанию — администратор: бот в расписании ничего не удаляет, а передаёт ему просьбу клиента.
 // Бот отменяет и переносит сам, только если это включено: altegio.selfCancel в блоке клиента или Text ALTEGIO_SELF_CANCEL = 1 (для одного клиента — ALTEGIO_SELF_CANCEL_<ID>)
@@ -1579,6 +1580,19 @@ function altSay(lang, b) {
   if (b.reason === "downPhone") return ["Сейчас я не вижу расписание. Оставьте, пожалуйста, имя и номер телефона — администратор перезвонит и запишет вас.", "Қазір кестені көре алмай тұрмын. Атыңыз бен телефон нөміріңізді қалдырыңызшы — әкімші қоңырау шалып, жазып қояды.", "I can't see the schedule right now. Please leave your name and phone number, and the administrator will call you back to book you."][L];
   if (b.reason === "crash") return ["Передала ваше сообщение администратору — он ответит вам в ближайшее время.", "Хабарламаңызды әкімшіге бердім — ол жақын арада жауап береді.", "I've passed your message to the administrator, who will reply shortly."][L];
   if (b.reason === "unsaved") return ["Не получилось сохранить заявку. Напишите, пожалуйста, ещё раз через минуту или позвоните нам.", "Өтінімді сақтау мүмкін болмады. Бір минуттан кейін қайта жазыңызшы немесе бізге қоңырау шалыңыз.", "I couldn't save your request. Please write again in a minute or call us."][L];
+  // ---- обычный клиент (без расписания): заявку подтверждает администратор
+  if (b.reason === "plNeedName") return ["Подскажите, пожалуйста, ваше настоящее имя — оно нужно администратору для записи.", "Шын атыңызды айтыңызшы — ол әкімшіге жазылу үшін керек.", "Please tell me your real name — the administrator needs it for the booking."][L];
+  if (b.reason === "plNeedPhone") return ["Оставьте, пожалуйста, номер телефона — администратор позвонит и подтвердит запись.", "Телефон нөміріңізді қалдырыңызшы — әкімші қоңырау шалып, жазбаны растайды.", "Please leave your phone number — the administrator will call you to confirm the booking."][L];
+  if (b.reason === "plPhoneBook") return ["Чтобы оформить запись, оставьте, пожалуйста, номер телефона — администратор позвонит и подтвердит.", "Жазбаны рәсімдеу үшін телефон нөміріңізді қалдырыңызшы — әкімші қоңырау шалып, растайды.", "To complete the booking, please leave your phone number — the administrator will call you to confirm."][L];
+  if (b.reason === "plNoTime") return [`На это время записи нет. Ближайшее свободное — ${b.day} в ${b.times.join(" или в ")}. Какое подойдёт?`, `Бұл уақытқа жазылу жоқ. Ең жақын бос уақыт — ${b.day} ${b.times.join(" немесе ")}. Қайсысы ыңғайлы?`, `That time isn't available. The nearest free time is ${b.day} at ${b.times.join(" or ")}. Which one works for you?`][L];
+  if (b.reason === "plNoSlots") return ["На это время записи нет. Подобрать вам удобное время?", "Бұл уақытқа жазылу жоқ. Ыңғайлы уақыт таңдап берейін бе?", "That time isn't available. Shall I find a convenient time for you?"][L];
+  if (b.reason === "plBooked") return [`Забронировала: ${b.what}. Администратор подтвердит запись.`, `Брондадым: ${b.what}. Әкімші жазбаны растайды.`, `Booked: ${b.what}. The administrator will confirm the booking.`][L];
+  if (b.reason === "plCancel") return [`Передала администратору отмену: ${b.what}. Он подтвердит.`, `Болдырмау туралы әкімшіге бердім: ${b.what}. Ол растайды.`, `I've passed the cancellation to the administrator: ${b.what}. They will confirm it.`][L];
+  if (b.reason === "plOldCx") return [`Отмену прежней записи (${b.what}) передала администратору.`, `Бұрынғы жазбаны (${b.what}) болдырмау туралы әкімшіге бердім.`, `I've passed the cancellation of your previous booking (${b.what}) to the administrator.`][L];
+  if (b.reason === "plGone") return [`Отмену я уже передала администратору: ${b.what}. Он подтвердит.`, `Болдырмау туралы әкімшіге бердім: ${b.what}. Ол растайды.`, `I've already passed the cancellation to the administrator: ${b.what}. They will confirm it.`][L];
+  if (b.reason === "plNow") return [`Сейчас у администратора ваша заявка: ${b.list}.`, `Қазір әкімшіде өтініміңіз бар: ${b.list}.`, `The administrator currently has your request: ${b.list}.`][L];
+  if (b.reason === "plNoop") return [`Я ничего не отменяла и не переносила. Ваша заявка у администратора: ${b.list}. Если нужно отменить или перенести — напишите, пожалуйста.`, `Ештеңені болдырған да, ауыстырған да жоқпын. Өтініміңіз әкімшіде: ${b.list}. Болдырмау не ауыстыру керек болса — жазыңызшы.`, `I haven't cancelled or moved anything. The administrator has your request: ${b.list}. If you need to cancel or move it, just tell me.`][L];
+  if (b.reason === "plNone") return ["Я ничего не отменяла и не переносила. Чем могу помочь?", "Ештеңені болдырған да, ауыстырған да жоқпын. Қалай көмектесе аламын?", "I haven't cancelled or moved anything. How can I help?"][L];
   return [`Передала вашу запись администратору: ${b.what}. Он подтвердит её в ближайшее время.`, `Жазбаңызды әкімшіге бердім: ${b.what}. Ол жақын арада растайды.`, `I've passed your booking to the administrator: ${b.what}. They will confirm it shortly.`][L];
 }
 
@@ -1721,6 +1735,69 @@ const MOVE_WISH = /перенес|перенос|перезапи|сдвин|п�
 const CX_MORE = /^\s*(и|а\s+ещ[её]|ещ[её]|также|тоже|плюс|and|also|тағы|және)(?![а-яёa-zәғқңөұүһі])|(^|[^а-яё])(тоже|также|заодно)(?![а-яё])|(^|[^a-z])(too|as\s+well)(?![a-z])/i;
 const ALL_RECS = /(^|[^а-яё])(все|обе|оба)\s+(мои\s+|наши\s+)?(запис|брон)|^\s*(обе|оба|все|всё)[\s!.]*$|all\s+(of\s+them|my\s+bookings)|(^|[^a-z])both(?![a-z])|барлық\s+жазба|екеуін/i;
 
+// ---- заявки обычного клиента (без расписания Altegio). Действующие заявки чата — список profile.leads (до 5 последних):
+// { id, name, date (ГГГГ-ММ-ДД, если день разобран), time (ЧЧ:ММ, если разобрано), service, text (день и время, как в заявке), at, sig }.
+// Поля leadId и leadSig — последняя заявка, booked — все заявки словами: их видят ИИ («уже есть бронь») и администратор в пульте чатов
+const PL_MAX = 5;
+const plIso = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
+// заявка действует до конца своего дня; если день не разобран — неделю
+const plLive = (x, nowMs) => !!x && !!x.id && (plIso(x.date) ? x.date >= isoDay(nowMs) : nowMs - (x.at || 0) < 7 * 86400e3);
+// заявка словами. lang пустой — для ИИ и администратора: день полностью («понедельник, 5 октября, в 16:00»), чтобы «завтра» из строки ИИ назавтра не устарело
+function plText(x, lang, nowMs) {
+  if (x.stub) return ["заявка без подробностей — услугу и время уточнит администратор", "толық емес өтінім — қызмет пен уақытты әкімші нақтылайды", "a request without details — the administrator will clarify the service and time"][lang === "kk" ? 1 : lang === "en" ? 2 : 0];
+  if (x.old) return x.text;
+  const when = !plIso(x.date) ? x.text : lang ? altWhen(x.date, x.time, lang, nowMs) : dayLabel(new Date(x.date + "T00:00:00Z")) + (x.time ? ", в " + x.time : "");
+  return [x.service, when].filter(Boolean).join(", ");
+}
+// несколько заявок: имя пишем, когда в чате заявки разных людей или заявка не на владельца чата
+function plList(list, lang, nowMs, owner) {
+  const many = new Set(list.map(x => nameKey(x.name || ""))).size > 1;
+  return list.map(x => (x.name && (many || (owner && !samePerson(x.name, owner))) ? x.name + ": " : "") + plText(x, lang, nowMs)).join("; ");
+}
+// список из профиля; у чата, начатого до появления списка (или после «меню» в WhatsApp), — последняя заявка из прежних полей
+function plLoad(p, nowMs) {
+  if (Array.isArray(p.leads)) return p.leads;
+  if (!p.leadId) return [];
+  // в booked могли быть перечислены несколько заявок («Азамат: …; Гульнар: …») — восстанавливаем последнюю: её номер и подпись лежат в leadId и leadSig
+  const s = String(p.leadSig || "").split("|"), seg = String(p.booked || "").split("; ").pop(), m = seg.match(/^([^:,;]{2,40}): (.+)$/);
+  return [{ id: p.leadId, name: m ? m[1] : p.name || "", date: plIso(s[2]) ? s[2] : "", time: /^\d{1,2}:\d{2}$/.test(s[1] || "") ? s[1] : hm(seg), service: "", text: m ? m[2] : seg, at: nowMs, sig: p.leadSig || "", old: true }];
+}
+// записать список в профиль вместе с полями, которые от него зависят
+function plSync(p, list, nowMs) {
+  const live = list.filter(x => plLive(x, nowMs)).slice(-PL_MAX), last = live[live.length - 1];
+  if (last) { p.leads = live; p.leadId = last.id; if (last.sig) p.leadSig = last.sig; else delete p.leadSig; p.booked = plList(live, "", nowMs, p.name || ""); }
+  else { delete p.leads; delete p.leadSig; if (p.leadId != null) p.leadId = null; if (p.booked != null) p.booked = null; }
+  return live;
+}
+// одна и та же услуга: «стрижка» и «стрижка, мастер: Арман» — да, «чистка» и «отбеливание» — нет
+const plSameSv = (a, b) => { const w = s => svWords(svTrim(s || "")).map(svStem), A = w(a), B = w(b); return !A.length || !B.length || A.every(x => B.includes(x)) || B.every(x => A.includes(x)); };
+// ИИ написал «забронировала» без служебной строки — это о заявке, которая уже есть в чате (то же время, новых имён нет)?
+function plRestated(leads, cl, reply, c, owner) {
+  if (!leads.length) return false;
+  const times = new Set(leads.map(x => x.time).filter(Boolean));
+  if (!cl.times.every(t => times.has(t))) return false;
+  const known = [owner, ...leads.map(x => x.name)].filter(Boolean), facts = nameToks(c.facts + " " + c.name).filter(w => w.length >= 3);
+  for (const sent of String(reply).split(/[.!?\n]+/)) for (const w0 of sent.trim().split(/\s+/).slice(1)) { // слово с большой буквы в середине фразы — скорее всего имя
+    const w = w0.replace(/[^A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі-]/g, ""), k = nameToks(w)[0] || "";
+    if (w.length < 3 || !k || !/^[A-ZА-ЯЁӘҒҚҢӨҰҮҺІ]/.test(w) || w === w.toUpperCase() || NOT_NAME.test(w) || new RegExp("^" + MON_EN_RE + "$", "i").test(w)) continue;
+    if (known.some(n => caseName(n, w)) || facts.some(f => isForm(f, k) || isForm(k, f))) continue; // имя клиента или слово из фактов компании (мастер, название)
+    return false;
+  }
+  return true;
+}
+// клиент говорит о своей записи: «мою запись», «перенесите меня». «Запись моей мамы», «мою маму» — не о своей
+const PL_SELF = /(^|[^а-яё])(мо[юяёей]|свою)\s+(запись|бронь|заявку|визит|при[её]м)(?![а-яё])|(^|[^а-яё])(запись|бронь|заявк[ау]|визит)\s+(мо[юяёей]|свою)(?![а-яё])|(^|[^а-яё])(меня|себя)(?![а-яё])|(^|[^a-z])my\s+(own\s+)?(booking|appointment|reservation|visit)(?![a-z])|(^|[^a-z])(me|myself)(?![a-z])|менің\s+жазба|(^|[^а-яёәғқңөұүһі])(мені|өзімді)(?![а-яёәғқңөұүһі])/i;
+// клиент говорит о записи, сделанной не в этом чате: «записывался по телефону», «записывалась у администратора»
+const PL_ELSEWHERE = /(запис|заброн|бронир)[а-яё]*\s+(\S+\s+){0,3}?(по\s+телефону|у\s+администратора|на\s+ресепшен[еа]?)(?![а-яё])|(по\s+телефону|у\s+администратора)\s+(\S+\s+){0,3}?(запис|заброн|бронир)|booked\s+(\S+\s+){0,2}?(by|over\s+the)\s+phone|телефон\s+арқылы\s+жазыл/i;
+// клиент меняет услугу в той же записи: «не чистку, а отбеливание», «замените чистку на отбеливание», «вместо чистки»
+const PL_SWAP = /(?<![а-яё])не\s+[^,.!?]{2,40},?\s+а\s+\S|(?<![а-яё])(смени|поменя|замени|измени)[а-яё]*|вместо|(^|[^a-z])(change|instead|switch)(?![a-z])|ауыстыр|орнына/i;
+// названия дня для ответов кода: «сегодня», «tomorrow», «05.10»
+const plDay = (s, lang, nowMs) => {
+  if (lang !== "kk" && lang !== "en") return s.rel || s.label;
+  const d = s.date || altDateOf(s.label, nowMs), i = plIso(d) ? Math.round((new Date(d + "T00:00:00Z") - new Date(isoDay(nowMs) + "T00:00:00Z")) / 86400e3) : -1;
+  return (lang === "kk" ? ["бүгін", "ертең", "бүрсігүні"] : ["today", "tomorrow", "the day after tomorrow"])[i] || (plIso(d) ? (lang === "en" ? "on " : "") + `${d.slice(8, 10)}.${d.slice(5, 7)}` : s.label);
+};
+
 // store — KV или память (для автотеста); opts: { channel:'web'|'wa', phone, nowMs, test }
 async function think(env, store, clientId, histKey, rawText, source, opts = {}) {
   const c = (hasClient(clientId) && CLIENTS[clientId]) || CLIENTS.dent;
@@ -1731,9 +1808,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const base = JSON.stringify(saved.profile); // профиль до этого сообщения: при слиянии с другим сообщением берём из своего только то, что изменили сами
   const isNew = saved.n === 0, nowMs = ctxT.nowMs, wa = opts.channel === "wa";
   // вопросы бота «Отменить запись …?» и «Перенести её?» действуют только на одно, следующее сообщение — каким бы путём оно ни пошло
-  const cxAsk = saved.profile.cxAsk, mvAsk = saved.profile.mvAsk, cfPrev = saved.profile.cf || 0;
-  delete saved.profile.cxAsk; delete saved.profile.mvAsk; delete saved.profile.cf;
-  const dirty = !!(cxAsk || mvAsk || cfPrev);
+  const cxAsk = saved.profile.cxAsk, mvAsk = saved.profile.mvAsk, cfPrev = saved.profile.cf || 0, cxWho = saved.profile.cxWho; // cxWho — «на кого оформлена запись?» (обычный клиент)
+  delete saved.profile.cxAsk; delete saved.profile.mvAsk; delete saved.profile.cf; delete saved.profile.cxWho;
+  const dirty = !!(cxAsk || mvAsk || cfPrev || cxWho);
   saved.profile.li = nowMs;                                                        // время последнего сообщения клиента: по нему пульт чатов считает 24-часовое окно WhatsApp
   if (opts.waName && !saved.profile.waName) saved.profile.waName = snip(opts.waName, 40); // имя из профиля WhatsApp — только чтобы администратор узнал клиента; для записи бот спрашивает имя сам
   if (opts.pnid) saved.profile.pn = String(opts.pnid).slice(0, 24);              // номер компании (Phone number ID), на который написал клиент: с него же ответит администратор из пульта
@@ -1760,10 +1837,13 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   };
   const quiet = async () => { try { await save("", ""); } catch (e) { console.log("history", String(e)); } }; // сохранить состояние, не роняя ответ
   const optM = /^h:(?:wa|ga):[^:]+:(\d+)$/.exec(histKey), optKey = optM ? `optout:${c.id}:${optM[1]}` : "";
+  // язык ответов, которые бот даёт сам, без ИИ («стоп», «позовите человека», лимит): как у сообщения клиента или у чата
+  const lang0 = detectLang(text, saved.profile.lang), tr = (ru, kk, en) => lang0 === "kk" ? kk : lang0 === "en" ? en : ru;
+  if (lang0 !== "ru") saved.profile.lang = lang0; else delete saved.profile.lang; // язык чата помним и тогда, когда до ИИ дело не дошло: номер после «позовите человека» языка не меняет
 
   if (saved.n >= MAX_MSGS_PER_SESSION && !wa && !STOP.test(text) && !wantsHuman(text, (saved.turns.filter(t => t.role === "model").pop() || {}).text || "")) { // «позовите администратора» и «стоп» работают и после лимита
     if (dirty) await quiet();
-    return { reply: "Спасибо! Лимит этого диалога исчерпан. Нажмите «Заново» или позвоните нам.", lead: null };
+    return { reply: tr("Спасибо! Лимит этого диалога исчерпан. Нажмите «Заново» или позвоните нам.", "Рахмет! Бұл диалогтың лимиті бітті. «Заново» батырмасын басыңыз немесе бізге қоңырау шалыңыз.", "Thank you! This chat has reached its message limit. Press «Заново» to start over, or call us."), lead: null };
   }
 
   // «стоп» — клиент не хочет общаться с ботом
@@ -1772,7 +1852,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     saved.profile.pausedUntil = nowMs + 30 * 86400e3; saved.profile.stop = true;
     if (wa && optKey) { try { await store.put(optKey, String(nowMs)); } catch (e) { console.log("optout", String(e)); } } // отметка без срока: история чата через месяц сотрётся, а в рассылки этот номер попадать не должен
     if (!opts.test && !already) await notify(env, `⛔ Клиент попросил не писать ему автоматически — ${c.name}\n${who}`, c.id);
-    const reply = "Хорошо, автоматически больше не отвечаю. Если понадобится, администратор напишет вам сам. Чтобы я снова отвечала, напишите «старт».";
+    // «stop» латиницей первым сообщением — скорее всего, пишет не русскоязычный клиент
+    const en = lang0 === "en" || (lang0 === "ru" && !saved.turns.length && /^[^а-яёәғқңөұүһі]*[a-z][^а-яёәғқңөұүһі]*$/i.test(text));
+    const reply = en ? "OK, I won't reply automatically any more. If needed, the administrator will write to you. To turn my replies back on, write \"start\"."
+      : tr("Хорошо, автоматически больше не отвечаю. Если понадобится, администратор напишет вам сам. Чтобы я снова отвечала, напишите «старт».", "Жарайды, енді автоматты түрде жауап бермеймін. Қажет болса, әкімші сізге өзі жазады. Қайта жауап беруім үшін «старт» деп жазыңыз.", "");
     await save(text, reply);
     return { reply, lead: null, stopped: true, isNew, offer: [] };
   }
@@ -1798,9 +1881,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       try { await save(text, ""); } catch (e) { console.log("history", String(e)); } // сообщение клиента остаётся в истории: администратор видит его в пульте чатов
       return { reply: "", paused: true, lead: null, isNew };
     }
-    let reply = "Администратор уже получил ваш запрос и скоро свяжется с вами. Если удобно, оставьте номер телефона.";
+    let reply = tr("Администратор уже получил ваш запрос и скоро свяжется с вами. Если удобно, оставьте номер телефона.", "Әкімші өтінішіңізді алды, жақында хабарласады. Ыңғайлы болса, телефон нөміріңізді қалдырыңыз.", "The administrator already has your request and will contact you soon. If convenient, please leave your phone number.");
     if (phoneInText) {
-      reply = "Спасибо! Передала номер администратору, он вам перезвонит.";
+      reply = tr("Спасибо! Передала номер администратору, он вам перезвонит.", "Рахмет! Нөміріңізді әкімшіге бердім, ол сізге қоңырау шалады.", "Thank you! I've passed your number to the administrator, they will call you back.");
       if (!opts.test) await notify(env, `📞 Клиент оставил номер для связи — ${c.name}\n${phoneInText}`, c.id);
     }
     await save(text, reply);
@@ -1813,7 +1896,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     d.n++; saved.profile.day = d;
     if (d.n > WA_MAX_DAY) {
       saved.profile.pausedUntil = nowMs + PAUSE_MS;
-      const reply = "Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.";
+      const reply = tr("Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.", "Бүгін автоматты түрде бұдан әрі жауап бере алмаймын. Хабарламаңызды әкімшіге бердім — ол сізге осында жауап береді.", "I can't reply automatically any more today. I've passed your message to the administrator — they will reply here.");
       const told = !!d.told; d.told = true; // один сигнал в сутки, даже если клиент снимает паузу командой «меню»
       needs("limit");
       if (!opts.test && !told) await notify(env, `🙋 Клиент написал больше ${WA_MAX_DAY} сообщений за день — бот замолчал на 2 часа, ответьте сами — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${chatLink}`, c.id);
@@ -1826,12 +1909,12 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const lastBot = (saved.turns.filter(t => t.role === "model").pop() || {}).text || "";
   if (wantsHuman(text, lastBot)) {
     saved.profile.pausedUntil = nowMs + PAUSE_MS;
-    const when = openNow(c, nowMs) ? "в ближайшее время" : `когда откроемся — ${nextOpen(c, nowMs)}`;
+    const open = openNow(c, nowMs), when = tr(open ? "в ближайшее время" : `когда откроемся — ${nextOpen(c, nowMs)}`, open ? "жақын арада" : "жұмыс басталғанда", open ? "shortly" : "as soon as we open");
     const reply = wa
-      ? `Передала ваш запрос администратору — он ответит вам здесь ${when}.`
+      ? tr(`Передала ваш запрос администратору — он ответит вам здесь ${when}.`, `Өтінішіңізді әкімшіге бердім — ол сізге осында ${when} жауап береді.`, `I've passed your request to the administrator — they will reply here ${when}.`)
       : (opts.phone || saved.profile.phone)
-        ? `Передала администратору — он перезвонит вам ${when}.`
-        : `Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`;
+        ? tr(`Передала администратору — он перезвонит вам ${when}.`, `Әкімшіге бердім — ол сізге ${when} қоңырау шалады.`, `I've passed this to the administrator — they will call you back ${when}.`)
+        : tr(`Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`, `Әкімшіге бердім. Телефон нөміріңізді қалдырыңызшы — ол ${when} қоңырау шалады.`, `I've passed this to the administrator. Please leave your phone number — they will call you back ${when}.`);
     const hoRecent = saved.profile.hoAt && nowMs - saved.profile.hoAt < 3600e3; saved.profile.hoAt = nowMs; // не чаще раза в час на чат
     needs("human");
     if (!opts.test && !hoRecent) await notify(env, `🙋 Клиент просит администратора — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${wa ? "\nБот молчит в этом чате 2 часа — ответьте клиенту " + (chatLink ? "в пульте чатов." : "с телефона.") : ""}${chatLink}`, c.id);
@@ -1841,7 +1924,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
 
   if (ATTACK.test(text)) {
     await quiet(); // сам текст в историю не кладём: он не должен попасть в ИИ. Чат при этом считается начатым, а вопрос об отмене — снятым
-    return { reply: `Я AI-администратор «${c.name}» и помогаю только с вопросами о наших услугах и записью. Чем могу помочь?`, lead: null, guard: "input", isNew };
+    return { reply: tr(`Я AI-администратор «${c.name}» и помогаю только с вопросами о наших услугах и записью. Чем могу помочь?`, `Мен «${c.name}» AI-әкімшісімін, тек қызметтеріміз бен жазылу туралы сұрақтарға көмектесемін. Қалай көмектесе аламын?`, `I'm the AI administrator of «${c.name}» and I only help with questions about our services and booking. How can I help?`), lead: null, guard: "input", isNew };
   }
 
   const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile };
@@ -1873,6 +1956,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (bl && bl.text && nowMs - bl.at < 7 * 86400e3) cc = { ...cc, facts: cc.facts + `\n\nНедавно компания отправила клиентам в WhatsApp такое сообщение (клиент мог его получить и отвечать на него): «${bl.text}». Условия из него называй только так, как в нём написано; чего в нём нет — уточнит администратор.` };
     } catch (e) { console.log("bclast", String(e)); }
   }
+
+  // обычный клиент (без расписания): список заявок чата обновляем до запроса к ИИ — он видит действующие заявки с правильными днями
+  const plain = !alt && !altDown;
+  if (plain) plSync(saved.profile, plLoad(saved.profile, nowMs), nowMs);
 
   const lang = detectLang(text, saved.profile.lang);
   if (lang !== "ru") saved.profile.lang = lang; else delete saved.profile.lang;
@@ -1914,7 +2001,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (raw && !hasTag(raw) && !altDown) {
     const cl0 = altClaims(checked.text), prof = saved.profile, bt = new Set((prof.bookings || []).map(b => b.time));
     const restated = (prof.bookings || []).length > 0 && cl0.times.every(t => bt.has(t)); // фраза о записи, которая уже есть, — её разберёт код
-    const need = alt ? (cl0.change && !(prof.gone || []).length) || (cl0.book && !cl0.soft && !restated && !(prof.pend || []).length) : cl0.book && !cl0.soft && !prof.leadId;
+    // обычный клиент: заявка в чате уже есть, а ИИ называет другое время или другого человека — это новая запись, строка для неё тоже нужна
+    const need = alt ? (cl0.change && !(prof.gone || []).length) || (cl0.book && !cl0.soft && !restated && !(prof.pend || []).length) : cl0.book && !cl0.soft && !plRestated(prof.leads || [], cl0, checked.text, c, prof.name || "");
     if (need) {
       try {
         const raw3 = await ask(`\n\nВНИМАНИЕ: в черновике ответа сказано, что ${cl0.change ? "запись отменена или перенесена" : "клиент записан"}, но служебной строки нет — значит, ничего не сделано. Ответь заново. Если все данные известны — добавь служебную строку по правилам. Если чего-то не хватает — спроси это у клиента и не пиши, что записала, отменила или перенесла.`);
@@ -1950,7 +2038,11 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const tagsOf = (s, name) => [...new Set([...String(s || "").replace(/\*\*|__|`/g, "").matchAll(new RegExp("\\[\\s*" + name + "\\s*\\]((?:(?!\\[\\s*(?:ЗАЯВКА|ОТМЕНА)\\s*\\])[^\\n])*)", "gi"))].map(m => m[1].trim()))];
   const draftOnly = raw === "";                                    // защита заменила ответ ИИ заготовкой
   const leaked = draftOnly && /^leak/.test(guard || "");           // ИИ пересказывал инструкции — его служебным строкам не верим
-  const prev = { leadId: saved.profile.leadId, booked: saved.profile.booked, cbAt: saved.profile.cbAt, adminLeads: saved.profile.adminLeads };
+  const aiSilent = !draftOnly && !strip(raw).replace(/\*\*|__|`|#/g, "").trim(); // ИИ не написал клиенту ничего, кроме служебных строк и разметки
+  if (!reply.trim()) reply = c.safe;                               // пустое сообщение клиенту не отправляем
+  // состояние до разбора ответа: к нему возвращаемся, если заявка нигде не сохранилась (имя, подпись и список заявок — тоже, иначе повтор той же заявки сочтётся дублем)
+  const prev = { leadId: saved.profile.leadId, booked: saved.profile.booked, cbAt: saved.profile.cbAt, adminLeads: saved.profile.adminLeads,
+    ...(plain ? { leadSig: saved.profile.leadSig, name: saved.profile.name, lgone: saved.profile.lgone, leads: saved.profile.leads ? JSON.parse(JSON.stringify(saved.profile.leads)) : undefined } : {}) };
   const added = [], removed = [], droppedPend = [];               // изменения этого сообщения — нужны при слиянии истории
   const say = (reason, extra) => altSay(lang, { reason, ...(extra || {}) });
   const today = isoDay(nowMs), nowMin = mins(hhmm(local(nowMs)));
@@ -2502,59 +2594,211 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     }
     saved.profile.booked = bookedText(books, pend);
   } else {
-    // ---- обычная заявка администратору
-    const hadLead = saved.profile.leadId ? { name: saved.profile.name || "", booked: saved.profile.booked || "" } : null; // заявка, которая была в чате до этого сообщения
-    if (tagsOf(raw, "ОТМЕНА").length) {
-      const lid = saved.profile.leadId;
-      if (lid) {
-        cancel = true;
-        let x = (await viewLeads()).find(l => l.id === lid) || null, keyFail = false;
-        if (!x) { try { x = JSON.parse((await store.get(leadKey(c.id, lid))) || "null"); } catch (e) { keyFail = true; } } // заявка могла выпасть из общего списка — она есть отдельным ключом
-        if (x) { patchLead(x.id, { status: "отменена" }); tell(`❌ Отмена: ${x.name}, ${x.time} (${c.name})`); }
-        else if (leadsFail || keyFail) { // заявка есть, но хранилище не читается: отмену всё равно записываем и сообщаем администратору то, что знаем из чата
-          patchLead(lid, { status: "отменена" }); tell(`❌ Отмена: ${saved.profile.name || "имя не указано"}, ${saved.profile.booked || "заявка из этого чата"} (${c.name})\n${who}`);
-        } else unknownRec("отменить", []);
-        saved.profile.leadId = null; saved.profile.booked = null; delete saved.profile.leadSig;
-      } else if (wantsChange(text) && !ALT_STATUS_Q.test(text)) {
-        // заявки из этого чата нет (записывались по телефону): с номером — передаём администратору, без номера ему некого искать — просим данные
-        if (ph0()) { cancel = true; unknownRec("отменить", []); }
-        else reply = say("cancelWho");
-      } // «точно отменили?» после отмены — отменять нечего, администратора не тревожим
-    }
-    const line = tagsOf(raw, "ЗАЯВКА")[0];
+    // ---- обычная заявка администратору. Заявки чата — список profile.leads; отменять ли заявку и какую — решает код по словам клиента, а не строка ИИ
+    const P = saved.profile, list = (P.leads || []).slice(), had = list.slice(), madeNow = [], outs = [], msgs = [];
+    const owner = JSON.parse(base).name || "", aiText = strip(raw || "");
+    const gone = (P.lgone || []).filter(g => nowMs - g.at < 6 * 3600e3).slice(-3); // недавно отменённые заявки: по ним бот отвечает на «точно отменили?»
+    // Бот спрашивал, на кого оформлена запись, которой нет в этом чате (cxWho, 15 минут). Ответ клиента с номером или именем уходит администратору
+    // вместе с первым сообщением — что бы ни написал ИИ; служебные строки ИИ в таком сообщении не разбираем
+    const who0 = cxWho && nowMs - cxWho.at < 15 * 60e3 ? cxWho : null;
+    const whoWord = w => !NOT_NAME.test(w) && !AFTER_STOP.has(w) && !CX_WORD(w) && !dowsIn(w).length && !/^(запис[а-я]*|отмен[а-я]*|телефон[а-я]*|номер[а-я]*|час[а-я]*|утр[а-я]*|вечер[а-я]*|имя|зовут|name|phone)$/.test(w);
+    const whoAns = !!who0 && !ALT_KEEP.test(text) && !/\?/.test(text) && (!!phoneInText || (lowE(text).match(/[a-zа-яәғқңөұүһі]{3,}/g) || []).some(whoWord));
+    const bookLines = whoAns ? [] : tagsOf(raw, "ЗАЯВКА").slice(0, 3), cancelLines = whoAns ? [] : tagsOf(raw, "ОТМЕНА");
     const slots = getSlots(c, ctx), freeT = new Set(slots.flatMap(s => s.times));
-    const noTime = () => slots[0] ? `На это время записи нет. Ближайшее свободное — ${slots[0].rel || slots[0].label} в ${slots[0].times.slice(0, 2).join(" или в ")}. Какое подойдёт?` : `${c.safe} Подобрать вам удобное время?`;
-    if (line !== undefined) {
+    // Дни, на которые открыта запись через чат: от сегодня до последнего дня свободных окон. Время из строки сверяем с окнами только для них:
+    // дата мероприятия у банкетного зала (или день через две недели) окнам ближайших дней не подчиняется — такую заявку подтверждает администратор
+    const lastWin = slots.length ? slots[slots.length - 1].date || altDateOf(slots[slots.length - 1].label, nowMs) : "";
+    const inWin = (day, src) => !day || !lastWin || day <= lastWin || (day === isoDay(nowMs + 7 * 86400e3) && dowsIn(lowE(src)).includes(local(nowMs).getUTCDay())); // «понедельник», написанный в понедельник, — возможно, сегодня
+    const noTime = () => slots[0] ? say("plNoTime", { day: plDay(slots[0], lang, nowMs), times: slots[0].times.slice(0, 2) }) : lang === "ru" ? `${c.safe} Подобрать вам удобное время?` : say("plNoSlots");
+    const lab = x => plText(x, lang, nowMs), named = arr => plList(arr, lang, nowMs, owner), ru = x => (x.name ? x.name + ": " : "") + plText(x, "", nowMs);
+    // Просьба клиента об отмене или переносе: без неё заявка не отменяется, что бы ни написал ИИ. Действует 15 минут и до трёх уточнений («Отмените запись» → «Какую?» → «на 18:00»)
+    const wishNow = wantsChange(text), keepNow = ALT_KEEP.test(text), statusQ = ALT_STATUS_Q.test(text) && !ALT_ASKS_DO.test(text); // «можете перенести запись?» — просьба, а не вопрос о сделанном
+    let wish = P.cxWish && nowMs - P.cxWish.at < 15 * 60e3 ? P.cxWish : null, acted = false, keepWish = false;
+    delete P.cxWish;
+    if (wish && wish.done) wish = nowMs - wish.at < 5 * 60e3 && !wishNow && !keepNow && text.length <= 80 && !/\?/.test(text) && CX_MORE.test(text) ? { at: nowMs, text: wish.text, n: wish.n || 0 } : null; // исполненную просьбу продолжает только «и маму тоже»
+    if (ALT_UNDO.test(text) || (keepNow && !wishNow)) wish = null;
+    else if (wishNow && !statusQ) wish = { at: nowMs, text: maskPhones(text).slice(0, 300), n: 0 };
+    else if (wish) wish = (wish.n || 0) < 3 ? { at: wish.at, text: (wish.text + " . " + maskPhones(text)).slice(-400), n: (wish.n || 0) + 1 } : null;
+    const asked = !!wish && !statusQ;
+    const said = wish && wish.n ? `Сообщения клиента: «${wish.text.slice(0, 300)}»` : quote; // просьба из нескольких сообщений — администратору нужны все
+    const isMove = /перенес|перенос|перезапи|сдвин|передвин|resched|(^|[^a-z])move|ауыстыр/i.test(wish && wish.n ? wish.text : text);
+
+    // ---- о какой заявке говорит клиент
+    const view = x => ({ name: x.name || "", date: x.date || "", time: x.time || "", services: x.service || "", staffName: "", kin: x.kin });
+    const lineOf = line => { const f = tagFields(line, true), w = [f["дата"], f["время"]].filter(Boolean).join(", "); return { name: nameOf(f["имя"]), date: altDateOf(w, nowMs), time: hm(w) }; };
+    const oEnv = { nowMs, services: [], staff: [], skip: c.name.split(/\s+/), owner, get recs() { return list.map(view); }, booking: bookLines.map(lineOf) };
+    // в этом сообщении названа сама заявка: её время или имя
+    const names = v => (!!v.time && [...text.matchAll(/(?<![\d.:])(\d{1,2})(?:[:.](\d{2}))?(?![\d.:])/g)].some(m => { const t = +m[1] * 60 + +(m[2] || 0), rt = mins(v.time); return t === rt || (+m[1] < 12 && t + 720 === rt); }))
+      || nameToks(text).some(t => t.length >= 3 && caseName(v.name || "", t));
+    // слова клиента подходят к этой заявке? Другой человек, день или время — значит, речь о другой. «Мою запись» и имя из заявки — прямое указание на неё
+    const fits = (x, move) => {
+      if (PL_ELSEWHERE.test(text) || (wish && wish.n && PL_ELSEWHERE.test(wish.text))) return false; // «я записывался по телефону» — запись не из этого чата
+      const v = view(x), mode = !x.time ? "person" : move ? "move" : ""; // у заявки без разобранного времени сверяем только людей; при переносе время и день в словах клиента — новые
+      const why = altOther(v, text, oEnv, mode) || (wish && wish.n && !names(v) ? altOther(v, wish.text, oEnv, mode) : "");
+      if (!why) return true;
+      if (why !== "человек" && why !== "имя") return false;
+      return (PL_SELF.test(text) && !!owner && samePerson(v.name, owner)) || nameToks(text).some(t => t.length >= 3 && caseName(v.name, t));
+    };
+    // заявки, названные в строке [ОТМЕНА]; null — в строке нет ни имени, ни дня, ни времени
+    const lineHits = (line, pool) => {
+      const f = tagFields(line), free = !Object.keys(f).length ? clean(line, 200) : "";
+      const n0 = nameOf(f["имя"]), n = badName(n0) ? "" : n0, w = [f["дата"], f["время"]].filter(Boolean).join(", ") || free, d = altDateOf(w, nowMs), t = hm(w);
+      if (!n && !d && !t) return null;
+      return pool.filter(x => (!n || samePerson(x.name || "", n) || caseName(x.name || "", n)) && (!d || !x.date || x.date === d) && (!t || !x.time || x.time === t) && !(free && altOther(view(x), free, oEnv, "ai")));
+    };
+    // какую заявку отменить: { hit } | { all } | { which: [из каких выбрать] } | { none } — названной записи в этом чате нет
+    const pickCancel = (line, moveName, keep) => {
+      const pool = list.filter(x => !keep.includes(x)), fit = pool.filter(x => fits(x, !!moveName)), byLine = lineHits(line, pool);
+      if (byLine) {
+        const both = byLine.filter(x => fit.includes(x));
+        return both.length === 1 ? { hit: both[0] } : both.length > 1 ? { which: both } : byLine.length && fit.length ? { which: pool } : { none: true }; // ИИ назвал одну заявку, а слова клиента — о другой: переспрашиваем
+      }
+      if (moveName) { const same = fit.filter(x => samePerson(x.name || "", moveName)); if (same.length) return same.length === 1 ? { hit: same[0] } : { which: same }; } // перенос: прежняя заявка того же человека
+      return fit.length === 1 ? { hit: fit[0] } : fit.length > 1 ? (ALL_RECS.test(text) ? { all: fit.slice(0, 3) } : { which: fit }) : { none: true };
+    };
+
+    // ---- строки [ЗАЯВКА]: каждая — отдельная заявка (не больше трёх за сообщение)
+    const kinTexts = turns.filter(t => t.role === "user").slice(-3).map(t => t.text);
+    const cands = bookLines.map(line => {
       const f = tagFields(line, true), lb = f.labels || {};
       const l = { name: f["имя"] || "", service: [f["услуга"] || "", f["мастер"] ? `${String(lb["мастер"] || "мастер").toLowerCase()}: ${f["мастер"]}` : ""].filter(Boolean).join(", "),
         time: [f["дата"], f["время"]].filter(Boolean).join(", "), phone: phoneOf(f["телефон"]) };
-      // та же заявка (ИИ повторил строку) или новая — вторая запись в этом же чате? Смотрим на имя, день и время
-      const t = hm(l.time), sig = [nameKey(l.name), t || lowE(clean(l.time, 60)), altDateOf(l.time, nowMs)].join("|");
-      const dup = !!saved.profile.leadId && (saved.profile.leadSig ? saved.profile.leadSig === sig : lowE(saved.profile.booked || "") === lowE(`${l.service}, ${l.time}`));
-      if (dup) { /* эта заявка уже у администратора */ }
-      else if (badName(l.name)) reply = "Подскажите, пожалуйста, ваше настоящее имя — оно нужно администратору для записи.";
-      else if (!l.phone) { saved.profile.name = l.name; reply = "Оставьте, пожалуйста, номер телефона — администратор позвонит и подтвердит запись."; }
-      else if (t && !freeT.has(t)) reply = noTime(); // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
-      else {
-        // вторая заявка в чате, а клиент просил другое время («перенесите на 18:00») и строки [ОТМЕНА] не было: администратор должен знать и о прежней
-        const moved = hadLead && !cancel && hadLead.booked && MOVE_WISH.test(text) && (!hadLead.name || samePerson(hadLead.name, l.name)) ? `клиент просил перенос — прежняя заявка: ${hadLead.booked}` : "";
-        const notes2 = [moved, f["заметка"] ? "комментарий: " + f["заметка"] : "", l.time ? "" : "время в строке не разобрано. Строка ИИ: " + clean(line, 300)].filter(Boolean).join("; ");
-        addLead({ ...l, time: l.time || "время не указано — уточните у клиента" }, notes2 ? { note: notes2 } : null, "✅ Новая заявка");
-        saved.profile.leadSig = sig;
-      }
-    } else if (!draftOnly && !cancel && !saved.profile.leadId) {
-      // ИИ написал «забронировала», а служебной строки нет: клиент думает, что записан, а заявки нет
-      const cl = altClaims(reply);
-      if (cl.book && !cl.soft) {
-        if (cl.times.some(t => !freeT.has(t))) reply = noTime();
-        else if (ph0()) addLead({ name: saved.profile.name || "", service: "уточнить у клиента", time: "уточнить у клиента", phone: ph0() },
-          { note: `ИИ сообщил клиенту о брони, но не оформил заявку по правилам. Ответ бота: «${reply.slice(0, 300)}». ${quote}` }, "⚠️ Заявка без подробностей — уточните у клиента", true);
-        else reply = join([cl.before, "Чтобы оформить запись, оставьте, пожалуйста, номер телефона — администратор позвонит и подтвердит."]);
+      // та же заявка (ИИ повторил строку) или новая? Подпись — имя, день и время; услуга сравнивается отдельно. Сверяем со всеми заявками чата, а не только с последней
+      const t = hm(l.time), day = altDateOf(l.time, nowMs), sig = [nameKey(l.name), t || lowE(clean(l.time, 60)), day].join("|");
+      const twin = list.find(x => x.sig ? x.sig === sig : !!x.old && lowE(x.text) === lowE(`${l.service}, ${l.time}`)) || null;
+      return { line, f, l, t, day, sig, twin, dup: !!twin && plSameSv(twin.service, l.service) };
+    });
+    const dups = cands.filter(k => k.dup).map(k => k.twin); // эти заявки уже у администратора
+
+    // ИИ считает, что клиент отменяет или переносит запись: строка [ОТМЕНА] либо слова «отменила», «перенесла», «передала администратору отмену»
+    const cl0 = draftOnly ? { book: false, change: false, soft: false, times: [], keep: "", before: "" } : altClaims(reply);
+    const saysCx = !draftOnly && !whoAns && (cl0.change || (ADMIN_CX.test(aiText) && CX_TOPIC.test(aiText)));
+    const reqCx = cancelLines.length > 0 || saysCx;
+    const doCx = reqCx && asked, moving = doCx && cands.length > 0; // отмена — только по просьбе клиента; перенос — отмена вместе с новой заявкой
+    // какая заявка отменяется, решаем до создания новой (новая и повторённые ИИ в выбор не входят), а исполняем после
+    const plan = doCx ? pickCancel(cancelLines[0] || "", moving ? nameOf(cands[0].l.name) : "", dups) : null;
+    const moveOld = moving && plan.hit ? plan.hit : null;
+
+    // 1) новые заявки: сначала проверяем и создаём их — при переносе прежняя заявка отменяется только после этого
+    const noteAt = notes.length;
+    for (const [i, k] of cands.entries()) {
+      const { f, l, t, day, sig, twin } = k;
+      if (k.dup || madeNow.some(x => x.sig === sig && plSameSv(x.service, l.service))) continue; // эта заявка уже у администратора
+      if (badName(l.name)) { outs.push(say("plNeedName")); continue; }
+      const kin = kinNear(kinTexts, l.name, [...cands.map(x => x.l.name), ...list.map(x => x.name || "")].filter(n => n && !samePerson(n, l.name)), !!owner && !samePerson(l.name, owner) && cands.length === 1);
+      if (!l.phone) { if (!P.name && !kin.length) P.name = l.name; outs.push(say("plNeedPhone")); continue; }
+      if (t && inWin(day, l.time) && !freeT.has(t)) { outs.push(noTime()); continue; } // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
+      if (adminCap() >= ALT_MAX_ADMIN_LEADS) { outs.push(say("adminBusy")); continue; } // за сегодня из этого чата уже много заявок — новых не плодим
+      const old = i === 0 ? moveOld : null;
+      const swap = !!twin && !old && had.includes(twin) && PL_SWAP.test(text) && !ADD_WISH.test(text);  // та же запись с другой услугой: «не чистку, а отбеливание»
+      const before = had.filter(x => !x.stub && x !== twin && samePerson(x.name || "", l.name)).pop(); // прежняя заявка этого же человека
+      const note = [
+        old ? `клиент просил перенос — прежняя заявка: ${ru(old)} (отменена)`
+          : swap ? `клиент изменил услугу — прежняя заявка: ${ru(twin)} (заменена этой)`
+          : moving && i === 0 && plan.none ? "клиент просил перенос — прежней записи в этом чате нет, отмените её вручную"
+          : moving && i === 0 && plan.which ? "клиент просил перенос — какую из прежних заявок отменить, бот уточняет у клиента"
+          : before && !doCx && MOVE_WISH.test(text) && !ADD_WISH.test(text) ? `клиент просил перенос — прежняя заявка: ${ru(before)}` : "", // строки [ОТМЕНА] не было — о прежней заявке администратор узнаёт из пометки; «ещё одну запись» — не перенос
+        f["заметка"] ? "комментарий: " + f["заметка"] : "", l.time ? "" : "время в строке не разобрано. Строка ИИ: " + clean(k.line, 300)].filter(Boolean).join("; ");
+      const nameWas = P.name;
+      const made = addLead({ ...l, time: l.time || "время не указано — уточните у клиента" }, note ? { note } : null, "✅ Новая заявка", true); // имя владельца чата не меняем, когда записывают другого человека
+      if (!nameWas && kin.length) delete P.name; // первая заявка чата — на другого человека («запишите маму»): имя клиента по ней не определяем
+      adminInc();
+      for (const s of list.filter(x => x.stub)) { patchLead(s.id, { status: "заменена", note: `клиент оформил заявку: ${[l.name, l.service, l.time].filter(Boolean).join(", ")}` }); list.splice(list.indexOf(s), 1); } // настоящая заявка заменяет заявку «уточните у клиента»
+      if (swap) { patchLead(twin.id, { status: "заменена", note: `клиент изменил услугу — новая заявка: ${l.service}` }); list.splice(list.indexOf(twin), 1); }
+      const rec = { id: made.id, name: l.name, date: day, time: t, service: l.service, text: l.time, at: nowMs, sig, ...(kin.length ? { kin } : {}) };
+      list.push(rec); madeNow.push(rec); k.made = rec;
+    }
+    let useCode = aiSilent || outs.length > 0; // ответ пишет код: ИИ ничего не написал либо часть его слов — неправда
+    if (madeNow.length) msgs.push(say("plBooked", { what: named(madeNow) }));
+
+    // 2) отмена и перенос
+    const cxOne = (x, at) => {
+      if (!list.includes(x)) return false; // заявку «уточните у клиента» уже заменила новая — отменять нечего
+      patchLead(x.id, { status: "отменена" });
+      const msg = `❌ Отмена: ${x.name || "имя не указано"}, ${plText(x, "", nowMs)} (${c.name})\n${who}\n${said}`;
+      if (!opts.test) { if (at != null) notes.splice(at, 0, msg); else notes.push(msg); } // при переносе администратор сначала видит отмену прежней заявки, потом новую
+      list.splice(list.indexOf(x), 1);
+      gone.push({ ...x, at: nowMs });
+      cancel = true; acted = true;
+      return true;
+    };
+    // записи, о которой просит клиент, в этом чате нет: с телефоном — передаём администратору, без телефона — спрашиваем, на кого она оформлена
+    const noSuch = move => {
+      const g = !list.length && !move ? gone.filter(x => fits(x)).pop() : null;
+      if (g) return say("plGone", { what: named([g]) }); // эту заявку бот уже отменил — второй раз администратора не тревожим
+      const also = list.length ? " " + say("also", { list: named(list) }) : "";
+      if (!ph0()) { P.cxWho = { at: nowMs, text: maskPhones(text).slice(0, 300) }; return say("cancelWho") + also; } // следующее сообщение с номером или именем уйдёт администратору вместе с этим
+      const u = P.unk && nowMs - P.unk.t < 3600e3 ? P.unk : { t: nowMs, n: 0 }; // не больше трёх таких сигналов из одного чата в час
+      if (u.n < 3) { u.n++; P.unk = u; tellOnce("cx:" + histKey + ":" + hash(text), `❓ Клиент просит ${move ? "перенести" : "отменить"} запись, которой нет в этом чате — ${c.name}\n${who}${list.length ? "\nЗаявки этого чата: " + list.map(ru).join("; ") : ""}\n${said}`); }
+      cancel = true; acted = true;
+      return say(list.length || move ? "otherAdmin" : "cancelAdmin") + also;
+    };
+    if (doCx && moving && !cands[0].made) {
+      // перенос, а новая заявка не создана (время не из свободных окон, нет имени или телефона) — прежняя остаётся, клиент об этом знает
+      useCode = true;
+      if (outs.length) { if (had.length) outs.push(say("keepOld").trim()); }
+      else if (dups.length) msgs.push(say("pending", { what: named(dups) })); // на это время клиент уже записан
+    } else if (doCx && moving) {
+      if (plan.hit) { const what = lab(plan.hit); acted = true; if (cxOne(plan.hit, noteAt)) msgs.push(say("plOldCx", { what })); }
+      else if (plan.which || plan.all) { keepWish = true; useCode = true; msgs.push(say("which", { list: named(plan.which || plan.all) })); } // новая заявка есть, а какую из прежних убрать — спрашиваем
+      else { acted = true; msgs.push(say("oldAdmin")); } // прежней записи в этом чате нет — её отменит администратор (пометка в новой заявке)
+    } else if (doCx && isMove && list.length && !saysCx && /\?\s*$/.test(reply)) {
+      // клиент просит перенести, а ИИ уточняет новое время («На какое время перенести?»): пока ничего не делаем, ждём ответа клиента
+    } else if (doCx && isMove && list.length) {
+      // клиент просит перенести, а новой заявки в ответе ИИ нет: ничего не отменяем — просьбу словами клиента передаём администратору
+      tellOnce("mv:" + histKey + ":" + hash(text), `✏️ Клиент просит перенести запись — ${c.name}\n${who}\nЗаявки этого чата: ${list.map(ru).join("; ")}\n${said}`);
+      cancel = true; acted = true; useCode = true;
+      msgs.push(say("mvAdmin", { list: named(list) }));
+    } else if (doCx) {
+      if (plan.hit || plan.all) {
+        const xs = plan.all || [plan.hit], what = named(xs);
+        if (had.length > 1 || cl0.change || /\?\s*$/.test(reply)) useCode = true; // заявок было несколько (клиент должен знать, какая отменена), ИИ написал «отменила» или задал вопрос — итог сообщает код
+        xs.forEach(x => cxOne(x));
+        msgs.push(say("plCancel", { what }) + (list.length ? " " + say("also", { list: named(list) }) : ""));
+      } else if (plan.which) { useCode = true; msgs.push(say("which", { list: named(plan.which) })); }
+      else { useCode = true; msgs.push(noSuch(isMove)); }
+    } else if (reqCx) {
+      // ИИ поставил [ОТМЕНА] или написал «отменила», а клиент об этом не просил, спрашивает «точно отменили?» или просит запись оставить — ничего не отменяем
+      if (keepNow && !wishNow) { if (list.length) { useCode = true; msgs.push(say("kept", { list: named(list) })); } else if (saysCx || aiSilent) { useCode = true; msgs.push(say("plNone")); } }
+      else if (statusQ) {
+        const g = gone[gone.length - 1]; useCode = true;
+        msgs.push(g ? join([say("plGone", { what: named([g]) }), list.length ? say("plNow", { list: named(list) }) : ""]) : !list.length && P.unk && nowMs - P.unk.t < 3600e3 ? say("reqStatus") : list.length ? say("plNoop", { list: named(list) }) : say("plNone"));
+      } else if (saysCx || aiSilent) { // слова ИИ «отменила», «перенесла» — неправда
+        useCode = true;
+        const others = list.filter(x => !madeNow.includes(x));
+        msgs.push(madeNow.length ? (others.length ? say("also", { list: named(others) }) : "") : list.length ? say("plNoop", { list: named(list) }) : say("plNone"));
       }
     }
+    if (useCode) reply = join([...msgs, ...outs]) || (dups.length ? say("pending", { what: named(dups) }) : reply);
+
+    // 3) ИИ написал «забронировала», а служебной строки нет: клиент думает, что записан, а заявки у администратора нет.
+    //    Если в чате уже есть заявка, а в ответе другое время или новое имя — это вторая запись, с ней поступаем так же
+    if (!cands.length && !reqCx && !draftOnly && !whoAns && cl0.book && !cl0.soft && !plRestated(list, cl0, reply, c, owner)) {
+      const q = /\?\s*$/.test(cl0.keep) ? cl0.keep.split(/(?<=[.!?…])\s+/).pop() : "";
+      if (q && CL_DATA_Q.test(q)) reply = cl0.keep; // «Записываю вас на 16:00. Как вас зовут?» — вопрос о данных оставляем, заявку без подробностей не создаём
+      else if (inWin(altDateOf(reply, nowMs), reply) && cl0.times.some(t => !freeT.has(t))) reply = noTime();
+      else if (list.some(x => x.stub)) { /* заявка «уточните у клиента» уже у администратора */ }
+      else if (!ph0()) reply = join([cl0.before, say("plPhoneBook")]);
+      else if (adminCap() >= ALT_MAX_ADMIN_LEADS) reply = say("adminBusy");
+      else {
+        const made = addLead({ name: P.name || "", service: "уточнить у клиента", time: "уточнить у клиента", phone: ph0() },
+          { note: `ИИ сообщил клиенту о брони, но не оформил заявку по правилам. Ответ бота: «${reply.slice(0, 300)}». ${quote}` }, "⚠️ Заявка без подробностей — уточните у клиента", true);
+        adminInc(); list.push({ id: made.id, name: P.name || "", date: "", time: "", service: "", text: "", at: nowMs, sig: "", stub: true });
+      }
+    }
+    if (whoAns) {
+      const ph = ph0(), u = P.unk && nowMs - P.unk.t < 3600e3 ? P.unk : { t: nowMs, n: 0 };
+      if (u.n < 3) { u.n++; P.unk = u; tellOnce("cx:" + histKey + ":" + hash(text), `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}${list.length ? "\nЗаявки этого чата: " + list.map(ru).join("; ") : ""}\nСообщения клиента: «${who0.text}» → «${text.slice(0, 200)}»`); }
+      if (ph) { cancel = true; reply = say("cancelAdmin"); }
+      else { reply = say("cancelAdmin") + " " + say("needPhoneCb"); P.cxWho = { at: who0.at, text: (who0.text + " → " + maskPhones(text)).slice(-400) }; } // номера ещё нет: когда клиент его пришлёт, администратор получит и его
+      wish = null;
+    }
+    if (wish) P.cxWish = acted && !keepWish ? { at: nowMs, text: wish.text, n: wish.n || 0, done: true } : wish;
+    if (gone.length) P.lgone = gone; else delete P.lgone;
+    plSync(P, list, nowMs);
   }
   // ИИ пообещал, что с клиентом свяжется администратор, а ни заявки, ни уведомления об этом нет: с номером — сообщаем администратору, без номера — просим номер
-  if (reply === checked.text && !newLeads.length && !notes.length && CB_PROMISE.test(reply)) {
+  if (reply === checked.text && !newLeads.length && !notes.length && CB_PROMISE.test(reply) && !(plain && (saved.profile.leads || []).length)) { // у обычного клиента с действующей заявкой администратор и так с ним свяжется
     if (ph0()) { if (!(alt && callback("бот пообещал клиенту, что с ним свяжется администратор"))) tellOnce("pr:" + histKey, `📞 Бот пообещал клиенту, что с ним свяжется администратор — ${c.name}\n${who}\n${quote}`); }
     else if (!/телефон|номер|phone|number|нөмір/i.test(reply)) reply = join([reply, say("needPhoneCb")]);
   }
