@@ -1675,6 +1675,33 @@ button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px
 // ================= общий мозг =================
 // история чата с паузой («стоп» — 30 дней) живёт не меньше, чем сама пауза
 const histTtl = prof => Math.max(7 * 86400, prof && prof.pausedUntil > Date.now() ? Math.ceil((prof.pausedUntil - Date.now()) / 1000) + 86400 : 0);
+// ---- история чата: один ключ на чат — { n, turns: [{ role, text, t, by?, m? }], profile }.
+// В ИИ уходят последние MAX_TURNS реплик, хранится HIST_KEEP: их видит администратор в пульте чатов.
+// Метаданные ключа — строка списка чатов в пульте (весь список читается одним запросом KV.list, без чтения самих чатов)
+const HIST_KEEP = 60;
+const snip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+function histMeta(h) {
+  const p = (h && h.profile) || {}, ts = (h && h.turns) || [], last = ts[ts.length - 1] || null, now = Date.now();
+  const m = { t: now };
+  if (p.li) m.li = p.li;
+  if (last) { m.s = snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
+  const nm = p.name || p.waName; if (nm) m.nm = snip(nm, 40);
+  if (p.phone) m.ph = String(p.phone).slice(0, 20);
+  if (p.need && p.need.why) m.nd = String(p.need.why).slice(0, 12);
+  if (p.pausedUntil > now) m.pu = p.pausedUntil;
+  if (p.stop) m.st = 1;
+  const bk = (p.bookings || []).length + (p.pend || []).length; if (bk) m.bk = bk;
+  return m;
+}
+async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
+// дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
+async function logTurns(store, key, add, patch) {
+  const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
+  h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+  if (patch) patch(h.profile, h);
+  await putHist(store, key, h);
+  return h;
+}
 const WA_MAX_DAY = 80; // сообщений в сутки от одного номера WhatsApp, на которые бот отвечает сам
 // ИИ обещает, что с клиентом свяжется администратор
 const CB_PROMISE = /(администратор|менеджер|мастер|сотрудник|мы|я|он|она)\s+(\S+\s+){0,3}?(перезвон(ит|им|ю|ят)|свяж(ет|ем|у|ут)ся|позвон(ит|им|ю|ят)|набер(ёт|ет|у|ём|ем)|напиш(ет|ем|у|ут))(?![а-яё])|(^|[^а-яё])(передам|передала|передал)(?![а-яё])\s+(\S+\s+){0,3}?(администратор|менеджер)|(will|['’]ll)\s+(contact|call|reach)\s+(you|out)|get\s+back\s+to\s+you|хабарласады|қоңырау\s+шалады/i;
@@ -1702,6 +1729,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const cxAsk = saved.profile.cxAsk, mvAsk = saved.profile.mvAsk, cfPrev = saved.profile.cf || 0;
   delete saved.profile.cxAsk; delete saved.profile.mvAsk; delete saved.profile.cf;
   const dirty = !!(cxAsk || mvAsk || cfPrev);
+  saved.profile.li = nowMs;                                                        // время последнего сообщения клиента: по нему пульт чатов считает 24-часовое окно WhatsApp
+  if (opts.waName && !saved.profile.waName) saved.profile.waName = snip(opts.waName, 40); // имя из профиля WhatsApp — только чтобы администратор узнал клиента; для записи бот спрашивает имя сам
+  const needs = why => { saved.profile.need = { at: nowMs, why }; };               // чат требует внимания администратора — так он попадает наверх пульта
 
   const text = redact(String(rawText).replace(/[\u0000-\u001f]/g, " ").trim().slice(0, MAX_LEN));
   // телефон клиента — первый номер в сообщении, кроме телефона самой компании из фактов («я звонил вам на +7 700…» — это не номер клиента)
@@ -1710,17 +1740,18 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (phoneInText) saved.profile.phone = phoneInText;
   const who = opts.phone || saved.profile.phone || "телефон не указан";
   const save = async (userText, reply) => {
-    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText) }] : [], reply ? [{ role: "model", text: reply }] : []);
+    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), t: nowMs }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
     const put = async () => {
       let n = saved.n + 1, t = saved.turns.concat(add), prof = saved.profile, cur = null;
       try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) {}
       if (cur && cur.n > saved.n) { n = cur.n + 1; t = (cur.turns || []).concat(add); prof = mergeProfile(cur.profile || {}, saved.profile, JSON.parse(base), [], [], []); } // в чат успело прийти другое сообщение — его записи не затираем
-      await store.put(histKey, JSON.stringify({ n, turns: t.slice(-MAX_TURNS), profile: prof }), { expirationTtl: histTtl(prof) });
+      await putHist(store, histKey, { n, turns: t.slice(-HIST_KEEP), profile: prof });
     };
     try { await put(); }
     catch (e) { console.log("history", String(e)); await new Promise(s => setTimeout(s, 1100)); await put(); } // у KV лимит — одна запись ключа в секунду; вторая попытка обычно проходит
   };
   const quiet = async () => { try { await save("", ""); } catch (e) { console.log("history", String(e)); } }; // сохранить состояние, не роняя ответ
+  const optM = /^h:(?:wa|ga):[^:]+:(\d+)$/.exec(histKey), optKey = optM ? `optout:${c.id}:${optM[1]}` : "";
 
   if (saved.n >= MAX_MSGS_PER_SESSION && !wa && !STOP.test(text) && !wantsHuman(text, (saved.turns.filter(t => t.role === "model").pop() || {}).text || "")) { // «позовите администратора» и «стоп» работают и после лимита
     if (dirty) await quiet();
@@ -1731,6 +1762,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (STOP.test(text)) {
     const already = !!saved.profile.stop && saved.profile.pausedUntil > nowMs; // повторное «стоп» администратора второй раз не тревожит
     saved.profile.pausedUntil = nowMs + 30 * 86400e3; saved.profile.stop = true;
+    if (wa && optKey) { try { await store.put(optKey, String(nowMs)); } catch (e) { console.log("optout", String(e)); } } // отметка без срока: история чата через месяц сотрётся, а в рассылки этот номер попадать не должен
     if (!opts.test && !already) await notify(env, `⛔ Клиент попросил не писать ему автоматически — ${c.name}\n${who}`, c.id);
     const reply = "Хорошо, автоматически больше не отвечаю. Если понадобится, администратор напишет вам сам. Чтобы я снова отвечала, напишите «старт».";
     await save(text, reply);
@@ -1739,6 +1771,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   // «старт» после «стоп» — клиент снова хочет получать ответы
   if (saved.profile.stop && START.test(text)) {
     delete saved.profile.stop; delete saved.profile.pausedUntil; delete saved.profile.fw;
+    if (wa && optKey && store.delete) { try { await store.delete(optKey); } catch (e) { console.log("optout", String(e)); } }
     const reply = "Хорошо, снова отвечаю. " + c.greeting.replace(/^Здравствуйте!\s*/, "");
     await save(text, reply);
     return { reply, lead: null, isNew, offer: [] };
@@ -1752,8 +1785,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         const f = saved.profile.fw && nowMs - saved.profile.fw.t < 3600e3 ? saved.profile.fw : { t: nowMs, n: 0 };
         f.n++; saved.profile.fw = f;
         if (f.n <= 10) await notify(env, `✉️ ${saved.profile.stop ? "Клиент, который просил не писать ему автоматически, прислал сообщение" : "Клиент пишет, бот в этом чате молчит"} — ${c.name}\n${who}\nСообщение: «${text.slice(0, 300)}»\nОтветьте клиенту сами.${f.n === 10 ? "\nСледующие сообщения этого клиента в ближайший час пересылаться не будут." : ""}`, c.id);
-        await quiet();
-      } else if (dirty) await quiet();
+      }
+      if (!saved.profile.stop) needs("human"); // клиент пишет, а бот молчит: чат ждёт администратора
+      try { await save(text, ""); } catch (e) { console.log("history", String(e)); } // сообщение клиента остаётся в истории: администратор видит его в пульте чатов
       return { reply: "", paused: true, lead: null, isNew };
     }
     let reply = "Администратор уже получил ваш запрос и скоро свяжется с вами. Если удобно, оставьте номер телефона.";
@@ -1773,6 +1807,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       saved.profile.pausedUntil = nowMs + PAUSE_MS;
       const reply = "Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.";
       const told = !!d.told; d.told = true; // один сигнал в сутки, даже если клиент снимает паузу командой «меню»
+      needs("limit");
       if (!opts.test && !told) await notify(env, `🙋 Клиент написал больше ${WA_MAX_DAY} сообщений за день — бот замолчал на 2 часа, ответьте сами — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»`, c.id);
       await save(text, reply);
       return { reply, handoff: true, lead: null, isNew, offer: [] };
@@ -1790,6 +1825,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         ? `Передала администратору — он перезвонит вам ${when}.`
         : `Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`;
     const hoRecent = saved.profile.hoAt && nowMs - saved.profile.hoAt < 3600e3; saved.profile.hoAt = nowMs; // не чаще раза в час на чат
+    needs("human");
     if (!opts.test && !hoRecent) await notify(env, `🙋 Клиент просит администратора — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${wa ? "\nБот молчит в этом чате 2 часа — ответьте клиенту с телефона." : ""}`, c.id);
     await save(text, reply);
     return { reply, handoff: true, lead: null, isNew, offer: [] };
@@ -1802,7 +1838,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
 
   const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile };
 
-  let turns = saved.turns.concat([{ role: "user", text: maskPhones(text) }]).slice(-MAX_TURNS);
+  const userTurn = { role: "user", text: maskPhones(text), t: nowMs };
+  let turns = saved.turns.concat([userTurn]).slice(-MAX_TURNS); // это уходит в ИИ; в хранилище остаётся вся история (HIST_KEEP)
   while (turns.length && turns[0].role !== "user") turns.shift();
   const userAll = turns.filter(t => t.role === "user").map(t => t.text).join(" \n ");
 
@@ -1831,6 +1868,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     console.log("gemini", String(e));
     if (!opts.test) await notifyOnce(env, "ai:" + histKey, `⚠️ Бот не смог ответить клиенту (сбой ИИ) — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»\nОтветьте клиенту сами.`, c.id);
     const reply = /cut off|timeout/.test(String(e)) ? "Извините, связь прервалась. Повторите, пожалуйста, вопрос?" : FALLBACK;
+    needs("ai");
     try { await save(text, reply); } catch (e2) { console.log("history", String(e2)); } // чат начат: следующее сообщение не должно считаться новым диалогом
     return { reply, lead: null, error: String(e).slice(0, 200), isNew };
   }
@@ -2552,23 +2590,26 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       } else if (!opts.test) notes.push(`⚠️ Заявка не сохранилась в списке заявок (сбой хранилища), все данные — в сообщениях выше — ${c.name}`);
     }
   }
-  turns.push({ role: "model", text: reply });
-  const putHist = async () => {
-    let n = saved.n + 1, outTurns = turns, prof = saved.profile, cur = null;
+  const botTurn = { role: "model", text: reply, t: nowMs };
+  // чат требует внимания администратора: просьба об отмене или переносе, заявка, которую нужно подтвердить или записать вручную, звонок
+  if (newLeads.length) { const k = newLeads[newLeads.length - 1]; if (k.kind === "cancel" || k.kind === "change") needs("req"); else if (k.kind === "callback") needs("call"); else if (!(k.altegio && k.altegio.record_id)) needs("lead"); }
+  else if (guard && /сбой/.test(guard)) needs("ai");
+  const saveHist = async () => {
+    let n = saved.n + 1, outTurns = saved.turns.concat([userTurn, botTurn]), prof = saved.profile, cur = null;
     try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) { console.log("history read", String(e)); } // не прочиталось — пишем без слияния
     if (cur && cur.n > saved.n) { // пока бот отвечал, в этот же чат пришло и обработалось другое сообщение — его не затираем
       n = cur.n + 1;
-      outTurns = (cur.turns || []).concat(turns.slice(-2));
+      outTurns = (cur.turns || []).concat([userTurn, botTurn]);
       prof = mergeProfile(cur.profile || {}, saved.profile, JSON.parse(base), added, removed, droppedPend);
       if (alt || altDown) prof.booked = bookedText((prof.bookings || []).filter(x => x.date >= today), prof.pend || [], prof.cbAt);
     }
-    await store.put(histKey, JSON.stringify({ n, turns: outTurns.slice(-MAX_TURNS), profile: prof }), { expirationTtl: histTtl(prof) });
+    await putHist(store, histKey, { n, turns: outTurns.slice(-HIST_KEEP), profile: prof });
   };
-  try { await putHist(); }
+  try { await saveHist(); }
   catch (e) {
     console.log("history", String(e));
     await new Promise(s => setTimeout(s, 1100)); // у KV лимит — одна запись ключа в секунду; вторая попытка обычно проходит
-    try { await putHist(); }
+    try { await saveHist(); }
     catch (e2) {
       console.log("history", String(e2));
       if ((added.length || removed.length || newLeads.length) && !opts.test) notes.push(`⚠️ Не сохранилась история чата (сбой хранилища) — ${c.name}\n${who}\nБот может не помнить о записи или заявке из этого сообщения — проверьте их сами.`);
@@ -2614,14 +2655,14 @@ async function dropAsk(store, histKey) {
   const h = JSON.parse((await store.get(histKey)) || "null");
   if (!h || !h.profile || !(h.profile.cxAsk || h.profile.mvAsk)) return;
   delete h.profile.cxAsk; delete h.profile.mvAsk;
-  await store.put(histKey, JSON.stringify(h), { expirationTtl: histTtl(h.profile) });
+  await putHist(store, histKey, h);
 }
 
 async function askGemini(env, system, turns) {
   const models = [env.MODEL || "gemini-flash-lite-latest", env.MODEL_FALLBACK || "gemini-flash-latest"];
   const payload = {
     systemInstruction: { parts: [{ text: system }] },
-    contents: turns.map(t => ({ role: t.role, parts: [{ text: t.text }] })),
+    contents: turns.reduce((a, t) => { const l = a[a.length - 1]; if (l && l.role === t.role) l.parts[0].text += "\n" + t.text; else a.push({ role: t.role, parts: [{ text: t.text }] }); return a; }, []),
     generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
     safetySettings: ["HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT", "DANGEROUS_CONTENT"].map(k => ({ category: "HARM_CATEGORY_" + k, threshold: "BLOCK_ONLY_HIGH" }))
   };
@@ -2653,7 +2694,7 @@ async function askGemini(env, system, turns) {
 }
 
 async function notify(env, text, clientId) { // → true, если хотя бы один чат получил сообщение
-  const chats = String((clientId && env["TG_CHAT_" + clientId.toUpperCase()]) || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
+  const chats = String((clientId && env["TG_CHAT_" + String(clientId).toUpperCase()]) || (clientId && hasClient(clientId) && CLIENTS[clientId].tg) || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
   if (!env.TG_TOKEN || !chats.length) return false;
   let sent = false;
   const post = async chat_id => {
@@ -2899,42 +2940,44 @@ const MENU_TEXT = "Это демо AI-администратора. Выбери
   MENU.map((c, i) => `${i + 1} — ${c.name} (${c.kind})`).join("\n") + "\n\nНапишите цифру. Сменить бизнес: «меню».";
 
 // Общая логика WhatsApp: channel = "wa" (Meta) или "ga" (Green-API). send(text) — отправка ответа.
-async function nicheOf(env, channel, fromDigits) {
-  const fixed = channel === "ga" ? env.GA_CLIENT : env.WA_CLIENT;
+// wx — к какому клиенту и через какой номер пришло сообщение: { client, token, pnid, name }. Пусто — прежний режим: один номер на весь воркер (WA_CLIENT) или меню демо
+const fixedOf = (env, channel, wx) => (wx && wx.client) || (channel === "ga" ? env.GA_CLIENT : env.WA_CLIENT);
+async function nicheOf(env, channel, fromDigits, wx) {
+  const fixed = fixedOf(env, channel, wx);
   return hasClient(fixed) ? fixed : await env.KV.get(`wa:niche:${channel}:${fromDigits}`);
 }
 async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
 async function setPause(env, hk, until) {
   const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
   h.profile = h.profile || {}; h.profile.pausedUntil = until;
-  await env.KV.put(hk, JSON.stringify(h), { expirationTtl: histTtl(h.profile) });
+  await putHist(env.KV, hk, h);
 }
 
 // Сбой хранилища или сети не должен оставить клиента WhatsApp без ответа, а администратора — без сигнала
-async function handleWAText(env, channel, fromDigits, text, send) {
+async function handleWAText(env, channel, fromDigits, text, send, wx) {
   const phone = normPhone(fromDigits) || "+" + fromDigits;
   let sent = false;
   const say = async t => { await send(t); sent = true; };
-  try { return await waText(env, channel, fromDigits, text, say, phone); }
+  try { return await waText(env, channel, fromDigits, text, say, phone, wx); }
   catch (e) {
     console.log("wa text", String((e && e.stack) || e));
     if (!sent) { try { await send(FALLBACK); } catch (e2) { console.log("wa send", String(e2)); } }
-    try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`); } catch (e2) {}
+    try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }
-async function waText(env, channel, fromDigits, text, send, phone) {
-  const fixed = channel === "ga" ? env.GA_CLIENT : env.WA_CLIENT;
+async function waText(env, channel, fromDigits, text, send, phone, wx) {
+  const fixed = fixedOf(env, channel, wx);
   const nicheKey = `wa:niche:${channel}:${fromDigits}`;
-  const consentKey = `consent:${channel}:${fromDigits}`;
-  let niche = await nicheOf(env, channel, fromDigits);
+  const consentKey = wx && wx.client ? `consent:${channel}:${wx.client}:${fromDigits}` : `consent:${channel}:${fromDigits}`; // у каждой компании своё согласие
+  let niche = await nicheOf(env, channel, fromDigits, wx);
   const histKey = () => `h:${channel}:${niche}:${fromDigits}`;
 
   if (/^(меню|menu|сброс|reset|\/start)$/i.test(text)) {
     if (niche) {
       // разговор начинается заново, но то, что уже сделано, бот помнит: записи, заявки и ограничения. Паузу и «стоп» эта команда клиента снимает
       const p = ((await readHist(env, histKey())) || {}).profile || {}, keep = {};
-      for (const k of ["bookings", "pend", "gone", "cbAt", "adminLeads", "delFails", "booked", "leadId", "leadSig", "day", "hoAt", "req", "unk", "name", "phone"]) if (p[k] !== undefined && p[k] !== null) keep[k] = p[k];
-      if (Object.keys(keep).length) await env.KV.put(histKey(), JSON.stringify({ n: 0, turns: [], profile: keep }), { expirationTtl: histTtl(keep) });
+      for (const k of ["bookings", "pend", "gone", "cbAt", "adminLeads", "delFails", "booked", "leadId", "leadSig", "day", "hoAt", "req", "unk", "name", "phone", "waName", "need"]) if (p[k] !== undefined && p[k] !== null) keep[k] = p[k];
+      if (Object.keys(keep).length) await putHist(env.KV, histKey(), { n: 0, turns: [], profile: keep });
       else await env.KV.delete(histKey());
     }
     if (hasClient(fixed)) return send("Диалог начат заново. " + CLIENTS[fixed].greeting);
@@ -2951,7 +2994,7 @@ async function waText(env, channel, fromDigits, text, send, phone) {
   }
   const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
-  const r = await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !env.APP_SECRET, forward: channel === "wa", defer: f => later.push(f) });
+  const r = await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", defer: f => later.push(f) });
   try {
     if (r.paused) return; // клиентом занимается администратор — бот молчит
     if (r.isNew) {
@@ -2965,8 +3008,9 @@ async function waText(env, channel, fromDigits, text, send, phone) {
 
 // Голосовые, фото, файлы, геолокация, стикеры: вежливый ответ + уведомление администратору
 const MEDIA_LABEL = { audio: "🎤 Голосовое", image: "🖼 Фото", video: "🎬 Видео", document: "📄 Файл", location: "📍 Геолокация", contact: "👤 Контакт" };
-async function handleWAMedia(env, channel, fromDigits, kind, link, caption, send) {
-  const niche = await nicheOf(env, channel, fromDigits);
+const MEDIA_WORD = { audio: "голосовое сообщение", image: "фото", video: "видео", document: "файл", location: "геолокацию", contact: "контакт" };
+async function handleWAMedia(env, channel, fromDigits, kind, link, caption, send, wx, media) {
+  const niche = await nicheOf(env, channel, fromDigits, wx);
   if (!niche) return send(MENU_TEXT);
   const c = CLIENTS[niche];
   const hk = `h:${channel}:${niche}:${fromDigits}`;
@@ -2982,14 +3026,27 @@ async function handleWAMedia(env, channel, fromDigits, kind, link, caption, send
       }
     } catch (e) { console.log("media note", String(e)); }
   }
-  if (paused && !caption) return;
-  if (caption) return handleWAText(env, channel, fromDigits, caption, send);
-  // бот спросил «Отменить запись …?», а клиент ответил голосовым или картинкой: ответа бот не понял — вопрос снимается, следующее «ок» записи не удалит
-  if (h?.profile?.cxAsk || h?.profile?.mvAsk) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }
+  // что прислал клиент, остаётся в истории чата: администратор видит это в пульте (и может открыть файл), а ИИ знает, что клиент что-то присылал
+  const now = Date.now(), m = { k: kind, ...(media && media.id ? { id: String(media.id).slice(0, 120) } : {}), ...(media && media.mime ? { mime: String(media.mime).slice(0, 60) } : {}), ...(link ? { url: String(link).slice(0, 500) } : {}) };
+  const inTurn = kind === "sticker" ? null : { role: "user", text: `[клиент прислал ${MEDIA_WORD[kind] || "сообщение"}]`, t: now, m };
+  const note = async (reply) => {
+    if (!inTurn) return;
+    try {
+      await logTurns(env.KV, hk, reply ? [inTurn, { role: "model", text: reply, t: now }] : [inTurn], p => {
+        delete p.cxAsk; delete p.mvAsk; // бот спросил «Отменить запись …?», а клиент ответил голосовым или картинкой: вопрос снимается, следующее «ок» записи не удалит
+        p.li = now; if (!p.stop) p.need = { at: now, why: paused ? "human" : "media" };
+        if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
+      });
+    } catch (e) { console.log("history", String(e)); }
+  };
+  if (paused && !caption) return note("");
+  if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, wx); }
   const reply = kind === "audio" ? "Я пока не умею слушать голосовые — напишите, пожалуйста, текстом. Сообщение передала администратору."
     : kind === "sticker" ? "Чем могу помочь? Напишите, пожалуйста, вопрос текстом."
     : kind === "location" || kind === "contact" ? "Спасибо, передала администратору. Чем ещё могу помочь?"
     : "Спасибо, файл получила и передала администратору. Напишите, пожалуйста, текстом, чем помочь?";
+  if (kind === "sticker" && (h?.profile?.cxAsk || h?.profile?.mvAsk)) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }
+  await note(reply);
   return send(reply);
 }
 
@@ -3003,20 +3060,48 @@ async function seenBefore(env, id) {
 }
 
 // --- Meta WhatsApp Cloud API (официальный, для боевых клиентов)
-async function handleWhatsApp(body, env) {
-  const val = body?.entry?.[0]?.changes?.[0]?.value;
-  const st = val?.statuses?.[0];
-  if (st?.status === "failed") { const e = st.errors?.[0] || {}; await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details); }
-  const msg = val?.messages?.[0];
-  if (!msg) return;
+// В одном запросе Meta может прислать несколько сообщений (разных клиентов и одного клиента подряд) — обрабатываем все:
+// разных клиентов — одновременно, сообщения одного клиента — по порядку.
+const WA_BATCH = 12; // столько сообщений из одного запроса бот отвечает сам; остальные (всплеск после рассылки) сохраняет в чатах для администратора
+async function handleWhatsApp(body, env, wx = {}) {
+  const jobs = [];
+  for (const entry of (body && body.entry) || []) for (const ch of (entry && entry.changes) || []) {
+    const val = (ch && ch.value) || {};
+    for (const st of val.statuses || []) if (st && st.status === "failed") { const e = (st.errors || [])[0] || {}; await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details); }
+    const names = new Map((val.contacts || []).map(k => [k && k.wa_id, (k && k.profile && k.profile.name) || ""]));
+    const pnid = (val.metadata && val.metadata.phone_number_id) || "";
+    for (const msg of val.messages || []) if (msg && msg.from && msg.id) jobs.push({ msg, wx: { ...wx, pnid: wx.pnid || pnid, name: names.get(msg.from) || "" } });
+  }
+  if (!jobs.length) return;
+  const bySender = new Map();
+  jobs.slice(0, WA_BATCH).forEach(j => bySender.set(j.msg.from, (bySender.get(j.msg.from) || []).concat([j])));
+  await Promise.allSettled([...bySender.values()].map(async list => {
+    for (const j of list) { try { await handleWAMessage(env, j.msg, j.wx); } catch (e) { console.log("wa msg", String((e && e.stack) || e)); } }
+  }));
+  const rest = jobs.slice(WA_BATCH, WA_BATCH + 60);
+  if (rest.length) { // на эти сообщения бот не отвечает (лимиты одного запроса), но они не теряются: лежат в чатах и помечены для администратора
+    for (const j of rest) {
+      try {
+        if (await seenBefore(env, j.msg.id)) continue;
+        const niche = await nicheOf(env, "wa", j.msg.from, j.wx);
+        if (!niche) continue;
+        const t = j.msg.type === "text" ? (j.msg.text?.body || "") : j.msg.type === "button" ? (j.msg.button?.text || "") : `[${j.msg.type}]`, now = Date.now();
+        await logTurns(env.KV, `h:wa:${niche}:${j.msg.from}`, [{ role: "user", text: maskPhones(redact(String(t).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "limit" }; if (j.wx.name && !p.waName) p.waName = snip(j.wx.name, 40); });
+      } catch (e) { console.log("wa rest", String(e)); }
+    }
+    try { await notifyOnce(env, "waburst:" + (wx.client || ""), `⚠️ В WhatsApp пришло сразу ${jobs.length} сообщений — на ${jobs.length - WA_BATCH} бот не ответил. Они лежат в пульте чатов с пометкой — ответьте клиентам сами.`, wx.client); } catch (e) {}
+  }
+}
+async function handleWAMessage(env, msg, wx) {
   if (await seenBefore(env, msg.id)) return;
-  const from = msg.from, send = t => sendWA(env, from, t);
-  if (msg.type === "text") return handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send);
+  const from = String(msg.from).replace(/\D/g, ""), send = t => sendWA(env, from, t, wx);
+  if (!from) return;
+  if (msg.type === "text") return handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx);
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст
   const pressed = msg.type === "button" ? msg.button?.text || msg.button?.payload : msg.type === "interactive" ? msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title : "";
-  if (pressed) return handleWAText(env, "wa", from, String(pressed).trim(), send);
+  if (pressed) return handleWAText(env, "wa", from, String(pressed).trim(), send, wx);
   const kinds = { audio: "audio", voice: "audio", image: "image", video: "video", document: "document", sticker: "sticker", location: "location", contacts: "contact" };
-  if (kinds[msg.type]) return handleWAMedia(env, "wa", from, kinds[msg.type], null, (msg[msg.type]?.caption || "").trim(), send);
+  if (kinds[msg.type]) { const o = msg[msg.type] || {}; return handleWAMedia(env, "wa", from, kinds[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "" }); }
   // реакции и прочее — без ответа
 }
 
@@ -3042,7 +3127,7 @@ async function handleGreen(body, env) {
   const kinds = { audioMessage: "audio", imageMessage: "image", videoMessage: "video", documentMessage: "document", stickerMessage: "sticker", locationMessage: "location", contactMessage: "contact", contactsArrayMessage: "contact" };
   const kind = kinds[md.typeMessage];
   if (!kind) return; // реакции, опросы и прочее — без ответа
-  return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send);
+  return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, null, { mime: md.fileMessageData?.mimeType || "" });
 }
 
 async function sendGreen(env, chatId, message) {
@@ -3054,9 +3139,17 @@ async function sendGreen(env, chatId, message) {
   if (!r.ok) console.log("GA send", r.status, (await r.text()).slice(0, 300));
 }
 
-async function sendWA(env, to, t) {
-  const r = await fetch(`${GRAPH}/${env.PHONE_NUMBER_ID}/messages`, {
-    method: "POST", headers: { authorization: "Bearer " + env.WA_TOKEN, "content-type": "application/json" },
+// токен и номер, с которого отвечаем: у клиента со своим вебхуком (/wa/<id>) — его секрет WA_TOKEN_<ID> и номер, на который написали; иначе общие WA_TOKEN и PHONE_NUMBER_ID
+const waCreds = (env, wx) => {
+  const cid = wx && wx.client, up = cid ? String(cid).toUpperCase() : "";
+  return cid ? { token: env["WA_TOKEN_" + up] || "", pnid: (wx.pnid || env["PHONE_NUMBER_ID_" + up] || (hasClient(cid) && CLIENTS[cid].waPhoneId) || "") }
+    : { token: env.WA_TOKEN || "", pnid: env.PHONE_NUMBER_ID || (wx && wx.pnid) || "" };
+};
+// → { ok, id } или { ok: false, status, code, error }
+async function sendWA(env, to, t, wx) {
+  const cr = waCreds(env, wx);
+  const r = await fetch(`${GRAPH}/${cr.pnid}/messages`, {
+    method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: t.slice(0, 4000) } })
   });
   if (!r.ok) {
@@ -3064,8 +3157,11 @@ async function sendWA(env, to, t) {
     let e = {}; try { e = JSON.parse(t).error || {}; } catch (x) {}
     await waErr(env, "отправка " + r.status, e.code, e.message || t.slice(0, 200), e.error_data?.details);
     // клиент ответа не получил — администратор должен об этом узнать (не чаще раза в 10 минут)
-    try { await notifyOnce(env, "wasend", `⚠️ Ответы бота не доходят до клиентов WhatsApp (ошибка ${r.status}${e.code ? ", код " + e.code : ""})${WA_HINT[e.code] ? " — " + WA_HINT[e.code] : ""}\nКлиент +${String(to).replace(/\D/g, "")} ответа не получил — напишите ему сами. Подробности — на странице /diag.`); } catch (x) {}
+    if (!(wx && wx.quiet)) { try { await notifyOnce(env, "wasend:" + ((wx && wx.client) || ""), `⚠️ Ответы бота не доходят до клиентов WhatsApp (ошибка ${r.status}${e.code ? ", код " + e.code : ""})${WA_HINT[e.code] ? " — " + WA_HINT[e.code] : ""}\nКлиент +${String(to).replace(/\D/g, "")} ответа не получил — напишите ему сами. Подробности — на странице /diag.`, wx && wx.client); } catch (x) {} }
+    return { ok: false, status: r.status, code: e.code || 0, error: String(e.message || t).slice(0, 200) };
   }
+  let id = ""; try { id = ((await r.json()).messages || [])[0]?.id || ""; } catch (x) {}
+  return { ok: true, id };
 }
 
 // подпись Meta: заголовок x-hub-signature-256 = "sha256=" + HMAC-SHA256(App secret, тело запроса)

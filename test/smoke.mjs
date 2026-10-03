@@ -2,6 +2,7 @@
 import "./clock.mjs"; // до загрузки бота: проверки идут по одним и тем же часам
 import worker from "../worker.js";
 import { createHmac } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 const mem = new Map();
 const puts = new Map(); // сколько раз за прогон записан каждый ключ
@@ -1683,4 +1684,6 @@ geminiQueue = ["Да, оплатить можно у администратор�
 ok("«Можно оплатить через администратора?» — вопрос, а не просьба позвать человека", !d.handoff, JSON.stringify(d));
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
-process.exit(fail ? 1 : 0);
+// новые части (история чата для пульта, паспорт бота, вход, пульт чатов) проверяются отдельным файлом и в отдельном процессе
+const platform = spawnSync(process.execPath, [new URL("./platform.mjs", import.meta.url).pathname], { stdio: "inherit" });
+process.exit(fail || platform.status !== 0 ? 1 : 0);
