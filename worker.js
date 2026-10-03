@@ -2596,6 +2596,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     const whoAns = !!who0 && !ALT_KEEP.test(text) && !/\?/.test(text) && (!!phoneInText || (lowE(text).match(/[a-zа-яәғқңөұүһі]{3,}/g) || []).some(whoWord));
     const bookLines = whoAns ? [] : tagsOf(raw, "ЗАЯВКА").slice(0, 3), cancelLines = whoAns ? [] : tagsOf(raw, "ОТМЕНА");
     const slots = getSlots(c, ctx), freeT = new Set(slots.flatMap(s => s.times));
+    // Дни, на которые открыта запись через чат: от сегодня до последнего дня свободных окон. Время из строки сверяем с окнами только для них:
+    // дата мероприятия у банкетного зала (или день через две недели) окнам ближайших дней не подчиняется — такую заявку подтверждает администратор
+    const lastWin = slots.length ? slots[slots.length - 1].date || altDateOf(slots[slots.length - 1].label, nowMs) : "";
+    const inWin = (day, src) => !day || !lastWin || day <= lastWin || (day === isoDay(nowMs + 7 * 86400e3) && dowsIn(lowE(src)).includes(local(nowMs).getUTCDay())); // «понедельник», написанный в понедельник, — возможно, сегодня
     const noTime = () => slots[0] ? say("plNoTime", { day: plDay(slots[0], lang, nowMs), times: slots[0].times.slice(0, 2) }) : lang === "ru" ? `${c.safe} Подобрать вам удобное время?` : say("plNoSlots");
     const lab = x => plText(x, lang, nowMs), named = arr => plList(arr, lang, nowMs, owner), ru = x => (x.name ? x.name + ": " : "") + plText(x, "", nowMs);
     // Просьба клиента об отмене или переносе: без неё заявка не отменяется, что бы ни написал ИИ. Действует 15 минут и до трёх уточнений («Отмените запись» → «Какую?» → «на 18:00»)
@@ -2673,7 +2677,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (badName(l.name)) { outs.push(say("plNeedName")); continue; }
       const kin = kinNear(kinTexts, l.name, [...cands.map(x => x.l.name), ...list.map(x => x.name || "")].filter(n => n && !samePerson(n, l.name)), !!owner && !samePerson(l.name, owner) && cands.length === 1);
       if (!l.phone) { if (!P.name && !kin.length) P.name = l.name; outs.push(say("plNeedPhone")); continue; }
-      if (t && !freeT.has(t)) { outs.push(noTime()); continue; } // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
+      if (t && inWin(day, l.time) && !freeT.has(t)) { outs.push(noTime()); continue; } // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
       if (adminCap() >= ALT_MAX_ADMIN_LEADS) { outs.push(say("adminBusy")); continue; } // за сегодня из этого чата уже много заявок — новых не плодим
       const old = i === 0 ? moveOld : null;
       const swap = !!twin && !old && had.includes(twin) && PL_SWAP.test(text) && !ADD_WISH.test(text);  // та же запись с другой услугой: «не чистку, а отбеливание»
@@ -2760,7 +2764,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     if (!cands.length && !reqCx && !draftOnly && !whoAns && cl0.book && !cl0.soft && !plRestated(list, cl0, reply, c, owner)) {
       const q = /\?\s*$/.test(cl0.keep) ? cl0.keep.split(/(?<=[.!?…])\s+/).pop() : "";
       if (q && CL_DATA_Q.test(q)) reply = cl0.keep; // «Записываю вас на 16:00. Как вас зовут?» — вопрос о данных оставляем, заявку без подробностей не создаём
-      else if (cl0.times.some(t => !freeT.has(t))) reply = noTime();
+      else if (inWin(altDateOf(reply, nowMs), reply) && cl0.times.some(t => !freeT.has(t))) reply = noTime();
       else if (list.some(x => x.stub)) { /* заявка «уточните у клиента» уже у администратора */ }
       else if (!ph0()) reply = join([cl0.before, say("plPhoneBook")]);
       else if (adminCap() >= ALT_MAX_ADMIN_LEADS) reply = say("adminBusy");
