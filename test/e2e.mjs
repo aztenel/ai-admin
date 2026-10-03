@@ -141,6 +141,47 @@ try {
   await shot(w, "11-inbox-done-wide");
   ok("владелец видит ссылку «Боты» в пульте", await w.locator("#l_st").isVisible());
 
+  // ---- рассылка глазами сотрудника: список, проверка, пробная отправка, запуск, итог
+  S.env.WA_TOKEN_KAIRAT = S.env.WA_TOKEN_KAIRAT || "tok-kairat"; S.env.PHONE_NUMBER_ID_KAIRAT = "900111";
+  net.graphReply = u => u.includes("?fields=") ? new Response(JSON.stringify({ display_phone_number: "+7 700 111 22 33", verified_name: "Barber House", quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_250" }), { status: 200 }) : null;
+  await st.goto(url + "/broadcast?c=kairat");
+  await st.waitForSelector("#info .msg");
+  const infoText = await st.locator("#info").innerText();
+  ok("страница рассылок: номер, качество и предел Meta", /\+7 700 111 22 33/.test(infoText) && /качество: высокое/.test(infoText) && /250 получателей за 24 часа/.test(infoText), infoText);
+  await st.click("#b_new");
+  ok("предел подставлен из Meta с запасом", (await st.locator("#f_cap").inputValue()) === "237");
+  await st.fill("#f_name", "Октябрь: скидка"); await st.fill("#f_tpl", "promo_october");
+  await st.fill("#f_text", "Здравствуйте, {{1}}! В октябре стрижка 5 000 ₸. Чтобы не получать сообщения, ответьте СТОП"); await st.fill("#f_params", "{имя}");
+  await st.fill("#f_rec", "8 705 111 00 01, Данияр\n+7 705 111 00 02\tАйгерим\n87051110001, повтор\nне номер\n8 705 111 00 03; не записывать");
+  await st.click("#b_chk");
+  await st.waitForSelector("#fout .msg");
+  const chkText = await st.locator("#fout").innerText();
+  ok("проверка списка: номера, имена, повторы и непонятные строки", /Номеров: 3/.test(chkText) && /с именем: 2/.test(chkText) && /повторов убрано: 1/.test(chkText) && /Не понял строк: 1/.test(chkText) && /Подстановки для первого клиента: Данияр/.test(chkText), chkText);
+  await shot(st, "14-broadcast-check");
+  await st.fill("#f_to1", "8 705 999 00 00"); await st.click("#b_test");
+  await st.waitForSelector("#tout .msg");
+  ok("пробная отправка себе", /Шаблон отправлен на \+77059990000/.test(await st.locator("#tout").innerText()) && S.sentTo("77059990000").includes("[шаблон promo_october]"));
+  await st.click("#b_make");
+  await st.waitForSelector("#fout .msg.e");
+  ok("без галочки согласия рассылка не создаётся", /клиенты компании/.test(await st.locator("#fout").innerText()));
+  await st.check("#f_ok"); await st.click("#b_make");
+  await st.waitForSelector("#list .card");
+  ok("рассылка создана и готова к запуску", /готова к запуску/.test(await st.locator("#list .card").first().innerText()));
+  await st.click("#list .card >> text=Запустить");
+  await st.waitForFunction(() => /идёт/.test(document.querySelector("#list .card").textContent));
+  await shot(st, "15-broadcast-running");
+  await fetch(url + "/_cron", { method: "POST" });
+  await st.waitForFunction(() => /завершена/.test(document.querySelector("#list .card").textContent), null, { timeout: 15000 });
+  const doneText = await st.locator("#list .card").first().innerText();
+  ok("фоновая отправка: все получили шаблон, страница сама показала итог", /отправлено 3 из 3/.test(doneText) && ["77051110001", "77051110002", "77051110003"].every(x => S.sentTo(x).includes("[шаблон promo_october]")), doneText);
+  await shot(st, "16-broadcast-done");
+  await wa({ c: "kairat", from: "77051110002", name: "Айгерим", text: "Здравствуйте, хочу по акции" });
+  await st.goto(url + "/inbox?c=kairat#wa:77051110002");
+  await st.waitForSelector("#msgs .sys");
+  ok("в пульте в чате клиента, ответившего на рассылку, видна подсказка с её текстом", /Рассылка «Октябрь: скидка»/.test(await st.locator("#msgs .sys").innerText()) && /5 000 ₸/.test(await st.locator("#msgs .sys").innerText()));
+  await shot(st, "17-inbox-after-broadcast");
+  net.graphReply = null;
+
   // ---- проверка запуска: чек-лист и экзамен
   await p.goto(url + "/launch?c=kairat");
   await p.waitForSelector("#checks .ck");

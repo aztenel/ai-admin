@@ -454,6 +454,317 @@ section("проверка запуска");
   net.graphReply = null;
 }
 
+// ====== 7. Рассылки: шаблоны WhatsApp по списку
+section("рассылки");
+{
+  const own = S.browser(); await own.go("/studio?key=" + OWNER);
+  const staff = S.browser(); const kk = await (await own.post("/api/studio/key", { id: "kairat" })).json(); await staff.go("/inbox?c=kairat&key=" + kk.key);
+  const dentStaff = S.browser(); await dentStaff.go("/inbox?c=dent&key=dent-staff-key");
+  const J = async r => r.json();
+  const tpls = () => net.graph.filter(g => g.body && g.body.type === "template");
+  const bcOf = id => S.kv.json("bc:kairat:" + id), setBc = (id, f) => { const b = bcOf(id); f(b); S.kv.mem.set("bc:kairat:" + id, JSON.stringify(b)); };
+  const run = () => S.kv.json("bcrun") || [];
+  const LIST = "8 701 111 00 01, Айгерим\n+7 (701) 111-00-02;Данияр Серикович\n77011110003\tне записывать\n7011110004\nАрман 8 701 111 00 05\n87011110001, повтор\n+998 90 123 45 67, ТИМУР\nмусор\n12345\n";
+  const FORM = { c: "kairat", name: "Октябрь", tpl: "promo_october", lang: "ru", text: "Здравствуйте, {{1}}!\nВ октябре стрижка 4 500 ₸. Чтобы не получать сообщения, ответьте СТОП", params: "{имя}", recipients: LIST, cap: 240, from: 10, to: 20, consent: true };
+  const mkBc = async (over = {}, who = own) => J(await who.post("/api/bc/create", { ...FORM, ...over }));
+  const many = (n, base = 7020000000) => Array.from({ length: n }, (_, i) => "+7" + String(base + i).slice(1) + ", Клиент").join("\n"); // +7 020… не пройдёт: код с 0
+  const nums = (n, from = 1) => Array.from({ length: n }, (_, i) => "8705" + String(1000000 + from + i)).join("\n");
+
+  // --- доступ
+  ok("рассылки без входа закрыты", (await S.browser().go("/api/bc/list?c=kairat")).status === 401 && (await S.browser().go("/broadcast?c=kairat")).status === 303);
+  ok("сотрудник другой компании рассылки не видит и не создаёт", (await dentStaff.go("/api/bc/list?c=kairat")).status === 403 && (await dentStaff.post("/api/bc/create", FORM)).status === 403);
+  let r = await own.go("/broadcast?c=kairat"); const pg = await r.text();
+  ok("страница рассылок открывается владельцу и сотруднику", r.status === 200 && /Новая рассылка/.test(pg) && (await staff.go("/broadcast?c=kairat")).status === 200);
+  ok("сотрудника с чужой страницы рассылок уводит на свою", (r = await staff.go("/broadcast?c=dent")).status === 303 && r.headers.get("location") === "/broadcast?c=kairat");
+  r = await own.post("/api/bc/create", FORM, { origin: "https://evil.example" });
+  ok("запрос с чужого сайта отклонён", r.status === 403);
+
+  // --- разбор списка
+  net.reset(); net.graphReply = url => url.includes("?fields=") ? new Response(JSON.stringify({ display_phone_number: "+7 700 111 22 33", verified_name: "Barber House", quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_250" }), { status: 200 }) : null;
+  let d = await J(await own.post("/api/bc/check", FORM));
+  ok("проверка списка: номера в разных видах, повтор убран, мусор показан", d.ok === true && d.valid === 6 && d.dup === 1 && d.badN === 2 && d.bad.join("|") === "мусор|12345", JSON.stringify(d));
+  ok("имена: первое слово, ИМЯ → Имя; пометка администратора («не записывать») именем не становится", d.named === 4 && d.sample.join("|") === "+77011110001 — Айгерим|+77011110002 — Данияр|+77011110003 — без имени|+77011110004 — без имени|+77011110005 — Арман" && d.preview[0] === "Айгерим", JSON.stringify(d));
+  d = await mkBc({ consent: false, tpl: "Promo October", from: 20, to: 10, text: "", name: "" });
+  ok("создание: без согласия, с неверным названием шаблона, часами и без текста — понятные ошибки", d.ok === false && d.errors.length === 5 && /клиенты компании/.test(d.errors.join()) && /латинские/.test(d.errors.join()) && /раньше/.test(d.errors.join()), JSON.stringify(d));
+  d = await mkBc({ from: 6, to: 23 });
+  ok("ночные часы отправки не принимаются", d.ok === false && /не раньше 8:00/.test(d.errors.join()));
+  d = await mkBc({ recipients: "мусор\n12345" });
+  ok("список без номеров не принимается", d.ok === false && /нет ни одного номера/.test(d.errors.join()));
+  ok("пока ничего не отправлено и не сохранено", tpls().length === 0 && ![...S.kv.mem.keys()].some(k => k.startsWith("bc:")));
+
+  // --- сведения о номере
+  d = await J(await own.go("/api/bc/list?c=kairat"));
+  ok("страница показывает номер, качество и предел Meta", d.ready === true && d.health && d.health.limit === 250 && d.health.quality === "GREEN" && /700 111/.test(d.health.phone) && d.list.length === 0, JSON.stringify(d));
+  net.graphReply = url => url.includes("whatsapp_business_manager_messaging_limit") ? new Response(JSON.stringify({ error: { code: 100, message: "nonexisting field" } }), { status: 400 }) : url.includes("?fields=") ? new Response(JSON.stringify({ display_phone_number: "+7 700 111 22 33", messaging_limit_tier: "TIER_2K" }), { status: 200 }) : null;
+  d = await J(await own.go("/api/bc/list?c=kairat"));
+  ok("старое поле предела у Meta тоже читается (2 000)", d.health.limit === 2000, JSON.stringify(d.health));
+  net.graphReply = null;
+
+  // --- создание, пробная отправка, запуск
+  const stops0 = [...S.kv.mem.keys()].filter(k => k.startsWith("optout:kairat:")).length;
+  S.kv.mem.set("optout:kairat:77011110002", String(Date.now())); // Данияр раньше написал «стоп»
+  net.reset();
+  d = await J(await own.post("/api/bc/test", { ...FORM, to: "8 701 999 00 00" }));
+  let g = tpls();
+  ok("пробная отправка: шаблон уходит на указанный номер с номера клиента", d.ok === true && g.length === 1 && g[0].body.to === "77019990000" && g[0].url.includes("/900111/messages") && g[0].auth === "Bearer tok-kairat" && g[0].body.template.name === "promo_october" && g[0].body.template.language.code === "ru", JSON.stringify(g));
+  d = await J(await own.post("/api/bc/test", { ...FORM, to: "123" }));
+  ok("пробная отправка на неполный номер — отказ", /номер полностью/.test(d.error || ""));
+  net.graphReply = (u, i, rec) => rec.body && rec.body.type === "template" ? new Response(JSON.stringify({ error: { code: 132001, message: "Template name does not exist in the translation" } }), { status: 404 }) : null;
+  d = await J(await own.post("/api/bc/test", { ...FORM, to: "8 701 999 00 00" }));
+  ok("Meta не приняла шаблон → причина человеческим языком", /шаблон не найден или не одобрен/.test(d.error || ""), JSON.stringify(d));
+  net.graphReply = null; net.reset();
+  d = await mkBc({}, staff);
+  const id1 = d.b && d.b.id;
+  ok("рассылку создаёт и сотрудник компании: готова к запуску, список сохранён", d.ok === true && d.b.status === "ready" && d.b.total === 6 && d.dup === 1 && d.bad === 2 && (S.kv.json("bcr:kairat:" + id1 + ":0") || []).length === 6 && S.kv.meta.get("bc:kairat:" + id1).status === "ready", JSON.stringify(d));
+  ok("до запуска ничего не уходит, даже по фоновой задаче", (await S.cron(), tpls().length === 0));
+  d = await J(await staff.post("/api/bc/act", { c: "kairat", id: id1, act: "start" }));
+  ok("запуск: рассылка идёт, стоит в очереди фоновой отправки, её текст запомнен для ИИ и пульта", d.ok === true && d.b.status === "running" && run().length === 1 && /4 500/.test(S.kv.json("bclast:kairat").text), JSON.stringify([d, run()]));
+  net.reset(); await S.cron(); g = tpls();
+  const b1 = bcOf(id1);
+  ok("фоновая задача отправила шаблон всем, кроме попросившего не писать", g.length === 5 && !g.some(x => x.body.to === "77011110002") && g.every(x => x.url.includes("/900111/messages") && x.auth === "Bearer tok-kairat"), JSON.stringify(g.map(x => x.body.to)));
+  ok("подстановка: имя из списка, без имени — «уважаемый клиент»", g.find(x => x.body.to === "77011110001").body.template.components[0].parameters[0].text === "Айгерим" && g.find(x => x.body.to === "77011110003").body.template.components[0].parameters[0].text === "уважаемый клиент" && g.find(x => x.body.to === "998901234567").body.template.components[0].parameters[0].text === "Тимур", JSON.stringify(g.map(x => x.body.template.components)));
+  ok("рассылка завершена: счётчики верные, очередь пуста, итог ушёл в Telegram", b1.status === "done" && b1.sent === 5 && b1.skipped === 1 && b1.failed === 0 && b1.pos === 6 && run().length === 0 && net.tg.some(x => /Рассылка «Октябрь» завершена/.test(x.text) && /Отправлено: 5 из 6/.test(x.text) && /просили не писать\): 1/.test(x.text)), JSON.stringify([b1, net.tg]));
+  await S.cron(); await S.cron();
+  ok("повторные запуски фоновой задачи ничего не отправляют", tpls().length === 5);
+  d = await J(await own.post("/api/bc/act", { c: "kairat", id: id1, act: "start" }));
+  ok("завершённую рассылку нельзя запустить снова", /нельзя запустить/.test(d.error || ""));
+  d = await J(await own.go("/api/bc/list?c=kairat"));
+  ok("в списке рассылок — итог и счётчик отправленного за сутки", d.list.length === 1 && d.list[0].status === "done" && d.list[0].sent === 5 && d.used === 5 && d.stops === stops0 + 1, JSON.stringify(d));
+
+  // --- порции, предел на 24 часа
+  net.reset();
+  d = await mkBc({ name: "Большая", recipients: nums(45), cap: 35 });
+  const id2 = d.b.id;
+  await own.post("/api/bc/act", { c: "kairat", id: id2, act: "start" });
+  await S.cron(); const n1 = tpls().length; await S.cron(); const n2 = tpls().length; await S.cron(); await S.cron(); const n3 = tpls().length;
+  let b2 = bcOf(id2);
+  ok("порциями по 20; предел 35 за сутки учитывает и прошлую рассылку (5): ушло 30, дальше ожидание", n1 === 20 && n2 === 30 && n3 === 30 && b2.status === "running" && b2.pos === 30 && /За последние 24 часа отправлено 35 — это предел \(35\)/.test(b2.waitNote || ""), JSON.stringify([n1, n2, n3, b2]));
+  ok("никто не получил сообщение дважды", new Set(tpls().map(x => x.body.to)).size === 30);
+  const puts0 = S.kv.ops.put; await S.cron(); await S.cron();
+  ok("пока ждём, фоновая задача хранилище не пишет", S.kv.ops.put === puts0 && tpls().length === 30);
+  { const q = S.kv.json("bcq:kairat"), old = {}; for (const [k, v] of Object.entries(q)) old[+k - 200] = v; S.kv.mem.set("bcq:kairat", JSON.stringify(old)); } // прошли сутки
+  await S.cron(); b2 = bcOf(id2);
+  ok("через сутки отправка продолжилась сама и дошла до конца", tpls().length === 45 && b2.status === "done" && b2.sent === 45 && !b2.waitNote && new Set(tpls().map(x => x.body.to)).size === 45, JSON.stringify(b2));
+
+  // --- часы отправки (сейчас 12:00)
+  net.reset(); S.kv.mem.delete("bcq:kairat");
+  d = await mkBc({ name: "Вечер", recipients: nums(3, 100), from: 14, to: 20 }); const id3 = d.b.id;
+  await own.post("/api/bc/act", { c: "kairat", id: id3, act: "start" }); await S.cron();
+  ok("вне часов отправки ничего не уходит, названо время продолжения", tpls().length === 0 && /с 14:00 до 20:00 по Астане. Продолжу в 14:00/.test(bcOf(id3).waitNote || ""), JSON.stringify(bcOf(id3)));
+  d = await mkBc({ name: "Утро", recipients: nums(3, 200), from: 8, to: 11 }); const id4 = d.b.id;
+  await own.post("/api/bc/act", { c: "kairat", id: id4, act: "start" }); await S.cron(); await S.cron();
+  ok("после окончания часов отправки — «продолжу завтра»", tpls().length === 0 && /Продолжу завтра в 8:00/.test(bcOf(id4).waitNote || ""), JSON.stringify(bcOf(id4)));
+  d = await J(await own.post("/api/bc/act", { c: "kairat", id: id3, act: "delete" }));
+  ok("идущую рассылку удалить нельзя — сначала остановить", /Сначала остановите/.test(d.error || ""));
+  await own.post("/api/bc/act", { c: "kairat", id: id3, act: "stop" }); await own.post("/api/bc/act", { c: "kairat", id: id4, act: "pause" });
+  ok("остановка и пауза убирают рассылку из фоновой очереди", run().length === 0 && bcOf(id3).status === "stopped" && bcOf(id4).status === "paused");
+  d = await J(await own.post("/api/bc/act", { c: "kairat", id: id3, act: "start" }));
+  ok("остановленную совсем рассылку запустить нельзя", /нельзя запустить/.test(d.error || ""));
+  d = await J(await own.post("/api/bc/act", { c: "kairat", id: id3, act: "delete" }));
+  ok("удаление стирает и рассылку, и список номеров", d.gone === true && !S.kv.mem.has("bc:kairat:" + id3) && !S.kv.mem.has("bcr:kairat:" + id3 + ":0"));
+  await own.post("/api/bc/act", { c: "kairat", id: id4, act: "delete" });
+
+  // --- ошибки Meta
+  const fresh = async (name, n, from, over = {}) => { net.reset(); S.kv.mem.delete("bcq:kairat"); const x = await mkBc({ name, recipients: nums(n, from), ...over }); await own.post("/api/bc/act", { c: "kairat", id: x.b.id, act: "start" }); return x.b.id; };
+  const failTpl = (code, when = () => true, status = 400) => { net.graphReply = (u, i, rec) => rec.body && rec.body.type === "template" && when(rec.body) ? new Response(JSON.stringify({ error: { code, message: "err " + code } }), { status }) : null; };
+  let id = await fresh("Шаблон не одобрен", 4, 300);
+  failTpl(132001); await S.cron();
+  let b = bcOf(id);
+  ok("шаблон не одобрен → пауза после первой же попытки, получатель остаётся в очереди, администратору — сигнал с причиной", b.status === "paused" && b.pos === 0 && b.failed === 0 && tpls().length === 1 && /шаблон не найден или не одобрен/.test(b.note) && run().length === 0 && net.tg.some(x => /Рассылка «Шаблон не одобрен» остановлена/.test(x.text) && /132001/.test(x.text)), JSON.stringify([b, net.tg]));
+  net.graphReply = null; await S.cron();
+  ok("на паузе ничего не уходит", tpls().length === 1);
+  await own.post("/api/bc/act", { c: "kairat", id, act: "start" }); await S.cron(); b = bcOf(id);
+  ok("после исправления и «Продолжить» рассылка дошла до всех, никто не потерян", b.status === "done" && b.sent === 4 && b.failed === 0 && !b.note, JSON.stringify(b));
+
+  id = await fresh("Подстановка", 4, 400);
+  const bad1 = "8705" + String(1000000 + 401);
+  failTpl(132012, x => x.to === "7" + bad1.slice(1)); await S.cron(); b = bcOf(id);
+  ok("ошибка подстановки → пауза, получатель пока в очереди", b.status === "paused" && b.pos === 1 && b.sent === 1 && b.failed === 0 && /подстановка не подходит/.test(b.note), JSON.stringify(b));
+  await own.post("/api/bc/act", { c: "kairat", id, act: "start" }); await S.cron(); b = bcOf(id);
+  ok("после «Продолжить» тот же получатель снова не прошёл → он пропущен, остальные получили", b.status === "done" && b.sent === 3 && b.failed === 1, JSON.stringify(b));
+  d = await J(await own.go("/api/bc/get?c=kairat&id=" + id + "&bad=1"));
+  ok("номера с ошибками можно посмотреть — с причиной", d.bad.length === 1 && d.bad[0].startsWith("+7705100040") && /подстановка/.test(d.bad[0]), JSON.stringify(d.bad));
+
+  id = await fresh("Скорость", 3, 500);
+  failTpl(130429); await S.cron(); b = bcOf(id);
+  ok("Meta просит помедленнее → не пауза, а ожидание 10 минут; получатель в очереди", b.status === "running" && b.pos === 0 && b.failed === 0 && b.retryAt > Date.now() + 500e3 && run().length === 1, JSON.stringify(b));
+  net.graphReply = null; await S.cron(); b = bcOf(id);
+  ok("в ожидании ничего не уходит, причина показана", tpls().length === 1 && /Meta временно не принимает сообщения — повторю в 12:1/.test(b.waitNote || ""), JSON.stringify(b));
+  setBc(id, x => { x.retryAt = Date.now() - 1; }); await S.cron(); b = bcOf(id);
+  ok("после ожидания рассылка продолжилась сама", b.status === "done" && b.sent === 3, JSON.stringify(b));
+  id = await fresh("Долгий сбой", 3, 520);
+  failTpl(131016, () => true, 500);
+  for (let i = 0; i < 6; i++) { await S.cron(); setBc(id, x => { if (x.retryAt) x.retryAt = Date.now() - 1; }); }
+  b = bcOf(id);
+  ok("Meta не принимает больше часа → пауза и сигнал", b.status === "paused" && b.pos === 0 && /больше часа не принимает/.test(b.note), JSON.stringify(b));
+  net.graphReply = null; await own.post("/api/bc/act", { c: "kairat", id, act: "stop" });
+
+  id = await fresh("Один номер не в WhatsApp", 4, 600);
+  failTpl(131026, x => x.to.endsWith("602")); await S.cron(); b = bcOf(id);
+  ok("номер не в WhatsApp → одна ошибка, остальные получили, рассылка завершена", b.status === "done" && b.sent === 3 && b.failed === 1 && b.fails["131026"] === 1 && net.tg.some(x => /Не отправлено из-за ошибок: 1/.test(x.text)), JSON.stringify(b));
+  id = await fresh("Пять подряд", 8, 700);
+  failTpl(131026); await S.cron(); b = bcOf(id);
+  ok("пять ошибок подряд → пауза (что-то не так со списком или номером)", b.status === "paused" && b.failed === 5 && b.pos === 5 && /Пять сообщений подряд/.test(b.note), JSON.stringify(b));
+  net.graphReply = null; await own.post("/api/bc/act", { c: "kairat", id, act: "stop" });
+  id = await fresh("Связь", 3, 800);
+  net.graphReply = (u, i, rec) => { if (rec.body && rec.body.type === "template") throw new Error("network down"); return null; };
+  await S.cron(); b = bcOf(id);
+  ok("связь с Meta оборвалась → получатель не повторяется (мог получить), пауза 10 минут", b.status === "running" && b.failed === 1 && b.pos === 1 && b.retryAt > Date.now(), JSON.stringify(b));
+  net.graphReply = null; setBc(id, x => { x.retryAt = Date.now() - 1; }); await S.cron(); b = bcOf(id);
+  ok("после обрыва связи остальные получили по одному сообщению", b.status === "done" && b.sent === 2 && new Set(tpls().map(x => x.body.to)).size === 3 && tpls().length === 3, JSON.stringify(b));
+
+  // --- сбой посреди порции и одновременная отправка
+  id = await fresh("Сбой", 30, 900);
+  setBc(id, x => { x.pos = 20; x.cur = [0, 20]; x.last = Date.now(); }); // прошлая порция оборвалась после отметки
+  await S.cron(); b = bcOf(id);
+  ok("оборванная порция повторно не уходит: помечена «неизвестно», отправка идёт дальше", b.status === "done" && b.unsure === 20 && b.sent === 10 && tpls().length === 10 && net.tg.some(x => /Неизвестно \(сбой во время отправки\): до 20/.test(x.text)), JSON.stringify(b));
+  id = await fresh("Замок", 3, 1000);
+  S.kv.mem.set("bcl:kairat:" + id, "other");
+  d = await J(await own.post("/api/bc/tick", { c: "kairat", id }));
+  ok("пока идёт другая отправка этой рассылки, вторая не начинается", d.state === "busy" && tpls().length === 0, JSON.stringify(d));
+  S.kv.mem.delete("bcl:kairat:" + id);
+  d = await J(await own.go("/api/bc/get?c=kairat&id=" + id));
+  ok("фон работает — подсказки про ручную отправку нет", d.b.stalled === false);
+  setBc(id, x => { x.startedAt = Date.now() - 200e3; });
+  d = await J(await own.go("/api/bc/get?c=kairat&id=" + id));
+  ok("фон молчит больше двух минут → страница предложит отправить порцию вручную", d.b.stalled === true);
+  S.kv.mem.delete("bcrun");
+  d = await J(await own.post("/api/bc/tick", { c: "kairat", id }));
+  ok("порция вручную отправляет и завершает рассылку", d.state === "done" && d.b.sent === 3 && tpls().length === 3, JSON.stringify(d));
+  ok("после запуска замок снят", !S.kv.mem.has("bcl:kairat:" + id));
+
+  // --- сигналы Meta
+  const signal = (field, value, statuses) => S.waPost("/wa/kairat", [], { secret: "sec-kairat", raw: JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "waba1", changes: [statuses ? { field: "messages", value: { messaging_product: "whatsapp", metadata: { phone_number_id: "900111" }, statuses } } : { field, value }] }] }) });
+  id = await fresh("Сигнал", 30, 1100);
+  await S.cron();
+  ok("первая порция ушла", tpls().length === 20);
+  net.tg.length = 0;
+  r = await signal("message_template_status_update", { event: "PAUSED", message_template_id: 1, message_template_name: "promo_october", message_template_language: "ru", reason: "NONE", other_info: { title: "FIRST_PAUSE" } });
+  ok("Meta приостановила шаблон → сигнал администратору", r.status === 200 && net.tg.some(x => /Шаблон «promo_october» приостановлен Meta/.test(x.text) && /Рассылки с этим шаблоном остановлены/.test(x.text)), JSON.stringify(net.tg));
+  await S.cron(); b = bcOf(id);
+  ok("рассылка с этим шаблоном встала на паузу, больше ничего не ушло", b.status === "paused" && b.pos === 20 && tpls().length === 20 && /Сигнал от Meta: шаблон «promo_october» приостановлен/.test(b.note), JSON.stringify(b));
+  d = await J(await own.go("/api/bc/list?c=kairat"));
+  ok("сигнал виден на странице рассылок", d.hold && /приостановлен/.test(d.hold.join()), JSON.stringify(d.hold));
+  r = await own.post("/api/bc/act", { c: "kairat", id, act: "start" }); d = await J(r);
+  ok("«Продолжить» при сигнале Meta — только после подтверждения", r.status === 409 && /Всё равно продолжить/.test(d.confirm || "") && bcOf(id).status === "paused");
+  net.tg.length = 0;
+  await signal("message_template_status_update", { event: "APPROVED", message_template_name: "promo_october", message_template_language: "ru", reason: "NONE" });
+  ok("шаблон снова одобрен → сигнал снят, администратору сообщение", !S.kv.mem.has("bchold:kairat") && net.tg.some(x => /✅/.test(x.text) && /одобрен/.test(x.text)), JSON.stringify(net.tg));
+  await own.post("/api/bc/act", { c: "kairat", id, act: "start" }); await S.cron();
+  ok("после этого рассылка продолжается без подтверждения и доходит до конца", bcOf(id).status === "done" && bcOf(id).sent === 30);
+  await signal("message_template_status_update", { event: "DISABLED", message_template_name: "other_tpl", message_template_language: "ru" });
+  id = await fresh("Другой шаблон отключён", 2, 1200); await S.cron();
+  ok("сигнал о другом шаблоне эту рассылку не останавливает", bcOf(id).status === "done");
+  await signal("message_template_quality_update", { previous_quality_score: "GREEN", new_quality_score: "RED", message_template_name: "promo_october", message_template_language: "ru" });
+  net.reset(); id = (await mkBc({ name: "Качество", recipients: nums(2, 1210) })).b.id;
+  r = await own.post("/api/bc/act", { c: "kairat", id, act: "start" }); d = await J(r); await S.cron();
+  ok("качество шаблона упало до низкого → рассылка с ним не запускается без подтверждения", r.status === 409 && /качество шаблона «promo_october» — низкое/.test(d.confirm || "") && bcOf(id).status === "ready" && tpls().length === 0, JSON.stringify(d));
+  d = await J(await own.post("/api/bc/act", { c: "kairat", id, act: "start", force: true }));
+  ok("подтверждённое «Продолжить» снимает сигнал по этому шаблону, сигнал по другому остаётся", d.ok === true && S.kv.json("bchold:kairat").tpl.other_tpl && !S.kv.json("bchold:kairat").tpl.promo_october, JSON.stringify(S.kv.json("bchold:kairat")));
+  net.tg.length = 0;
+  await signal("account_update", { event: "ACCOUNT_RESTRICTION", restriction_info: [{ restriction_type: "RESTRICTED_BIZ_INITIATED_MESSAGING", expiration: 1700000000 }] });
+  ok("Meta ограничила аккаунт → администратору тревога", net.tg.some(x => /🚨/.test(x.text) && /Meta ограничила аккаунт WhatsApp \(RESTRICTED_BIZ_INITIATED_MESSAGING\)/.test(x.text)) && !!S.kv.json("bchold:kairat").all, JSON.stringify(net.tg));
+  await S.cron(); b = bcOf(id);
+  ok("идущая рассылка при этом встаёт на паузу — с любым шаблоном", b.status === "paused" && /Meta ограничила аккаунт/.test(b.note), JSON.stringify(b));
+  await own.post("/api/bc/act", { c: "kairat", id, act: "stop" }); S.kv.mem.delete("bchold:kairat");
+  await signal("account_update", { event: "PARTNER_ADDED" });
+  ok("несущественные сообщения об аккаунте ничего не останавливают", !S.kv.mem.has("bchold:kairat"));
+  net.tg.length = 0;
+  await signal("business_capability_update", { max_daily_conversations_per_business: "TIER_2K", max_phone_numbers_per_business: 2 });
+  ok("Meta изменила предел → администратору сообщение", net.tg.some(x => /max_daily_conversations_per_business: TIER_2K/.test(x.text)), JSON.stringify(net.tg));
+
+  // --- отказ от рекламы
+  await signal("user_preferences", { messaging_product: "whatsapp", metadata: { phone_number_id: "900111" }, contacts: [{ wa_id: "77051001301" }], user_preferences: [{ wa_id: "77051001301", detail: "User requested to stop marketing messages", category: "marketing_messages", value: "stop", timestamp: 1731705721 }] });
+  ok("человек запретил рекламу в самом WhatsApp → он в списке «не писать»", String(S.kv.mem.get("optout:kairat:77051001301") || "").startsWith("meta:"));
+  id = await fresh("Отказники", 3, 1300); await S.cron();
+  ok("такому человеку рассылка не уходит", bcOf(id).skipped === 1 && bcOf(id).sent === 2 && !tpls().some(x => x.body.to === "77051001301"));
+  await signal("user_preferences", { user_preferences: [{ wa_id: "77051001301", category: "marketing_messages", value: "resume" }, { wa_id: "77011110002", category: "marketing_messages", value: "resume" }] });
+  ok("разрешил снова → убран из списка; «стоп», написанный боту, так не снимается", !S.kv.mem.has("optout:kairat:77051001301") && S.kv.mem.has("optout:kairat:77011110002"));
+  net.reset(); net.ai = ["Хорошо."];
+  await S.waPost("/wa/kairat", { from: "77051001302", type: "button", button: { text: "Остановить рекламу", payload: "STOP" } }, { secret: "sec-kairat", pnid: "900111" });
+  await S.waText("/wa/kairat", "77051001303", "Stop promotions", { secret: "sec-kairat", pnid: "900111" });
+  await S.waText("/wa/kairat", "77051001304", "отписаться от рассылки", { secret: "sec-kairat", pnid: "900111" });
+  ok("кнопка отказа в шаблоне («Остановить рекламу», Stop promotions) и «отписаться от рассылки» — это «стоп»", ["77051001302", "77051001303", "77051001304"].every(x => S.kv.mem.has("optout:kairat:" + x)) && net.gemini.length === 0, JSON.stringify([...S.kv.mem.keys()].filter(k => k.startsWith("optout:"))));
+
+  // --- недоставленные (приходят позже)
+  S.kv.mem.delete("bchold:kairat"); net.reset();
+  await signal("", null, [{ id: "wamid.1", status: "failed", recipient_id: "77051001401", errors: [{ code: 131026, title: "Message undeliverable" }] }, { id: "wamid.2", status: "failed", recipient_id: "77051001402", errors: [{ code: 131050, title: "User opted out" }] }, { id: "wamid.3", status: "delivered", recipient_id: "77051001403" }]);
+  d = await J(await own.go("/api/bc/list?c=kairat"));
+  ok("недоставленные считаются по причинам и видны на странице", d.fail && d.fail.n === 2 && d.fail.codes.some(x => x.code === 131026 && /не в WhatsApp/.test(x.hint)), JSON.stringify(d.fail));
+  ok("«человек запретил рекламу» из отчёта о доставке → в список «не писать»; безобидные причины рассылки не останавливают", S.kv.mem.has("optout:kairat:77051001402") && !S.kv.mem.has("bchold:kairat"));
+  await signal("", null, [{ id: "wamid.4", status: "failed", recipient_id: "77051001404", errors: [{ code: 131048, title: "Spam rate limit hit" }] }]);
+  ok("опасная причина недоставки (жалобы на спам) → рассылки остановлены, администратору тревога", (S.kv.json("bchold:kairat") || {}).all && /жаловались/.test(S.kv.json("bchold:kairat").all.why) && net.tg.some(x => /Рассылки остановлены/.test(x.text)), JSON.stringify([S.kv.json("bchold:kairat"), net.tg]));
+  S.kv.mem.delete("bchold:kairat");
+
+  // --- ИИ и пульт знают текст рассылки
+  net.reset(); net.ai = ["Да, в октябре стрижка 4 500 ₸. Записать вас?"];
+  await S.waText("/wa/kairat", "77051001501", "Здравствуйте, это по вашей акции. Хочу", { secret: "sec-kairat", pnid: "900111" });
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("клиент отвечает на рассылку: ИИ видит её текст", /Недавно компания отправила клиентам в WhatsApp такое сообщение/.test(sys) && /В октябре стрижка 4 500 ₸/.test(sys), sys.slice(-600));
+  ok("цена из рассылки — не выдумка: ответ бота с ней проходит защиту", S.sentTo("77051001501").some(x => /4 500 ₸/.test(x)), JSON.stringify(S.sentTo("77051001501")));
+  d = await J(await own.go("/api/inbox/chat?c=kairat&ch=wa&id=77051001501"));
+  ok("в пульте в этом чате видна подсказка о рассылке", d.promo && /4 500/.test(d.promo.text) && !!d.promo.name, JSON.stringify(d.promo));
+  net.reset(); net.ai = ["Стрижка стоит 4 500 ₸."];
+  d = await S.chat("kairat", "bc-web-1", "Сколько стоит стрижка?");
+  ok("в чате на сайте текст рассылки ИИ не подмешивается: цены 4 500 в фактах нет", !/4 500/.test(d.reply) && !/Недавно компания отправила/.test(net.gemini[0].systemInstruction.parts[0].text), d.reply);
+
+  // --- шаблон с картинкой, перевод строки в подстановке
+  id = await fresh("Картинка", 1, 1600, { img: "https://example.com/promo.jpg", params: "{имя}\nдо 15   октября", fallback: "друг" }); await S.cron();
+  const comp = tpls()[0].body.template.components;
+  ok("картинка уходит в шапке шаблона, подстановки — по порядку, запасное имя — своё", comp[0].type === "header" && comp[0].parameters[0].image.link === "https://example.com/promo.jpg" && comp[1].parameters.map(x => x.text).join("|") === "друг|до 15 октября", JSON.stringify(comp));
+  d = await mkBc({ img: "http://example.com/a.jpg" });
+  ok("картинка не по https не принимается", d.ok === false && /https/.test(d.errors.join()));
+  d = await mkBc({ params: "", name: "Без подстановок", recipients: nums(1, 1700) }); await own.post("/api/bc/act", { c: "kairat", id: d.b.id, act: "start" }); net.reset(); await S.cron();
+  ok("шаблон без подстановок уходит без блока components", tpls().length === 1 && !("components" in tpls()[0].body.template), JSON.stringify(tpls()[0].body));
+
+  // --- две рассылки сразу: по очереди, предел общий
+  net.reset(); S.kv.mem.delete("bcq:kairat");
+  const A = (await mkBc({ name: "Первая", recipients: nums(25, 2000), cap: 60 })).b.id, B = (await mkBc({ name: "Вторая", recipients: nums(25, 2100), cap: 60 })).b.id;
+  await own.post("/api/bc/act", { c: "kairat", id: A, act: "start" }); await own.post("/api/bc/act", { c: "kairat", id: B, act: "start" });
+  await S.cron();
+  ok("за один запуск фоновой задачи — одна порция одной рассылки", tpls().length === 20);
+  for (let i = 0; i < 6; i++) await S.cron();
+  ok("обе рассылки дошли до конца, каждый номер — один раз", bcOf(A).status === "done" && bcOf(B).status === "done" && tpls().length === 50 && new Set(tpls().map(x => x.body.to)).size === 50, JSON.stringify([bcOf(A), bcOf(B)]));
+
+  // --- настоящий KV не даёт писать один ключ чаще раза в секунду: маленькая порция уходит быстрее
+  net.reset(); S.kv.mem.delete("bcq:kairat"); S.kv.strict.last.clear(); S.kv.strict.hits = 0; S.kv.strict.on = true;
+  d = await mkBc({ name: "Быстрая", recipients: nums(2, 2300) });
+  await own.post("/api/bc/act", { c: "kairat", id: d.b.id, act: "start" }); await S.cron();
+  S.kv.strict.on = false;
+  ok("при лимите «одна запись ключа в секунду» рассылка всё равно завершается и итог сохраняется", bcOf(d.b.id).status === "done" && bcOf(d.b.id).sent === 2 && tpls().length === 2 && S.kv.strict.hits > 0 && run().length === 0, JSON.stringify([bcOf(d.b.id), S.kv.strict.hits, run()]));
+
+  // --- клиент без WhatsApp и общий номер
+  d = await J(await own.go("/api/bc/list?c=dent"));
+  ok("у клиента без WhatsApp рассылки недоступны — с объяснением", d.ready === false && /WA_TOKEN_DENT/.test(d.why) && d.health === null);
+  d = await J(await own.post("/api/bc/create", { ...FORM, c: "dent" })); const idD = d.b.id;
+  d = await J(await own.post("/api/bc/act", { c: "dent", id: idD, act: "start" }));
+  ok("и запустить её нельзя", /не подключён/.test(d.error || ""));
+  // пустая очередь: фоновая задача делает одно чтение и выходит
+  S.kv.mem.delete("bcrun"); const g0 = S.kv.ops.get, p0 = S.kv.ops.put; await S.cron();
+  ok("когда рассылок нет, фоновая задача только проверяет очередь (одно чтение)", S.kv.ops.get - g0 === 1 && S.kv.ops.put === p0);
+  // удалённый клиент в очереди — убирается
+  S.kv.mem.set("bcrun", JSON.stringify([{ c: "ghost", id: "x1" }, { c: "kairat", id: "nope" }])); await S.cron();
+  ok("очередь чистится от удалённых клиентов и рассылок", run().length === 0, JSON.stringify(run()));
+}
+{
+  // общий номер воркера (прежний режим): рассылка для клиента, закреплённого за номером
+  const S2 = mk({ WA_TOKEN: "wat", PHONE_NUMBER_ID: "111", WA_CLIENT: "barber", APP_SECRET: "sec" });
+  const own = S2.browser(); await own.go("/studio?key=owner-key-123456");
+  net.reset();
+  let d = await (await own.post("/api/bc/create", { c: "barber", name: "Общий номер", tpl: "hello_world", lang: "en_US", text: "Hello World", params: "", recipients: "87051234567", cap: 10, from: 10, to: 20, consent: true })).json();
+  await own.post("/api/bc/act", { c: "barber", id: d.b.id, act: "start" }); await S2.cron();
+  const g = net.graph.filter(x => x.body && x.body.type === "template");
+  ok("общий номер воркера: рассылка уходит с него", g.length === 1 && g[0].url.includes("/111/messages") && g[0].auth === "Bearer wat" && g[0].body.template.language.code === "en_US", JSON.stringify(g));
+  d = await (await own.post("/api/bc/create", { c: "dent", name: "Чужой", tpl: "hello_world", lang: "ru", text: "x", params: "", recipients: "87051234567", cap: 10, from: 10, to: 20, consent: true })).json();
+  d = await (await own.post("/api/bc/act", { c: "dent", id: d.b.id, act: "start" })).json();
+  ok("с общего номера нельзя разослать от имени другого клиента", /не подключён/.test(d.error || ""));
+  // сигнал Meta на общий вебхук
+  net.reset();
+  const body = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "w", changes: [{ field: "user_preferences", value: { user_preferences: [{ wa_id: "77059990001", category: "marketing_messages", value: "stop" }] } }] }] });
+  await S2.waPost("/", [], { secret: "sec", raw: body });
+  ok("общий вебхук: отказ от рекламы записан за клиентом номера", S2.kv.mem.has("optout:barber:77059990001"));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);

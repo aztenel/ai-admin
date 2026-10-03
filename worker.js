@@ -385,7 +385,7 @@ const HANDOFF = new RegExp([
 // «можно оплатить через администратора?», «запись только через администратора?» — вопросы, а не просьба позвать человека
 const HANDOFF_NOT = /(оплат|купить|куплю|сертификат|предоплат|запис[ьи]\s+только|только\s+через)[^.!?]{0,40}через\s+(живого\s+)?(человека|оператора|администратора|менеджера)|через\s+(оператора|администратора|менеджера)\s+(или|kaspi|каспи)|(одного|двух|тр[её]х|\d+)\s+человека?\s+на\s+\d/i;
 const wantsHuman = (t, lastBot) => (HANDOFF.test(t) && !HANDOFF_NOT.test(t)) || (/^адам[\s.!?]*$/i.test(String(t).trim()) && !/зовут|имя|есім|атыңыз|name/i.test(lastBot || ""));
-const STOP = /^(стоп|stop|unsubscribe|отписаться|отпишите(\s+меня)?|отпишите\s+меня\s+от\s+рассылки|не\s+пишите\s+мне(\s+больше)?|больше\s+не\s+пишите(\s+мне)?|тоқта|тоқтат)(\s*,?\s*(пожалуйста|пж|плиз|please))?[\s.!\u{1F64F}\u{1F6AB}\u{270B}\u{1F6D1}️]*$/iu;
+const STOP = /^(?:(?:я\s+)?(?:хочу|прошу)\s+)?(стоп|stop|unsubscribe|отписаться(\s+от\s+(рассыл\S+|рекламы))?|отпишите(\s+меня)?|отпишите\s+меня\s+от\s+рассылки|не\s+пишите\s+мне(\s+больше)?|больше\s+не\s+пишите(\s+мне)?|тоқта|тоқтат|stop\s+promotions?|остановить\s+(рекламу|рассылк\S+|рекламные\s+\S+)|отказаться\s+от\s+(рассыл\S+|рекламы|рекламных\s+\S+)|не\s+(присылайте|отправляйте|шлите)\s+(мне\s+)?(рекламу|рассылк\S+)|жарнаманы\s+тоқтату)(\s*,?\s*(пожалуйста|пж|плиз|please))?[\s.!\u{1F64F}\u{1F6AB}\u{270B}\u{1F6D1}️]*$/iu;
 const START = /^(старт|start|начать|включить)[\s.!]*$/i; // после «стоп» клиент может снова включить автоответы
 const PAUSE_MS = 2 * 3600e3;
 
@@ -1695,13 +1695,17 @@ function histMeta(h) {
   return m;
 }
 async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
+// у KV лимит — одна запись ключа в секунду (иначе отказ 429): действие повторяется один раз через секунду. Чтение и изменение — внутри f, чтобы вторая попытка шла по свежим данным
+const kvRetry = async f => { try { return await f(); } catch (e) { console.log("kv retry", String(e).slice(0, 120)); await new Promise(r => setTimeout(r, 1100)); return f(); } };
 // дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
 async function logTurns(store, key, add, patch) {
-  const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
-  h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
-  if (patch) patch(h.profile, h);
-  await putHist(store, key, h);
-  return h;
+  return kvRetry(async () => {
+    const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
+    h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+    if (patch) patch(h.profile, h);
+    await putHist(store, key, h);
+    return h;
+  });
 }
 const WA_MAX_DAY = 80; // сообщений в сутки от одного номера WhatsApp, на которые бот отвечает сам
 // ИИ обещает, что с клиентом свяжется администратор
@@ -1860,6 +1864,14 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       ctx.slots = []; // расписание недоступно: время не выдумываем, берём контакты для звонка
       if (!opts.test) await notifyOnce(env, "alt:" + c.id, `⚠️ Altegio не отвечает — ${c.name}\n${String(e.message || e).slice(0, 200)}\nБот не видит расписание и просит клиентов оставить телефон.`, c.id);
     }
+  }
+
+  // недавняя рассылка: клиент может отвечать на неё, поэтому ИИ знает её текст; условия акции бот называет только по нему
+  if (wa && !opts.test) {
+    try {
+      const bl = JSON.parse((await store.get("bclast:" + c.id)) || "null");
+      if (bl && bl.text && nowMs - bl.at < 7 * 86400e3) cc = { ...cc, facts: cc.facts + `\n\nНедавно компания отправила клиентам в WhatsApp такое сообщение (клиент мог его получить и отвечать на него): «${bl.text}». Условия из него называй только так, как в нём написано; чего в нём нет — уточнит администратор.` };
+    } catch (e) { console.log("bclast", String(e)); }
   }
 
   const lang = detectLang(text, saved.profile.lang);
@@ -2859,6 +2871,20 @@ const leadsKey = env => env.LEADS_KEY || env.VERIFY_TOKEN;
 
 export default {
   async fetch(request, env, ctx) {
+    try { return await route(request, env, ctx); }
+    catch (e) { // необработанный сбой (чаще всего — хранилище): страницы пульта и рассылок получают понятный ответ, а не пустую ошибку
+      console.log("fatal", String((e && e.stack) || e).slice(0, 800));
+      let P = ""; try { P = new URL(request.url).pathname; } catch (x) {}
+      if (P.startsWith("/api/") && P !== "/api/chat") return jsonP({ error: "Сбой на сервере — попробуйте ещё раз через минуту." }, 500);
+      throw e;
+    }
+  },
+  // раз в минуту (cron в wrangler.jsonc): фоновая отправка рассылок
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(cronRun(env).catch(e => console.log("cron", String((e && e.stack) || e))));
+  }
+};
+async function route(request, env, ctx) {
     const url = new URL(request.url), P = url.pathname, M = request.method === "HEAD" ? "GET" : request.method; // HEAD — так проверяют ссылки Meta и другие сервисы
     const authed = () => leadsKey(env) && url.searchParams.get("key") === leadsKey(env);
     try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } // боты клиентов из хранилища (паспорта) — раз в минуту
@@ -2913,6 +2939,18 @@ export default {
       const s = await sessionRead(env, request);
       return s ? launchApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
+    // ---- рассылки
+    if (M === "GET" && P === "/broadcast") {
+      const a = await enter(request, env, url);
+      if (a.res) return a.res;
+      const c = url.searchParams.get("c");
+      if (a.s.role === "staff" && c !== a.s.cid) return new Response(null, { status: 303, headers: { location: "/broadcast?c=" + a.s.cid } });
+      return hasClient(c) ? page(bcPage()) : new Response(null, { status: 303, headers: { location: a.s.role === "owner" ? "/studio" : "/broadcast?c=" + a.s.cid } });
+    }
+    if (P.startsWith("/api/bc/")) {
+      const s = await sessionRead(env, request);
+      return s ? bcApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
@@ -2962,8 +3000,7 @@ export default {
       return html(hasClient(id) ? chatPage(id, CLIENTS[id]) : portfolioPage());
     }
     return new Response("Not found", { status: 404 });
-  }
-};
+}
 
 const cleanSid = s => String(s || "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 64);
 
@@ -2999,9 +3036,11 @@ async function nicheOf(env, channel, fromDigits, wx) {
 }
 async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
 async function setPause(env, hk, until) {
-  const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
-  h.profile = h.profile || {}; h.profile.pausedUntil = until;
-  await putHist(env.KV, hk, h);
+  await kvRetry(async () => {
+    const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
+    h.profile = h.profile || {}; h.profile.pausedUntil = until;
+    await putHist(env.KV, hk, h);
+  });
 }
 
 // Сбой хранилища или сети не должен оставить клиента WhatsApp без ответа, а администратора — без сигнала
@@ -3124,7 +3163,16 @@ async function handleWhatsApp(body, env, wx = {}) {
   const jobs = [];
   for (const entry of (body && body.entry) || []) for (const ch of (entry && entry.changes) || []) {
     const val = (ch && ch.value) || {};
-    for (const st of val.statuses || []) if (st && st.status === "failed") { const e = (st.errors || [])[0] || {}; await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details); }
+    if (ch && ch.field && ch.field !== "messages") { // не сообщение, а сигнал Meta: шаблон приостановлен, аккаунт ограничен, человек запретил рекламу
+      try { await waSignal(env, wx, String(ch.field), val); } catch (e) { console.log("wa signal", String((e && e.stack) || e)); }
+      continue;
+    }
+    const fails = (val.statuses || []).filter(st => st && st.status === "failed").map(st => { const e = (st.errors || [])[0] || {}; return { code: +e.code || 0, to: String(st.recipient_id || "").replace(/\D/g, ""), e }; });
+    if (fails.length) {
+      const e = fails[0].e;
+      await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details);
+      try { await waFailed(env, wx, fails); } catch (x) { console.log("wa failed", String((x && x.stack) || x)); }
+    }
     const names = new Map((val.contacts || []).map(k => [k && k.wa_id, (k && k.profile && k.profile.name) || ""]));
     const pnid = (val.metadata && val.metadata.phone_number_id) || "";
     for (const msg of val.messages || []) if (msg && msg.from && msg.id) jobs.push({ msg, wx: { ...wx, pnid: wx.pnid || pnid, name: names.get(msg.from) || "" } });
@@ -3348,16 +3396,17 @@ function privacyPage(env) {
   const mail = env.OWNER_EMAIL ? `<a href="mailto:${esc(env.OWNER_EMAIL)}">${esc(env.OWNER_EMAIL)}</a>` : "контакт владельца сервиса";
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Политика конфиденциальности — AI-администратор</title>
 <style>${BASE_CSS}.w{max-width:720px;margin:0 auto;padding:24px 16px 48px;line-height:1.55}h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:22px 0 6px}p,li{color:var(--ink)}.m{color:var(--muted)}</style></head><body><div class="w">
-<h1>Политика конфиденциальности</h1><p class="m">Сервис «AI-администратор» · редакция от 03.10.2026</p>
+<h1>Политика конфиденциальности</h1><p class="m">Сервис «AI-администратор» · редакция от 04.10.2026</p>
 <p>AI-администратор — автоматический ассистент, который отвечает в WhatsApp и в веб-чате от имени компании (клиники, салона, автосервиса и т.п.): рассказывает об услугах и ценах и принимает заявки на запись. Оператор сервиса: ${owner}. Связь: ${mail}.</p>
 <h2>Какие данные мы обрабатываем</h2><ul><li>номер телефона WhatsApp и имя профиля;</li><li>текст сообщений, которые вы отправляете;</li><li>данные для записи, которые вы сами сообщаете: имя, желаемая услуга, дата и время.</li></ul>
-<p>Голосовые сообщения, фото и файлы бот не распознаёт и не сохраняет — он только сообщает администратору, что они пришли.</p>
-<h2>Зачем</h2><p>Чтобы ответить на ваш вопрос и передать заявку на запись администратору компании. Мы не используем данные для рекламы, не продаём и не передаём их третьим лицам для их собственных целей.</p>
+<p>Голосовые сообщения, фото и файлы бот не распознаёт. В переписке остаётся отметка о том, что вы их прислали; сам файл администратор компании может открыть из переписки, пока его хранит WhatsApp. Копий файлов сервис не делает.</p>
+<h2>Зачем</h2><p>Чтобы ответить на ваш вопрос, записать вас или передать заявку администратору компании. Переписку с ботом видят администраторы этой компании: они могут продолжить разговор и ответить вам сами. Сервис не продаёт данные и не передаёт их третьим лицам для их собственных целей.</p>
+<h2>Сообщения от компании</h2><p>Компания может сама написать вам в WhatsApp — напомнить о записи, сообщить новости или предложение. Такие сообщения получают только её клиенты, оставлявшие компании свой номер. Чтобы больше их не получать, ответьте «стоп»: отметка об отказе хранится бессрочно, и рассылки компании вам приходить не будут.</p>
 <h2>Кто ещё участвует в обработке</h2><ul><li>Meta (WhatsApp Business Platform) — доставка сообщений;</li><li>Google (Gemini API) — формирование ответа по тексту переписки; номер телефона в модель не передаётся;</li><li>Cloudflare — хостинг и хранение истории переписки;</li><li>Telegram — уведомления администратору компании: о заявке, а также текст вашего сообщения, когда на него должен ответить человек (вы попросили администратора или написали «стоп»);</li><li>Altegio — расписание компании, если она им пользуется: при записи туда передаются имя, номер телефона, услуга и время.</li></ul>
-<h2>Сколько храним</h2><ul><li>история переписки — 7 дней после последнего сообщения; если вы написали «стоп» — 30 дней, чтобы бот помнил о вашей просьбе;</li><li>заявки на запись и отметка о согласии — 30 дней;</li><li>затем данные удаляются автоматически.</li></ul>
-<h2 id="delete">Ваши права и удаление данных</h2><ul><li>напишите боту «стоп» — он перестанет отвечать вам автоматически (ваши следующие сообщения увидит администратор); чтобы бот снова отвечал, напишите «старт»;</li><li>напишите «администратор» — с вами свяжется живой сотрудник;</li><li>чтобы узнать, какие данные о вас хранятся, или удалить их, напишите на ${mail} с номера или указанием номера телефона — удалим в течение 10 дней.</li></ul>
+<h2>Сколько храним</h2><ul><li>история переписки — 7 дней после последнего сообщения; если вы написали «стоп» — 30 дней, чтобы бот помнил о вашей просьбе;</li><li>заявки на запись и отметка о согласии — 30 дней;</li><li>отметка об отказе от сообщений («стоп») — бессрочно, пока вы не напишете «старт»;</li><li>списки номеров, которые компания загрузила для своих сообщений клиентам, — до 180 дней;</li><li>затем данные удаляются автоматически.</li></ul>
+<h2 id="delete">Ваши права и удаление данных</h2><ul><li>напишите боту «стоп» — он перестанет отвечать вам автоматически, а компания перестанет присылать вам сообщения (ваши следующие сообщения увидит администратор); чтобы бот снова отвечал, напишите «старт»;</li><li>напишите «администратор» — с вами свяжется живой сотрудник;</li><li>чтобы узнать, какие данные о вас хранятся, или удалить их, напишите на ${mail} с номера или указанием номера телефона — удалим в течение 10 дней.</li></ul>
 <h2>Согласие</h2><p>В начале переписки бот сообщает, что вам отвечает AI-ассистент. Продолжая переписку, вы соглашаетесь на обработку данных в описанных целях.</p>
-<h2>English summary</h2><p class="m">AI Administrator is an automated assistant that answers WhatsApp and web-chat messages on behalf of a business and takes booking requests. We process your WhatsApp number, profile name and message text only to reply and pass your booking to the business. Processors: Meta (message delivery), Google Gemini (reply generation; your phone number is not sent), Cloudflare (hosting), Telegram (staff notifications, including the text of a message a human has to answer), Altegio (the business's booking schedule, if used: your name, phone number, service and time). Chat history is kept for 7 days (30 days after you send "stop", so the bot remembers your request), booking requests for 30 days, then deleted automatically. Send "stop" to opt out of automatic replies; to access or delete your data contact ${mail}.</p>
+<h2>English summary</h2><p class="m">AI Administrator is an automated assistant that answers WhatsApp and web-chat messages on behalf of a business and takes booking requests. We process your WhatsApp number, profile name and message text only to reply and pass your booking to the business; the business's staff can read the conversation and reply themselves. The business may also send WhatsApp messages (reminders, news, offers) to its own customers; reply "stop" to opt out — the opt-out mark is kept until you send "start". Voice messages, photos and files are not analysed or copied: the conversation keeps only a note that you sent them. Processors: Meta (message delivery), Google Gemini (reply generation; your phone number is not sent), Cloudflare (hosting), Telegram (staff notifications, including the text of a message a human has to answer), Altegio (the business's booking schedule, if used: your name, phone number, service and time). Chat history is kept for 7 days (30 days after you send "stop", so the bot remembers your request), booking requests for 30 days, recipient lists uploaded by the business for up to 180 days, then deleted automatically. Send "stop" to opt out of automatic replies and of the business's messages; to access or delete your data contact ${mail}.</p>
 </div></body></html>`;
 }
 
@@ -3826,7 +3875,7 @@ async function studioApi(request, env, url, s) {
     if (P === "/api/studio/check" || r.errors.length) return json({ ok: !r.errors.length, errors: r.errors, warnings: r.warnings, preview }, P === "/api/studio/save" && r.errors.length ? 400 : 200);
     all[id] = { ...cfg, v: ((old && old.v) || 0) + 1, updated: Date.now() };
     delete all[id].id;
-    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ ok: false, errors: ["не удалось сохранить — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ ok: false, errors: ["не удалось сохранить — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
     await syncClients(env, true);
     return json({ ok: true, id, warnings: r.warnings, preview });
   }
@@ -3835,7 +3884,7 @@ async function studioApi(request, env, url, s) {
     if (!Object.hasOwn(all, id)) return json({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
     const raw = crypto.getRandomValues(new Uint8Array(15)), key = [...raw].map(x => "abcdefghjkmnpqrstuvwxyz23456789"[x % 31]).join("").replace(/(.{5})(?=.)/g, "$1-");
     all[id].keyHash = await sha256Hex(key);
-    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
     await syncClients(env, true);
     return json({ ok: true, key });
   }
@@ -3844,7 +3893,7 @@ async function studioApi(request, env, url, s) {
     if (!Object.hasOwn(all, id)) return json({ error: "Такого бота нет." }, 404);
     if (String(b.confirm || "") !== id) return json({ error: "Для удаления введите идентификатор бота." }, 400);
     delete all[id];
-    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
     await syncClients(env, true);
     return json({ ok: true });
   }
@@ -3910,7 +3959,7 @@ function card(c){var d=el('div','card');d.appendChild(el('b','',c.name));d.appen
  d.appendChild(t);var r=el('div','row');
  function a(h,x,p){var e=el('a','btn'+(p?' p':''),x);e.href=h;r.appendChild(e)}
  if(c.dynamic){var b=el('button','btn p','Изменить');b.onclick=function(){openEdit(c.id)};r.appendChild(b)}
- a('/?c='+c.id,'Чат');a('/inbox?c='+c.id,'Пульт чатов');a('/leads?c='+c.id,'Заявки');if(c.dynamic)a('/launch?c='+c.id,'Проверка запуска');
+ a('/?c='+c.id,'Чат');a('/inbox?c='+c.id,'Пульт чатов');a('/leads?c='+c.id,'Заявки');if(c.dynamic){a('/broadcast?c='+c.id,'Рассылки');a('/launch?c='+c.id,'Проверка запуска')}
  d.appendChild(r);return d}
 function fill(cfg){FIELDS.forEach(function(k){var e=$('f_'+k);if(e)e.value=cfg[k]!==undefined&&cfg[k]!==null?cfg[k]:(k==='step'?60:k==='bookDays'?3:k==='booking'?'altegio':k==='niche'?'barber':'')});$('f_off').checked=!!cfg.off;rows()}
 function rows(){var b=$('f_booking').value;$('altrow').hidden=b!=='altegio';$('manrow').hidden=b==='altegio';$('steprow').hidden=b!=='manual';$('kindrow').hidden=$('f_niche').value!=='other'}
@@ -3953,10 +4002,13 @@ function waRoute(env, cid, prof) {
 async function leadPatch(env, cid, id, patch) { // статус заявки — в отдельном ключе (с метаданными) и в общем списке
   let ok = false;
   try {
-    const k = leadKey(cid, id), v = JSON.parse((await env.KV.get(k)) || "null");
-    if (v) { const nv = { ...v, ...patch }; await env.KV.put(k, JSON.stringify(nv), { expirationTtl: Math.max(3600, Math.ceil((leadTs(nv) + LEAD_TTL - Date.now()) / 1000)), metadata: { status: nv.status || "", note: clean(nv.note || "", 200) } }); ok = true; }
+    await kvRetry(async () => {
+      const k = leadKey(cid, id), v = JSON.parse((await env.KV.get(k)) || "null");
+      if (v) { const nv = { ...v, ...patch }; await env.KV.put(k, JSON.stringify(nv), { expirationTtl: Math.max(3600, Math.ceil((leadTs(nv) + LEAD_TTL - Date.now()) / 1000)), metadata: { status: nv.status || "", note: clean(nv.note || "", 200) } }); ok = true; }
+    });
   } catch (e) { console.log("lead key", String(e)); }
-  try { const list = await loadLeads(env.KV, cid), x = list.find(l => l.id === id); if (x) { Object.assign(x, patch); await saveLeads(env.KV, cid, list); ok = true; } } catch (e) { console.log("leads", String(e)); }
+  // общий список пишут все чаты клиента: при отказе «не чаще записи в секунду» читаем его заново и повторяем
+  try { await kvRetry(async () => { const list = await loadLeads(env.KV, cid), x = list.find(l => l.id === id); if (x) { Object.assign(x, patch); await saveLeads(env.KV, cid, list); ok = true; } }); } catch (e) { console.log("leads", String(e)); }
   return ok;
 }
 async function inboxApi(request, env, url, s) {
@@ -3999,7 +4051,10 @@ async function inboxApi(request, env, url, s) {
     let reqs = [];
     if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
     const open = ch === "ga" ? true : ch === "wa" ? !!p.li && now - p.li < 24 * 3600e3 : false;
+    let promo = null; // недавняя рассылка: клиент мог ответить именно на неё
+    if (ch !== "web") { try { const bl = JSON.parse((await env.KV.get("bclast:" + cid)) || "null"); if (bl && bl.text) promo = { at: bl.at, name: bl.name || "", text: bl.text }; } catch (e) {} }
     return {
+      promo,
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
       bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
       need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "" } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
@@ -4043,9 +4098,11 @@ async function inboxApi(request, env, url, s) {
     const r = await sendTo(msg);
     if (!r.ok) return jsonP({ error: r.error }, 409);
     // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
-    h = await logTurns(env.KV, hk, [{ role: "model", text: msg, t: now, by: "admin" }], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; });
+    let warn = "";
+    try { h = await logTurns(env.KV, hk, [{ role: "model", text: msg, t: now, by: "admin" }], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; }); }
+    catch (e) { console.log("inbox log", String(e)); warn = "Сообщение клиенту ушло, но не сохранилось в переписке (хранилище не ответило). Второй раз не отправляйте."; } // сообщение уже у клиента: ошибка здесь привела бы к повторной отправке
     p = h.profile || {};
-    return jsonP({ ok: true, chat: await view() });
+    return jsonP({ ok: true, chat: await view(), ...(warn ? { warn } : {}) });
   }
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
@@ -4093,8 +4150,9 @@ body{height:100dvh;display:flex;flex-direction:column}.app{flex:1;min-height:0;d
 #msgs{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:6px}.m{max-width:82%;padding:8px 11px;border-radius:14px;font-size:15px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .m.u{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}.m.b{align-self:flex-end;background:var(--bot)}.m.a{align-self:flex-end;background:var(--acc);color:#fff}.m small{display:block;font-size:11.5px;opacity:.7;margin-top:3px}.m audio,.m img{display:block;max-width:100%;margin-top:6px;border-radius:8px}
 #acts{padding:6px 12px;margin:0}#comp{display:flex;gap:8px;padding:8px 12px 12px;align-items:flex-end}#comp textarea{flex:1;min-height:46px;max-height:140px}#warn{padding:0 12px 10px}
+.sys{align-self:center;max-width:92%;font-size:13px;line-height:1.4;color:var(--muted);border:1px dashed var(--line);border-radius:10px;padding:6px 10px;white-space:pre-wrap;word-break:break-word}
 .empty{padding:28px 16px;color:var(--muted);text-align:center;line-height:1.5}</style></head><body>
-<div class="top"><b id="ttl">Чаты</b><a id="l_leads" href="/leads">Заявки</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div>
+<div class="top"><b id="ttl">Чаты</b><a id="l_leads" href="/leads">Заявки</a><a id="l_bc" href="/broadcast">Рассылки</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div>
 <div class="app"><div id="listp" class="pane"><div class="bar"><button class="chip on" id="t_need">Ждут ответа</button><button class="chip" id="t_all">Все</button><button class="chip" id="t_web">Сайт</button><button class="chip" id="t_r" title="Обновить">↻</button></div><div id="rows"><div class="empty">Загрузка…</div></div></div>
 <div id="chatp" class="pane" hidden><div class="chead"><button id="back" aria-label="Назад">←</button><div><b id="cname"></b><div id="cstate" class="mut"></div></div><a id="call" class="btn">Позвонить</a></div>
 <div id="cards"></div><div id="msgs"></div><div id="acts" class="row"></div><div id="comp"><textarea id="txt" placeholder="Сообщение клиенту"></textarea><button class="btn p" id="send">Отправить</button></div><div id="warn" class="mut"></div></div></div>
@@ -4120,7 +4178,7 @@ function render(d,scroll){var first=!chat||chat.id!==d.id||chat.ch!==d.ch,grew=!
  st.push(d.off?'бот выключен — отвечаете вы':d.stop?'клиент просил не писать автоматически':d.paused?'бот молчит до '+tm(d.paused):'отвечает бот');if(d.bookings.length)st.push('запись: '+d.bookings.join('; '));else if(d.pend.length)st.push('заявка: '+d.pend.join('; '));else if(d.booked)st.push(d.booked);
  $('cstate').textContent=st.join(' · ');var cl=$('call');if(d.phone){cl.href='tel:'+d.phone;cl.hidden=false}else cl.hidden=true;
  var K=$('cards');if(!K.querySelector('textarea')){K.textContent='';d.reqs.forEach(function(q){K.appendChild(reqCard(q))})}
- if(grew){var M=$('msgs'),atEnd=M.scrollHeight-M.scrollTop-M.clientHeight<80;M.textContent='';d.turns.forEach(function(t){var m=el('div','m '+t.r,t.x);
+ if(grew){var M=$('msgs'),atEnd=M.scrollHeight-M.scrollTop-M.clientHeight<80;M.textContent='';var pr=d.promo;d.turns.forEach(function(t){if(pr&&t.t>=pr.at){M.appendChild(el('div','sys','Рассылка'+(pr.name?' «'+pr.name+'»':'')+' от '+tm(pr.at)+' (клиент мог ответить на неё): '+pr.text));pr=null}var m=el('div','m '+t.r,t.x);
    if(t.m&&t.m.f){var u='/api/inbox/media?c='+C+'&ch='+d.ch+'&id='+d.id+'&mid='+encodeURIComponent(t.m.id);if(t.m.k==='audio'){var a=el('audio');a.controls=true;a.preload='none';a.src=u;m.appendChild(a)}else if(t.m.k==='image'){var im=el('img');im.loading='lazy';im.alt='фото';im.src=u;m.appendChild(im)}else{var l=el('a','','Открыть файл');l.href=u;l.target='_blank';l.rel='noopener';m.appendChild(el('br'));m.appendChild(l)}}
    m.appendChild(el('small','',(t.r==='a'?'Вы · ':t.r==='b'?'бот · ':'')+tm(t.t)));M.appendChild(m)});if(scroll||first||atEnd)M.scrollTop=M.scrollHeight}
  var A=$('acts');A.textContent='';function b(x,a,p){var e=el('button','btn'+(p?' p':''),x);e.onclick=function(){act(a)};A.appendChild(e)}
@@ -4133,14 +4191,14 @@ function reqCard(q){var T={cancel:'Клиент просит отменить з
   ta.value=q.kind==='cancel'?'Здравствуйте! Вашу запись отменили. Будем рады видеть вас в другой раз.':q.kind==='change'?'Здравствуйте! Вашу запись перенесли'+(w?': '+w:'')+'. Ждём вас!':'Здравствуйте! Ваша запись подтверждена: '+[q.service,q.time].filter(Boolean).join(', ')+'. Ждём вас!';
   c.appendChild(ta);var r2=el('div','row'),s1=el('button','btn p','Отправить клиенту и закрыть'),s2=el('button','btn','Закрыть без сообщения'),s3=el('button','btn','Отмена');
   s1.onclick=function(){act('done',{lead:q.id,text:ta.value})};s2.onclick=function(){act('done',{lead:q.id,text:''})};s3.onclick=function(){$('cards').textContent='';load(false)};r2.appendChild(s1);r2.appendChild(s2);r2.appendChild(s3);c.appendChild(r2)};r.appendChild(d);c.appendChild(r);return c}
-function done(d){busy=false;if(d.error){alert(d.error);return}$('cards').textContent='';render(d.chat,true);list()}
+function done(d){busy=false;if(d.error){alert(d.error);return}if(d.warn)alert(d.warn);$('cards').textContent='';render(d.chat,true);list()}
 function act(a,x){if(busy||!cur)return;busy=true;var b={c:C,ch:cur.ch,id:cur.id,act:a};if(x){b.lead=x.lead;b.text=x.text}api('/api/inbox/act',b).then(done).catch(function(){busy=false})}
 $('send').onclick=function(){var t=$('txt').value.trim();if(!t||busy||!cur)return;busy=true;api('/api/inbox/send',{c:C,ch:cur.ch,id:cur.id,text:t}).then(function(d){if(!d.error)$('txt').value='';done(d)}).catch(function(){busy=false})};
 $('txt').onkeydown=function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))$('send').onclick()};
 $('back').onclick=function(){cur=null;chat=null;history.replaceState(null,'',location.pathname+location.search);$('chatp').hidden=true;$('listp').hidden=false;list()};
 function tab(f,ch){F=f;CH=ch;['t_need','t_all','t_web'].forEach(function(i){$(i).className='chip'});$(ch==='web'?'t_web':f==='need'?'t_need':'t_all').className='chip on';list()}
 $('t_need').onclick=function(){tab('need','wa')};$('t_all').onclick=function(){tab('all','wa')};$('t_web').onclick=function(){tab('all','web')};$('t_r').onclick=function(){list();load(false)};
-if(C){$('l_leads').href='/leads?c='+C}
+if(C){$('l_leads').href='/leads?c='+C;$('l_bc').href='/broadcast?c='+C}
 api('/api/inbox/me').then(function(d){if(d.owner)$('l_st').hidden=false}).catch(function(){});
 list();var hm=/^#(wa|ga|web):([\\w-]+)$/.exec(location.hash);if(hm&&C){if(hm[1]==='web')tab('all','web');else tab('all','wa');open(hm[1],hm[2])}
 setInterval(function(){if(!document.hidden)list()},60000);setInterval(function(){if(!document.hidden&&cur&&!busy&&!$('cards').querySelector('textarea'))load(false)},15000);
@@ -4288,5 +4346,480 @@ $('b_run').onclick=async function(){var btn=$('b_run');btn.disabled=true;var ok=
   $('sum').textContent='Прошло '+ok+' из '+(n+1)+(fails.length?' · не прошло: '+fails.length:'');await sleep(1500)}
  try{await api('/api/launch/done',{c:C,pass:ok,total:CASES.length,fails:fails})}catch(e){}btn.disabled=false;$('sum').textContent='Итог: прошло '+ok+' из '+CASES.length+(fails.length?'':' — бот готов к этой части')};
 status();
+</script></body></html>`;
+}
+
+// ================= РАССЫЛКИ: шаблоны WhatsApp по списку клиентов =================
+// Написать клиенту первым официальный WhatsApp разрешает только шаблоном, который одобрила Meta. Рассылка = шаблон + список номеров.
+// Отправляет фоновая задача (cron, раз в минуту — одна порция): страницу после запуска можно закрыть. Если фон не работает, страница предложит отправить порцию вручную.
+// Правила: тем, кто написал «стоп» или запретил рекламу в самом WhatsApp, не шлём; номер в списке — один раз; есть предел на 24 часа и часы отправки;
+// при ошибках Meta и при её сигналах (шаблон приостановлен, аккаунт ограничен) рассылка сама встаёт на паузу и сообщает в Telegram.
+// Порция сначала отмечается отправленной и только потом уходит: при сбое часть клиентов не получит сообщение, зато никто не получит его дважды.
+// Ключи: bc:<клиент>:<id> — рассылка; bcr:<клиент>:<id>:<k> — получатели, по 250; bcrun — что сейчас идёт; bcq:<клиент> — сколько отправлено за сутки;
+// bchold:<клиент> — сигнал Meta «остановиться»; bcf:<клиент>:<день> — недоставленные; bclast:<клиент> — текст последней рассылки (его видит ИИ и пульт)
+const BC_CHUNK = 250, BC_MAX = 20000, BC_STALE = 150e3, BC_SLOT = 600e3, BC_DAY = 145; // получателей в ключе; предел списка; «фон молчит»; шаг учёта — 10 минут; сутки с запасом — 145 шагов
+const BC_HINT = { ...WA_HINT,
+  4: "слишком много запросов к Meta", 80007: "достигнут предел запросов аккаунта", 130429: "слишком быстрая отправка", 130472: "Meta не доставила сообщение этому человеку (её эксперимент)", 130497: "в эту страну аккаунту писать нельзя",
+  131000: "временный сбой у Meta", 131016: "сервис Meta временно недоступен", 131026: "номер не в WhatsApp или не принимает сообщения", 131042: "проблема с оплатой в кабинете Meta",
+  131048: "Meta ограничила отправку с этого номера: клиенты жаловались на сообщения", 131049: "Meta не доставила: этот человек уже получил много рекламных сообщений", 131050: "человек запретил рекламные сообщения в WhatsApp",
+  131056: "слишком много сообщений этому получателю за короткое время", 131057: "аккаунт на обслуживании у Meta", 132000: "число подстановок не совпало с шаблоном", 132001: "шаблон не найден или не одобрен на этом языке",
+  132005: "текст с подстановками получился слишком длинным", 132007: "шаблон нарушает правила WhatsApp", 132012: "подстановка не подходит шаблону (например, шаблон с картинкой, а она не указана)",
+  132015: "Meta приостановила этот шаблон из-за жалоб", 132016: "Meta отключила этот шаблон", 368: "аккаунт временно ограничен за нарушение правил" };
+const BC_TEMP = new Set([1, 2, 4, 80007, 130429, 131000, 131016]);                                                                  // временное: подождать 10 минут и продолжить
+const BC_ACCOUNT = new Set([3, 10, 190, 200, 368, 130497, 131005, 131031, 131037, 131042, 131045, 131048, 131057, 132001, 132007, 132015, 132016, 133010]); // дело в аккаунте или шаблоне — пауза, получатель возвращается в очередь
+const BC_PARAM = new Set([100, 131008, 131009, 132000, 132005, 132012]);                                                              // дело в подстановках: первый раз — пауза; если после «Продолжить» тот же получатель снова не прошёл — пропускаем его
+const bcWhy = r => `код ${r.code}${BC_HINT[r.code] ? ": " + BC_HINT[r.code] : r.error ? ": " + r.error : ""}`;
+const bcKey = (cid, id) => `bc:${cid}:${id}`, bcChunkKey = (cid, id, k) => `bcr:${cid}:${id}:${k}`;
+const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, created: b.created });
+const bcPut = (env, cid, b) => kvRetry(() => env.KV.put(bcKey(cid, b.id), JSON.stringify(b), { expirationTtl: 180 * 86400, metadata: bcMeta(b) }));
+const bcGet = async (env, cid, id) => JSON.parse((await env.KV.get(bcKey(cid, id))) || "null");
+const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
+// имя для подстановки {имя} — одно слово из букв. Пометки администратора из клиентской базы («не записывать», «должник Арман») в сообщение клиенту попасть не должны
+const BC_NOT_NAME = /^(не|нет|без|клиент\S*|должни\S*|долг\S*|мама|папа|муж|жена|сын|дочь|брат|сестра|вип|vip|блок\S*|спам|тест\S*|test|админ\S*|мастер|нов(ый|ая)|постоянн\S*|client|unknown|неизвестн\S*|аноним\S*|гость|guest|whatsapp|ватсап\S*|инста\S*|номер|тел|телефон|имя|фио|name|phone)$/i;
+function bcName(s) {
+  const w = (String(s || "").trim().split(/[\s(]+/)[0] || "").replace(/[.,!]+$/, "");
+  if (!/^\p{L}[\p{L}'’-]{1,24}$/u.test(w) || BC_NOT_NAME.test(w)) return "";
+  return w === w.toUpperCase() || w === w.toLowerCase() ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w;
+}
+// список получателей из текста: по клиенту на строку — номер и (необязательно) имя, через запятую, точку с запятой или табуляцию (как при вставке из Excel)
+function bcParse(src) {
+  const seen = new Set(), list = [], bad = [];
+  let dup = 0, badN = 0, cut = 0;
+  for (const raw of String(src || "").split(/\r?\n/)) {
+    const line = raw.trim(); if (!line) continue;
+    if (list.length >= BC_MAX) { cut++; continue; }
+    let digits = "", nm = "";
+    for (const cell of line.split(/[\t;,|]/)) {
+      if (!digits && /^[\s+\d()\-.–—]{10,24}$/.test(cell)) { // в ячейке только номер
+        const d = cell.replace(/\D/g, ""), p = normPhone(cell);
+        digits = p ? p.slice(1) : /^\s*\+/.test(cell) && /^[1-9]\d{9,14}$/.test(d) ? d : "";
+        if (digits) continue;
+      }
+      if (!nm && /\p{L}/u.test(cell) && !cell.includes("@")) nm = cell;
+    }
+    if (!digits) { // номер внутри текста: «Айгерим 8 701 123 45 67»
+      const p = phonesIn(line)[0];
+      if (p) { digits = p.phone.slice(1); nm = (line.slice(0, p.at) + "," + line.slice(p.at + p.len)).split(/[\t;,|]/).find(x => /\p{L}/u.test(x) && !x.includes("@")) || ""; }
+    }
+    if (!digits) { badN++; if (bad.length < 8) bad.push(snip(line, 50)); continue; }
+    if (seen.has(digits)) { dup++; continue; }
+    seen.add(digits);
+    list.push([digits, bcName(nm)]);
+  }
+  return { list, dup, bad, badN, cut };
+}
+async function bcOptouts(env, cid) { // все, кому писать нельзя: написали «стоп» боту или запретили рекламу в WhatsApp
+  const out = new Set(), prefix = `optout:${cid}:`;
+  for (let cursor, page = 0; page < 20; page++) {
+    const r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+    for (const k of (r && r.keys) || []) out.add(String(k.name).slice(prefix.length));
+    if (!r || r.list_complete || !r.cursor) break;
+    cursor = r.cursor;
+  }
+  return out;
+}
+const bcClientOf = (env, wx) => (wx && wx.client) || (hasClient(env.WA_CLIENT) ? env.WA_CLIENT : ""); // чей это номер WhatsApp
+const bcRoute = (env, cid) => { // с какого номера и каким токеном уходят шаблоны
+  const up = cid.toUpperCase();
+  if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID» — без него рассылку не отправить (страница «Мои боты» → Изменить)." }; }
+  if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return { quiet: true };
+  return { error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${up}.` };
+};
+const bcParam = (t, name, fallback) => clean(String(t).replace(/\{\s*(имя|name)\s*\}/gi, name || fallback || "клиент").replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   "), 300) || "—"; // Meta не принимает пустые подстановки, переводы строк, табуляцию и больше четырёх пробелов подряд
+async function sendTemplate(env, to, b, name, route) {
+  const cr = waCreds(env, route), params = (b.params || []).map(t => ({ type: "text", text: bcParam(t, name, b.fallback) }));
+  const comps = [].concat(b.img ? [{ type: "header", parameters: [{ type: "image", image: { link: b.img } }] }] : [], params.length ? [{ type: "body", parameters: params }] : []);
+  let r;
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000);
+  try {
+    r = await fetch(`${GRAPH}/${cr.pnid}/messages`, { method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" }, signal: ac.signal,
+      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: b.tpl, language: { code: b.lang }, ...(comps.length ? { components: comps } : {}) } }) });
+  } catch (e) { return { ok: false, code: 0, error: "Meta не ответила" }; } // ушло сообщение или нет — неизвестно
+  finally { clearTimeout(timer); }
+  if (r.ok) return { ok: true };
+  let e = {}; try { e = (await r.json()).error || {}; } catch (x) {}
+  return { ok: false, status: r.status, code: +e.code || r.status, error: clean(e.message || "", 160) };
+}
+// сведения о номере из Meta: качество и предел получателей за 24 часа
+async function bcHealth(env, route) {
+  const cr = waCreds(env, route);
+  const get = async f => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = {}; try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
+  try {
+    let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле
+    if (j.error && j.error.code === 100) j = await get("display_phone_number,verified_name,quality_rating,messaging_limit_tier");
+    if (j.error && j.error.code === 100) j = await get("display_phone_number,verified_name,quality_rating");
+    if (j.error) return { error: `Meta не отдала сведения о номере (код ${j.error.code}${BC_HINT[j.error.code] ? ": " + BC_HINT[j.error.code] : ""}).` };
+    const tier = String(j.whatsapp_business_manager_messaging_limit || j.messaging_limit_tier || ""), m = /TIER_(\d+)(K)?/i.exec(tier);
+    return { phone: clean(j.display_phone_number || "", 24), name: clean(j.verified_name || "", 60), quality: String(j.quality_rating || "").toUpperCase(), limit: m ? +m[1] * (m[2] ? 1000 : 1) : /UNLIMITED/i.test(tier) ? -1 : 0 };
+  } catch (e) { return { error: "Meta не отвечает — сведения о номере получить не удалось." }; }
+}
+// сигнал Meta «остановиться»: { all: { at, why }, tpl: { <шаблон>: { at, why } } }
+const bcHold = async (env, cid) => { try { return JSON.parse((await env.KV.get("bchold:" + cid)) || "null"); } catch (e) { return null; } };
+const bcHoldFor = (h, tpl) => (h && (h.all || (h.tpl && h.tpl[tpl]))) || null;
+async function bcHoldEdit(env, cid, edit) {
+  await kvRetry(async () => {
+    const h = (await bcHold(env, cid)) || {};
+    edit(h);
+    if (h.tpl && !Object.keys(h.tpl).length) delete h.tpl;
+    if (!h.all && !h.tpl) await env.KV.delete("bchold:" + cid); else await env.KV.put("bchold:" + cid, JSON.stringify(h), { expirationTtl: 14 * 86400 });
+  });
+}
+async function bcRun(env, cid, id, on) { // список рассылок, которые сейчас идут: по нему работает фоновая отправка
+  try {
+    await kvRetry(async () => {
+      const cur = JSON.parse((await env.KV.get("bcrun")) || "[]") || [], rest = cur.filter(x => !(x.c === cid && x.id === id));
+      if (on) rest.push({ c: cid, id });
+      if (JSON.stringify(rest) !== JSON.stringify(cur)) await env.KV.put("bcrun", JSON.stringify(rest.slice(-40)));
+    });
+  } catch (e) { console.log("bcrun", String(e)); }
+}
+// когда отправлять нельзя: вне часов отправки или после временного отказа Meta → { note, till }
+function bcWait(b, now) {
+  if (b.retryAt > now) return { note: `Meta временно не принимает сообщения — повторю ${bcAt(b.retryAt, now)}.`, till: b.retryAt };
+  const n = local(now), hr = n.getUTCHours() + n.getUTCMinutes() / 60;
+  if (hr >= b.from && hr < b.to) return null;
+  const day0 = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) - TZ * 3600e3, till = day0 + b.from * 3600e3 + (hr >= b.to ? 86400e3 : 0);
+  return { note: `Отправка идёт с ${hStr(b.from)} до ${hStr(b.to)} по Астане. Продолжу ${bcAt(till, now)}.`, till };
+}
+// одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки
+async function bcTick(env, cid, id) {
+  const now = Date.now(), lk = `bcl:${cid}:${id}`, token = Math.random().toString(36).slice(2);
+  let b = await bcGet(env, cid, id);
+  if (!b) return { error: "Рассылка не найдена." };
+  if (b.status !== "running") return { b, state: b.status };
+  const tell = async text => { try { await notify(env, text, cid); } catch (e) { console.log("bc tg", String(e)); } };
+  const waitFor = async w => { if (b.waitNote !== w.note) { b.waitNote = w.note; b.waitTill = w.till; try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); } } return { b, state: "wait" }; };
+  const stopFor = async note => {
+    b.status = "paused"; b.note = note; delete b.waitNote; delete b.waitTill; delete b.retryAt;
+    await bcPut(env, cid, b); await bcRun(env, cid, id, false);
+    await tell(`⚠️ Рассылка «${b.name}» остановлена — ${CLIENTS[cid].name}\n${note}\nОтправлено ${b.sent} из ${b.total}. Когда причина устранена, нажмите «Продолжить» на странице рассылок.`);
+    return { b, state: "paused" };
+  };
+  const w = bcWait(b, now); if (w) return waitFor(w);
+  const route = bcRoute(env, cid);
+  if (route.error) return stopFor(route.error);
+  const hold = bcHoldFor(await bcHold(env, cid), b.tpl);
+  if (hold) return stopFor(`Сигнал от Meta: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
+  // предел на 24 часа — общий для всех рассылок клиента: Meta считает получателей за скользящие сутки
+  let q = {}; try { q = JSON.parse((await env.KV.get("bcq:" + cid)) || "{}") || {}; } catch (e) {}
+  const slot = Math.floor(now / BC_SLOT), live = Object.keys(q).filter(k => +k > slot - BC_DAY && +q[k] > 0), used = live.reduce((a, k) => a + +q[k], 0);
+  if (used >= b.cap) { const till = (Math.min(...live.map(Number)) + BC_DAY) * BC_SLOT; return waitFor({ note: `За последние 24 часа отправлено ${used} — это предел (${b.cap}). Продолжу ${bcAt(till, now)}.`, till }); }
+  // замок: две отправки одной рассылки одновременно идти не должны
+  if (await env.KV.get(lk)) return { b, state: "busy" };
+  try { await env.KV.put(lk, token, { expirationTtl: 60 }); } catch (e) { return { b, state: "busy" }; } // замок только что ставили или снимали — значит, отправка шла секунду назад
+  if ((await env.KV.get(lk)) !== token) return { b, state: "busy" };
+  let sentNow = 0, did = false;
+  try {
+    b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
+    if (b.status !== "running") return { b, state: b.status };
+    if (b.cur) { b.unsure = (b.unsure || 0) + b.cur[1]; delete b.cur; } // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
+    const batch = Math.max(1, Math.min(Math.round(+env.BC_BATCH) || 20, 200)), take = Math.min(batch, b.cap - used, b.total - b.pos);
+    const from = b.pos, items = [];
+    for (let k = Math.floor(from / BC_CHUNK); take > 0 && k <= Math.floor((from + take - 1) / BC_CHUNK); k++) {
+      const ch = JSON.parse((await env.KV.get(bcChunkKey(cid, id, k))) || "[]");
+      for (let i = 0; i < ch.length; i++) { const at = k * BC_CHUNK + i; if (at >= from && at < from + take) items.push(ch[i]); }
+    }
+    if (take > 0 && !items.length) return await stopFor("Список получателей не читается из хранилища — попробуйте «Продолжить» через несколько минут.");
+    const stop = take > 0 ? await bcOptouts(env, cid) : new Set();
+    // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт
+    b.pos = from + items.length; b.last = now; delete b.waitNote; delete b.waitTill; delete b.retryAt;
+    if (items.length) { b.cur = [from, items.length]; await bcPut(env, cid, b); }
+    const t0 = Date.now();
+    let done = 0, halt = null;
+    for (const [digits, name] of items) {
+      if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
+      if (stop.has(digits)) { b.skipped++; done++; continue; }
+      did = true;
+      const r = await sendTemplate(env, digits, b, name, route);
+      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; continue; }
+      const temp = BC_TEMP.has(r.code) || r.status >= 500;
+      if (temp || BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done)) { // получатель ни при чём: он возвращается в очередь
+        if (BC_PARAM.has(r.code)) b.stuck = from + done;
+        halt = { kind: temp ? "temp" : "stop", r }; break;
+      }
+      b.failed++; done++;
+      b.fails = b.fails || {}; b.fails[r.code] = (b.fails[r.code] || 0) + 1;
+      if ((b.bad = b.bad || []).length < 300) b.bad.push([digits, r.code]);
+      if (r.code === 131050) { try { await env.KV.put(`optout:${cid}:${digits}`, "meta:" + now); } catch (e) {} } // человек запретил рекламу в WhatsApp — больше ему не шлём
+      if (r.code === 0) { halt = { kind: "temp", r }; break; } // связь с Meta оборвалась — пауза на 10 минут
+      b.streak = (b.streak || 0) + 1;
+      if (b.streak >= 5) { halt = { kind: "streak", r }; break; }
+    }
+    b.pos = from + done; delete b.cur;
+    if (halt && halt.kind === "temp") { b.tmp = (b.tmp || 0) + 1; if (b.tmp < 6) b.retryAt = now + 600e3; }
+    if (sentNow) { // учёт отправленного за сутки
+      try { const nq = {}; for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put("bcq:" + cid, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
+    }
+    if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
+      return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${bcWhy(halt.r)}).` : halt.kind === "temp" ? `Meta больше часа не принимает сообщения (${bcWhy(halt.r)}).` : `Meta отклонила отправку (${bcWhy(halt.r)}).`);
+    }
+    if (b.pos >= b.total) {
+      b.status = "done"; b.doneAt = now;
+      await bcPut(env, cid, b); await bcRun(env, cid, id, false);
+      await tell(`📣 Рассылка «${b.name}» завершена — ${CLIENTS[cid].name}\nОтправлено: ${b.sent} из ${b.total}.${b.skipped ? `\nПропущено (просили не писать): ${b.skipped}.` : ""}${b.failed ? `\nНе отправлено из-за ошибок: ${b.failed}.` : ""}${b.unsure ? `\nНеизвестно (сбой во время отправки): до ${b.unsure}.` : ""}`);
+      return { b, state: "done", did };
+    }
+    await bcPut(env, cid, b);
+    return { b, state: b.retryAt > now ? "wait" : "running", did };
+  } finally { try { await env.KV.delete(lk); } catch (e) {} }
+}
+// фоновая отправка: раз в минуту — одна порция одной рассылки (у бесплатного тарифа Cloudflare 50 внешних запросов на запуск)
+async function cronRun(env) {
+  let run = [];
+  try { run = JSON.parse((await env.KV.get("bcrun")) || "[]") || []; } catch (e) { console.log("cron", String(e)); return 0; }
+  if (!run.length) return 0;
+  try { await syncClients(env, true); } catch (e) { console.log("cfg", String(e)); }
+  const k = Math.floor(Date.now() / 60e3) % run.length;
+  let n = 0;
+  for (const x of run.slice(k).concat(run.slice(0, k)).slice(0, 5)) { // по очереди: у каждой рассылки своя минута
+    if (!hasClient(x.c)) { await bcRun(env, x.c, x.id, false); continue; }
+    let r; try { r = await bcTick(env, x.c, x.id); } catch (e) { console.log("cron bc", String((e && e.stack) || e)); continue; }
+    n++;
+    if (r.error || !["running", "wait", "busy"].includes(r.state)) await bcRun(env, x.c, x.id, false);
+    if (r.did) break;
+  }
+  return n;
+}
+// сигналы Meta, которые приходят на тот же вебхук, что и сообщения: шаблон приостановлен, аккаунт ограничен, человек запретил рекламу
+const TPL_EVENT = { APPROVED: "одобрен — его можно отправлять", REINSTATED: "снова работает", UNARCHIVED: "возвращён из архива", REJECTED: "отклонён Meta", PAUSED: "приостановлен Meta: клиенты жаловались на сообщения",
+  DISABLED: "отключён Meta из-за жалоб", FLAGGED: "под угрозой отключения: клиенты жалуются на сообщения", PENDING_DELETION: "удаляется", DELETED: "удалён", ARCHIVED: "отправлен в архив" };
+const TPL_BAD = new Set(["REJECTED", "PAUSED", "DISABLED", "FLAGGED", "PENDING_DELETION", "DELETED", "ARCHIVED"]), TPL_GOOD = new Set(["APPROVED", "REINSTATED", "UNARCHIVED"]);
+async function waSignal(env, wx, field, val) {
+  const cid = bcClientOf(env, wx);
+  if (!cid) return;
+  const who = CLIENTS[cid].name, now = Date.now(), ev = String(val.event || "").toUpperCase(), s = (x, n) => clean(String(x ?? ""), n || 80);
+  if (field === "user_preferences") { // человек в самом WhatsApp запретил или снова разрешил рекламные сообщения
+    for (const p of val.user_preferences || []) {
+      const d = String((p && p.wa_id) || "").replace(/\D/g, "");
+      if (!/^\d{8,15}$/.test(d) || (p.category && p.category !== "marketing_messages")) continue;
+      if (p.value === "stop") await env.KV.put(`optout:${cid}:${d}`, "meta:" + now);
+      else if (p.value === "resume") { const cur = await env.KV.get(`optout:${cid}:${d}`); if (cur && String(cur).startsWith("meta:")) await env.KV.delete(`optout:${cid}:${d}`); } // «стоп», написанный боту, снимает только слово «старт»
+    }
+    return;
+  }
+  if (field === "message_template_status_update" || field === "message_template_quality_update") {
+    const name = s(val.message_template_name, 100); if (!name) return;
+    const q = String(val.new_quality_score || "").toUpperCase();
+    const bad = field.endsWith("status_update") ? TPL_BAD.has(ev) : q === "RED", good = field.endsWith("status_update") ? TPL_GOOD.has(ev) : q === "GREEN";
+    const why = field.endsWith("status_update") ? `шаблон «${name}» ${TPL_EVENT[ev] || "изменил статус: " + s(ev, 30)}${val.rejection_info && val.rejection_info.reason ? ` (${s(val.rejection_info.reason, 200)})` : val.reason && val.reason !== "NONE" ? ` (${s(val.reason, 40)})` : ""}`
+      : `качество шаблона «${name}» — ${q === "RED" ? "низкое: клиенты жалуются, Meta может его отключить" : q === "YELLOW" ? "среднее: появились жалобы клиентов" : q === "GREEN" ? "высокое" : s(q, 20)}`;
+    if (bad) await bcHoldEdit(env, cid, h => { (h.tpl = h.tpl || {})[name] = { at: now, why }; });
+    else if (good) await bcHoldEdit(env, cid, h => { if (h.tpl) delete h.tpl[name]; });
+    if (bad || good || q === "YELLOW") await notify(env, `${bad ? "⚠️" : good ? "✅" : "ℹ️"} WhatsApp — ${who}\n${why[0].toUpperCase() + why.slice(1)}.${bad ? "\nРассылки с этим шаблоном остановлены." : ""}`, cid);
+    return;
+  }
+  if (field === "account_update") {
+    const ban = String((val.ban_info && val.ban_info.waba_ban_state) || "").toUpperCase();
+    const serious = ["DISABLED_UPDATE", "ACCOUNT_VIOLATION", "ACCOUNT_RESTRICTION", "ACCOUNT_DELETED"].includes(ev) && ban !== "REINSTATE";
+    if (!serious) { console.log("wa account_update", ev); return; }
+    const why = ev === "ACCOUNT_VIOLATION" ? `аккаунт WhatsApp нарушил правила${val.violation_info && val.violation_info.violation_type ? ` (${s(val.violation_info.violation_type, 60)})` : ""}`
+      : ev === "ACCOUNT_RESTRICTION" ? `Meta ограничила аккаунт WhatsApp${Array.isArray(val.restriction_info) && val.restriction_info[0] ? ` (${s(val.restriction_info[0].restriction_type, 60)})` : ""}`
+        : ev === "ACCOUNT_DELETED" ? "аккаунт WhatsApp удалён" : `аккаунт WhatsApp отключают${ban ? ` (${s(ban, 40)})` : ""}`;
+    await bcHoldEdit(env, cid, h => { h.all = { at: now, why }; });
+    await notify(env, `🚨 WhatsApp — ${who}\n${why[0].toUpperCase() + why.slice(1)}.\nРассылки остановлены. Откройте кабинет Meta → Business Support Home.`, cid);
+    return;
+  }
+  if (field === "account_alerts" || field === "business_capability_update" || field === "phone_number_quality_update" || field === "account_review_update" || field === "phone_number_name_update") {
+    if (field === "phone_number_quality_update" && ev === "ONBOARDING") return;
+    const facts = Object.entries(val).filter(([k, v]) => ["string", "number"].includes(typeof v) && !/^(display_phone_number|messaging_product)$/.test(k)).slice(0, 6).map(([k, v]) => `${s(k, 40)}: ${s(v, 120)}`).join("\n");
+    await notifyOnce(env, "wasig:" + cid + ":" + field + ":" + ev, `ℹ️ WhatsApp — ${who}\nСообщение от Meta (${field}):\n${facts || "без подробностей"}`, cid);
+  }
+}
+// недоставленные сообщения (Meta сообщает о них позже, отдельным событием): считаем по дням, опасные причины останавливают рассылки
+async function waFailed(env, wx, fails) {
+  const cid = bcClientOf(env, wx);
+  if (!cid || !fails.length) return;
+  const now = Date.now(), key = `bcf:${cid}:${isoDay(now)}`;
+  try { // счётчик приблизительный: при плотном потоке событий часть может не записаться — на остановку рассылок это не влияет
+    const f = JSON.parse((await env.KV.get(key)) || "{}") || {};
+    f.n = (f.n || 0) + fails.length; f.codes = f.codes || {};
+    for (const x of fails) f.codes[x.code] = (f.codes[x.code] || 0) + 1;
+    await env.KV.put(key, JSON.stringify(f), { expirationTtl: 14 * 86400 });
+  } catch (e) { console.log("bcf", String(e).slice(0, 120)); }
+  for (const x of fails) if (x.code === 131050 && /^\d{8,15}$/.test(x.to)) { try { await env.KV.put(`optout:${cid}:${x.to}`, "meta:" + now); } catch (e) {} }
+  const hard = fails.find(x => BC_ACCOUNT.has(x.code));
+  if (hard) {
+    const why = BC_HINT[hard.code] || "код " + hard.code;
+    await bcHoldEdit(env, cid, h => { h.all = { at: now, why }; });
+    await notifyOnce(env, "wafail:" + cid + ":" + hard.code, `⚠️ WhatsApp — ${CLIENTS[cid].name}\nСообщения не доходят: ${why}.\nРассылки остановлены.`, cid);
+  }
+}
+async function bcApi(request, env, url, s) {
+  const P = url.pathname, M = request.method, q = url.searchParams;
+  let body = {};
+  if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); try { body = (await request.json()) || {}; } catch (e) {} }
+  const cid = String((M === "POST" ? body.c : q.get("c")) || "");
+  if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
+  const c = CLIENTS[cid], now = Date.now(), route = bcRoute(env, cid);
+  const pub = b => { const { bad, ...rest } = b; return { ...rest, fails: Object.entries(b.fails || {}).map(([code, n]) => ({ code: +code, n, hint: BC_HINT[code] || "" })), stalled: b.status === "running" && now - Math.max(b.last || 0, b.startedAt || 0, b.waitTill || 0) > BC_STALE }; };
+  if (M === "GET" && P === "/api/bc/list") {
+    const rows = [];
+    try {
+      const r = await env.KV.list({ prefix: `bc:${cid}:`, limit: 300 });
+      for (const k of (r && r.keys) || []) rows.push({ id: String(k.name).split(":").pop(), ...(k.metadata || {}) });
+    } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте через минуту." }, 503); }
+    rows.sort((a, b2) => (b2.created || 0) - (a.created || 0));
+    let stops = 0, hold = null, fail = null, used = 0;
+    try { stops = (await bcOptouts(env, cid)).size; } catch (e) {}
+    try { const h = await bcHold(env, cid); hold = h ? [h.all && h.all.why].concat(Object.values(h.tpl || {}).map(x => x.why)).filter(Boolean) : null; } catch (e) {}
+    try { const f = JSON.parse((await env.KV.get(`bcf:${cid}:${isoDay(now)}`)) || "null"); if (f && f.n) fail = { n: f.n, codes: Object.entries(f.codes || {}).map(([code, n]) => ({ code: +code, n, hint: BC_HINT[code] || "" })) }; } catch (e) {}
+    try { const u = JSON.parse((await env.KV.get("bcq:" + cid)) || "{}") || {}, slot = Math.floor(now / BC_SLOT); used = Object.keys(u).filter(k => +k > slot - BC_DAY).reduce((a, k) => a + (+u[k] || 0), 0); } catch (e) {}
+    const health = route.error ? null : await bcHealth(env, route);
+    return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, list: rows.slice(0, 60), now });
+  }
+  if (M === "GET" && P === "/api/bc/get") {
+    const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));
+    if (!b) return jsonP({ error: "Рассылка не найдена." }, 404);
+    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map(([d, code]) => `+${d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
+  }
+  if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
+  const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24);
+  const fields = () => {
+    const errors = [], tpl = String(body.tpl || "").trim(), lang = String(body.lang || "ru").trim(), img = String(body.img || "").trim();
+    if (!/^[a-z0-9_]{1,512}$/.test(tpl)) errors.push("название шаблона — как в кабинете Meta: строчные латинские буквы, цифры и «_» (например, promo_october)");
+    if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(lang)) errors.push("язык шаблона — код из кабинета Meta: ru, kk, en или en_US");
+    if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка — ссылка, которая начинается с https://");
+    const params = (Array.isArray(body.params) ? body.params : String(body.params || "").split("\n")).map(x => clean(x, 300)).filter(Boolean).slice(0, 10);
+    return { errors, tpl, lang, img, params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback: clean(body.fallback || "", 30) };
+  };
+  if (P === "/api/bc/check") { // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим
+    const r = bcParse(body.recipients), f = fields();
+    let stop = new Set(); try { stop = await bcOptouts(env, cid); } catch (e) {}
+    return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter(x => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter(x => stop.has(x[0])).length,
+      sample: r.list.slice(0, 5).map(x => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: f.params.map(t => bcParam(t, (r.list.find(x => x[1]) || [])[1] || "", f.fallback)) });
+  }
+  if (P === "/api/bc/test") { // пробная отправка шаблона на один номер (себе)
+    const f = fields(), to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
+    if (f.errors.length) return jsonP({ error: f.errors.join("; ") }, 400);
+    if (!to) return jsonP({ error: "Укажите свой номер полностью, например +7 701 123 45 67." }, 400);
+    if (route.error) return jsonP({ error: route.error }, 409);
+    const tk = `bct:${cid}:${Math.floor(now / 3600e3)}`, tn = +((await env.KV.get(tk)) || 0);
+    if (tn >= 20) return jsonP({ error: "Слишком много пробных отправок за час — подождите." }, 429);
+    try { await env.KV.put(tk, String(tn + 1), { expirationTtl: 3700 }); } catch (e) {}
+    const r = await sendTemplate(env, to.slice(1), f, "Айгерим", route);
+    return r.ok ? jsonP({ ok: true, text: `Шаблон отправлен на ${to} — проверьте WhatsApp. Если сообщение не пришло за минуту, этот номер не принимает сообщения от компаний.` }) : jsonP({ error: `Meta не приняла шаблон (${bcWhy(r)}).` }, 409);
+  }
+  if (P === "/api/bc/create") {
+    const f = fields(), r = bcParse(body.recipients), errors = f.errors.slice();
+    const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
+    if (name.length < 2) errors.push("дайте рассылке название — для себя");
+    if (!r.list.length) errors.push("в списке нет ни одного номера");
+    if (!(cap >= 1 && cap <= 100000)) errors.push("предел на 24 часа — число от 1 до 100 000");
+    if (!(from >= 0 && to <= 24 && to > from)) errors.push("часы отправки: «с» должно быть раньше, чем «до»");
+    else if (from < 8 || to > 22) errors.push("часы отправки — не раньше 8:00 и не позже 22:00: ночные сообщения вызывают жалобы, а жалобы блокируют номер");
+    if (!f.text) errors.push("вставьте текст шаблона — его увидит администратор, а бот поймёт, на что отвечает клиент");
+    if (body.consent !== true) errors.push("подтвердите, что эти люди — клиенты компании и не просили им не писать");
+    if (errors.length) return jsonP({ ok: false, errors }, 400);
+    const b = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, tpl: f.tpl, lang: f.lang, params: f.params, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to };
+    try {
+      for (let k = 0; k * BC_CHUNK < r.list.length; k++) await env.KV.put(bcChunkKey(cid, b.id, k), JSON.stringify(r.list.slice(k * BC_CHUNK, (k + 1) * BC_CHUNK)), { expirationTtl: 180 * 86400 });
+      await bcPut(env, cid, b);
+    } catch (e) { console.log("bc create", String(e)); return jsonP({ ok: false, errors: ["не удалось сохранить список — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
+    return jsonP({ ok: true, b: pub(b), dup: r.dup, bad: r.badN, cut: r.cut });
+  }
+  const cur = id ? await bcGet(env, cid, id) : null;
+  if (!cur) return jsonP({ error: "Рассылка не найдена." }, 404);
+  if (P === "/api/bc/act") {
+    const act = String(body.act || "");
+    if (act === "start") {
+      if (route.error) return jsonP({ error: route.error }, 409);
+      if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
+      const hold = bcHoldFor(await bcHold(env, cid), cur.tpl);
+      if (hold && body.force !== true) return jsonP({ confirm: `Сигнал от Meta: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
+      if (hold) await bcHoldEdit(env, cid, h => { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; });
+      cur.status = "running"; cur.startedAt = now; cur.streak = 0; cur.tmp = 0;
+      for (const k of ["note", "retryAt", "waitNote", "waitTill"]) delete cur[k];
+      await bcPut(env, cid, cur); await bcRun(env, cid, id, true);
+      try { await env.KV.put("bclast:" + cid, JSON.stringify({ at: now, name: cur.name, text: snip(cur.text, 600) }), { expirationTtl: 7 * 86400 }); } catch (e) { console.log("bclast", String(e)); } // текст рассылки увидят ИИ (клиент может ответить на неё) и администратор в пульте
+    } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
+    else if (act === "stop") { if (cur.status !== "done") { cur.status = "stopped"; delete cur.note; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
+    else if (act === "delete") { // вместе с рассылкой удаляется и список номеров
+      if (cur.status === "running") return jsonP({ error: "Сначала остановите рассылку." }, 409);
+      for (let k = 0; k * BC_CHUNK < cur.total; k++) { try { await env.KV.delete(bcChunkKey(cid, id, k)); } catch (e) {} }
+      await env.KV.delete(bcKey(cid, id)); await bcRun(env, cid, id, false);
+      return jsonP({ ok: true, gone: true });
+    } else return jsonP({ error: "Неизвестное действие." }, 400);
+    return jsonP({ ok: true, b: pub(cur) });
+  }
+  if (P === "/api/bc/tick") { // порция вручную — когда фоновая отправка не работает
+    let r; try { r = await bcTick(env, cid, id); } catch (e) { console.log("bc tick", String((e && e.stack) || e)); return jsonP({ error: "Сбой при отправке порции — попробуйте ещё раз через минуту." }, 500); }
+    if (r.error) return jsonP({ error: r.error }, 404);
+    if (r.state === "running" || r.state === "wait") await bcRun(env, cid, id, true);
+    return jsonP({ ok: true, b: pub(r.b), state: r.state });
+  }
+  return jsonP({ error: "Не найдено." }, 404);
+}
+function bcPage() {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Рассылки — AI-администратор</title><style>${ADMIN_CSS}
+.bar2{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:8px 0}.bar2 i{display:block;height:100%;background:var(--acc)}.two{display:flex;gap:10px;flex-wrap:wrap}.two>div{flex:1;min-width:92px}
+input[type=file]{font-size:14px;margin-top:6px}label.ck{font-weight:400;display:flex;gap:8px;align-items:flex-start}label.ck input{margin-top:4px;width:18px;height:18px}</style></head><body>
+<div class="top"><b id="ttl">Рассылки</b><a id="l_in" href="/inbox">Чаты</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div><div class="w">
+<div id="info"></div>
+<div id="list"></div>
+<div class="row"><button class="btn p" id="b_new">+ Новая рассылка</button></div>
+<div id="form" class="card" hidden>
+<h3 style="margin-top:0">Новая рассылка</h3><p class="mut">Написать клиенту первым WhatsApp разрешает только шаблоном, который одобрила Meta (кабинет Meta → WhatsApp Manager → Шаблоны сообщений). В конце шаблона добавьте строку «Чтобы не получать сообщения, ответьте СТОП» — таким клиентам рассылка больше не уйдёт.</p>
+<label>Название для себя</label><input type="text" id="f_name" maxlength="60" placeholder="Октябрь: скидка на стрижку">
+<div class="two"><div style="flex:3"><label>Название шаблона в Meta</label><input type="text" id="f_tpl" maxlength="100" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="promo_october"></div><div><label>Язык</label><input type="text" id="f_lang" maxlength="6" value="ru" autocapitalize="off"></div></div>
+<label>Текст шаблона<small>Скопируйте из кабинета Meta как есть. Клиенту уйдёт сам шаблон; этот текст нужен, чтобы администратор и бот знали, что было отправлено.</small></label><textarea id="f_text"></textarea>
+<label>Подстановки<small>Если в шаблоне есть {{1}}, {{2}} — по одной на строке, по порядку. {имя} заменится именем клиента из списка. Если подстановок нет — оставьте пустым.</small></label><textarea id="f_params" style="min-height:60px" placeholder="{имя}"></textarea>
+<label>Если имени в списке нет, подставить</label><input type="text" id="f_fb" maxlength="30" value="уважаемый клиент">
+<label>Картинка в шапке<small>Только если шаблон с картинкой: ссылка на неё, начинается с https://</small></label><input type="text" id="f_img" maxlength="500" autocapitalize="off" placeholder="не обязательно">
+<label>Кому<small>По клиенту на строке: номер и, если есть, имя — «8 701 123 45 67, Айгерим». Можно вставить столбцы прямо из Excel. Повторы уберутся сами.</small></label><textarea id="f_rec" style="min-height:140px"></textarea><input type="file" id="f_file" accept=".csv,.txt,text/plain,text/csv">
+<div class="two"><div><label>Не больше за 24 часа</label><input type="number" id="f_cap" value="240" min="1"></div><div><label>С, час</label><input type="number" id="f_from" value="10" min="8" max="21"></div><div><label>До, час</label><input type="number" id="f_to" value="20" min="9" max="22"></div></div>
+<p class="mut" id="caphint">У нового номера предел Meta — 250 получателей за 24 часа, после проверки компании — 2 000.</p>
+<p class="mut">Первую рассылку сделайте небольшой — 50–100 постоянных клиентов. По жалобам на первые сообщения Meta судит о номере: много жалоб — и она ограничит отправку.</p>
+<label class="ck"><input type="checkbox" id="f_ok"><span>Это клиенты компании: они сами оставляли номер и не просили им не писать</span></label>
+<div id="fout"></div>
+<div class="row"><button class="btn" id="b_chk">Проверить список</button><button class="btn p" id="b_make">Создать рассылку</button><button class="btn" id="b_cancel">Отмена</button></div>
+<label>Пробная отправка себе<small>Перед рассылкой отправьте шаблон на свой номер и посмотрите, как он выглядит.</small></label>
+<div class="two"><div style="flex:3"><input type="text" id="f_to1" inputmode="tel" placeholder="+7 701 123 45 67"></div><div><button class="btn" id="b_test">Отправить</button></div></div><div id="tout"></div></div>
+</div>
+<script>
+var $=function(i){return document.getElementById(i)},C=new URLSearchParams(location.search).get('c')||'',poll=null,live={};
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
+function tm(ms){var d=new Date(ms+5*3600e3);return ('0'+d.getUTCHours()).slice(-2)+':'+('0'+d.getUTCMinutes()).slice(-2)}
+var ST={ready:'готова к запуску',running:'идёт',paused:'на паузе',done:'завершена',stopped:'остановлена'},QL={GREEN:'высокое',YELLOW:'среднее — есть жалобы',RED:'низкое — много жалоб'};
+function msg(box,cls,lines){box.textContent='';var m=el('div','msg '+cls);lines.forEach(function(x){m.appendChild(el('div','',x))});box.appendChild(m)}
+function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('info');L.textContent='';I.textContent='';if(d.error){msg(I,'e',[d.error]);return}
+ $('ttl').textContent='Рассылки · '+d.client.name;$('l_in').href='/inbox?c='+C;$('l_st').hidden=!d.owner;
+ if(!d.ready)I.appendChild(el('div','msg e',d.why));
+ if(d.health){if(d.health.error)I.appendChild(el('div','msg w',d.health.error));else{var h=d.health,t='Номер '+(h.phone||'')+(h.name?' «'+h.name+'»':'')+(QL[h.quality]?' · качество: '+QL[h.quality]:'')+(h.limit>0?' · предел Meta: '+h.limit+' получателей за 24 часа':h.limit<0?' · предел Meta: без ограничений':'');
+  I.appendChild(el('div','msg '+(h.quality==='RED'?'e':h.quality==='YELLOW'?'w':'g'),t));if(h.limit>0){$('f_cap').value=Math.max(1,Math.floor(h.limit*0.95));$('caphint').textContent='Предел Meta для этого номера — '+h.limit+' получателей за 24 часа. Оставьте небольшой запас.'}else if(h.limit<0)$('caphint').textContent='У этого номера нет суточного предела Meta. Начинайте с небольших рассылок: жалобы клиентов снижают качество номера.'}}
+ if(d.hold&&d.hold.length)I.appendChild(el('div','msg e','Сигнал от Meta: '+d.hold.join('; ')+'. Рассылки остановлены.'));
+ var p=el('p','mut','Отправлено за последние 24 часа: '+d.used+'. Просили не писать: '+d.stops+' — им рассылки не уходят.');I.appendChild(p);
+ if(d.fail)I.appendChild(el('p','mut','Не доставлено сегодня: '+d.fail.n+' ('+d.fail.codes.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')+').'));
+ if(!d.list.length)L.appendChild(el('p','mut','Рассылок пока нет.'));
+ live={};d.list.forEach(function(b){var c=el('div','card');c.id='bc'+b.id;L.appendChild(c);fillCard(c,b);if(b.status!=='done'&&b.status!=='stopped')refresh(b.id)});watch()}).catch(function(){})}
+function refresh(id){return api('/api/bc/get?c='+C+'&id='+id).then(function(d){var c=$('bc'+id);if(!c||d.error)return;var was=live[id];fillCard(c,d.b);if(was&&!live[id])load()}).catch(function(){})}
+function watch(){clearTimeout(poll);if(!Object.keys(live).length)return;poll=setTimeout(function(){if(document.hidden){watch();return}Promise.all(Object.keys(live).map(refresh)).then(watch)},5000)}
+function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;else delete live[b.id];
+ c.appendChild(el('b','',b.name));c.appendChild(el('div','mut',(ST[b.status]||b.status)+' · отправлено '+b.sent+' из '+b.total+(b.skipped?' · просили не писать: '+b.skipped:'')+(b.failed?' · ошибок: '+b.failed:'')+(b.unsure?' · неизвестно (сбой): до '+b.unsure:'')));
+ var bar=el('div','bar2'),i=el('i');i.style.width=Math.round(100*(b.pos||0)/Math.max(1,b.total))+'%';bar.appendChild(i);c.appendChild(bar);
+ if(b.note&&b.status==='paused')c.appendChild(el('div','msg e',b.note));if(b.waitNote&&b.status==='running')c.appendChild(el('div','msg w',b.waitNote));
+ if(b.fails&&b.fails.length)c.appendChild(el('div','mut','Ошибки: '+b.fails.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')));
+ var out=el('div');out.id='o'+b.id;c.appendChild(out);
+ var r=el('div','row');function btn(t,a,p){var e=el('button','btn'+(p?' p':''),t);e.onclick=function(){act(b.id,a,e)};r.appendChild(e);return e}
+ if(b.status==='ready')btn('Запустить','start',1);if(b.status==='paused')btn('Продолжить','start',1);if(b.status==='running')btn('Пауза','pause');
+ if(b.status==='running'&&b.stalled){c.appendChild(el('div','msg w','Фоновая отправка молчит больше двух минут. Можно отправить порцию вручную.'));btn('Отправить порцию сейчас','tick',1)}
+ if(b.status!=='done'&&b.status!=='stopped')btn('Остановить совсем','stop');if(b.failed)btn('Номера с ошибками','bad');if(b.status!=='running')btn('Удалить','delete').className='btn d';
+ c.appendChild(r);if(b.status==='running'&&!b.stalled&&!b.waitNote)c.appendChild(el('div','mut','Отправка идёт в фоне — по порции в минуту. Страницу можно закрыть: итог придёт в Telegram.'+(b.last?' Последняя порция: '+tm(b.last)+'.':'')))}
+function act(id,a,btn,force){var o=$('o'+id);
+ if(a==='stop'&&!confirm('Остановить рассылку совсем? Продолжить её будет нельзя.'))return;if(a==='delete'&&!confirm('Удалить рассылку вместе со списком номеров?'))return;
+ if(a==='bad'){api('/api/bc/get?c='+C+'&id='+id+'&bad=1').then(function(d){o.textContent='';var p=el('pre','',(d.bad||[]).join(String.fromCharCode(10))||'нет');o.appendChild(p)}).catch(function(){});return}
+ btn.disabled=true;
+ var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',{c:C,id:id,act:a,force:!!force});
+ call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(){btn.disabled=false})}
+function body(){return{c:C,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
+$('b_new').onclick=function(){$('form').hidden=false;$('b_new').hidden=true;$('form').scrollIntoView()};$('b_cancel').onclick=function(){$('form').hidden=true;$('b_new').hidden=false};
+$('f_file').onchange=function(){var f=this.files&&this.files[0];if(!f)return;if(f.size>3e6){msg($('fout'),'e',['Файл слишком большой. Нужен текстовый файл или CSV со списком номеров.']);return}var r=new FileReader();r.onload=function(){$('f_rec').value=String(r.result||'')};r.readAsText(f)};
+$('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.error){msg($('fout'),'e',[d.error]);return}var l=['Номеров: '+d.valid+(d.named?' · с именем: '+d.named:'')+(d.dup?' · повторов убрано: '+d.dup:'')+(d.stopped?' · просили не писать: '+d.stopped+' (им не уйдёт)':'')];if(d.sample&&d.sample.length)l.push('Первые строки: '+d.sample.join('; '));
+ if(d.preview&&d.preview.length)l.push('Подстановки для первого клиента: '+d.preview.join(' | '));if(d.badN)l.push('Не понял строк: '+d.badN+' — например: '+d.bad.join(' | '));if(d.cut)l.push('Список слишком длинный: '+d.cut+' строк в конце не попадут в рассылку.');
+ if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l)}).catch(function(){})};
+$('b_test').onclick=function(){var b=body();b.to=$('f_to1').value;var t=$('b_test');t.disabled=true;api('/api/bc/test',b).then(function(d){t.disabled=false;msg($('tout'),d.error?'e':'g',[d.error||d.text])}).catch(function(){t.disabled=false})};
+$('b_make').onclick=function(){var t=$('b_make');t.disabled=true;api('/api/bc/create',body()).then(function(d){t.disabled=false;if(!d.ok){msg($('fout'),'e',(d.errors||[d.error||'Не получилось.']).map(function(x){return'• '+x}));return}$('form').hidden=true;$('b_new').hidden=false;$('f_rec').value='';$('fout').textContent='';load()}).catch(function(){t.disabled=false})};
+document.addEventListener('visibilitychange',function(){if(!document.hidden)watch()});
+load();
 </script></body></html>`;
 }

@@ -1,6 +1,7 @@
 // Локальный сервер для проверки страниц в настоящем браузере: весь бот работает на заглушках (память вместо KV, «ИИ» по простым правилам,
 // Telegram, Meta и Altegio — подменены). Сеть не нужна. Запуск: node test/devserver.mjs [порт]  →  http://127.0.0.1:8787/studio?key=owner-key-123456
 // Сообщение «клиента WhatsApp» можно прислать так: POST /_wa { "c": "kairat", "from": "77051110001", "text": "Привет", "name": "Данияр" }
+// Фоновая задача (в Cloudflare она идёт раз в минуту сама): POST /_cron — отправляет очередную порцию рассылки
 import http from "node:http";
 import { mk, net, worker, D1 } from "./harness.mjs";
 
@@ -31,6 +32,7 @@ export function start(port = 0, envExtra = {}) {
         const r = await S.waPost("/wa/" + b.c, msg, { secret: S.env["APP_SECRET_" + up], pnid: "900111", names: { [b.from]: b.name || "" } });
         res.writeHead(r.status, { "content-type": "application/json" }); res.end(JSON.stringify({ status: r.status, sent: S.sentTo(b.from) })); return;
       }
+      if (req.method === "POST" && req.url === "/_cron") { await S.cron(); res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); return; } // «прошла минута»: фоновая задача (рассылки)
       const headers = {}; for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers[k] = v;
       if (!headers["cf-connecting-ip"]) headers["cf-connecting-ip"] = "127.0.0.1";
       const pending = [];

@@ -11,11 +11,13 @@ export const wait = ms => new Promise(s => setTimeout(s, ms));
 export function mkKV() {
   const mem = new Map(), meta = new Map(), ttl = new Map(), ops = { get: 0, put: 0, del: 0, list: 0 };
   const fail = { put: null, get: null, list: null };
+  const strict = { on: !!process.env.KV_STRICT, last: new Map(), hits: 0 }; // строгий режим: вторая запись того же ключа за секунду — отказ 429, как у настоящего KV
+  const tooFast = k => { if (!strict.on) return false; const now = performance.now(), prev = strict.last.get(k); if (prev !== undefined && now - prev < 1000) { strict.hits++; return true; } strict.last.set(k, now); return false; };
   const api = {
     get: async k => { ops.get++; if (fail.get && fail.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return mem.get(k) ?? null; },
     put: async (k, v, o) => {
       ops.put++;
-      if (fail.put && fail.put(k)) throw new Error("KV PUT failed: 429 Too Many Requests");
+      if ((fail.put && fail.put(k)) || tooFast(k)) throw new Error("KV PUT failed: 429 Too Many Requests");
       if (typeof v !== "string") throw new Error("KV PUT: значение должно быть строкой");
       if (o && o.metadata !== undefined && JSON.stringify(o.metadata).length > 1024) throw new Error("KV PUT failed: 413 metadata too large");
       if (o && o.expirationTtl !== undefined && !(o.expirationTtl >= 60)) throw new Error("KV PUT failed: 400 Invalid expiration_ttl");
@@ -23,7 +25,7 @@ export function mkKV() {
       if (o && o.metadata !== undefined) meta.set(k, JSON.parse(JSON.stringify(o.metadata))); else meta.delete(k); // запись без metadata её стирает — как в настоящем KV
       if (o && o.expirationTtl) ttl.set(k, o.expirationTtl); else ttl.delete(k);
     },
-    delete: async k => { ops.del++; mem.delete(k); meta.delete(k); ttl.delete(k); },
+    delete: async k => { ops.del++; if (tooFast(k)) throw new Error("KV DELETE failed: 429 Too Many Requests"); mem.delete(k); meta.delete(k); ttl.delete(k); },
     list: async ({ prefix = "", limit = 1000, cursor } = {}) => {
       ops.list++;
       if (fail.list && fail.list(prefix)) throw new Error("KV LIST failed: 500");
@@ -31,7 +33,7 @@ export function mkKV() {
       return { keys: all.slice(from, from + limit).map(name => meta.has(name) ? { name, metadata: meta.get(name) } : { name }), list_complete: done, ...(done ? {} : { cursor: String(from + limit) }) };
     }
   };
-  return { api, mem, meta, ttl, ops, fail, json: k => JSON.parse(mem.get(k) || "null") };
+  return { api, mem, meta, ttl, ops, fail, strict, json: k => JSON.parse(mem.get(k) || "null") };
 }
 
 // ---- внешние сервисы
@@ -148,7 +150,8 @@ export function mk(envExtra = {}) {
   const sentTo = to => net.graph.filter(g => g.body && g.body.to === to).map(g => (g.body.text && g.body.text.body) || (g.body.template && "[шаблон " + g.body.template.name + "]") || "");
   const hist = (ch, c, id) => kv.json(`h:${ch}:${c}:${id}`);
   const leads = c => kv.json("leads:" + c) || [];
-  return { env, kv, call, settle, browser, chat, waPost, waText, sentTo, hist, leads };
+  const cron = async () => { await worker.scheduled({ cron: "* * * * *" }, env, ctx); await settle(); }; // фоновая задача (раз в минуту)
+  return { env, kv, call, settle, browser, chat, waPost, waText, sentTo, hist, leads, cron };
 }
 
 // ---- счёт проверок
