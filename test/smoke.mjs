@@ -1230,6 +1230,38 @@ ok("ИИ посчитал «7 200» → в повторном запросе с�
     }
     ok("клиент с Altegio: по строке отмены в любом виде запись отменена, служебная строка клиенту не видна", !zx.length, zx.join(" || ")); }
 
+  // --- L3. Страницы /diag, /api/history и /leads, когда хранилище не читается или не подключено: диагностика нужна именно тогда
+  { const s6 = sid(), page6 = async path => { let r6, t6 = ""; try { r6 = await call(path); t6 = await r6.text(); } catch (e) { return { status: 0, text: "исключение: " + String(e).slice(0, 120) }; } return { status: r6.status, text: t6 }; };
+    geminiQueue = ["Мужская стрижка от 6 000 ₸. Записать вас?"]; await chat("barber", s6, "Сколько стоит стрижка?");
+    geminiQueue = ["работает"]; let p = await page6("/diag?key=lk");
+    ok("/diag при исправном хранилище: «KV: подключено ✅», остальная диагностика на месте", p.status === 200 && /KV: подключено ✅/.test(p.text) && /Последняя ошибка WhatsApp: /.test(p.text) && /Тест Gemini: ✅/.test(p.text) && !/не читается/.test(p.text), p.text.slice(0, 300));
+    p = await page6(`/api/history?c=barber&sid=${s6}`);
+    ok("/api/history при исправном хранилище отдаёт переписку", p.status === 200 && JSON.parse(p.text).turns.length === 2, p.text.slice(0, 200));
+    // все чтения хранилища падают
+    KVFAIL.get = () => true; geminiQueue = ["работает"];
+    p = await page6("/diag?key=lk");
+    ok("хранилище не читается → /diag открывается: «Хранилище KV: ❌ не читается» и вся остальная диагностика", p.status === 200 && /Хранилище KV: ❌ не читается — [^\n]*KV GET failed/.test(p.text) && /GEMINI_KEY: есть ✅/.test(p.text) && /Telegram: настроен ✅/.test(p.text) && /Тест Gemini: ✅/.test(p.text), `${p.status} ${p.text.slice(0, 400)}`);
+    p = await page6(`/api/history?c=barber&sid=${s6}`);
+    ok("хранилище не читается → /api/history отвечает пустой перепиской, а не ошибкой", p.status === 200 && JSON.stringify(JSON.parse(p.text)) === '{"turns":[]}', `${p.status} ${p.text.slice(0, 200)}`);
+    p = await page6("/leads?key=lk");
+    ok("хранилище не читается → /leads говорит об этом, а не «Пока пусто»", p.status === 200 && /Хранилище не отвечает — заявки сейчас не видны, попробуйте обновить страницу\. Заявки не потеряны/.test(p.text) && !/Пока пусто/.test(p.text), `${p.status} ${p.text.replace(/<style>[\s\S]*?<\/style>/, "").slice(0, 300)}`);
+    KVFAIL.get = null;
+    p = await page6("/leads?key=lk");
+    ok("хранилище снова читается → /leads показывает заявки, предупреждения нет", p.status === 200 && /Азамат/.test(p.text) && !/Хранилище не отвечает|Пока пусто/.test(p.text), p.text.replace(/<style>[\s\S]*?<\/style>/, "").slice(0, 200));
+    // общий список заявок одного клиента не читается, отдельные ключи читаются: заявки видны, пометка о сбое есть
+    KVFAIL.get = k => k === "leads:barber";
+    p = await page6("/leads?key=lk&c=barber");
+    ok("не читается только общий список заявок → страница показывает заявки из отдельных ключей", p.status === 200 && /Азамат/.test(p.text) && !/Пока пусто/.test(p.text), p.text.replace(/<style>[\s\S]*?<\/style>/, "").slice(0, 300));
+    KVFAIL.get = null;
+    // хранилище не подключено вовсе (забыли привязку KV)
+    env.KV = undefined; geminiQueue = ["работает"];
+    p = await page6("/diag?key=lk");
+    const d6 = p; p = await page6(`/api/history?c=barber&sid=${s6}`); const h6 = p; p = await page6("/leads?key=lk");
+    env.KV = KV;
+    ok("хранилище не подключено → /diag открывается: «KV: НЕ подключено ❌» и вся остальная диагностика", d6.status === 200 && /KV: НЕ подключено ❌/.test(d6.text) && /GEMINI_KEY: есть ✅/.test(d6.text) && /Тест Gemini: ✅/.test(d6.text), `${d6.status} ${d6.text.slice(0, 400)}`);
+    ok("хранилище не подключено → /api/history отвечает пустой перепиской", h6.status === 200 && JSON.stringify(JSON.parse(h6.text)) === '{"turns":[]}', `${h6.status} ${h6.text.slice(0, 200)}`);
+    ok("хранилище не подключено → /leads говорит, что хранилище не подключено, а не «Пока пусто»", p.status === 200 && /Хранилище KV не подключено/.test(p.text) && !/Пока пусто/.test(p.text), `${p.status} ${p.text.replace(/<style>[\s\S]*?<\/style>/, "").slice(0, 300)}`); }
+
   d = await studio6("remove", { id: "nails6", confirm: "nails6" });
   ok("бот из паспорта после проверок удалён", d.ok === true, JSON.stringify(d));
 }

@@ -419,7 +419,7 @@ async function saveLeads(store, cid, leads) {
 const leadKey = (cid, id) => `lead:${cid}:${isoDay(leadTs({ id }))}:${id}`;
 async function allLeads(env, cid) {
   const fresh = l => Date.now() - leadTs(l) < LEAD_TTL;
-  let leads = [], readable = true;
+  let leads = [], readable = true, keysRead = false;
   try { leads = (await loadLeads(env.KV, cid)).filter(fresh); } catch (e) { readable = false; console.log("leads read", String(e)); } // общий список не читается — покажем заявки из отдельных ключей
   try {
     if (typeof env.KV.list === "function") {
@@ -441,6 +441,7 @@ async function allLeads(env, cid) {
       const got = [];
       for (const name of miss.sort().reverse().slice(0, 60)) { const v = JSON.parse((await env.KV.get(name)) || "null"); if (v && v.id && !have.has(v.id) && fresh(v)) { have.set(v.id, v); got.push(v); } } // сначала самые новые
       if (got.length) { leads.push(...got); leads.sort((a, b) => leadTs(a) - leadTs(b)); }
+      keysRead = true;
       if (readable && (got.length || fixed.size)) { // возвращаем в общий список: перечитываем его прямо перед записью и только добавляем, чужих изменений не затираем
         try {
           const cur = await loadLeads(env.KV, cid), ids = new Set(cur.map(l => l.id));
@@ -452,6 +453,8 @@ async function allLeads(env, cid) {
       }
     }
   } catch (e) { console.log("leads heal", String(e)); }
+  // общий список не прочитался: «all» — заявок не видно вовсе, «part» — видны только найденные отдельными ключами. Страница заявок скажет об этом, а не покажет «Пока пусто»
+  if (!readable) Object.defineProperty(leads, "unread", { value: keysRead ? "part" : "all" });
   return leads;
 }
 // Язык сообщения; prev — язык прошлых сообщений этого чата. Латиница сама по себе — не английский («Camry R16», «Kaspi», «Azamat», «privet»):
@@ -3156,8 +3159,10 @@ async function route(request, env, ctx) {
     if (M === "GET" && P === "/api/history") {
       const c = hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : "dent";
       const sid = cleanSid(url.searchParams.get("sid"));
-      const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null;
-      return json({ turns: h ? h.turns : [] });
+      let turns = [];
+      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns; }
+      catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
+      return json({ turns });
     }
     if (M === "POST" && P === "/ga") { // Green-API
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
@@ -3491,7 +3496,12 @@ async function waErr(env, where, code, msg, details) {
 
 async function diag(env) {
   const out = [];
-  out.push("KV: " + (env.KV ? "подключено ✅" : "НЕ подключено ❌ — Settings → Bindings → KV namespace, имя KV"));
+  // хранилище проверяем чтением: эта страница нужна как раз тогда, когда оно не работает, поэтому сбой — строка в отчёте, а не падение страницы
+  let kvErr = "", waLast = null;
+  if (env.KV) { try { waLast = await env.KV.get("wa:lastErr"); } catch (e) { kvErr = String((e && e.message) || e).slice(0, 160); } }
+  out.push(!env.KV ? "KV: НЕ подключено ❌ — Settings → Bindings → KV namespace, имя KV"
+    : kvErr ? `Хранилище KV: ❌ не читается — ${kvErr}. Проверьте привязку KV (Settings → Bindings) и суточный лимит хранилища в панели Cloudflare. Пока оно не читается, бот не ведёт диалог и не показывает заявки`
+    : "KV: подключено ✅");
   const key = env.GEMINI_KEY || "";
   out.push("GEMINI_KEY: " + (key ? `есть ✅ (${key.length} симв., ${key.slice(0, 4)}…)` : "НЕТ ❌"));
   out.push("LEADS_KEY: " + (env.LEADS_KEY ? "задан ✅" : "не задан — используется VERIFY_TOKEN (лучше задать отдельный)"));
@@ -3523,8 +3533,7 @@ async function diag(env) {
         (j.code_verification_status ? ` · подтверждение: ${j.code_verification_status}` : ""));
       else { const e = j?.error || {}; out.push(`Номер в Meta: ❌ ${e.code || r.status} ${e.message || ""}` + (WA_HINT[e.code] ? " → " + WA_HINT[e.code] : "")); }
     } catch (e) { out.push("Номер в Meta: ❌ " + String(e).slice(0, 120)); }
-    const le = await env.KV.get("wa:lastErr");
-    out.push("Последняя ошибка WhatsApp: " + (le || "нет ✅"));
+    out.push("Последняя ошибка WhatsApp: " + (!env.KV || kvErr ? "не прочитана — хранилище не отвечает" : waLast || "нет ✅"));
   }
   out.push("Altegio: " + (env.ALTEGIO_PARTNER ? "ключ разработчика задан ✅ — проверка расписания: /altegio?key=…" : "не настроен (нужен Secret ALTEGIO_PARTNER)"));
   out.push("Модели: " + (env.MODEL || "gemini-flash-lite-latest") + " → запасная " + (env.MODEL_FALLBACK || "gemini-flash-latest"));
@@ -3558,16 +3567,21 @@ const BASE_CSS = `:root{--bg:#e6eeef;--panel:#fff;--ink:#12303a;--muted:#5e7780;
 
 async function leadsPage(env, only) {
   const ids = only ? [only] : Object.keys(CLIENTS);
-  let total = 0, blocks = "";
+  let total = 0, blocks = "", blind = false, part = false;
   for (const id of ids) {
     const leads = await allLeads(env, id);
+    if (leads.unread === "all") blind = true; else if (leads.unread) part = true;
     total += leads.length;
     if (!leads.length && !only) continue;
     blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map(l => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small></div>`).join("");
   }
+  // хранилище не читается — так и пишем: пустая страница выглядела бы как «заявок нет»
+  const warn = !env.KV ? "Хранилище KV не подключено к воркеру — заявки негде хранить. Проверьте настройку на странице /diag."
+    : blind ? `Хранилище не отвечает — ${blocks ? "часть заявок сейчас не видна" : "заявки сейчас не видны"}, попробуйте обновить страницу. Заявки не потеряны.`
+    : part ? "Общий список заявок сейчас не читается — показаны последние заявки из запасных копий. Попробуйте обновить страницу." : "";
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Заявки</title>
 <style>${BASE_CSS}body{padding:16px;max-width:640px;margin:0 auto}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}</style>
-<h2>Заявки (${total})</h2>${blocks || "<p>Пока пусто</p>"}`;
+<h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}`;
 }
 
 // политика конфиденциальности — нужна Meta, чтобы опубликовать приложение (App settings → Basic → Privacy Policy URL)
