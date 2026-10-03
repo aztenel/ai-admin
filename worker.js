@@ -3739,7 +3739,7 @@ const canSee = (s, cid) => !!s && (s.role === "owner" || (s.role === "staff" && 
 // запросы, которые что-то меняют, принимаем только со своей страницы (cookie сама по себе — не доказательство намерения)
 const sameOrigin = (request, url) => { const o = request.headers.get("origin"); return !o || o === url.origin; };
 function page(body, status = 200, extra = {}) { // страницы с личными данными: не кэшировать, не встраивать в чужие сайты, скрипты — только свои
-  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...extra } });
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "same-origin", "x-content-type-options": "nosniff", ...extra } }); // referrer-policy: адрес страницы не уходит на чужие сайты, а своя форма входа по-прежнему присылает заголовок Origin
 }
 const safeNext = n => { n = String(n || ""); return /^\/[a-z]/.test(n) && !/[\\\s]/.test(n) && !n.startsWith("//") ? n.slice(0, 200) : "/studio"; };
 function loginPage(next, msg) {
@@ -3754,7 +3754,8 @@ async function handleLogin(request, env, url) {
   if (request.method === "GET") return page(loginPage(safeNext(url.searchParams.get("next")), ""));
   let key = "", next = "/studio";
   try { const f = await request.formData(); key = String(f.get("key") || ""); next = safeNext(f.get("next")); } catch (e) {}
-  if (!sameOrigin(request, url)) return page(loginPage(next, "Откройте страницу входа заново."), 403);
+  const og = request.headers.get("origin");
+  if (og && og !== "null" && og !== url.origin) return page(loginPage(next, "Откройте страницу входа заново."), 403); // форму входа с чужого сайта не принимаем; «null» присылают браузеры со строгой приватностью
   if (await loginBlocked(env, request, false)) return page(loginPage(next, "Слишком много попыток. Подождите 10 минут."), 429);
   const hint = (/[?&]c=([a-z0-9]+)/.exec(next) || [])[1];
   const who = await loginRole(env, key, hint);

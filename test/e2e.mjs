@@ -1,0 +1,157 @@
+// Проверка страниц в настоящем браузере (Chromium через Playwright) на локальном сервере с заглушками.
+// В npm test не входит: нужен установленный Playwright. Запуск: node test/e2e.mjs [папка для снимков экрана]
+// Путь к Playwright: переменная PLAYWRIGHT_PATH или /opt/npm-tools/node_modules/playwright/index.mjs
+import { start, OWNER } from "./devserver.mjs";
+import { net, T, ok } from "./harness.mjs";
+import { mkdirSync } from "node:fs";
+
+const { chromium } = await import(process.env.PLAYWRIGHT_PATH || "/opt/npm-tools/node_modules/playwright/index.mjs");
+const shots = process.argv[2] || "";
+if (shots) mkdirSync(shots, { recursive: true });
+const { S, server, url } = await start(0);
+const browser = await chromium.launch();
+const errors = [];
+const newPage = async (viewport = { width: 390, height: 844 }) => {
+  const ctx = await browser.newContext({ viewport, locale: "ru-RU" });
+  const page = await ctx.newPage();
+  page.on("pageerror", e => errors.push("pageerror: " + e.message));
+  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push("console: " + m.text()); });
+  page.on("dialog", d => d.accept(d.type() === "prompt" ? "kairat" : undefined));
+  return page;
+};
+const shot = async (page, name) => { if (shots) await page.screenshot({ path: `${shots}/${name}.png`, fullPage: false }); };
+const wa = (b) => fetch(url + "/_wa", { method: "POST", body: JSON.stringify(b) }).then(r => r.json());
+const realFetch = globalThis.fetch; // harness подменил fetch: запросы к локальному серверу пропускаем настоящим
+{
+  const stub = globalThis.fetch, http = await import("node:http");
+  globalThis.fetch = (u, init) => String(u).startsWith(url) ? new Promise((resolve, reject) => {
+    const q = http.request(String(u), { method: (init && init.method) || "GET", headers: (init && init.headers) || {} }, res => { const ch = []; res.on("data", c => ch.push(c)); res.on("end", () => resolve(new Response(Buffer.concat(ch), { status: res.statusCode }))); });
+    q.on("error", reject); if (init && init.body) q.write(init.body); q.end();
+  }) : stub(u, init);
+}
+
+try {
+  // ---- вход владельца и страница «Мои боты»
+  const p = await newPage();
+  await p.goto(url + "/studio");
+  ok("без входа открывается страница входа", /\/login/.test(p.url()) && await p.locator("input[name=key]").isVisible());
+  await p.fill("input[name=key]", "неверный"); await p.click("button");
+  ok("неверный ключ — сообщение об ошибке", await p.locator("text=Ключ не подошёл").isVisible());
+  await p.fill("input[name=key]", OWNER); await p.click("button");
+  await p.waitForSelector("text=Боты клиентов");
+  ok("после входа — «Мои боты», ключа в адресе нет", p.url().endsWith("/studio"));
+  ok("демо-боты перечислены", await p.locator(".card").count() >= 7);
+  await shot(p, "01-studio-list");
+
+  // ---- новый бот: ошибки, проверка, сохранение
+  await p.click("text=+ Новый бот");
+  await p.fill("#f_id", "kairat"); await p.fill("#f_name", "Barber House");
+  await p.selectOption("#f_booking", "manual");
+  await p.fill("#f_schedule", "как получится"); await p.fill("#f_services", "Стрижка — 50");
+  await p.click("#b_check");
+  await p.waitForSelector(".msg.e");
+  const errText = await p.locator(".msg.e").innerText();
+  ok("ошибки паспорта показаны простыми словами", /Нужно исправить/.test(errText) && /график/.test(errText) && /цена 50/.test(errText), errText);
+  await shot(p, "02-studio-errors");
+  await p.fill("#f_address", "Астана, пр. Мангилик Ел, 10"); await p.fill("#f_phone", "8 701 123 45 67");
+  await p.fill("#f_schedule", "Пн–Сб 10:00–21:00; Вс 11:00–19:00");
+  await p.fill("#f_services", "Мужская стрижка — 6000 — 60\nСтрижка + борода — 9000 — 90\nОформление бороды от 4000\nДетская стрижка — 4000 — 45");
+  await p.fill("#f_staff", "Арман — топ-барбер\nЕрлан — барбер"); await p.fill("#f_extra", "Оплата: наличные и Kaspi.\nПарковка бесплатная.");
+  await p.click("#b_check");
+  await p.waitForSelector(".msg.g");
+  const prev = await p.locator("#out").innerText();
+  ok("проверка без ошибок показывает, что бот будет знать", /Ошибок нет/.test(prev) && /Мужская стрижка — 6 000 ₸/.test(prev) && /\+7 701 123 45 67/.test(prev) && /Пн–Сб 10:00–21:00/.test(prev), prev.slice(0, 400));
+  await shot(p, "03-studio-check");
+  await p.click("#b_save");
+  await p.waitForSelector("text=Сохранено");
+  ok("бот сохранён", !!S.kv.json("cfg:all").kairat);
+  await p.click("#b_key");
+  await p.waitForSelector("#keyout pre");
+  const staffKey = (await p.locator("#keyout pre").innerText()).trim();
+  ok("ключ сотрудника показан", /^[a-z2-9-]{17}$/.test(staffKey), staffKey);
+  await shot(p, "04-studio-key");
+  await p.click("#b_back");
+  await p.waitForSelector("text=Barber House");
+  const card = await p.locator(".card", { hasText: "Barber House" }).innerText();
+  ok("в списке — новый бот с отметками", /заявки администратору/.test(card) && /ключ сотрудника выдан/.test(card), card);
+  await shot(p, "05-studio-list-with-bot");
+
+  // ---- веб-чат бота из паспорта
+  const c = await newPage();
+  await c.goto(url + "/?c=kairat");
+  await c.waitForSelector("text=Barber House");
+  await c.fill("#in", "Сколько стоит стрижка?"); await c.keyboard.press("Enter");
+  await c.waitForSelector("text=6 000 ₸");
+  await c.fill("#in", "Тимур, +7 705 111 22 33, завтра в 12:00"); await c.keyboard.press("Enter");
+  await c.waitForSelector("text=Забронировала вас");
+  ok("веб-чат бота из паспорта: цена из паспорта, заявка создана", S.leads("kairat").length === 1 && S.leads("kairat")[0].phone === "+77051112233");
+  await shot(c, "06-webchat");
+
+  // ---- пульт чатов глазами сотрудника
+  await wa({ c: "kairat", from: "77051110001", name: "Данияр", text: "Здравствуйте! Сколько стоит стрижка?" });
+  await wa({ c: "kairat", from: "77051110001", name: "Данияр", text: "Позовите администратора" });
+  await wa({ c: "kairat", from: "77051110002", name: "Айгерим", text: "Добрый день" });
+  await wa({ c: "kairat", from: "77051110001", name: "Данияр", media: "MEDIA1" });
+  const st = await newPage();
+  await st.goto(url + "/inbox?c=kairat#wa:77051110001");
+  await st.fill("input[name=key]", staffKey); await st.click("button");
+  await st.waitForSelector("#msgs .m");
+  ok("сотрудник после входа попадает сразу в чат из ссылки", /#wa:77051110001$/.test(st.url()) && /Данияр/.test(await st.locator("#cname").innerText()));
+  const stateText = await st.locator("#cstate").innerText();
+  ok("в шапке чата — номер и состояние бота", /\+77051110001/.test(stateText) && /бот молчит до/.test(stateText), stateText);
+  ok("в чате видны сообщения клиента, ответ бота и голосовое с проигрывателем", await st.locator("#msgs .m.u").count() >= 3 && await st.locator("#msgs .m.b").count() >= 1 && await st.locator("#msgs audio").count() === 1);
+  await shot(st, "07-inbox-chat");
+  await st.fill("#txt", "Здравствуйте, Данияр! Это администратор, чем помочь?"); await st.click("#send");
+  await st.waitForSelector("#msgs .m.a");
+  ok("ответ администратора появился в чате и ушёл клиенту", /Это администратор/.test(await st.locator("#msgs .m.a").last().innerText()) && S.sentTo("77051110001").some(x => /Это администратор/.test(x)));
+  await shot(st, "08-inbox-replied");
+  await st.click("text=Вернуть бота");
+  await st.waitForFunction(() => /отвечает бот/.test(document.getElementById("cstate").textContent));
+  ok("«Вернуть бота» — состояние сменилось на «отвечает бот»", true);
+  await st.click("#back");
+  await st.waitForSelector("#rows .r, #rows .empty");
+  await st.click("#t_all");
+  await st.waitForFunction(() => document.querySelectorAll("#rows .r").length >= 2);
+  const listText = await st.locator("#rows").innerText();
+  ok("список чатов: оба клиента, имена из WhatsApp, начало последнего сообщения", /Данияр/.test(listText) && /Айгерим/.test(listText) && /Добрый день|Здравствуйте/.test(listText), listText.slice(0, 300));
+  await shot(st, "09-inbox-list");
+  await st.goto(url + "/studio");
+  ok("сотрудника со страницы владельца уводит в его пульт", /\/inbox\?c=kairat/.test(st.url()));
+
+  // ---- клиент с Altegio: просьба об отмене → «Сделано» в пульте (широкий экран)
+  await p.evaluate(async () => { await fetch("/api/studio/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5001" }) }); });
+  await wa({ c: "salon", from: "77071110001", name: "Айша", text: "Айша, мужская стрижка завтра в 10:00" });
+  await wa({ c: "salon", from: "77071110001", name: "Айша", text: "Не смогу прийти, отмените запись" });
+  ok("запись в Altegio создана, отмена не выполнена ботом", net.altRecords.length === 1 && net.altDeleted.length === 0);
+  const w = await newPage({ width: 1200, height: 800 });
+  await w.goto(url + "/inbox?c=salon&key=" + OWNER);
+  await w.waitForSelector("#rows .r");
+  ok("вход по ссылке с ключом: ключ из адреса убран", !w.url().includes("key="));
+  await w.click("#rows .r");
+  await w.waitForSelector(".rq");
+  const rqText = await w.locator(".rq").first().innerText();
+  ok("карточка просьбы: что просит клиент, номер записи, его слова", /Клиент просит отменить запись/.test(rqText) && /№ 777001/.test(rqText) && /Не смогу прийти/.test(rqText), rqText);
+  await shot(w, "10-inbox-request-wide");
+  await w.click(".rq >> text=Сделано");
+  await w.waitForSelector(".rq textarea");
+  ok("подготовлен текст для клиента", /Вашу запись отменили/.test(await w.locator(".rq textarea").inputValue()));
+  await w.click("text=Отправить клиенту и закрыть");
+  await w.waitForFunction(() => !document.querySelector(".rq"));
+  ok("«Сделано»: клиенту ушло сообщение, карточка закрыта, заявка помечена", S.sentTo("77071110001").some(x => /Вашу запись отменили/.test(x)) && S.leads("salon").some(l => l.kind === "cancel" && l.status === "выполнена"));
+  await shot(w, "11-inbox-done-wide");
+  ok("владелец видит ссылку «Боты» в пульте", await w.locator("#l_st").isVisible());
+
+  // ---- страницы заявок и выхода
+  await st.goto(url + "/leads");
+  ok("сотрудник видит заявки своего клиента", /Barber House/.test(await st.locator("body").innerText()) && !/Демо Дент/.test(await st.locator("body").innerText()));
+  await p.goto(url + "/logout");
+  await p.goto(url + "/studio");
+  ok("после выхода страница владельца закрыта", /\/login/.test(p.url()));
+  ok("в браузере нет ошибок JavaScript", errors.length === 0, errors.join(" | "));
+} catch (e) {
+  ok("сценарий в браузере дошёл до конца", false, String((e && e.stack) || e).slice(0, 1200) + (errors.length ? " | " + errors.join(" | ") : ""));
+} finally {
+  await browser.close(); server.close(); globalThis.fetch = realFetch;
+}
+console.log(`\nБраузер: прошло ${T.pass}, не прошло ${T.fail}`);
+process.exit(T.fail ? 1 : 0);
