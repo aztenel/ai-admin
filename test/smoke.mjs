@@ -1464,6 +1464,9 @@ geminiQueue = ["Да, отменила.\n[ОТМЕНА]"]; d = await chat("alt",
 ok("«Точно отменили?» → «просьба у администратора», второй заявки нет", /просьба у администратора/.test(d.reply) && leadsOf("alt").length === lN2 + 1 && calls.tg.length === 0, JSON.stringify([d.reply, calls.tg]));
 geminiQueue = ["Хорошо, оставляю запись."]; d = await chat("alt", s2, "Знаете, не надо отменять, я приду");
 ok("клиент передумал → администратор узнаёт, что запись нужно оставить", tgHas("Клиент передумал") && /запись нужно оставить: Мужская стрижка/.test(d.reply) && !profOf("alt", s2).req, JSON.stringify([d.reply, calls.tg]));
+ok("…и на странице заявок просьба об отмене помечена «клиент передумал»", reqLead("alt").status === "клиент передумал" && /не отменять и не переносить/.test(reqLead("alt").note), JSON.stringify(reqLead("alt")));
+r = await call("/leads?key=lk&c=alt"); t = await r.text();
+ok("…страница заявок показывает эту пометку", t.includes("<em>клиент передумал</em>") && t.includes("Отменить запись"), t.slice(t.indexOf("клиент передумал") - 200, t.indexOf("клиент передумал") + 200));
 calls.tg.length = 0; lN2 = leadsOf("alt").length;
 geminiQueue = ["Спасибо, больше ничего не нужно — хорошо!"]; d = await chat("alt", s2, "Нет, спасибо, больше ничего не нужно");
 ok("«спасибо, больше ничего не нужно» — не «клиент передумал»: администратору ничего не уходит", calls.tg.length === 0 && leadsOf("alt").length === lN2, JSON.stringify(calls.tg));
@@ -1501,6 +1504,11 @@ newLoc(); s2 = sid();
 geminiQueue = ["Записала.\n" + tagOf()]; d = await chat("alt", s2, "Тимур, +7 771 000 50 06, мужская стрижка завтра в 10:00");
 { const live = env.ALTEGIO_LOC_ALT; ALT.down = true; env.ALTEGIO_LOC_ALT = String(++locN);
   geminiQueue = ["Передала администратору, он подтвердит отмену.\n[ОТМЕНА]"]; d = await chat("alt", s2, "Отмените мою запись");
+  ALT.down = false; env.ALTEGIO_LOC_ALT = live; }
+{ const live = env.ALTEGIO_LOC_ALT, s3 = sid(); geminiQueue = ["Записала.\n" + tagOf({ name: "Ержан", time: "11:00" })]; await chat("alt", s3, "Ержан, +7 771 000 50 16, мужская стрижка завтра в 11:00");
+  ALT.down = true; env.ALTEGIO_LOC_ALT = String(++locN); calls.tg.length = 0;
+  geminiQueue = ["Передала вашу просьбу администратору, он подтвердит отмену."]; const x = await chat("alt", s3, "Отмените мою запись");
+  ok("расписание недоступно, ИИ написал «передала администратору» без строки [ОТМЕНА] → администратор всё равно получает просьбу", tgHas("Клиент просит отменить или перенести запись") && /Передала администратору/.test(x.reply), JSON.stringify([x.reply, calls.tg]));
   ALT.down = false; env.ALTEGIO_LOC_ALT = live; }
 geminiQueue = ["Отменяю.\n[ОТМЕНА]"]; d = await chat("alt", s2, "Так отменили?");
 ok("расписание было недоступно, потом заработало: на «Так отменили?» бот ничего не удаляет и говорит, что просьба у администратора", ALT.deleted.length === 0 && /просьба у администратора/.test(d.reply), JSON.stringify([d.reply, ALT.deleted]));

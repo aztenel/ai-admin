@@ -2135,14 +2135,15 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (!selfCx && ph) {
         // отмену и перенос делает администратор: просьбу сохраняем заявкой — она видна на странице заявок, даже если уведомление не дошло. Одна и та же просьба — одна заявка
         const key = (move ? "mvx|" : "cxx|") + hash(text), r0 = saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? saved.profile.req : null;
+        const ids = ((r0 && r0.ids) || []).slice(-5);
         if (!(r0 && r0.key === key)) {
           if (adminCap() >= ALT_MAX_ADMIN_LEADS) return say("adminBusy");
-          addLead({ name: saved.profile.name || "", service: (move ? "Перенести" : "Отменить") + " запись, которой нет в этом чате", time: "день и время — в сообщении клиента", phone: ph },
+          ids.push(addLead({ name: saved.profile.name || "", service: (move ? "Перенести" : "Отменить") + " запись, которой нет в этом чате", time: "день и время — в сообщении клиента", phone: ph },
             { kind: move ? "change" : "cancel", note: `бот этой записи не видит — найдите её в Altegio по номеру клиента.${books.length ? " Записи этого чата: " + books.map(x => altLabel(x, "ru", nowMs, true)).join("; ") + "." : ""} ${quote}` },
-            `❓ Клиент просит ${move ? "перенести" : "отменить"} запись, которой нет в этом чате`, true);
+            `❓ Клиент просит ${move ? "перенести" : "отменить"} запись, которой нет в этом чате`, true).id);
           adminInc();
         }
-        saved.profile.req = { key, at: nowMs };
+        saved.profile.req = { key, at: nowMs, ids };
       } else unknownRec(move ? "перенести" : "отменить", books);
       if (ph) { cancel = true; goneAll = false; }
       return (ph ? say(move ? "otherAdmin" : "cancelAdmin") : say("cancelWho")) + (withAlso ? alsoText(books) : "");
@@ -2220,16 +2221,16 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const reqAdmin = move => {
         const tg = cancelLines.length ? findTarget(cancelLines[0], null) : null, picked = tg && tg.hits.length === 1 ? tg.hits : old;
         const want = mvLines.map(bl => { const f = tagFields(bl); return [nameOf(f["имя"]), clean(f["услуга"], 80), f["мастер"] && !altPickStaff(alt.staff, f["мастер"]).any ? "мастер " + clean(f["мастер"], 40) : "", [clean(f["дата"], 20), clean(f["время"], 40)].filter(Boolean).join(" ")].filter(Boolean).join(", "); }).join("; ");
-        const key = (move ? "mv|" : "cx|") + hash(text);
+        const key = (move ? "mv|" : "cx|") + hash(text), ids = ((req0 && req0.ids) || []).slice(-5);
         if (!(req0 && req0.key === key)) { // одна и та же просьба — одна заявка
           if (adminCap() >= ALT_MAX_ADMIN_LEADS) return say("adminBusy");
-          addLead({ name: saved.profile.name || (old[0] || pend[0] || {}).name || "", service: move ? "Перенести запись" + (want ? " → " + want : "") : "Отменить запись", time: listRu(), phone: ph0() },
+          ids.push(addLead({ name: saved.profile.name || (old[0] || pend[0] || {}).name || "", service: move ? "Перенести запись" + (want ? " → " + want : "") : "Отменить запись", time: listRu(), phone: ph0() },
             { kind: move ? "change" : "cancel", note: `бот сам записи не ${move ? "переносит" : "отменяет"} — сделайте это в Altegio и подтвердите клиенту.${picked.length === 1 && old.length > 1 ? " ИИ считает, что речь о записи: " + altLabel(picked[0], "ru", nowMs, true) + "." : ""} ${quote}` },
-            move ? "✏️ Клиент просит перенести запись — сделайте в Altegio" : "❌ Клиент просит отменить запись — сделайте в Altegio", true);
+            move ? "✏️ Клиент просит перенести запись — сделайте в Altegio" : "❌ Клиент просит отменить запись — сделайте в Altegio", true).id);
           adminInc();
         }
         const out = say(move ? "mvAdmin" : "cxAdmin", { list: (old.length ? old : pend).map(lab).join("; ") });
-        saved.profile.req = { key, at: nowMs };
+        saved.profile.req = { key, at: nowMs, ids };
         for (const x of picked) x.rq = nowMs; // по этой записи есть просьба у администратора
         cancel = true; goneAll = false; acted = true;
         return out;
@@ -2237,6 +2238,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (undo) {
         // клиент передумал, а просьбу уже передали администратору — он должен узнать, что запись нужно оставить как есть
         if (!undoTold) tell(`↩️ Клиент передумал — запись не отменять и не переносить; если уже изменили её в Altegio, верните как было или свяжитесь с клиентом — ${c.name}\n${who}\n${listRu()}\n${quote}`);
+        for (const id of req0.ids || []) patchLead(id, { status: "клиент передумал", note: "клиент передумал — запись не отменять и не переносить. " + quote }); // на странице заявок просьба больше не выглядит действующей
         for (const x of books) delete x.rq;
         delete saved.profile.req;
         if (!undoTold) outs.push(say("keepAdmin2", { list: listOf(old) }));
@@ -2391,13 +2393,14 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     const hasCx = tagsOf(raw, "ОТМЕНА").length > 0 || (draftOnly && tagsOf(raw0, "ОТМЕНА").length > 0);
     // отмену и перенос передаём администратору, только если об этом просит сам клиент: слов ИИ «отменила» для этого мало
     const wishD = wantsChange(text) && !ALT_STATUS_Q.test(text);
+    const saysAdm = !draftOnly && ADMIN_CX.test(reply); // ИИ пишет «передала администратору» — служебную строку он при этом мог и не поставить
     const wd = saved.profile.cxWish;
     if (wd && wd.down && nowMs - wd.at < 15 * 60e3 && books.length && ALT_UNDO.test(text)) {
       // клиент передумал отменять, а администратора уже попросили отменить запись вручную
       tell(`↩️ Клиент передумал отменять запись — оставьте её — ${c.name}\n${who}\n${books.map(x => altLabel(x, "ru", nowMs, true) + (x.record_id ? ", № " + x.record_id : "")).join("; ")}\n${quote}`);
       delete saved.profile.cxWish;
       reply = say("keepAdmin", { list: books.map(x => altLabel(x, lang, nowMs)).join("; ") });
-    } else if ((hasCx || cl.change) && wishD) {
+    } else if ((hasCx || cl.change || saysAdm) && wishD) {
       cancel = true;
       const one = pend.length === 1 && !altOther({ name: pend[0].name || "", date: pend[0].date, time: pend[0].time, services: pend[0].service || "", staffName: "" }, text, { nowMs }) ? pend[0] : null;
       if (books.length) {
@@ -2413,6 +2416,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       else { unknownRec("отменить", []); if (!ph0()) cancel = false; }
       reply = cancel ? say("cancelAdmin") : say("cancelWho");
     } else if (hasCx || cl.change) reply = join([cl.keep]) || say("noChange"); // ИИ пишет «отменила», а клиент об этом не просил: в расписании ничего не менялось
+    else if (saysAdm && CX_TOPIC.test(reply) && books.length && !altSelfCancel(env, c)) reply = say("noChange"); // «передала администратору просьбу об отмене», а клиент о ней не просил
     const outs = [];
     for (const line of bookLines) {
       const f = tagFields(line);
