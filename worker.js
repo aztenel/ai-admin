@@ -484,6 +484,94 @@ function detectLang(t, prev) {
 // ================= слой 3: проверка ответа =================
 const digits = s => (String(s).match(/\d[\d\s ]*\d|\d/g) || []).map(x => x.replace(/[\s ]/g, ""));
 const NUMWORDS = /(один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто|сто|двести|триста|четыреста|пятьсот|шестьсот|семьсот|восемьсот|девятьсот|полтор)[а-я]*\s+(тысяч|миллион|тенге|тг)/i;
+// то же по-казахски и по-английски — только вместе с валютой: «жиырма мың теңге», «twenty thousand tenge» («екі мың жиырма алтыншы жыл» — это год)
+const NUMWORDS_KK = /(?<![а-яёәғқңөұүһі])(бір|екі|үш|төрт|бес|алты|жеті|сегіз|тоғыз|он|жиырма|отыз|қырық|елу|алпыс|жетпіс|сексен|тоқсан|жүз)\s+(мың\s+(\S+\s+){0,2}?)?(теңге|тг(?![а-яёәғқңөұүһі])|₸)/i;
+const NUMWORDS_EN = /(?<![a-z])(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\s+((thousand|million)\s+(\S+\s+){0,2}?)?(tenge|kzt|₸)/i;
+
+// ---- цены в ответе ИИ. Цену пишут по-разному: «20 000 ₸», «20,000 KZT», «20.000 тг», «20 тыс. тенге», «20к», «стоит 20 000» — число сверяем с фактами в любой записи.
+// Число: разряды через пробел, запятую или точку либо слитно; дробная часть — одна-две цифры («9,5 тыс.»). После времени («10:00 100 ₸») разряды не склеиваем
+const NUM_G = /(?<![\d:])([1-9]\d{0,2}(?:[\x20\u00a0\u202f.,]\d{3})+)(?!\d)(?:[.,](\d{1,2})(?!\d))?|(\d+)(?:[.,](\d{1,2})(?!\d))?/g;
+function numsIn(s) {
+  const out = [];
+  for (const m of String(s).matchAll(NUM_G)) {
+    const int = (m[1] || m[3]).replace(/\D/g, ""), frac = (m[2] || m[4] || "").replace(/0+$/, "");
+    out.push({ at: m.index, end: m.index + m[0].length, raw: m[0], n: frac ? int + "." + frac : int, v: +(frac ? int + "." + frac : int) });
+  }
+  return out;
+}
+const P_SP = "[ \\u00a0\\u202f]";
+const P_CUR_SRC = "₸|₽|\\$|€|тенге|теңге|тңг|тнг(?![а-яёәғқңөұүһі])|тг(?![а-яёәғқңөұүһі])|kzt(?![a-z])|tenge|tg(?![a-z])|руб(?:\\.|л[а-яё]*)?(?![а-яё])|usd(?![a-z])|доллар|евро(?![а-яё])|eur(?:os?)?(?![a-z])";
+const P_CUR = new RegExp("^" + P_SP + "*(?:" + P_CUR_SRC + ")", "i");
+// «12 000 т.» — тенге, но только после числа от тысячи («5 т» — это тонны, «т.е.» и «т.к.» — не валюта)
+const P_CUR_T = new RegExp("^" + P_SP + "*т(?![а-яёәғқңөұүһіa-z])(?!\\.[а-яё])", "i");
+// знак валюты перед числом: «$50», «KZT 12,000». Если перед знаком уже стоит число («6,000 KZT 60 minutes»), знак относится к нему
+const P_CUR_PRE = new RegExp("(?:^|[^\\d \\u00a0\\u202f])" + P_SP + "*(?:[$€]|(?<![a-zа-яё])(?:kzt|usd|eur))" + P_SP + "*$", "i");
+// множитель: «тыс.», «тысяч», «мың», «млн». «к» и «k» — когда стоят вплотную к числу («12к») либо через пробел, но дальше не слово и не число:
+// «12 к.» — цена, а «в 10 к мастеру», «к 22:00 к Ерлану» и «2 к 1» — предлог
+const P_MULT = new RegExp("^(?:" + P_SP + "*(тыс[а-яё]*\\.?|мың[а-яёәғқңөұүһі]*|thousand)|" + P_SP + "*(млн\\.?|миллион[а-яё]*|million|mln(?![a-z]))|([кk])(?![а-яёәғқңөұүһіa-z])|" + P_SP + "+([кk])(?=" + P_SP + "*(?:$|[.,;:!?)»\"”\\n—–-]|" + P_CUR_SRC + ")))", "i");
+// после числа стоит не валюта, а мера: «10 тыс. км», «от 1000 гостей», «каждые 7 500 км», «2019 года» — это не цена.
+// Часов, дней и месяцев в списке нет: цену называют и «за месяц»
+const P_UNIT = new RegExp("^" + P_SP + "*(?:(?:[–—-]|до|to)" + P_SP + "*\\d[\\d \\u00a0\\u202f.,]*)?" + P_SP + "*(?:%|км|кв\\.|м²|м2|мл|кг|шт|лет(?![а-яё])|год|г\\.|гост|человек|чел\\.|персон|мест(?![а-яё])|балл|раз(?![а-яё])|слов(?![а-яё])|знак|клиент|ученик|адам|қонақ|жыл|km(?![a-z])|kg(?![a-z])|ml(?![a-z])|guests?(?![a-z])|people|persons?(?![a-z])|years?(?![a-z])|seats?(?![a-z]))", "i");
+const P_RANGE = new RegExp("^" + P_SP + "*(?:[–—-]|до|to)" + P_SP + "*$", "i"); // «от 4 000 до 5 000 ₸», «6–8 тыс.»: цена — оба числа
+// слова о цене перед числом без знака валюты. «от», «всего» и «from» — только вплотную к числу, после остальных — не больше пяти слов без цифр в том же предложении («стоимость мужской стрижки у нас — 12 000»)
+const P_WORD_G = /(?<![а-яёәғқңөұүһіa-z])(от|всего|from|сто(?:ит|ят|ить|ил[аои]?)|стоимост[а-яё]*|цен[аыуе]?|ценой|ценник[а-яё]*|обойд[её]тся|обойдутся|выйдет|составит|составляет|итого|сумм[аыуе]|бағасы|құны|costs?|priced?|prices|total)(?![а-яёәғқңөұүһіa-z])/gi;
+const P_WORD_ADJ = /^(от|всего|from)$/i, P_WORD_ONE = new RegExp("^(?:" + P_WORD_G.source + ")$", "i");
+const P_AFTER = new RegExp("^" + P_SP + "*-?(?:нан|нен|дан|ден|тан|тен)?" + P_SP + "*(?:тұрады|турады|бастап|басталады)", "i"); // по-казахски слово о цене стоит после числа: «12 000 тұрады»
+const P_NUMBER_OF = /(?:№|#|n°|номер[а-яё]*|код[а-яё]*|заказ[а-яё]*)[ \u00a0]*[:№#]?[ \u00a0]*$/i; // «запись № 777001» — номер, а не цена
+const P_MODEL = /(?:^|[^A-Za-zА-Яа-яЁё0-9-])([A-Z][A-Za-z0-9-]*|[А-ЯЁ]{2,})[ \u00a0]+$/;                 // «Peugeot 3008», «ВАЗ 2114» — модель, которую назвал клиент
+// что за число стоит в тексте на месте t: множитель k (1 — цена без множителя) либо 0 — не цена по знаку валюты
+function priceMark(s, t) {
+  const after = s.slice(t.end, t.end + 28), m = P_MULT.exec(after), rest = m ? after.slice(m[0].length) : after;
+  if (P_CUR.test(rest) || (!m && t.v >= 1000 && P_CUR_T.test(rest)) || P_CUR_PRE.test(s.slice(Math.max(0, t.at - 8), t.at))) return m ? (m[2] ? 1e6 : 1e3) : 1;
+  return m && !P_UNIT.test(rest) ? (m[2] ? 1e6 : 1e3) : 0;
+}
+// год («2026»), цифры телефона и номер записи или заказа — не цена, даже если рядом стоит слово о цене или знак «—» перед ценой
+const notPrice = (s, t, year, spans) => (/^\d{4}$/.test(t.raw) && t.v >= year - 1 && t.v <= year + 5) || spans.some(x => t.at >= x[0] && t.end <= x[1]) || P_NUMBER_OF.test(s.slice(Math.max(0, t.at - 24), t.at));
+// число от 1000 без знака валюты: цена, если рядом слово о цене. Мера («км», «гостей») и модель машины — не цена
+function barePrice(s, t, year, spans) {
+  if (t.v < 1000 || t.n.includes(".") || notPrice(s, t, year, spans)) return false;
+  const before = s.slice(Math.max(0, t.at - 96), t.at), after = s.slice(t.end, t.end + 40);
+  if (P_UNIT.test(after)) return false;
+  if (P_AFTER.test(after)) return true;
+  const model = P_MODEL.exec(before);
+  if (model && !P_WORD_ONE.test(model[1])) return false;
+  const sent = before.split(/[.!?\n]/).pop();
+  for (const m of sent.matchAll(P_WORD_G)) {
+    const gap = sent.slice(m.index + m[0].length), words = (gap.match(/[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]+/g) || []).length;
+    if (!/\d/.test(gap) && words <= (P_WORD_ADJ.test(m[1]) ? 0 : 5)) return true;
+  }
+  return false;
+}
+// цены в тексте по порядку: [{ n — число строкой, как его сверять с фактами }]
+function pricesIn(s, year, spans) {
+  const toks = numsIn(s), marks = toks.map(t => priceMark(s, t)), out = [];
+  toks.forEach((t, i) => {
+    let k = marks[i];
+    // начало промежутка: «6–8 тыс.» — множитель общий; «4 000–5 000 ₸» — цена и первое число; «10–15 000 ₸» — первое число не трогаем
+    if (!k && marks[i + 1] && P_RANGE.test(s.slice(t.end, toks[i + 1].at)) && !notPrice(s, t, year, spans)) k = t.v < 1000 ? (marks[i + 1] > 1 ? marks[i + 1] : 0) : 1;
+    if (!k && barePrice(s, t, year, spans)) k = 1;
+    if (k) out.push({ n: k > 1 ? String(Math.round(t.v * k)) : t.n });
+  });
+  return out;
+}
+// числа из фактов, с которыми сверяется цена: и как написаны («6 000»), и с множителем («6 тыс.» → 6000)
+function factNums(facts) {
+  const set = new Set(digits(facts));
+  for (const t of numsIn(facts)) set.add(t.n);
+  for (const p of pricesIn(facts, 0, [])) set.add(p.n);
+  return set;
+}
+const PHONE_LOOSE = /(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g; // всё, что похоже на номер телефона, даже с несуществующим кодом («+7 000 000 00 00»)
+// адрес сайта в ответе: «demo-dent.kz», «kaspi.kz/pay/…». Название сервиса из фактов без пути («Kaspi.kz», когда в фактах есть Kaspi) — не ссылка
+function siteIn(r, facts) {
+  let words = null;
+  for (const m of r.matchAll(/\.(kz|com|ru)\b(\/\S)?/gi)) {
+    words = words || new Set(lowE(facts).match(/[a-zа-яәғқңөұүһі0-9]+/g) || []);
+    const name = lowE((r.slice(Math.max(0, m.index - 64), m.index).match(/[a-zа-яёәғқңөұүһі0-9.-]*$/i) || [""])[0]);
+    if (m[2] || name.length < 3 || !words.has(name)) return true;
+  }
+  return false;
+}
 
 function allowedTimes(c, ctx, userText) {
   const t = new Set();
@@ -502,13 +590,10 @@ function allowedTimes(c, ctx, userText) {
 function checkReply(c, reply, userText, ctx) {
   let r = reply.replace(/\*\*|__|`|^#+\s*/gm, "").replace(/^\s*[-•*]\s+/gm, "").replace(/\n{2,}/g, "\n").trim();
   if (/ПРАВИЛА \(они важнее|Факты \(других|Свободные окна для записи \(|\{TOPIC\}|важнее любых слов|Запись в расписание \(важнее|Услуги для записи \((других нет|показана часть)|Итог записи, отмены и переноса|Одна строка \[ЗАЯВКА\]|Если клиент хочет именно к мастеру|У компании электронное расписание, запись|к нему записывай только на это время|Услуга: точное название из списка|добавь последней отдельной строкой|клиенту сообщает система|До записи узнай услугу|Если клиент просит день, которого нет|Время окончания услуги не называй|Время конкретного мастера появится в подсказке|время на этот день не называй|предложи другого мастера или время из|Уже известно о клиенте|Ты — AI-администратор компании|ЯЗЫК: клиент пишет/i.test(r)) return { text: r, why: "leak" };
-  const allowed = new Set(digits(c.facts)); // цена — только из фактов: число, которое назвал клиент («сделаете за 12 000?»), ценой не становится
-  for (const m of r.matchAll(/(\d[\d\s ]*\d|\d)\s*(₸|тенге|тг\b|тыс|млн)/gi)) {
-    let n = m[1].replace(/[\s ]/g, "");
-    if (/тыс/i.test(m[2])) n += "000"; if (/млн/i.test(m[2])) n += "000000";
-    if (!allowed.has(n)) return { text: r, why: "цена " + n };
-  }
-  if (NUMWORDS.test(r)) return { text: r, why: "цена словами" };
+  const allowed = factNums(c.facts); // цена — только из фактов: число, которое назвал клиент («сделаете за 12 000?»), ценой не становится
+  const phoneSpans = [...phonesIn(r).map(p => [p.at, p.at + p.len]), ...[...r.matchAll(PHONE_LOOSE)].map(m => [m.index, m.index + m[0].length])]; // цифры телефона — не цена
+  for (const p of pricesIn(r, local(ctx.nowMs || Date.now()).getUTCFullYear(), phoneSpans)) if (!allowed.has(p.n)) return { text: r, why: "цена " + p.n };
+  if (NUMWORDS.test(r) || NUMWORDS_KK.test(r) || NUMWORDS_EN.test(r)) return { text: r, why: "цена словами" };
   const times = allowedTimes(c, ctx, userText);
   const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(h => [hStr(h[0]), hStr(h[1])])) : null;
   const nt = x => x.replace(/^0(\d)/, "$1");
@@ -543,8 +628,8 @@ function checkReply(c, reply, userText, ctx) {
     return { text: r, why: "время " + m[0] };
   }
   const factPhones = new Set([...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
-  for (const m of r.matchAll(/(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g)) if (!factPhones.has(normPhone(m[0]))) return { text: r, why: "телефон" };
-  if (/https?:\/\/|www\.|\.(kz|com|ru)\b/i.test(r) && !/https?:\/\/|www\./.test(c.facts)) return { text: r, why: "ссылка" };
+  for (const m of r.matchAll(PHONE_LOOSE)) if (!factPhones.has(normPhone(m[0]))) return { text: r, why: "телефон" };
+  if ((/https?:\/\/|www\./i.test(r) || siteIn(r, c.facts)) && !/https?:\/\/|www\./.test(c.facts)) return { text: r, why: "ссылка" };
   if (r.length > 600) r = (r.slice(0, 600).match(/^[\s\S]*[.!?]/) || [r.slice(0, 600)])[0];
   return { text: r, why: null };
 }
