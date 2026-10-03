@@ -1543,6 +1543,14 @@ ok("«старт» после «стоп»: бот снова отвечает",
     ok("H1: чат со старым профилем (без списка) → последняя заявка попадает в список, ИИ видит её", (pf(s).leads || []).length === 1 && pf(s).leads[0].id === "old1" && pf(s).leadId === "old1" && sysOf().includes("уже есть бронь: чистка, завтра, 16:00"), JSON.stringify(pf(s)));
     geminiQueue = [cxTag]; d = await chat("dent", s, "Отмените мою запись");
     ok("…и отменяется по просьбе клиента", d.cancel === true && tgHas("Отмена: Азамат, чистка, завтра, 16:00") && !pf(s).leadId && !pf(s).leads, JSON.stringify([d.reply, calls.tg, pf(s)])); }
+  { const wc = env.WA_CLIENT; env.WA_CLIENT = "dent"; const from = "77016000031";
+    geminiQueue = ["Какое время вам подойдёт?"]; await waText(from, "Хочу на чистку"); const W = winOf(), D = W[0].day, [T0, T1] = W[0].times;
+    geminiQueue = [`Забронировала вас на ${D} в ${T0}. Администратор подтвердит запись.\n` + TAG("Азамат", `${D}, ${T0}`)]; await waText(from, "Азамат, в первое время");
+    geminiQueue = [`Забронировала Гульнар на ${D} в ${T1}. Администратор подтвердит запись.\n` + TAG("Гульнар", `${D}, ${T1}`)]; await waText(from, "И маму запишите, Гульнар, на второе время");
+    const gid2 = waProf("dent", from).leadId; await waText(from, "сброс");
+    geminiQueue = ["Здравствуйте! Чем помочь?"]; await waText(from, "Здравствуйте"); const p = waProf("dent", from);
+    ok("H1: WhatsApp, «сброс» при двух заявках (сам список команда не сохраняет) → чат помнит последнюю заявку: её номер, имя и время", (p.leads || []).length === 1 && p.leads[0].id === gid2 && p.leads[0].name === "Гульнар" && p.leads[0].time === T1 && /Гульнар/.test(p.booked || "") && !/Азамат/.test(p.booked || ""), JSON.stringify(p));
+    env.WA_CLIENT = wc; }
 
   // --- H2: вторая запись в чате не теряется
   o = await open(); let g0 = calls.gemini.length;

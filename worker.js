@@ -1758,8 +1758,9 @@ function plList(list, lang, nowMs, owner) {
 function plLoad(p, nowMs) {
   if (Array.isArray(p.leads)) return p.leads;
   if (!p.leadId) return [];
-  const s = String(p.leadSig || "").split("|");
-  return [{ id: p.leadId, name: p.name || "", date: plIso(s[2]) ? s[2] : "", time: /^\d{1,2}:\d{2}$/.test(s[1] || "") ? s[1] : hm(p.booked || ""), service: "", text: String(p.booked || ""), at: nowMs, sig: p.leadSig || "", old: true }];
+  // в booked могли быть перечислены несколько заявок («Азамат: …; Гульнар: …») — восстанавливаем последнюю: её номер и подпись лежат в leadId и leadSig
+  const s = String(p.leadSig || "").split("|"), seg = String(p.booked || "").split("; ").pop(), m = seg.match(/^([^:,;]{2,40}): (.+)$/);
+  return [{ id: p.leadId, name: m ? m[1] : p.name || "", date: plIso(s[2]) ? s[2] : "", time: /^\d{1,2}:\d{2}$/.test(s[1] || "") ? s[1] : hm(seg), service: "", text: m ? m[2] : seg, at: nowMs, sig: p.leadSig || "", old: true }];
 }
 // записать список в профиль вместе с полями, которые от него зависят
 function plSync(p, list, nowMs) {
