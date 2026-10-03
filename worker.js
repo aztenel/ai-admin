@@ -1834,10 +1834,13 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   };
   const quiet = async () => { try { await save("", ""); } catch (e) { console.log("history", String(e)); } }; // сохранить состояние, не роняя ответ
   const optM = /^h:(?:wa|ga):[^:]+:(\d+)$/.exec(histKey), optKey = optM ? `optout:${c.id}:${optM[1]}` : "";
+  // язык ответов, которые бот даёт сам, без ИИ («стоп», «позовите человека», лимит): как у сообщения клиента или у чата
+  const lang0 = detectLang(text, saved.profile.lang), tr = (ru, kk, en) => lang0 === "kk" ? kk : lang0 === "en" ? en : ru;
+  if (lang0 !== "ru") saved.profile.lang = lang0; else delete saved.profile.lang; // язык чата помним и тогда, когда до ИИ дело не дошло: номер после «позовите человека» языка не меняет
 
   if (saved.n >= MAX_MSGS_PER_SESSION && !wa && !STOP.test(text) && !wantsHuman(text, (saved.turns.filter(t => t.role === "model").pop() || {}).text || "")) { // «позовите администратора» и «стоп» работают и после лимита
     if (dirty) await quiet();
-    return { reply: "Спасибо! Лимит этого диалога исчерпан. Нажмите «Заново» или позвоните нам.", lead: null };
+    return { reply: tr("Спасибо! Лимит этого диалога исчерпан. Нажмите «Заново» или позвоните нам.", "Рахмет! Бұл диалогтың лимиті бітті. «Заново» батырмасын басыңыз немесе бізге қоңырау шалыңыз.", "Thank you! This chat has reached its message limit. Press «Заново» to start over, or call us."), lead: null };
   }
 
   // «стоп» — клиент не хочет общаться с ботом
@@ -1846,7 +1849,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     saved.profile.pausedUntil = nowMs + 30 * 86400e3; saved.profile.stop = true;
     if (wa && optKey) { try { await store.put(optKey, String(nowMs)); } catch (e) { console.log("optout", String(e)); } } // отметка без срока: история чата через месяц сотрётся, а в рассылки этот номер попадать не должен
     if (!opts.test && !already) await notify(env, `⛔ Клиент попросил не писать ему автоматически — ${c.name}\n${who}`, c.id);
-    const reply = "Хорошо, автоматически больше не отвечаю. Если понадобится, администратор напишет вам сам. Чтобы я снова отвечала, напишите «старт».";
+    // «stop» латиницей первым сообщением — скорее всего, пишет не русскоязычный клиент
+    const en = lang0 === "en" || (lang0 === "ru" && !saved.turns.length && /^[^а-яёәғқңөұүһі]*[a-z][^а-яёәғқңөұүһі]*$/i.test(text));
+    const reply = en ? "OK, I won't reply automatically any more. If needed, the administrator will write to you. To turn my replies back on, write \"start\"."
+      : tr("Хорошо, автоматически больше не отвечаю. Если понадобится, администратор напишет вам сам. Чтобы я снова отвечала, напишите «старт».", "Жарайды, енді автоматты түрде жауап бермеймін. Қажет болса, әкімші сізге өзі жазады. Қайта жауап беруім үшін «старт» деп жазыңыз.", "");
     await save(text, reply);
     return { reply, lead: null, stopped: true, isNew, offer: [] };
   }
@@ -1872,9 +1878,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       try { await save(text, ""); } catch (e) { console.log("history", String(e)); } // сообщение клиента остаётся в истории: администратор видит его в пульте чатов
       return { reply: "", paused: true, lead: null, isNew };
     }
-    let reply = "Администратор уже получил ваш запрос и скоро свяжется с вами. Если удобно, оставьте номер телефона.";
+    let reply = tr("Администратор уже получил ваш запрос и скоро свяжется с вами. Если удобно, оставьте номер телефона.", "Әкімші өтінішіңізді алды, жақында хабарласады. Ыңғайлы болса, телефон нөміріңізді қалдырыңыз.", "The administrator already has your request and will contact you soon. If convenient, please leave your phone number.");
     if (phoneInText) {
-      reply = "Спасибо! Передала номер администратору, он вам перезвонит.";
+      reply = tr("Спасибо! Передала номер администратору, он вам перезвонит.", "Рахмет! Нөміріңізді әкімшіге бердім, ол сізге қоңырау шалады.", "Thank you! I've passed your number to the administrator, they will call you back.");
       if (!opts.test) await notify(env, `📞 Клиент оставил номер для связи — ${c.name}\n${phoneInText}`, c.id);
     }
     await save(text, reply);
@@ -1887,7 +1893,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     d.n++; saved.profile.day = d;
     if (d.n > WA_MAX_DAY) {
       saved.profile.pausedUntil = nowMs + PAUSE_MS;
-      const reply = "Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.";
+      const reply = tr("Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.", "Бүгін автоматты түрде бұдан әрі жауап бере алмаймын. Хабарламаңызды әкімшіге бердім — ол сізге осында жауап береді.", "I can't reply automatically any more today. I've passed your message to the administrator — they will reply here.");
       const told = !!d.told; d.told = true; // один сигнал в сутки, даже если клиент снимает паузу командой «меню»
       needs("limit");
       if (!opts.test && !told) await notify(env, `🙋 Клиент написал больше ${WA_MAX_DAY} сообщений за день — бот замолчал на 2 часа, ответьте сами — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${chatLink}`, c.id);
@@ -1900,12 +1906,12 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const lastBot = (saved.turns.filter(t => t.role === "model").pop() || {}).text || "";
   if (wantsHuman(text, lastBot)) {
     saved.profile.pausedUntil = nowMs + PAUSE_MS;
-    const when = openNow(c, nowMs) ? "в ближайшее время" : `когда откроемся — ${nextOpen(c, nowMs)}`;
+    const open = openNow(c, nowMs), when = tr(open ? "в ближайшее время" : `когда откроемся — ${nextOpen(c, nowMs)}`, open ? "жақын арада" : "жұмыс басталғанда", open ? "shortly" : "as soon as we open");
     const reply = wa
-      ? `Передала ваш запрос администратору — он ответит вам здесь ${when}.`
+      ? tr(`Передала ваш запрос администратору — он ответит вам здесь ${when}.`, `Өтінішіңізді әкімшіге бердім — ол сізге осында ${when} жауап береді.`, `I've passed your request to the administrator — they will reply here ${when}.`)
       : (opts.phone || saved.profile.phone)
-        ? `Передала администратору — он перезвонит вам ${when}.`
-        : `Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`;
+        ? tr(`Передала администратору — он перезвонит вам ${when}.`, `Әкімшіге бердім — ол сізге ${when} қоңырау шалады.`, `I've passed this to the administrator — they will call you back ${when}.`)
+        : tr(`Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`, `Әкімшіге бердім. Телефон нөміріңізді қалдырыңызшы — ол ${when} қоңырау шалады.`, `I've passed this to the administrator. Please leave your phone number — they will call you back ${when}.`);
     const hoRecent = saved.profile.hoAt && nowMs - saved.profile.hoAt < 3600e3; saved.profile.hoAt = nowMs; // не чаще раза в час на чат
     needs("human");
     if (!opts.test && !hoRecent) await notify(env, `🙋 Клиент просит администратора — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${wa ? "\nБот молчит в этом чате 2 часа — ответьте клиенту " + (chatLink ? "в пульте чатов." : "с телефона.") : ""}${chatLink}`, c.id);
@@ -1915,7 +1921,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
 
   if (ATTACK.test(text)) {
     await quiet(); // сам текст в историю не кладём: он не должен попасть в ИИ. Чат при этом считается начатым, а вопрос об отмене — снятым
-    return { reply: `Я AI-администратор «${c.name}» и помогаю только с вопросами о наших услугах и записью. Чем могу помочь?`, lead: null, guard: "input", isNew };
+    return { reply: tr(`Я AI-администратор «${c.name}» и помогаю только с вопросами о наших услугах и записью. Чем могу помочь?`, `Мен «${c.name}» AI-әкімшісімін, тек қызметтеріміз бен жазылу туралы сұрақтарға көмектесемін. Қалай көмектесе аламын?`, `I'm the AI administrator of «${c.name}» and I only help with questions about our services and booking. How can I help?`), lead: null, guard: "input", isNew };
   }
 
   const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile };
