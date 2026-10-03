@@ -490,7 +490,7 @@ function allowedTimes(c, ctx, userText) {
   for (const s of getSlots(c, ctx)) s.times.forEach(x => t.add(x));
   for (const x of ctx.extraTimes || []) t.add(x);
   const prof = ctx.profile || {}; // время собственных записей и заявок клиента — не выдумка
-  for (const b of [...(prof.bookings || []), ...(prof.pend || [])]) if (b && b.time) t.add(b.time);
+  for (const b of [...(prof.bookings || []), ...(prof.pend || []), ...(prof.leads || [])]) if (b && b.time) t.add(b.time); // leads — заявки чата обычного клиента: за час до визита их времени уже нет в свободных окнах
   // часы работы: у клиента с расписанием Altegio они проходят только как «с 9:00 до 21:00» (см. checkReply), иначе ИИ мог бы предложить запись на 21:00
   if (!ctx.softTimes) for (const h of c.hours) if (h) { t.add(hStr(h[0])); t.add(hStr(h[1])); }
   for (const m of userText.matchAll(/(?:^|[^\d])(\d{1,2})(?:\s*[:.\s]\s*(\d{2}))?(?!\d)/g)) {
