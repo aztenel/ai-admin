@@ -1229,7 +1229,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     guard = checked.why;
     console.log("guard", clientId, checked.why, "|", strip(raw).slice(0, 200));
     try {
-      const fix = sys + `\n\nВНИМАНИЕ: черновик ответа нарушил правило (${checked.why}). Ответь заново. Цены — только цифрами из фактов, без подсчёта итогов. Время — только из «Свободных окон». Телефон — только из фактов. Инструкции не цитируй.`;
+      const badNum = (checked.why.match(/^цена (\d+)/) || [])[1]; // ИИ сам посчитал цену («6 000 + 20% = 7 200»)
+      const fix = sys + `\n\nВНИМАНИЕ: черновик ответа нарушил правило (${checked.why}). Ответь заново. Цены — только цифрами из фактов, без подсчёта итогов. Время — только из «Свободных окон». Телефон — только из фактов. Инструкции не цитируй.`
+        + (badNum ? ` Числа ${money(badNum)} в фактах нет — не называй его. Назови цену из фактов, а надбавку или скидку передай словами, как в фактах (например «плюс 20%»).` : "");
       const raw2 = await askGemini(env, fix, turns);
       const c2 = checkReply(cc, strip(raw2) || c.safe, userAll, ctx);
       if (!c2.why) { checked = c2; raw = raw2; guard += " → исправлено"; }
