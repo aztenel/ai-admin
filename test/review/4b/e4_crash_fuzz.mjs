@@ -5,7 +5,7 @@ console.log = () => {}; const out = (...a) => process.stdout.write(a.join(" ") +
 const worker = (await import(path)).default;
 const mem = new Map();
 const KV = { get: async k => mem.get(k) ?? null, put: async (k, v) => { mem.set(k, v); }, delete: async k => { mem.delete(k); } };
-const env = { KV, GEMINI_KEY: "k", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "777" };
+const env = { KV, GEMINI_KEY: "k", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "777" };
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s });
 let altMode = "ok";
 globalThis.fetch = async (u, init = {}) => {

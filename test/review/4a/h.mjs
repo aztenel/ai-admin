@@ -47,7 +47,7 @@ export const KV = {
   },
   delete: async k => { mem.delete(k); kvLog.push(["del", k]); }, list: async ({ prefix = "", limit = 1000 } = {}) => ({ keys: [...mem.keys()].filter(k => k.startsWith(prefix)).sort().slice(0, limit).map(name => ({ name })), list_complete: true })
 };
-export const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "2001" };
+export const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "2001" };
 
 // ---- Gemini / Telegram / Meta
 export const G = { queue: [], calls: [], fn: null, delay: 0 };

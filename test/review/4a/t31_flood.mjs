@@ -7,7 +7,7 @@ title("1. один чат без записей: 20 раз «отмените з
 env.ALTEGIO_LOC_ALT = "3801";
 let tg0 = TG.length;
 for (let i = 0; i < 20; i++) await chat("p1", "Отмените мою запись", "Передала администратору.\n[ОТМЕНА]");
-console.log("   уведомлений администратору:", TG.length - tg0, "| пример:", JSON.stringify(TG.at(-1).split("\n")[0]));
+console.log("   уведомлений администратору:", TG.length - tg0, "| пример:", JSON.stringify((TG.at(-1) || "уведомлений нет").split("\n")[0]));
 check("уведомлений об одной и той же просьбе не больше 2 за 20 сообщений", TG.length - tg0 <= 2, String(TG.length - tg0));
 
 title("1б. то же для обычного клиента без Altegio (барбершоп)");

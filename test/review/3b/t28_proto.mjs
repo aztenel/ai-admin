@@ -4,7 +4,7 @@ import w73 from "./worker73.mjs";
 const _log = console.log; console.log = (...a) => { if (!/^(guard|altegio|gemini)/.test(String(a[0]))) _log(...a); };
 for (const [name, worker] of [["v7.3", w73], ["v7.4", w74]]) {
   const mem = new Map(), tg = [];
-  const env = { KV: { get: async k => mem.get(k) ?? null, put: async (k, v) => { mem.set(k, v); }, delete: async k => { mem.delete(k); } }, GEMINI_KEY: "k", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", ALTEGIO_PARTNER: "partner-key" };
+  const env = { KV: { get: async k => mem.get(k) ?? null, put: async (k, v) => { mem.set(k, v); }, delete: async k => { mem.delete(k); } }, GEMINI_KEY: "k", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key" };
   globalThis.fetch = async (u, init = {}) => { const url = String(u); if (url.includes("telegram")) { tg.push(JSON.parse(init.body).text); return new Response("{}"); } if (url.includes("googleapis")) return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Здравствуйте!" }] }, finishReason: "STOP" }] })); return new Response("{}", { status: 500 }); };
   const call = async (path, init) => { try { const r = await worker.fetch(new Request("https://x.test" + path, init), env, { waitUntil() {} }); return `HTTP ${r.status} ${(await r.text()).replace(/\s+/g, " ").slice(0, 90)}`; } catch (e) { return "UNHANDLED EXCEPTION: " + String(e).slice(0, 90); } };
   _log(`--- ${name}`);

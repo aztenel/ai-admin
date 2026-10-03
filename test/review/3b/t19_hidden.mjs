@@ -1,7 +1,7 @@
 // Hidden test client «alt»: showcase, WhatsApp menu, self-test dropdown, direct link; secrets on pages a non-owner can open.
 import { mk, show, D1, D2, J } from "./lib.mjs";
 import { createHmac } from "node:crypto";
-const h = await mk({ env: { ALTEGIO_LOC_ALT: "4190", WA_TOKEN: "wat", PHONE_NUMBER_ID: "111", APP_SECRET: "sec", GA_ID: "1", GA_TOKEN: "gat", GA_HOOK: "hook", GA_URL: "https://x.green-api.com", KEY_ALT: "ownerkey", ALTEGIO_PARTNER: "partner-key" } });
+const h = await mk({ env: { ALTEGIO_LOC_ALT: "4190", WA_TOKEN: "wat", PHONE_NUMBER_ID: "111", APP_SECRET: "sec", GA_ID: "1", GA_TOKEN: "gat", GA_HOOK: "hook", GA_URL: "https://x.green-api.com", KEY_ALT: "ownerkey", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key" } });
 const _log = console.log; console.log = (...a) => { if (!/^(guard|altegio|gemini|WA|GA)/.test(String(a[0]))) _log(...a); };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, init) => String(u).includes("green-api") ? (h.calls.ga = h.calls.ga || [], h.calls.ga.push(JSON.parse(init.body)), new Response("{}")) : realFetch(u, init);

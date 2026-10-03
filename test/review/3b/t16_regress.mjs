@@ -105,7 +105,7 @@ await scenario("event client (dates block)", "event", [["Свадьба на 200
 await scenario("ИИН redaction + long text", "dent", [["Мой ИИН 990101300123, запишите на чистку " + "а".repeat(700), "Записать вас завтра в 10:00?"]]);
 await scenario("IPv6 client (tooMany key)", "barber", [["Сколько стоит стрижка?", "Мужская стрижка от 6 000 ₸. Записать вас?"]], { ip: "2a03:d000:1:2:aaaa:bbbb:cccc:1" });
 await scenario("unknown client id falls back to dent", "nope", [["Сколько стоит чистка?", "Чистка от 20 000 ₸. Записать вас?"]]);
-await scenario("env ALTEGIO_PARTNER set but client has no location", "barber", [["Сколько стоит стрижка?", "Мужская стрижка от 6 000 ₸. Записать вас?"]], { env: { ALTEGIO_PARTNER: "partner-key" } });
+await scenario("env ALTEGIO_PARTNER set but client has no location", "barber", [["Сколько стоит стрижка?", "Мужская стрижка от 6 000 ₸. Записать вас?"]], { env: { ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key" } });
 
 // ---- pages
 _log("# pages");

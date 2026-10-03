@@ -25,7 +25,7 @@ export async function mk(opts = {}) {
     put: async (k, v) => { if (h.kvFail && h.kvFail(k)) throw new Error("KV PUT failed: 429 Too Many Requests"); mem.set(k, v); },
     delete: async k => { mem.delete(k); }, list: async ({ prefix = "", limit = 1000 } = {}) => ({ keys: [...mem.keys()].filter(k => k.startsWith(prefix)).sort().slice(0, limit).map(name => ({ name })), list_complete: true })
   };
-  const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_PARTNER: "partner-key", ...(opts.env || {}) };
+  const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key", ...(opts.env || {}) };
   const h = {
     worker, env, mem, KV, kvFail: null,
     gemini: [], calls: { gemini: [], tg: [], wa: [] },

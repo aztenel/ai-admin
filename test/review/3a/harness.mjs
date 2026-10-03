@@ -11,7 +11,7 @@ export const KV = {
   put: async (k, v) => { if (KVFAIL.put && KVFAIL.put(k)) throw new Error("KV PUT failed: 429 Too Many Requests"); mem.set(k, v); putLog.push(k); },
   delete: async k => { mem.delete(k); }, list: async ({ prefix = "", limit = 1000 } = {}) => ({ keys: [...mem.keys()].filter(k => k.startsWith(prefix)).sort().slice(0, limit).map(name => ({ name })), list_complete: true })
 };
-export const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "2001" };
+export const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_SELF_CANCEL: "1", ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "2001" };
 
 export const G = { queue: [], calls: [], fn: null, delay: 0 }; // delay — сколько мс «думает» ИИ
 export const TG = [];
