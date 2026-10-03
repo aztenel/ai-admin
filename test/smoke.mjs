@@ -1446,6 +1446,167 @@ ok("«старт» после «стоп»: бот снова отвечает",
   ok("WhatsApp: хранилище не читается → клиент получает запасной ответ, администратор — сигнал", calls.wa.length === 1 && /Администратор ответит/.test(waLast()) && tgHas("Сбой бота в WhatsApp"), JSON.stringify([calls.wa.map(x => x.text.body), calls.tg]));
   env.WA_CLIENT = wc; }
 
+// ====== v7.6: обычный клиент (без расписания Altegio) — находки шестой независимой проверки. Заявки чата — список profile.leads
+{
+  // свободные окна из подсказки ИИ: [{ day, times }] — время берём отсюда, а не наугад
+  const winOf = () => { const blk = (sysOf().split("Свободные окна для записи (других нет):\n")[1] || "").split("\n\n")[0];
+    return blk.split("\n").filter(l => /^- /.test(l) && /\d:\d\d/.test(l)).map(l => ({ day: l.slice(2).split(":")[0].toLowerCase(), times: l.split(": ").pop().split(", ") })); };
+  const TAG = (name, when, sv = "чистка") => `[ЗАЯВКА] Имя: ${name}; Телефон: указан; Услуга: ${sv}; Время: ${when}`;
+  const st = id => (leadsOf("dent").find(l => l.id === id) || {}).status || "";
+  const pf = s => profOf("dent", s), cxTag = "Передала администратору, он подтвердит отмену.\n[ОТМЕНА]";
+  let phN = 0;
+  // первая заявка чата: Азамат на первое свободное время
+  const open = async () => {
+    const s = sid(); geminiQueue = ["Какое время вам подойдёт?"]; await chat("dent", s, "Хочу на чистку");
+    const W = winOf(), D = W[0].day, [T0, T1] = W[0].times;
+    geminiQueue = [`Забронировала вас на ${D} в ${T0}. Администратор подтвердит запись.\n` + TAG("Азамат", `${D}, ${T0}`)];
+    const x = await chat("dent", s, `Азамат, +7 777 600 10 ${String(++phN).padStart(2, "0")}, в первое время`);
+    calls.tg.length = 0;
+    return { s, W, D, T0, T1, id: x.lead && x.lead.id };
+  };
+  // вторая заявка того же чата: мама Гульнар на второе время
+  const mom = async o => { geminiQueue = [`Забронировала Гульнар на ${o.D} в ${o.T1}. Администратор подтвердит запись.\n` + TAG("Гульнар", `${o.D}, ${o.T1}`)];
+    const x = await chat("dent", o.s, "И маму запишите, Гульнар, на второе время"); calls.tg.length = 0; return x.lead && x.lead.id; };
+
+  // --- H1: строка [ОТМЕНА] исполняется только по просьбе клиента и только для заявки, о которой он говорит
+  let o = await open(), gid = await mom(o);
+  geminiQueue = [`Передала администратору, он подтвердит отмену вашей записи. Запись Гульнар остаётся.\n[ОТМЕНА] Имя: Азамат; Время: ${o.D}, ${o.T0}`];
+  d = await chat("dent", o.s, "Мою запись отмените, я не смогу. Мама придёт.");
+  ok("H1: две заявки в чате, «мою запись отмените, мама придёт» → отменена заявка клиента, а не мамы", st(o.id) === "отменена" && !st(gid) && tgHas("Отмена: Азамат") && !tgHas("Отмена: Гульнар") && d.cancel === true, JSON.stringify([st(o.id), st(gid), calls.tg, d.reply]));
+  ok("…в памяти чата осталась заявка мамы: список, последняя заявка и «уже есть бронь»", (pf(o.s).leads || []).length === 1 && pf(o.s).leads[0].name === "Гульнар" && pf(o.s).leadId === gid && (pf(o.s).booked || "").includes(o.T1) && !(pf(o.s).booked || "").includes(o.T0), JSON.stringify(pf(o.s)));
+  o = await open(); gid = await mom(o);
+  geminiQueue = [cxTag]; d = await chat("dent", o.s, "Отмените запись, пожалуйста");
+  ok("H1: заявок две, а какую отменить — не ясно → бот спрашивает и ничего не отменяет", /Какую отменить/.test(d.reply) && d.reply.includes(o.T0) && d.reply.includes(o.T1) && !st(o.id) && !st(gid) && !d.cancel && calls.tg.length === 0, JSON.stringify([d.reply, st(o.id), st(gid), calls.tg]));
+  geminiQueue = [cxTag]; d = await chat("dent", o.s, `На ${o.T1}`);
+  ok("…клиент уточнил время → отменена именно эта заявка", st(gid) === "отменена" && !st(o.id) && tgHas("Отмена: Гульнар") && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), st(gid), calls.tg]));
+  o = await open();
+  geminiQueue = ["Перенесла вас на 13:00. Администратор подтвердит запись.\n[ОТМЕНА]\n" + TAG("Азамат", `${o.D}, 13:00`)];
+  d = await chat("dent", o.s, "Перенесите меня на 13:00, пожалуйста");
+  ok("H1: перенос на время, которого нет в окнах → новой заявки нет, прежняя не отменена, клиенту так и сказано", !d.lead && !st(o.id) && !d.cancel && /На это время записи нет/.test(d.reply) && /Прежняя запись остаётся/.test(d.reply) && !tgHas("Отмена") && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), calls.tg]));
+  geminiQueue = [`Перенесла на ${o.T1}. Администратор подтвердит запись.\n[ОТМЕНА]\n` + TAG("клиент", `${o.D}, ${o.T1}`)];
+  d = await chat("dent", o.s, "Тогда перенесите на второе время");
+  ok("H1: перенос, а в новой строке нет настоящего имени → прежняя заявка остаётся", !d.lead && !st(o.id) && /настоящее имя/.test(d.reply) && /Прежняя запись остаётся/.test(d.reply) && !tgHas("Отмена"), JSON.stringify([d.reply, st(o.id), calls.tg]));
+  geminiQueue = [`Перенесла вас на ${o.T1}. Администратор подтвердит запись.\n[ОТМЕНА]\n` + TAG("Азамат", `${o.D}, ${o.T1}`)];
+  d = await chat("dent", o.s, "Азамат. Перенесите на второе время");
+  const movedId = d.lead && d.lead.id;
+  ok("H1: перенос на свободное время → новая заявка создана, прежняя отменена, в чате числится только новая", !!movedId && st(o.id) === "отменена" && !st(movedId) && tgHas("Отмена: Азамат") && tgHas("Новая заявка") && (pf(o.s).leads || []).length === 1 && pf(o.s).leadId === movedId, JSON.stringify([d.reply, st(o.id), calls.tg, pf(o.s)]));
+  ok("…администратор сначала видит отмену прежней заявки, потом новую", calls.tg.findIndex(x => x.includes("Отмена: Азамат")) >= 0 && calls.tg.findIndex(x => x.includes("Отмена: Азамат")) < calls.tg.findIndex(x => x.includes("Новая заявка")) && /клиент просил перенос/.test(lastLead("dent").note || ""), JSON.stringify([calls.tg, lastLead("dent").note]));
+  calls.tg.length = 0;
+  geminiQueue = ["Да, передала администратору, он подтвердит отмену.\n[ОТМЕНА]"];
+  d = await chat("dent", o.s, "А старую запись точно отменили?");
+  ok("H1: «точно отменили?» после переноса → новая заявка не отменена, администратора не тревожим", !st(movedId) && calls.tg.length === 0 && !d.cancel && pf(o.s).leadId === movedId, JSON.stringify([d.reply, st(movedId), calls.tg]));
+  o = await open();
+  geminiQueue = ["Пожалуйста! Ждём вас.\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Спасибо большое!");
+  ok("H1: клиент благодарит, ИИ по ошибке поставил [ОТМЕНА] → заявка цела, ответ ИИ не тронут", !st(o.id) && !d.cancel && calls.tg.length === 0 && pf(o.s).leadId === o.id && /Ждём вас/.test(d.reply), JSON.stringify([d.reply, st(o.id), calls.tg]));
+  geminiQueue = ["Отменила вашу запись.\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Хорошо, до встречи");
+  ok("…а слова ИИ «отменила» без просьбы клиента до него не доходят", !st(o.id) && !d.cancel && !/тменила вашу/.test(d.reply) && !/подтвердит отмену/.test(d.reply) && d.reply.includes(o.T0), d.reply);
+  geminiQueue = ["Передала администратору, он подтвердит отмену записи Гульнар.\n[ОТМЕНА]"];
+  d = await chat("dent", o.s, "И ещё: отмените, пожалуйста, запись моей мамы Гульнар на пятницу, она записывалась по телефону");
+  ok("H1: просят отменить запись мамы, которой нет в чате → своя заявка цела, администратор узнал о записи мамы", !st(o.id) && tgHas("которой нет в этом чате") && tgHas("Гульнар") && !tgHas("Отмена:") && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), calls.tg]));
+  calls.tg.length = 0; geminiQueue = [cxTag]; d = await chat("dent", o.s, "Нет, мою запись не надо отменять, я приду");
+  ok("H1: «не надо отменять» → заявка остаётся, клиенту так и сказано", !st(o.id) && !d.cancel && /остаётся/.test(d.reply) && calls.tg.length === 0, JSON.stringify([d.reply, calls.tg]));
+  geminiQueue = [cxTag]; d = await chat("dent", o.s, "Мне нужно отменить запись");
+  ok("H1: одна заявка и просьба «мне нужно отменить запись» → отменена, как раньше", st(o.id) === "отменена" && d.cancel === true && tgHas("Отмена: Азамат") && !pf(o.s).leadId && !pf(o.s).booked, JSON.stringify([d.reply, st(o.id), calls.tg, pf(o.s)]));
+  o = await open();
+  geminiQueue = ["Yes, it is cancelled.\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Did you cancel it?");
+  ok("H1: «Did you cancel it?» — вопрос о сделанном, а не просьба: заявка цела, ответ кода по-английски", !st(o.id) && !d.cancel && calls.tg.length === 0 && /haven't cancelled/.test(d.reply) && !/Yes, it is cancelled/.test(d.reply), JSON.stringify([d.reply, st(o.id), calls.tg]));
+  geminiQueue = ["Передала администратору вашу просьбу.\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Отмените запись на 15:00");
+  ok("H1: клиент называет время, которого нет среди заявок чата → заявка цела, администратору — «запись, которой нет в этом чате», клиенту названа его заявка", !st(o.id) && d.cancel === true && tgHas("которой нет в этом чате") && tgHas("Заявки этого чата") && !tgHas("Отмена:") && d.reply.includes(o.T0), JSON.stringify([d.reply, st(o.id), calls.tg]));
+  o = await open(); gid = await mom(o);
+  geminiQueue = [cxTag]; d = await chat("dent", o.s, "Отмените все записи, мы не придём");
+  ok("H1: «отмените все записи» при двух заявках → отменены обе", st(o.id) === "отменена" && st(gid) === "отменена" && tgHas("Отмена: Азамат") && tgHas("Отмена: Гульнар") && !pf(o.s).leadId, JSON.stringify([d.reply, calls.tg]));
+  calls.tg.length = 0; geminiQueue = [cxTag]; d = await chat("dent", o.s, "Отмените запись");
+  ok("…повторная просьба об уже отменённой заявке администратора второй раз не тревожит", calls.tg.length === 0 && /уже передала администратору/.test(d.reply), JSON.stringify([d.reply, calls.tg]));
+  o = await open();
+  geminiQueue = [`Перенесла вас на ${o.T1}. Администратор подтвердит запись.`]; d = await chat("dent", o.s, "Перенесите меня на второе время");
+  ok("H1: клиент просит перенос, а ИИ написал «перенесла» без строк → заявка цела, просьба словами клиента уходит администратору", !st(o.id) && !d.lead && tgHas("Клиент просит перенести запись") && tgHas("Перенесите меня на второе время") && /просьбу о переносе/.test(d.reply) && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), calls.tg]));
+  o = await open();
+  geminiQueue = ["Конечно. На какое время вас перенести?\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Перенесите мою запись");
+  ok("H1: «перенесите мою запись», ИИ уточняет новое время (и зря ставит [ОТМЕНА]) → заявка цела, администратора не тревожим, вопрос ИИ дошёл", !st(o.id) && !d.cancel && calls.tg.length === 0 && /На какое время/.test(d.reply) && pf(o.s).leadId === o.id, JSON.stringify([d.reply, st(o.id), calls.tg]));
+  geminiQueue = ["Вы уверены, что хотите отменить запись?\n[ОТМЕНА]"]; d = await chat("dent", o.s, "Нет, лучше совсем отмените запись");
+  ok("H1: клиент просит отменить, ИИ поставил [ОТМЕНА] и задал вопрос → отмена передана, клиенту об этом сказано (а не «вы уверены?»)", st(o.id) === "отменена" && d.cancel === true && /Передала администратору отмену/.test(d.reply) && !/Вы уверены/.test(d.reply), JSON.stringify([d.reply, st(o.id)]));
+  { // чат, начатый до появления списка заявок: в профиле только прежние поля
+    const s = sid(); mem.set("h:web:dent:" + s, JSON.stringify({ n: 4, turns: [], profile: { name: "Азамат", phone: "+77776009901", leadId: "old1", booked: "чистка, завтра, 16:00", leadSig: "азамат|16:00|" + D1 } })); calls.tg.length = 0;
+    geminiQueue = ["Здравствуйте! Чем помочь?"]; d = await chat("dent", s, "Здравствуйте");
+    ok("H1: чат со старым профилем (без списка) → последняя заявка попадает в список, ИИ видит её", (pf(s).leads || []).length === 1 && pf(s).leads[0].id === "old1" && pf(s).leadId === "old1" && sysOf().includes("уже есть бронь: чистка, завтра, 16:00"), JSON.stringify(pf(s)));
+    geminiQueue = [cxTag]; d = await chat("dent", s, "Отмените мою запись");
+    ok("…и отменяется по просьбе клиента", d.cancel === true && tgHas("Отмена: Азамат, чистка, завтра, 16:00") && !pf(s).leadId && !pf(s).leads, JSON.stringify([d.reply, calls.tg, pf(s)])); }
+
+  // --- H2: вторая запись в чате не теряется
+  o = await open(); let g0 = calls.gemini.length;
+  geminiQueue = [`Забронировала Гульнар на ${o.D} в ${o.T1}. Администратор подтвердит запись.`];
+  d = await chat("dent", o.s, "И маму запишите, Гульнар, на второе время");
+  ok("H2: вторая запись, а ИИ написал «забронировала» без строки → повторный запрос к ИИ и заявка «уточните у клиента»", calls.gemini.length - g0 === 2 && !!d.lead && tgHas("уточните у клиента"), JSON.stringify([calls.gemini.length - g0, d.lead, calls.tg]));
+  o = await open();
+  geminiQueue = [`Забронировала Гульнар на ${o.D} в ${o.T1}. Администратор подтвердит запись.`, `Забронировала Гульнар на ${o.D} в ${o.T1}. Администратор подтвердит запись.\n` + TAG("Гульнар", `${o.D}, ${o.T1}`)];
+  d = await chat("dent", o.s, "И маму запишите, Гульнар, на второе время");
+  ok("…если на повторный запрос ИИ добавил строку — создаётся обычная заявка", !!d.lead && d.lead.name === "Гульнар" && tgHas("Новая заявка") && !tgHas("уточните"), JSON.stringify([d.lead, calls.tg]));
+  g0 = calls.gemini.length; calls.tg.length = 0;
+  geminiQueue = [`Да, вы записаны на ${o.D} в ${o.T0}.`]; d = await chat("dent", o.s, "Я точно записан?");
+  ok("H2: ИИ повторил время заявки, которая уже есть в чате, → ни повторного запроса, ни новой заявки", calls.gemini.length - g0 === 1 && !d.lead && calls.tg.length === 0, JSON.stringify([calls.gemini.length - g0, d.lead, calls.tg]));
+  ok("H2: правило для ИИ — «строка в каждом ответе, где подтверждаешь новую бронь», а не «пиши один раз»", sysOf().includes("Добавляй строку в каждом ответе, где подтверждаешь новую бронь") && !sysOf().includes("Эту строку пиши один раз"), (sysOf().match(/\[ЗАЯВКА\] Имя[^\n]*\n[^\n]*/) || [""])[0]);
+  { const s = sid(); geminiQueue = ["Какое время вам подойдёт?"]; await chat("dent", s, "Хочу на чистку с женой");
+    const W = winOf(), D = W[0].day, [T0, T1] = W[0].times, n0 = leadsOf("dent").length; calls.tg.length = 0;
+    geminiQueue = [`Забронировала вас обоих: Азамат — ${D} в ${T0}, Айгуль — ${D} в ${T1}. Администратор подтвердит запись.\n${TAG("Азамат", `${D}, ${T0}`)}\n${TAG("Айгуль", `${D}, ${T1}`)}`];
+    d = await chat("dent", s, "Азамат и Айгуль, +7 777 600 20 01, меня в первое время, жену во второе");
+    ok("H2: две строки [ЗАЯВКА] в одном ответе → созданы обе заявки", leadsOf("dent").length === n0 + 2 && (d.leads || []).length === 2 && tgHas("Айгуль") && tgHas("Азамат") && (pf(s).leads || []).length === 2 && /обоих/.test(d.reply), JSON.stringify([leadsOf("dent").length - n0, d.reply, calls.tg]));
+    geminiQueue = [`Да, Айгуль записана на ${D} в ${T1}.\n${TAG("Азамат", `${D}, ${T0}`)}\n${TAG("Айгуль", `${D}, ${T1}`)}`]; d = await chat("dent", s, "Спасибо! А жену точно записали?");
+    ok("…ИИ повторил обе строки → новых заявок нет", leadsOf("dent").length === n0 + 2 && !d.lead, String(leadsOf("dent").length - n0)); }
+  o = await open();
+  { const tok = env.TG_TOKEN; delete env.TG_TOKEN; KVFAIL.put = k => /^leads?:/.test(k);
+    geminiQueue = [`Забронировала Гульнар на ${o.D} в ${o.T1}. Администратор подтвердит запись.\n` + TAG("Гульнар", `${o.D}, ${o.T1}`)];
+    d = await chat("dent", o.s, "И маму запишите, Гульнар, на второе время");
+    KVFAIL.put = null; env.TG_TOKEN = tok; calls.tg.length = 0;
+    ok("H2: вторая заявка не сохранилась (сбой хранилища и Telegram) → клиента честно просят повторить, память чата — как до сбоя", !d.lead && /Не получилось сохранить заявку/.test(d.reply) && pf(o.s).leadId === o.id && (pf(o.s).leads || []).length === 1 && pf(o.s).name === "Азамат", JSON.stringify([d.reply, pf(o.s)]));
+    d = await chat("dent", o.s, "Запишите маму ещё раз, пожалуйста");
+    ok("…клиент повторил → заявка создана, а не сочтена повтором", !!d.lead && d.lead.name === "Гульнар" && tgHas("Гульнар") && leadsOf("dent").some(l => l.id === d.lead.id), JSON.stringify([d.reply, d.lead, calls.tg])); }
+
+  // --- M3: дубли заявок и ложные пометки вокруг второй заявки
+  o = await open(); gid = await mom(o);
+  { const n0 = leadsOf("dent").length;
+    geminiQueue = ["Хорошего дня!\n" + TAG("Азамат", `${o.D}, ${o.T0}`)]; d = await chat("dent", o.s, "ок");
+    ok("M3: ИИ повторил строку первой заявки после второй → третья заявка не создаётся", leadsOf("dent").length === n0 && !d.lead && calls.tg.length === 0, JSON.stringify([leadsOf("dent").length - n0, calls.tg]));
+    const known = (sysOf().match(/Уже известно о клиенте:[^\n]*/) || [""])[0];
+    ok("M3: после заявки на маму бот знает клиента как Азамата и помнит обе брони", pf(o.s).name === "Азамат" && known.includes("имя Азамат") && known.includes(o.T0) && known.includes(o.T1) && known.includes("Гульнар"), known); }
+  o = await open();
+  geminiQueue = [`Забронировала вас на ${o.W[1].day} в ${o.W[1].times[0]}. Администратор подтвердит запись.\n` + TAG("Азамат", `${o.W[1].day}, ${o.W[1].times[0]}`, "отбеливание")];
+  d = await chat("dent", o.s, "И ещё на отбеливание запишите, лучше на другой день");
+  ok("M3: клиент просил ЕЩЁ одну запись → в новой заявке нет пометки «клиент просил перенос»", !!d.lead && !/просил перенос/.test(lastLead("dent").note || "") && (pf(o.s).leads || []).length === 2, JSON.stringify([lastLead("dent"), pf(o.s).leads]));
+  calls.tg.length = 0;
+  geminiQueue = [`Хорошо, заменила: отбеливание, ${o.D} в ${o.T0}. Администратор подтвердит запись.\n` + TAG("Азамат", `${o.D}, ${o.T0}`, "отбеливание")];
+  d = await chat("dent", o.s, "Ой, не чистку, а отбеливание, время то же");
+  ok("M3: «не чистку, а отбеливание, время то же» → администратор узнал: новая заявка, прежняя помечена «заменена»", !!d.lead && /отбеливание/.test(d.lead.service) && tgHas("отбеливание") && st(o.id) === "заменена" && (pf(o.s).leads || []).length === 2, JSON.stringify([d.lead, st(o.id), calls.tg]));
+  { const s = sid(); geminiQueue = ["Какое время вам подойдёт?"]; await chat("dent", s, "Хочу на чистку"); const W = winOf(), when = `${W[0].day}, ${W[0].times[0]}`;
+    geminiQueue = [`Забронировала вас на ${W[0].day} в ${W[0].times[0]}. Администратор подтвердит запись.`];
+    d = await chat("dent", s, "Азамат, +7 777 600 30 01, в первое время"); const stub = d.lead && d.lead.id;
+    geminiQueue = [`Забронировала вас на ${W[0].day} в ${W[0].times[0]}. Администратор подтвердит запись.\n` + TAG("Азамат", when)]; d = await chat("dent", s, "Так я записан?");
+    ok("M3: настоящая заявка заменяет заявку «уточните у клиента»", !!stub && !!d.lead && d.lead.id !== stub && st(stub) === "заменена" && (pf(s).leads || []).length === 1, JSON.stringify([stub, d.lead, st(stub), pf(s).leads])); }
+  { const wc = env.WA_CLIENT; env.WA_CLIENT = "dent"; const n0 = leadsOf("dent").length; calls.tg.length = 0;
+    geminiQueue = ["Какое время вам подойдёт?"]; await waText("77016000011", "Хочу на чистку"); const W = winOf();
+    geminiQueue = [`Отлично, записываю вас на ${W[0].day} в ${W[0].times[0]}. Как вас зовут?`]; await waText("77016000011", "давайте в первое время");
+    ok("M3: «записываю вас… Как вас зовут?» — вопрос о данных: заявка «уточните у клиента» не создаётся", leadsOf("dent").length === n0 && !tgHas("уточните у клиента") && /Как вас зовут/.test(waLast()), JSON.stringify([waLast(), calls.tg]));
+    geminiQueue = [`Забронировала вас на ${W[0].day} в ${W[0].times[0]}. Администратор подтвердит запись.\n` + TAG("Азамат", `${W[0].day}, ${W[0].times[0]}`)]; await waText("77016000011", "Азамат");
+    ok("…следом настоящая заявка — у администратора одна заявка на клиента", leadsOf("dent").filter(l => l.phone === "+77016000011" && !l.status).length === 1 && leadsOf("dent").length === n0 + 1, JSON.stringify(leadsOf("dent").slice(n0)));
+    env.WA_CLIENT = wc; }
+  { const s = sid(); let n = 0; geminiQueue = ["Какое время вам подойдёт?"]; await chat("dent", s, "Хочу на чистку"); const W = winOf();
+    for (const nm of ["Азамат", "Берик", "Серик", "Данияр", "Ерлан", "Тимур", "Руслан", "Марат"]) { geminiQueue = ["Забронировала.\n" + TAG(nm, `${W[0].day}, ${W[0].times[0]}`)]; d = await chat("dent", s, n ? `И ещё ${nm} запишите` : `${nm}, +7 777 600 40 01, запишите`); if (d.lead) n++; }
+    ok("M3: заявок из одного чата — не больше 6 в сутки, дальше бот честно говорит, что администратор уже получил заявки", n === 6 && /Администратор уже получил ваши заявки/.test(d.reply), JSON.stringify([n, d.reply])); }
+
+  // --- M4: ответ ИИ из одной служебной строки
+  { const wc = env.WA_CLIENT; env.WA_CLIENT = "dent";
+    geminiQueue = ["Какое время вам подойдёт?"]; await waText("77016000021", "Хочу на чистку"); const W = winOf(), when = `${W[0].day}, ${W[0].times[0]}`;
+    calls.wa.length = 0; geminiQueue = [TAG("Азамат", when)]; await waText("77016000021", "Азамат, в первое время");
+    ok("M4: ИИ вернул одну служебную строку → заявка создана, клиент получил ответ о брони, а не фразу о ценах", leadsOf("dent").some(l => l.phone === "+77016000021") && /Забронировала/.test(waLast()) && waLast().includes(W[0].times[0]) && !/Точную стоимость/.test(waLast()), waLast());
+    calls.wa.length = 0; geminiQueue = ["[ОТМЕНА]"]; await waText("77016000021", "Отмените мою запись");
+    ok("M4: ИИ вернул только [ОТМЕНА] → клиент получил «передала администратору»", calls.wa.length === 1 && /администратор/i.test(waLast()) && !/Точную стоимость/.test(waLast()) && (leadsOf("dent").find(l => l.phone === "+77016000021") || {}).status === "отменена", waLast());
+    geminiQueue = ["Какое время вам подойдёт?"]; await waText("77016000022", "Хочу на чистку");
+    calls.wa.length = 0; geminiQueue = ["```\n" + TAG("Берик", when) + "\n```"]; await waText("77016000022", "Берик, в первое время");
+    ok("M4: служебная строка в блоке кода, без текста → клиент WhatsApp не остаётся без ответа", calls.wa.length === 1 && /Забронировала/.test(waLast()) && leadsOf("dent").some(l => l.phone === "+77016000022"), JSON.stringify(calls.wa.map(x => x.text.body)));
+    calls.wa.length = 0; geminiQueue = ["**"]; await waText("77016000022", "Спасибо");
+    ok("M4: ответ ИИ из одной разметки → клиент получает запасную фразу, а не пустое сообщение", calls.wa.length === 1 && waLast().trim().length > 10, JSON.stringify(calls.wa.map(x => x.text.body)));
+    env.WA_CLIENT = wc; }
+}
+
 // ====== режим по умолчанию: отмену и перенос делает администратор, бот в расписании ничего не удаляет
 delete env.ALTEGIO_SELF_CANCEL;
 const reqLead = c => leadsOf(c).filter(l => l.kind === "cancel" || l.kind === "change").at(-1) || {};
