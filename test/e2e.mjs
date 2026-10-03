@@ -141,6 +141,22 @@ try {
   await shot(w, "11-inbox-done-wide");
   ok("владелец видит ссылку «Боты» в пульте", await w.locator("#l_st").isVisible());
 
+  // ---- проверка запуска: чек-лист и экзамен
+  await p.goto(url + "/launch?c=kairat");
+  await p.waitForSelector("#checks .ck");
+  const chk = await p.locator("#checks").innerText();
+  ok("чек-лист запуска: видно, что готово и чего не хватает", /Ключ ИИ/.test(chk) && /Хранилище/.test(chk) && /WhatsApp: адрес вебхука/.test(chk) && /\/wa\/kairat/.test(chk) && /Что сделать/.test(chk), chk.slice(0, 500));
+  await p.click("#b_tg");
+  await p.waitForSelector("#tgout .msg");
+  ok("пробное сообщение в Telegram отправляется со страницы", /доставлено/.test(await p.locator("#tgout").innerText()));
+  await shot(p, "12-launch-checklist");
+  await p.click("#b_run");
+  await p.waitForFunction(() => /^Итог:/.test(document.getElementById("sum").textContent), null, { timeout: 120000 });
+  const sumText = await p.locator("#sum").innerText(), marks = await p.locator("#cases .i").allInnerTexts();
+  ok("экзамен бота проходит все сценарии по очереди и показывает итог", /Итог: прошло \d+ из \d+/.test(sumText) && marks.length >= 12 && marks.every(m => m === "✅" || m === "❌") && marks.filter(m => m === "✅").length >= 6, sumText + " " + marks.join(""));
+  await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await shot(p, "13-launch-exam");
+
   // ---- страницы заявок и выхода
   await st.goto(url + "/leads");
   ok("сотрудник видит заявки своего клиента", /Barber House/.test(await st.locator("body").innerText()) && !/Демо Дент/.test(await st.locator("body").innerText()));

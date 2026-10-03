@@ -383,6 +383,77 @@ section("Altegio из паспорта + пульт");
   ok("дальше бот знает: запись отменил администратор (и не говорит «вы записаны»)", /администратор отменил запись клиента и написал ему/.test(net.gemini.at(-1).systemInstruction.parts[0].text) && !/Мужская стрижка — завтра/.test(net.gemini.at(-1).systemInstruction.parts[0].text.split("Уже известно о клиенте")[1] || ""), (net.gemini.at(-1).systemInstruction.parts[0].text.split("Уже известно о клиенте")[1] || "").slice(0, 300));
 }
 
+// ====== 6. Проверка запуска: чек-лист и экзамен бота по паспорту
+section("проверка запуска");
+{
+  const own = S.browser(); await own.go("/studio?key=" + OWNER);
+  const staff = S.browser(); const kk = await (await own.post("/api/studio/key", { id: "kairat" })).json(); await staff.go("/inbox?c=kairat&key=" + kk.key);
+  let r = await own.go("/launch?c=kairat");
+  ok("страница проверки запуска открывается владельцу", r.status === 200 && /Экзамен бота/.test(await r.text()));
+  r = await staff.go("/launch?c=kairat");
+  ok("сотрудника со страницы проверки уводит в пульт", r.status === 303 && r.headers.get("location") === "/inbox?c=kairat");
+  ok("запросы проверки сотруднику закрыты", (await staff.go("/api/launch/status?c=kairat")).status === 403);
+  net.reset();
+  let d = await (await own.go("/api/launch/status?c=kairat")).json();
+  const ck = t => d.checks.find(x => x.title.startsWith(t)) || {};
+  ok("чек-лист: ИИ, хранилище, Telegram клиента, секреты WhatsApp, ключ сотрудника — готово; контакты политики — нет, с подсказкой", ck("Ключ ИИ").ok === true && ck("Хранилище").ok === true && ck("Telegram").ok === true && ck("WhatsApp: секреты").ok === true && ck("Ключ для сотрудников").ok === true
+    && ck("Контакты").ok === false && /OWNER_NAME/.test(ck("Контакты").fix) && /https:\/\/bot\.test\/wa\/kairat/.test(ck("WhatsApp: адрес").text), JSON.stringify(d.checks).slice(0, 900));
+  ok("в чек-листе нет самих секретов", !JSON.stringify(d).includes("tok-kairat") && !JSON.stringify(d).includes("sec-kairat") && !JSON.stringify(d).includes(OWNER));
+  const titles = d.cases.map(k => k.t);
+  ok("экзамен собран из паспорта: цены трёх услуг, адрес, телефон, график, несуществующая услуга, торг, атака, казахский, заявка", titles.includes("Цена: Мужская стрижка") && titles.includes("Цена: Детская стрижка") && titles.includes("Адрес") && titles.includes("Телефон") && titles.includes("График сегодня")
+    && titles.includes("Услуги, которой нет") && titles.includes("Заявка до конца") && titles.includes("Время, которого нет в графике") && titles.includes("Позвать администратора") && titles.length >= 12, JSON.stringify(titles));
+  const idx = t => d.cases.find(k => k.t === t).i;
+  // пробное сообщение в Telegram
+  d = await (await own.post("/api/launch/tg", { c: "kairat" })).json();
+  ok("пробное сообщение ушло в чат администратора клиента", d.ok && net.tg.some(x => x.chat_id === "555000111" && /Проверка: уведомления бота «Barber House»/.test(x.text)), JSON.stringify([d, net.tg]));
+  net.tgStatus = 403;
+  d = await (await own.post("/api/launch/tg", { c: "kairat" })).json();
+  ok("Telegram отказал → понятная причина и что сделать", d.ok === false && /нажмите «Старт»/.test(d.text), JSON.stringify(d));
+  net.tgStatus = 200;
+  // сценарии экзамена на «живой модели» (здесь — заглушка)
+  d = await (await own.go("/api/launch/status?c=kairat")).json();
+  const L0 = S.leads("kairat").length;
+  net.ai = ["Мужская стрижка от 6 000 ₸. Записать вас?"];
+  let c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Цена: Мужская стрижка") })).json();
+  ok("сценарий «цена»: бот назвал цену из паспорта → прошёл", c1.pass === true && c1.transcript.length === 1, JSON.stringify(c1));
+  net.ai = ["Мужская стрижка от 4 000 ₸."];
+  c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Цена: Мужская стрижка") })).json();
+  ok("сценарий «цена»: бот назвал цену другой услуги → не прошёл, причина названа", c1.pass === false && /названа цена 6 000/.test(c1.fails.join()), JSON.stringify(c1));
+  net.ai = [b => /Азамат/.test(b.contents.at(-1).parts[0].text) ? "Забронировала вас. Администратор подтвердит запись.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Время: завтра, 12:00" : "Свободно завтра в 12:00 и 13:00. Какое время подойдёт?"];
+  c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Заявка до конца") })).json();
+  ok("сценарий «заявка до конца» прошёл, а в настоящие заявки ничего не попало", c1.pass === true && S.leads("kairat").length === L0, JSON.stringify([c1.fails, S.leads("kairat").length, L0]));
+  net.ai = ["Мы находимся: Астана, пр. Мангилик Ел, 10."];
+  c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Адрес") })).json();
+  ok("сценарий «адрес» сверяет ответ с паспортом", c1.pass === true);
+  net.ai = ["Мы находимся в центре города."];
+  c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Адрес") })).json();
+  ok("…и не проходит, если адреса в ответе нет", c1.pass === false);
+  c1 = await (await own.post("/api/launch/case", { c: "kairat", i: idx("Попытка сломать инструкции") })).json();
+  ok("сценарий «попытка сломать инструкции» проходит без обращения к ИИ", c1.pass === true);
+  await own.post("/api/launch/done", { c: "kairat", pass: 11, total: 13, fails: ["Адрес", "Торг"] });
+  d = await (await own.go("/api/launch/status?c=kairat")).json();
+  ok("итог экзамена запоминается", d.last && d.last.pass === 11 && d.last.total === 13 && d.last.fails.length === 2);
+  // клиент с Altegio: расписание проверяется, экзамен включает запись и отмену, записей не создаёт
+  net.reset();
+  d = await (await own.go("/api/launch/status?c=salon")).json();
+  const a = d.checks.find(x => x.title === "Расписание Altegio"), t2 = d.cases.map(k => k.t);
+  ok("чек-лист клиента с Altegio: расписание читается, режим отмены назван, экзамен включает запись и отмену", a && a.ok === true && /Услуги: ✅ 3/.test(a.text) && d.checks.some(x => x.title === "Отмена и перенос" && /передаёт просьбу администратору/.test(x.text))
+    && t2.includes("Запись в Altegio до конца (без создания)") && t2.includes("Просьба об отмене") && t2.includes("Цена: Мужская стрижка"), JSON.stringify([a, t2]));
+  const n0 = net.altRecords.length;
+  net.ai = [b => { const u = b.contents.at(-1).parts[0].text; return /Отмените/.test(u) ? "Передаю администратору.\n[ОТМЕНА]" : /Азамат/.test(u) ? `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${D1}; Время: 10:00` : /первую услугу/.test(u) ? "Хорошо. Как вас зовут и какой номер телефона?" : "Есть мужская стрижка от 6 000 ₸. Завтра свободно в 10:00 и 11:00. На какое время записать?"; }];
+  c1 = await (await own.post("/api/launch/case", { c: "salon", i: d.cases.find(k => k.t === "Просьба об отмене").i })).json();
+  ok("экзамен «просьба об отмене» у клиента с Altegio проходит; в расписании ничего не создано и не удалено", c1.pass === true && net.altRecords.length === n0 && net.altDeleted.length === 0 && net.alt.some(x => x.startsWith("POST /book_check/5001")), JSON.stringify([c1.fails, c1.transcript && c1.transcript.map(x => x.b)]));
+  // номер WhatsApp: сведения от Meta
+  await own.post("/api/studio/save", { ...PASS, isNew: false, waPhoneId: "900111" });
+  net.reset(); net.graphReply = url => url.includes("/900111?fields=") ? new Response(JSON.stringify({ display_phone_number: "+7 700 111 22 33", verified_name: "Barber House", quality_rating: "GREEN" }), { status: 200 }) : null;
+  d = await (await own.go("/api/launch/status?c=kairat")).json();
+  ok("номер WhatsApp проверяется у Meta: показаны номер, имя и качество", /\+7 700 111 22 33/.test((d.checks.find(x => x.title === "WhatsApp: номер") || {}).text || "") && net.graph.some(g => g.auth === "Bearer tok-kairat"), JSON.stringify(d.checks.find(x => x.title === "WhatsApp: номер")));
+  net.graphReply = () => new Response(JSON.stringify({ error: { message: "Error validating access token", code: 190 } }), { status: 401 });
+  d = await (await own.go("/api/launch/status?c=kairat")).json();
+  ok("токен WhatsApp не подошёл → причина человеческим языком", (d.checks.find(x => x.title === "WhatsApp: номер") || {}).ok === false && /токен истёк или неверный/.test(d.checks.find(x => x.title === "WhatsApp: номер").text));
+  net.graphReply = null;
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
