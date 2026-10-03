@@ -1565,6 +1565,30 @@ ok("…клиент прислал имя и номер → просьба ух�
   ok("автотест «запись и отмена» в режиме администратора: проходит, в расписании и в заявках ничего не появляется", st.pass === true && ALT.records.length === 0 && !ALT.calls.slice(c0).some(x => x.startsWith("DELETE")) && leadsOf("alt").length === l0
     && /просьбу об отмене/.test(st.transcript.at(-1).b), JSON.stringify([st.t, st.fails, st.transcript && st.transcript.map(x => x.b)])); }
 
+// «мне нужно отменить» — это просьба, а не «не нужно отменять»; «мне надо записаться» — не просьба об отмене
+newLoc(); s2 = sid();
+geminiQueue = ["Записала.\n" + tagOf()]; d = await chat("alt", s2, "Тимур, +7 771 000 50 15, мужская стрижка завтра в 10:00");
+geminiQueue = ["Записала.\n" + tagOf({ time: "13:00", service: "Оформление бороды" })]; d = await chat("alt", s2, "Мне надо записаться на бороду завтра в 13:00");
+ok("«Мне надо записаться на бороду в 13:00» при существующей записи → вторая запись, а не просьба о переносе", ALT.records.length === 2 && booksOf("alt", s2) === "Тимур 10:00, Тимур 13:00" && !tgHas("перенести") && /Записала вас/.test(d.reply), JSON.stringify([d.reply, calls.tg]));
+calls.tg.length = 0;
+geminiQueue = ["Передаю.\n" + cancelTag("Тимур", "10:00")]; d = await chat("alt", s2, "Мне нужно отменить запись на 10:00");
+ok("«Мне нужно отменить запись» → просьба уходит администратору (а не «клиент передумал»)", tgHas("Клиент просит отменить запись") && !tgHas("передумал") && /просьбу об отмене/.test(d.reply), JSON.stringify([d.reply, calls.tg]));
+for (const [t0, w, u] of [["Мне нужно отменить запись", true, false], ["Можете мне отменить запись?", true, false], ["Жене нужно отменить запись", true, false], ["мне не надо отменять", false, true], ["Тимуру не надо отменять", false, true], ["Мне надо записаться", false, false], ["Мне нужна стрижка", false, false]]) {
+  const sx = sid(); geminiQueue = ["Записала.\n" + tagOf()]; await chat("alt", sx, `Тимур, +7 771 000 7${String(sidN % 100).padStart(2, "0")} 1, мужская стрижка завтра в 10:00`);
+  calls.tg.length = 0; geminiQueue = ["Передаю.\n[ОТМЕНА]"]; const x = await chat("alt", sx, t0);
+  ok(`«${t0}» + [ОТМЕНА] от ИИ → ${w ? "просьба администратору" : "ничего не передаётся"}`, tgHas("Клиент просит отменить запись") === w && !tgHas("передумал"), JSON.stringify([x.reply, calls.tg])); }
+
+// просьба из двух сообщений: «Отмените запись» → «Какую?» → «Алихана»
+newLoc(); s2 = sid();
+geminiQueue = ["Записала.\n" + tagOf()]; d = await chat("alt", s2, "Тимур, +7 771 000 50 14, мужская стрижка завтра в 10:00");
+geminiQueue = ["Записала.\n" + tagOf({ name: "Алихан", time: "11:00", service: "Детская стрижка" })]; d = await chat("alt", s2, "И сына Алихана на 11:00 на детскую стрижку");
+calls.tg.length = 0; lN2 = leadsOf("alt").length;
+geminiQueue = ["Какую запись отменить — вашу на 10:00 или Алихана на 11:00?"]; d = await chat("alt", s2, "Отмените запись");
+ok("записей две, ИИ уточняет, какую отменить → вопрос проходит, администратору пока ничего не уходит", /Какую запись отменить/.test(d.reply) && leadsOf("alt").length === lN2 && calls.tg.length === 0, JSON.stringify([d.reply, calls.tg]));
+geminiQueue = ["Передаю администратору.\n" + cancelTag("Алихан", "11:00")]; d = await chat("alt", s2, "Алихана");
+ok("…клиент ответил «Алихана» → просьба уходит администратору: обе записи, пометка, о какой речь, и оба сообщения клиента", leadsOf("alt").length === lN2 + 1 && reqLead("alt").kind === "cancel" && /№ 555001/.test(reqLead("alt").time) && /№ 555002/.test(reqLead("alt").time)
+  && /речь о записи: Алихан/.test(reqLead("alt").note) && /Отмените запись/.test(reqLead("alt").note) && /Алихана/.test(reqLead("alt").note) && /просьбу об отмене/.test(d.reply) && ALT.deleted.length === 0, JSON.stringify([d.reply, reqLead("alt")]));
+
 // WhatsApp — главный канал: запись сделана не через бота (по телефону, через сайт Altegio), клиент пишет «не смогу прийти»
 { const wc = env.WA_CLIENT; env.WA_CLIENT = "alt"; newLoc(); calls.wa.length = 0; lN2 = leadsOf("alt").length;
   geminiQueue = ["Жаль! Передала администратору вашу просьбу об отмене, он подтвердит."]; await waText("77015556001", "Здравствуйте, завтра в 10 не смогу прийти");
@@ -1618,7 +1642,16 @@ ok("…потом ИИ повторил [ЗАЯВКА] на вопрос «я з
   ok(`${turns2} случайных ходов с отменами и переносами (в ${said} бот ответил «передала администратору»): в расписании не удалено ничего, сбоев и неправды нет`, turns2 >= 300 && said > 20 && !ALT.calls.slice(c0).some(x => x.startsWith("DELETE")) && crashed === 0 && lied === 0 && bad.length === 0, JSON.stringify([bad.slice(0, 6), ALT.calls.slice(c0).filter(x => x.startsWith("DELETE")).length])); }
 env.ALTEGIO_SELF_CANCEL = "1";
 
+// то же в режиме «бот сам отменяет»: «Мне нужно отменить запись» — отмена, а не «ничего не отменяю»
+newLoc(); s2 = sid();
+geminiQueue = ["Записала.\n" + tagOf()]; d = await chat("alt", s2, "Тимур, +7 771 000 52 01, мужская стрижка завтра в 10:00");
+geminiQueue = ["Отменяю.\n" + cancelTag("Тимур", "10:00")]; d = await chat("alt", s2, "Мне нужно отменить запись");
+ok("режим «бот сам отменяет»: «Мне нужно отменить запись» → запись отменена", ALT.deleted.length === 1 && /Отменила вашу запись/.test(d.reply), d.reply);
+
 // --- пожелание о мастере
+newLoc();
+geminiQueue = ["Записала.\n" + tagOf({ time: "11:00" })]; d = await chat("alt", sid(), "Тимур, +7 771 000 51 04. Мне понравилось у Армана, запишите к нему завтра на 11:00 на стрижку");
+ok("«Мне понравилось у Армана, запишите к нему» → запись к Арману", ALT.records.length === 1 && ALT.records[0].appointments[0].staff_id === 11, JSON.stringify([d.reply, ALT.records[0] && ALT.records[0].appointments[0]]));
 newLoc();
 geminiQueue = ["Записала.\n" + tagOf()]; d = await chat("alt", sid(), "Тимур, +7 771 000 51 01. В прошлый раз был у Армана, не понравилось. Запишите завтра на 10:00 на стрижку");
 ok("«был у Армана, не понравилось» → запись не к Арману", ALT.records.length === 0 ? /к какому мастеру/.test(d.reply) : ALT.records[0].appointments[0].staff_id !== 11, JSON.stringify([d.reply, ALT.records[0] && ALT.records[0].appointments[0]]));
