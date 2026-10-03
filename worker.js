@@ -1805,9 +1805,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const base = JSON.stringify(saved.profile); // профиль до этого сообщения: при слиянии с другим сообщением берём из своего только то, что изменили сами
   const isNew = saved.n === 0, nowMs = ctxT.nowMs, wa = opts.channel === "wa";
   // вопросы бота «Отменить запись …?» и «Перенести её?» действуют только на одно, следующее сообщение — каким бы путём оно ни пошло
-  const cxAsk = saved.profile.cxAsk, mvAsk = saved.profile.mvAsk, cfPrev = saved.profile.cf || 0;
-  delete saved.profile.cxAsk; delete saved.profile.mvAsk; delete saved.profile.cf;
-  const dirty = !!(cxAsk || mvAsk || cfPrev);
+  const cxAsk = saved.profile.cxAsk, mvAsk = saved.profile.mvAsk, cfPrev = saved.profile.cf || 0, cxWho = saved.profile.cxWho; // cxWho — «на кого оформлена запись?» (обычный клиент)
+  delete saved.profile.cxAsk; delete saved.profile.mvAsk; delete saved.profile.cf; delete saved.profile.cxWho;
+  const dirty = !!(cxAsk || mvAsk || cfPrev || cxWho);
   saved.profile.li = nowMs;                                                        // время последнего сообщения клиента: по нему пульт чатов считает 24-часовое окно WhatsApp
   if (opts.waName && !saved.profile.waName) saved.profile.waName = snip(opts.waName, 40); // имя из профиля WhatsApp — только чтобы администратор узнал клиента; для записи бот спрашивает имя сам
   if (opts.pnid) saved.profile.pn = String(opts.pnid).slice(0, 24);              // номер компании (Phone number ID), на который написал клиент: с него же ответит администратор из пульта
@@ -2589,7 +2589,12 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     const P = saved.profile, list = (P.leads || []).slice(), had = list.slice(), madeNow = [], outs = [], msgs = [];
     const owner = JSON.parse(base).name || "", aiText = strip(raw || "");
     const gone = (P.lgone || []).filter(g => nowMs - g.at < 6 * 3600e3).slice(-3); // недавно отменённые заявки: по ним бот отвечает на «точно отменили?»
-    const bookLines = tagsOf(raw, "ЗАЯВКА").slice(0, 3), cancelLines = tagsOf(raw, "ОТМЕНА");
+    // Бот спрашивал, на кого оформлена запись, которой нет в этом чате (cxWho, 15 минут). Ответ клиента с номером или именем уходит администратору
+    // вместе с первым сообщением — что бы ни написал ИИ; служебные строки ИИ в таком сообщении не разбираем
+    const who0 = cxWho && nowMs - cxWho.at < 15 * 60e3 ? cxWho : null;
+    const whoWord = w => !NOT_NAME.test(w) && !AFTER_STOP.has(w) && !CX_WORD(w) && !dowsIn(w).length && !/^(запис[а-я]*|отмен[а-я]*|телефон[а-я]*|номер[а-я]*|час[а-я]*|утр[а-я]*|вечер[а-я]*|имя|зовут|name|phone)$/.test(w);
+    const whoAns = !!who0 && !ALT_KEEP.test(text) && !/\?/.test(text) && (!!phoneInText || (lowE(text).match(/[a-zа-яәғқңөұүһі]{3,}/g) || []).some(whoWord));
+    const bookLines = whoAns ? [] : tagsOf(raw, "ЗАЯВКА").slice(0, 3), cancelLines = whoAns ? [] : tagsOf(raw, "ОТМЕНА");
     const slots = getSlots(c, ctx), freeT = new Set(slots.flatMap(s => s.times));
     const noTime = () => slots[0] ? say("plNoTime", { day: plDay(slots[0], lang, nowMs), times: slots[0].times.slice(0, 2) }) : lang === "ru" ? `${c.safe} Подобрать вам удобное время?` : say("plNoSlots");
     const lab = x => plText(x, lang, nowMs), named = arr => plList(arr, lang, nowMs, owner), ru = x => (x.name ? x.name + ": " : "") + plText(x, "", nowMs);
@@ -2653,7 +2658,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
 
     // ИИ считает, что клиент отменяет или переносит запись: строка [ОТМЕНА] либо слова «отменила», «перенесла», «передала администратору отмену»
     const cl0 = draftOnly ? { book: false, change: false, soft: false, times: [], keep: "", before: "" } : altClaims(reply);
-    const saysCx = !draftOnly && (cl0.change || (ADMIN_CX.test(aiText) && CX_TOPIC.test(aiText)));
+    const saysCx = !draftOnly && !whoAns && (cl0.change || (ADMIN_CX.test(aiText) && CX_TOPIC.test(aiText)));
     const reqCx = cancelLines.length > 0 || saysCx;
     const doCx = reqCx && asked, moving = doCx && cands.length > 0; // отмена — только по просьбе клиента; перенос — отмена вместе с новой заявкой
     // какая заявка отменяется, решаем до создания новой (новая и повторённые ИИ в выбор не входят), а исполняем после
@@ -2706,7 +2711,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const g = !list.length && !move ? gone.filter(fits).pop() : null;
       if (g) return say("plGone", { what: named([g]) }); // эту заявку бот уже отменил — второй раз администратора не тревожим
       const also = list.length ? " " + say("also", { list: named(list) }) : "";
-      if (!ph0()) return say("cancelWho") + also;
+      if (!ph0()) { P.cxWho = { at: nowMs, text: maskPhones(text).slice(0, 300) }; return say("cancelWho") + also; } // следующее сообщение с номером или именем уйдёт администратору вместе с этим
       const u = P.unk && nowMs - P.unk.t < 3600e3 ? P.unk : { t: nowMs, n: 0 }; // не больше трёх таких сигналов из одного чата в час
       if (u.n < 3) { u.n++; P.unk = u; tellOnce("cx:" + histKey + ":" + hash(text), `❓ Клиент просит ${move ? "перенести" : "отменить"} запись, которой нет в этом чате — ${c.name}\n${who}${list.length ? "\nЗаявки этого чата: " + list.map(ru).join("; ") : ""}\n${said}`); }
       cancel = true; acted = true;
@@ -2752,7 +2757,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
 
     // 3) ИИ написал «забронировала», а служебной строки нет: клиент думает, что записан, а заявки у администратора нет.
     //    Если в чате уже есть заявка, а в ответе другое время или новое имя — это вторая запись, с ней поступаем так же
-    if (!cands.length && !reqCx && !draftOnly && cl0.book && !cl0.soft && !plRestated(list, cl0, reply, c, owner)) {
+    if (!cands.length && !reqCx && !draftOnly && !whoAns && cl0.book && !cl0.soft && !plRestated(list, cl0, reply, c, owner)) {
       const q = /\?\s*$/.test(cl0.keep) ? cl0.keep.split(/(?<=[.!?…])\s+/).pop() : "";
       if (q && CL_DATA_Q.test(q)) reply = cl0.keep; // «Записываю вас на 16:00. Как вас зовут?» — вопрос о данных оставляем, заявку без подробностей не создаём
       else if (cl0.times.some(t => !freeT.has(t))) reply = noTime();
@@ -2764,6 +2769,13 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
           { note: `ИИ сообщил клиенту о брони, но не оформил заявку по правилам. Ответ бота: «${reply.slice(0, 300)}». ${quote}` }, "⚠️ Заявка без подробностей — уточните у клиента", true);
         adminInc(); list.push({ id: made.id, name: P.name || "", date: "", time: "", service: "", text: "", at: nowMs, sig: "", stub: true });
       }
+    }
+    if (whoAns) {
+      const ph = ph0(), u = P.unk && nowMs - P.unk.t < 3600e3 ? P.unk : { t: nowMs, n: 0 };
+      if (u.n < 3) { u.n++; P.unk = u; tellOnce("cx:" + histKey + ":" + hash(text), `❓ Клиент просит отменить запись, которой нет в этом чате — ${c.name}\n${who}${list.length ? "\nЗаявки этого чата: " + list.map(ru).join("; ") : ""}\nСообщения клиента: «${who0.text}» → «${text.slice(0, 200)}»`); }
+      if (ph) { cancel = true; reply = say("cancelAdmin"); }
+      else { reply = say("cancelAdmin") + " " + say("needPhoneCb"); P.cxWho = { at: who0.at, text: (who0.text + " → " + maskPhones(text)).slice(-400) }; } // номера ещё нет: когда клиент его пришлёт, администратор получит и его
+      wish = null;
     }
     if (wish) P.cxWish = acted && !keepWish ? { at: nowMs, text: wish.text, n: wish.n || 0, done: true } : wish;
     if (gone.length) P.lgone = gone; else delete P.lgone;

@@ -1605,6 +1605,25 @@ ok("«старт» после «стоп»: бот снова отвечает",
     calls.wa.length = 0; geminiQueue = ["**"]; await waText("77016000022", "Спасибо");
     ok("M4: ответ ИИ из одной разметки → клиент получает запасную фразу, а не пустое сообщение", calls.wa.length === 1 && waLast().trim().length > 10, JSON.stringify(calls.wa.map(x => x.text.body)));
     env.WA_CLIENT = wc; }
+
+  // --- H3: отмена записи, которой нет в чате (веб-чат): бот попросил имя и номер — и передаёт их администратору, что бы ни ответил ИИ
+  { const s = sid(); calls.tg.length = 0;
+    geminiQueue = [cxTag]; d = await chat("dent", s, "Отмените мою запись на завтра, я записывался по телефону");
+    ok("H3: записи в чате нет, телефона нет → бот просит имя и номер и запоминает свой вопрос", /имя и номер телефона/.test(d.reply) && !d.cancel && calls.tg.length === 0 && !!pf(s).cxWho, JSON.stringify([d.reply, pf(s)]));
+    geminiQueue = ["Спасибо, Азамат! Чем ещё могу помочь?"]; d = await chat("dent", s, "Азамат Ахметов, 8 701 555 44 33, завтра в 10:00");
+    ok("H3: клиент прислал имя и номер, а ИИ об отмене промолчал → администратор получает просьбу с обоими сообщениями", d.cancel === true && tgHas("которой нет в этом чате") && tgHas("+77015554433") && tgHas("я записывался по телефону") && tgHas("Азамат Ахметов") && /Передала администратору/.test(d.reply) && !pf(s).cxWho, JSON.stringify([d.reply, calls.tg]));
+    calls.tg.length = 0; geminiQueue = ["Да, передала.\n[ОТМЕНА]"]; d = await chat("dent", s, "Точно передали?");
+    ok("…вопрос «точно передали?» администратора второй раз не тревожит", calls.tg.length === 0, JSON.stringify([d.reply, calls.tg])); }
+  { const s = sid(); calls.tg.length = 0;
+    geminiQueue = [cxTag]; await chat("dent", s, "Отмените мою запись на завтра, я записывался по телефону");
+    geminiQueue = ["Принято, Азамат, ваша запись на завтра в 10:00 будет отменена."]; d = await chat("dent", s, "Азамат Ахметов, завтра в 10:00");
+    ok("H3: клиент назвал только имя → просьба уходит администратору, бот просит номер для связи и не обещает «будет отменена»", tgHas("которой нет в этом чате") && tgHas("Азамат Ахметов") && /номер телефона/.test(d.reply) && !/будет отменена/.test(d.reply) && !!pf(s).cxWho, JSON.stringify([d.reply, calls.tg, pf(s)]));
+    calls.tg.length = 0; geminiQueue = ["Спасибо!"]; d = await chat("dent", s, "8 701 555 44 34");
+    ok("…следом номер → администратор получает и его", tgHas("+77015554434") && tgHas("которой нет в этом чате") && d.cancel === true && !pf(s).cxWho, JSON.stringify([d.reply, calls.tg])); }
+  { const s = sid(); calls.tg.length = 0;
+    geminiQueue = [cxTag]; await chat("dent", s, "Отмените мою запись на завтра, я записывался по телефону");
+    geminiQueue = ["Чистка от 20 000 ₸."]; d = await chat("dent", s, "А сколько стоит чистка?");
+    ok("H3: следующее сообщение — другой вопрос → администратору ничего не уходит, вопрос бота больше не действует", calls.tg.length === 0 && /20 000/.test(d.reply) && !pf(s).cxWho, JSON.stringify([d.reply, calls.tg, pf(s)])); }
 }
 
 // ====== режим по умолчанию: отмену и перенос делает администратор, бот в расписании ничего не удаляет
