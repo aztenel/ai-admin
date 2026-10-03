@@ -182,20 +182,21 @@ const local = ms => new Date(ms + TZ * 3600e3); // читать через getUT
 const hhmm = d => `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 const dayLabel = d => `${DOW[d.getUTCDay()]}, ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
 const mins = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+const hStr = h => `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`; // час работы → «9:00», «9:30»
 
 function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; }
 
 // свободные окна: реальный график минус «занятые» (для демо — псевдослучайно, стабильно на день)
 function freeSlots(c, nowMs) {
   const n = local(nowMs), out = [];
-  for (let i = 0; i < 10 && out.length < 3; i++) {
+  for (let i = 0; i < 10 && out.length < (c.real ? c.bookDays || 3 : 3); i++) {
     const d = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + i));
     const dow = d.getUTCDay(), iso = d.toISOString().slice(0, 10);
     const times = (c.slots[dow] || []).filter(t => {
       if (i === 0 && mins(t) < n.getUTCHours() * 60 + n.getUTCMinutes() + 60) return false; // прошедшее и ближайший час
-      return hash(c.id + iso + t) % 3 !== 0;
-    }).slice(0, 4);
-    if (times.length) out.push({ rel: i === 0 ? "сегодня" : i === 1 ? "завтра" : i === 2 ? "послезавтра" : "", label: dayLabel(d), times });
+      return c.real || hash(c.id + iso + t) % 3 !== 0; // у настоящего клиента (паспорт бота) занятость знает администратор: бот предлагает всё время из графика, заявку подтверждает человек
+    }).slice(0, c.real ? 40 : 4);
+    if (times.length) out.push({ rel: i === 0 ? "сегодня" : i === 1 ? "завтра" : i === 2 ? "послезавтра" : "", label: dayLabel(d), times, ...(c.real ? { date: iso } : {}) });
   }
   return out;
 }
@@ -395,7 +396,7 @@ function nextOpen(c, nowMs) {
     const d = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + i));
     const h = c.hours[d.getUTCDay()];
     if (!h || (i === 0 && cur >= h[0] * 60)) continue;
-    return `${i === 0 ? "сегодня" : i === 1 ? "завтра" : "в " + DOW[d.getUTCDay()].replace("среда", "среду").replace("пятница", "пятницу").replace("суббота", "субботу")} с ${h[0]}:00`;
+    return `${i === 0 ? "сегодня" : i === 1 ? "завтра" : "в " + DOW[d.getUTCDay()].replace("среда", "среду").replace("пятница", "пятницу").replace("суббота", "субботу")} с ${hStr(h[0])}`;
   }
   return "в рабочее время";
 }
@@ -491,7 +492,7 @@ function allowedTimes(c, ctx, userText) {
   const prof = ctx.profile || {}; // время собственных записей и заявок клиента — не выдумка
   for (const b of [...(prof.bookings || []), ...(prof.pend || [])]) if (b && b.time) t.add(b.time);
   // часы работы: у клиента с расписанием Altegio они проходят только как «с 9:00 до 21:00» (см. checkReply), иначе ИИ мог бы предложить запись на 21:00
-  if (!ctx.softTimes) for (const h of c.hours) if (h) { t.add(h[0] + ":00"); t.add(h[1] + ":00"); }
+  if (!ctx.softTimes) for (const h of c.hours) if (h) { t.add(hStr(h[0])); t.add(hStr(h[1])); }
   for (const m of userText.matchAll(/(?:^|[^\d])(\d{1,2})(?:\s*[:.\s]\s*(\d{2}))?(?!\d)/g)) {
     const h = +m[1]; if (h > 23) continue; t.add(`${h}:${m[2] || "00"}`); t.add(`${h}:00`); t.add(`${h}:30`);
   }
@@ -509,7 +510,7 @@ function checkReply(c, reply, userText, ctx) {
   }
   if (NUMWORDS.test(r)) return { text: r, why: "цена словами" };
   const times = allowedTimes(c, ctx, userText);
-  const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(h => [h[0] + ":00", h[1] + ":00"])) : null;
+  const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(h => [hStr(h[0]), hStr(h[1])])) : null;
   const nt = x => x.replace(/^0(\d)/, "$1");
   // слова о свободном времени и записи: рядом с ними время должно быть из расписания
   const FREE = /свобод|окн|окош|есть\s+время|free|available|slot|(^|[^а-яёәғқңөұүһі])бос(?![а-яёәғқңөұүһі])/i;
@@ -1731,7 +1732,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const dirty = !!(cxAsk || mvAsk || cfPrev);
   saved.profile.li = nowMs;                                                        // время последнего сообщения клиента: по нему пульт чатов считает 24-часовое окно WhatsApp
   if (opts.waName && !saved.profile.waName) saved.profile.waName = snip(opts.waName, 40); // имя из профиля WhatsApp — только чтобы администратор узнал клиента; для записи бот спрашивает имя сам
+  if (opts.pnid) saved.profile.pn = String(opts.pnid).slice(0, 24);              // номер компании (Phone number ID), на который написал клиент: с него же ответит администратор из пульта
   const needs = why => { saved.profile.need = { at: nowMs, why }; };               // чат требует внимания администратора — так он попадает наверх пульта
+  // ссылка на этот чат в пульте — в уведомлениях администратору о чатах WhatsApp (там он может ответить клиенту)
+  const hkm = /^h:(wa|ga):([^:]+):(\d+)$/.exec(histKey), chatLink = opts.origin && hkm ? `\nОткрыть чат: ${opts.origin}/inbox?c=${hkm[2]}#${hkm[1]}:${hkm[3]}` : "";
 
   const text = redact(String(rawText).replace(/[\u0000-\u001f]/g, " ").trim().slice(0, MAX_LEN));
   // телефон клиента — первый номер в сообщении, кроме телефона самой компании из фактов («я звонил вам на +7 700…» — это не номер клиента)
@@ -1784,7 +1788,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if ((saved.profile.stop || opts.forward) && !opts.test) {
         const f = saved.profile.fw && nowMs - saved.profile.fw.t < 3600e3 ? saved.profile.fw : { t: nowMs, n: 0 };
         f.n++; saved.profile.fw = f;
-        if (f.n <= 10) await notify(env, `✉️ ${saved.profile.stop ? "Клиент, который просил не писать ему автоматически, прислал сообщение" : "Клиент пишет, бот в этом чате молчит"} — ${c.name}\n${who}\nСообщение: «${text.slice(0, 300)}»\nОтветьте клиенту сами.${f.n === 10 ? "\nСледующие сообщения этого клиента в ближайший час пересылаться не будут." : ""}`, c.id);
+        if (f.n <= 10) await notify(env, `✉️ ${saved.profile.stop ? "Клиент, который просил не писать ему автоматически, прислал сообщение" : "Клиент пишет, бот в этом чате молчит"} — ${c.name}\n${who}\nСообщение: «${text.slice(0, 300)}»\nОтветьте клиенту сами.${f.n === 10 ? "\nСледующие сообщения этого клиента в ближайший час пересылаться не будут." : ""}${chatLink}`, c.id);
       }
       if (!saved.profile.stop) needs("human"); // клиент пишет, а бот молчит: чат ждёт администратора
       try { await save(text, ""); } catch (e) { console.log("history", String(e)); } // сообщение клиента остаётся в истории: администратор видит его в пульте чатов
@@ -1808,7 +1812,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const reply = "Сегодня я больше не могу отвечать автоматически. Передала ваше сообщение администратору — он ответит вам здесь.";
       const told = !!d.told; d.told = true; // один сигнал в сутки, даже если клиент снимает паузу командой «меню»
       needs("limit");
-      if (!opts.test && !told) await notify(env, `🙋 Клиент написал больше ${WA_MAX_DAY} сообщений за день — бот замолчал на 2 часа, ответьте сами — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»`, c.id);
+      if (!opts.test && !told) await notify(env, `🙋 Клиент написал больше ${WA_MAX_DAY} сообщений за день — бот замолчал на 2 часа, ответьте сами — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${chatLink}`, c.id);
       await save(text, reply);
       return { reply, handoff: true, lead: null, isNew, offer: [] };
     }
@@ -1826,7 +1830,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         : `Передала администратору. Оставьте, пожалуйста, номер телефона — он перезвонит ${when}.`;
     const hoRecent = saved.profile.hoAt && nowMs - saved.profile.hoAt < 3600e3; saved.profile.hoAt = nowMs; // не чаще раза в час на чат
     needs("human");
-    if (!opts.test && !hoRecent) await notify(env, `🙋 Клиент просит администратора — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${wa ? "\nБот молчит в этом чате 2 часа — ответьте клиенту с телефона." : ""}`, c.id);
+    if (!opts.test && !hoRecent) await notify(env, `🙋 Клиент просит администратора — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»${wa ? "\nБот молчит в этом чате 2 часа — ответьте клиенту " + (chatLink ? "в пульте чатов." : "с телефона.") : ""}${chatLink}`, c.id);
     await save(text, reply);
     return { reply, handoff: true, lead: null, isNew, offer: [] };
   }
@@ -1866,7 +1870,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   try { raw = await ask(); }
   catch (e) {
     console.log("gemini", String(e));
-    if (!opts.test) await notifyOnce(env, "ai:" + histKey, `⚠️ Бот не смог ответить клиенту (сбой ИИ) — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»\nОтветьте клиенту сами.`, c.id);
+    if (!opts.test) await notifyOnce(env, "ai:" + histKey, `⚠️ Бот не смог ответить клиенту (сбой ИИ) — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»\nОтветьте клиенту сами.${chatLink}`, c.id);
     const reply = /cut off|timeout/.test(String(e)) ? "Извините, связь прервалась. Повторите, пожалуйста, вопрос?" : FALLBACK;
     needs("ai");
     try { await save(text, reply); } catch (e2) { console.log("history", String(e2)); } // чат начат: следующее сообщение не должно считаться новым диалогом
@@ -1958,7 +1962,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     books.length ? books.map(x => altLabel(x, "ru", nowMs, true)).join("; ") : "",
     pend.length ? "запись ещё НЕ создана, заявка у администратора: " + pend.map(p => pendText(p, "ru")).join("; ") : "",
     !books.length && !pend.length && cbAt && nowMs - cbAt < 12 * 3600e3 ? "запись ещё НЕ создана: администратор перезвонит клиенту" : "",
-    saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? "клиент просил отменить или перенести запись — это делает администратор, он подтвердит клиенту; сама запись пока прежняя" : ""
+    saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? "клиент просил отменить или перенести запись — это делает администратор, он подтвердит клиенту; сама запись пока прежняя" : "",
+    saved.profile.adminDid && nowMs - saved.profile.adminDid.at < 48 * 3600e3 ? `администратор ${saved.profile.adminDid.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"} и написал ему: «${saved.profile.adminDid.text}»` : ""
   ].filter(Boolean).join(". ") || null;
   const join = arr => [...new Set(arr.filter(Boolean))].join(" ");
   // клиент просит отменить или перенести запись, о которой этот чат ничего не знает; одно и то же сообщение дважды администратору не шлём
@@ -2549,7 +2554,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   }
 
   // ---- сохранение: заявки → история → уведомления
-  const sendNotes = async list => { const r = []; for (const m of list) r.push(await notify(env, m, c.id)); return r; }; // по очереди: «Отмена» старой заявки приходит раньше «Новой заявки»
+  const sendNotes = async list => { const r = []; for (const [i, m] of list.entries()) r.push(await notify(env, i === list.length - 1 ? m + chatLink : m, c.id)); return r; }; // по очереди: «Отмена» старой заявки приходит раньше «Новой заявки»; ссылка на чат — в последнем
   if (leadOps.length) {
     // 1) каждая новая заявка — ещё и отдельным ключом: он не зависит от общего списка и не теряется, когда два чата сохраняют заявки одновременно.
     //    Статус («отменена», «заменена») кладём и в метаданные ключа: страница заявок берёт его оттуда, даже если общий список успели затереть
@@ -2856,6 +2861,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url), P = url.pathname, M = request.method === "HEAD" ? "GET" : request.method; // HEAD — так проверяют ссылки Meta и другие сервисы
     const authed = () => leadsKey(env) && url.searchParams.get("key") === leadsKey(env);
+    try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } // боты клиентов из хранилища (паспорта) — раз в минуту
 
     if (M === "GET" && url.searchParams.get("hub.mode") === "subscribe") {
       return url.searchParams.get("hub.verify_token") === env.VERIFY_TOKEN
@@ -2864,8 +2870,41 @@ export default {
     if (M === "GET" && P === "/leads") {
       if (authed()) return html(await leadsPage(env, hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : null));
       const c = url.searchParams.get("c"), ck = hasClient(c) && env["KEY_" + c.toUpperCase()];
-      return ck && url.searchParams.get("key") === ck ? html(await leadsPage(env, c)) : forbid();
+      if (ck && url.searchParams.get("key") === ck) return html(await leadsPage(env, c));
+      const s = await sessionRead(env, request); // вход по cookie: владелец видит всех (или одного — ?c=), сотрудник — только своего клиента
+      if (s) return page(await leadsPage(env, s.role === "staff" ? s.cid : hasClient(c) ? c : null));
+      return forbid();
     }
+    // ---- вход и страница владельца
+    if (P === "/login" && (M === "GET" || M === "POST")) return handleLogin(request, env, url);
+    if (M === "GET" && P === "/logout") return new Response(null, { status: 303, headers: { location: "/login", "set-cookie": cookieSet("", 0), "cache-control": "no-store" } });
+    if (M === "GET" && P === "/studio") {
+      const a = await enter(request, env, url);
+      if (a.res) return a.res;
+      return a.s.role === "owner" ? page(studioPage()) : new Response(null, { status: 303, headers: { location: "/inbox?c=" + a.s.cid } });
+    }
+    if (P.startsWith("/api/studio/")) {
+      const s = await sessionRead(env, request);
+      return s ? studioApi(request, env, url, s) : json({ error: "Войдите заново." }, 401);
+    }
+    // ---- пульт чатов
+    if (M === "GET" && P === "/inbox") {
+      const a = await enter(request, env, url);
+      if (a.res) return a.res;
+      const c = url.searchParams.get("c");
+      if (a.s.role === "staff" && c !== a.s.cid) return new Response(null, { status: 303, headers: { location: "/inbox?c=" + a.s.cid } }); // сотрудник — только в свой пульт
+      if (c && !hasClient(c)) return new Response(null, { status: 303, headers: { location: "/inbox" } });
+      return page(inboxPage());
+    }
+    if (P.startsWith("/api/inbox/")) {
+      const s = await sessionRead(env, request);
+      if (!s) return jsonP({ error: "Войдите заново." }, 401);
+      if (M === "GET" && P === "/api/inbox/me") return jsonP({ owner: s.role === "owner", c: s.role === "staff" ? s.cid : "" });
+      return inboxApi(request, env, url, s);
+    }
+    // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
+    const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
+    if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
     if (M === "GET" && P === "/diag") return authed() ? text(await diag(env)) : forbid();
     if (P === "/altegio" && (M === "GET" || M === "POST")) { // проверка расписания; POST — пробная запись с удалением
       let q = { key: url.searchParams.get("key"), c: url.searchParams.get("c") || "", loc: url.searchParams.get("loc") || "", phone: "" };
@@ -2894,7 +2933,7 @@ export default {
     if (M === "POST" && P === "/ga") { // Green-API
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env).catch(err => console.log("ga error", String(err))));
+      if (body) ctx.waitUntil(handleGreen(body, env, url.origin).catch(err => console.log("ga error", String(err))));
       return new Response("OK");
     }
     if (M === "POST") { // WhatsApp Cloud API (Meta)
@@ -2903,7 +2942,7 @@ export default {
         return new Response("Bad signature", { status: 403 });
       }
       let body = null; try { body = JSON.parse(raw); } catch (e) {}
-      if (body) ctx.waitUntil(handleWhatsApp(body, env).catch(err => console.log("wa error", err)));
+      if (body) ctx.waitUntil(handleWhatsApp(body, env, { origin: url.origin }).catch(err => console.log("wa error", err)));
       return new Response("OK");
     }
     if (M === "GET" && P === "/privacy") return html(privacyPage(env));
@@ -2925,6 +2964,7 @@ async function handleWebChat(request, env, ctx) {
   let limited = false;
   try { limited = await tooMany(request, env, c, sid); } catch (e) { console.log("limit", String(e)); } // сбой хранилища на счётчике не должен ронять чат
   if (limited) return json({ reply: "Слишком много сообщений. Попробуйте чуть позже или позвоните нам.", offer: [] });
+  if (CLIENTS[c].off) return json({ reply: "Сейчас на сообщения отвечает администратор. Напишите нам, пожалуйста, в WhatsApp или позвоните.", offer: [] }); // бот выключен владельцем
   const later = [];
   const r = await thinkSafe(env, env.KV, c, `h:web:${c}:${sid}`, textIn, "веб-чат", { channel: "web", ip: request.headers.get("cf-connecting-ip") || "", defer: ctx && ctx.waitUntil ? f => later.push(f) : null });
   if (later.length) ctx.waitUntil(Promise.allSettled(later.map(f => f()))); // уведомления администратору не задерживают ответ клиенту
@@ -2992,9 +3032,15 @@ async function waText(env, channel, fromDigits, text, send, phone, wx) {
     await env.KV.put(consentKey, "1", { expirationTtl: 30 * 86400 });
     return send(`${pick.greeting}\n\n${consentText(env, pick)}`);
   }
+  if (CLIENTS[niche] && CLIENTS[niche].off) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор
+    const now = Date.now();
+    await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
+    try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
+    return;
+  }
   const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
-  const r = await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", defer: f => later.push(f) });
+  const r = await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: f => later.push(f) });
   try {
     if (r.paused) return; // клиентом занимается администратор — бот молчит
     if (r.isNew) {
@@ -3106,7 +3152,7 @@ async function handleWAMessage(env, msg, wx) {
 }
 
 // --- Green-API (обычный WhatsApp по QR — только для своей демо-SIM)
-async function handleGreen(body, env) {
+async function handleGreen(body, env, origin) {
   const type = body?.typeWebhook;
   const chatId = body?.senderData?.chatId || "";
   if (!chatId.endsWith("@c.us")) return; // группы и каналы игнорируем
@@ -3121,13 +3167,13 @@ async function handleGreen(body, env) {
   const id = body.idMessage;
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
-  const send = t => sendGreen(env, chatId, t);
+  const send = t => sendGreen(env, chatId, t), gx = { origin, name: body?.senderData?.senderName || "" };
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
-  if (text) return handleWAText(env, "ga", digitsId, text, send);
+  if (text) return handleWAText(env, "ga", digitsId, text, send, gx);
   const kinds = { audioMessage: "audio", imageMessage: "image", videoMessage: "video", documentMessage: "document", stickerMessage: "sticker", locationMessage: "location", contactMessage: "contact", contactsArrayMessage: "contact" };
   const kind = kinds[md.typeMessage];
   if (!kind) return; // реакции, опросы и прочее — без ответа
-  return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, null, { mime: md.fileMessageData?.mimeType || "" });
+  return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, gx, { mime: md.fileMessageData?.mimeType || "" });
 }
 
 async function sendGreen(env, chatId, message) {
@@ -3162,6 +3208,19 @@ async function sendWA(env, to, t, wx) {
   }
   let id = ""; try { id = ((await r.json()).messages || [])[0]?.id || ""; } catch (x) {}
   return { ok: true, id };
+}
+
+// Вебхук WhatsApp клиента со своим номером и своим приложением Meta: https://<воркер>/wa/<id>.
+// Подпись проверяется секретом APP_SECRET_<ID>, ответ уходит с токеном WA_TOKEN_<ID> с того номера, на который написали. Без секрета сообщения не принимаем
+async function handleWAClient(request, env, ctx, id, origin) {
+  if (request.method !== "POST") return new Response("OK"); // проверку адреса (hub.mode=subscribe) обрабатывает общий блок выше
+  if (!hasClient(id)) return new Response("Unknown client", { status: 404 });
+  const secret = env["APP_SECRET_" + id.toUpperCase()], raw = await request.text();
+  if (!secret) return new Response("APP_SECRET is not set for this client", { status: 403 });
+  if (!(await metaSigOk(secret, raw, request.headers.get("x-hub-signature-256")))) return new Response("Bad signature", { status: 403 });
+  let body = null; try { body = JSON.parse(raw); } catch (e) {}
+  if (body) ctx.waitUntil(handleWhatsApp(body, env, { client: id, signed: true, origin }).catch(err => console.log("wa error", err)));
+  return new Response("OK");
 }
 
 // подпись Meta: заголовок x-hub-signature-256 = "sha256=" + HMAC-SHA256(App secret, тело запроса)
@@ -3381,5 +3440,695 @@ if(d.turns&&d.turns.length){d.turns.forEach(t=>add(t.role==='user'?'u':'b',t.tex
 document.getElementById('f').onsubmit=e=>{e.preventDefault();send(inp.value)};
 document.getElementById('rs').onclick=()=>{newSid();intro();chips(C.chips)};
 start();
+</script></body></html>`;
+}
+
+// ================= ПАСПОРТ БОТА: клиенты из хранилища, без правки кода =================
+// Настоящий клиент описывается данными («паспортом»): название, ниша, адрес, график, услуги и цены, способ записи.
+// Паспорта лежат в KV одним ключом cfg:all = { <id>: паспорт }. Из паспорта собирается такой же объект, как у демо-клиентов в CLIENTS,
+// поэтому весь движок (подсказка ИИ, защита ответа, запись, заявки) работает с ним без отдельных веток.
+// Секреты в паспорт не кладём: токен WhatsApp — секрет WA_TOKEN_<ID>, подпись Meta — APP_SECRET_<ID> в панели Cloudflare.
+const BUILTIN = new Set(Object.keys(CLIENTS));
+const ID_RE = /^[a-z][a-z0-9]{1,15}$/;
+const NICHES = {
+  barber: { title: "Барбершоп", kind: "барбершоп", topic: "мужские стрижки, борода, бритьё, цены, мастера, адрес, график и запись", goal: "записать клиента к мастеру на конкретное время",
+    hello: "На стрижку, бороду или всё сразу?", chips: ["Сколько стоит стрижка?", "Есть время сегодня?", "Хочу записаться"], safe: "Точную стоимость мастер скажет на месте.", staffWord: "Мастера", ghost: ["маникюр", "наращивание ресниц", "массаж спины"] },
+  beauty: { title: "Салон красоты", kind: "салон красоты", topic: "услуги салона красоты, цены, мастера, адрес, график и запись", goal: "записать клиента к мастеру на конкретное время",
+    hello: "Какая услуга вас интересует?", chips: ["Сколько стоит маникюр?", "Есть время сегодня?", "Хочу записаться"], safe: "Точную стоимость мастер назовёт на месте.", staffWord: "Мастера", ghost: ["шиномонтаж", "лечение зубов", "татуировку"] },
+  cosm: { title: "Косметология", kind: "клиника косметологии", topic: "косметологические процедуры, цены, специалисты, адрес, график и запись", goal: "записать клиента на консультацию или процедуру", medical: true,
+    redFlags: "сильный отёк после процедуры, побеление или посинение кожи, температура, трудно дышать, сильная аллергическая реакция",
+    hello: "Какая процедура вас интересует?", chips: ["Сколько стоит чистка лица?", "Это больно?", "Хочу записаться"], safe: "Точную стоимость косметолог подберёт на консультации.", staffWord: "Специалисты", ghost: ["пересадку волос", "лечение зубов", "маникюр"] },
+  dent: { title: "Стоматология", kind: "стоматология", topic: "лечение и услуги стоматологии, цены, врачи, адрес, график и запись на приём", goal: "записать пациента на консультацию или лечение", medical: true,
+    redFlags: "сильный отёк лица или шеи, температура выше 38, трудно глотать или дышать, кровотечение, которое не останавливается, травма челюсти",
+    hello: "Что вас беспокоит или какая услуга интересует?", chips: ["Сколько стоит чистка?", "Болит зуб", "Хочу записаться"], safe: "Точную стоимость врач назовёт после осмотра.", staffWord: "Врачи", ghost: ["коррекцию зрения", "массаж спины", "маникюр"] },
+  auto: { title: "Автосервис", kind: "автосервис", topic: "ремонт и обслуживание автомобилей, шиномонтаж, цены, адрес, график и запись", goal: "записать автомобиль на конкретное время",
+    hello: "Какая машина и что нужно сделать?", chips: ["Замена масла", "Шиномонтаж R16", "Хочу записаться"], safe: "Точную стоимость мастер скажет после осмотра машины.", staffWord: "Мастера", ghost: ["тонировку в хамелеон", "ремонт мотоциклов", "мойку ковров"] },
+  edu: { title: "Обучение", kind: "образовательный центр", topic: "курсы, занятия, цены, расписание, адрес и запись на пробный урок", goal: "записать ученика на пробный урок",
+    hello: "Для кого подбираем занятия?", chips: ["Сколько стоит обучение?", "Есть пробный урок?", "Хочу записаться"], safe: "Точную стоимость подберём после пробного урока.", staffWord: "Преподаватели", ghost: ["курсы вождения", "уроки вокала", "курсы пилотов"] },
+  fit: { title: "Фитнес и спорт", kind: "фитнес-студия", topic: "тренировки, абонементы, цены, тренеры, адрес, расписание и запись", goal: "записать клиента на пробную тренировку",
+    hello: "Какие тренировки вас интересуют?", chips: ["Сколько стоит абонемент?", "Есть пробное занятие?", "Хочу записаться"], safe: "Точную стоимость подскажет администратор на месте.", staffWord: "Тренеры", ghost: ["аренду лошадей", "уроки дайвинга", "массаж горячими камнями"] },
+  other: { title: "Другое", kind: "компания", topic: "услуги компании, цены, адрес, график и запись", goal: "записать клиента на конкретное время",
+    hello: "Чем могу помочь?", chips: ["Какие услуги есть?", "Сколько стоит?", "Хочу записаться"], safe: "Точную стоимость подскажет администратор.", staffWord: "Специалисты", ghost: ["полёт на воздушном шаре", "ремонт часов", "аренду яхты"] }
+};
+
+// ---- разбор графика: «Пн–Пт 10:00–20:00; Сб 10:00–18:00; Вс выходной», «ежедневно 9–21», «будни с 9 до 18, выходные 10–16»
+const DAY_KEYS = [["вс", "воскр", "sun"], ["пн", "понед", "mon"], ["вт", "вторн", "tue"], ["ср", "сред", "wed"], ["чт", "четв", "thu"], ["пт", "пятн", "fri"], ["сб", "субб", "sat"]];
+const DAY_SHORT = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+const dayIdx = w => { w = lowE(w).replace(/[^a-zа-я]/g, ""); return w ? DAY_KEYS.findIndex(ks => ks.some(k => w === k || (k.length > 2 && w.startsWith(k)))) : -1; };
+function parseSchedule(src) {
+  const hours = [undefined, undefined, undefined, undefined, undefined, undefined, undefined], errors = [];
+  const T = "(\\d{1,2})(?:[:.](\\d{2}))?", RANGE = new RegExp("(?:(?<![а-яё])с\\s+)?" + T + "\\s*(?:[–—-]|до|по)\\s*" + T, "i");
+  const text = String(src || "").replace(/\r/g, "").trim();
+  if (!text) return { hours: hours.map(() => null), text: "", errors: ["график работы не указан"], missing: [] };
+  // куски: по «;» и переводам строк; запятая делит, только если после неё снова идут дни («Пн–Пт 10–20, Сб 10–18»)
+  const parts = [], DAYW = /^\s*(?:с\s+)?(?:пн|вт|ср|чт|пт|сб|вс|пон|втор|сред|четв|пятн|субб|воскр|будн|выходн|ежедн|кажд)/i, DONE = /выходн(ой|ые|ых)?\s*$|закрыт|круглосуточно/;
+  for (const p of text.split(/[;\n]+/)) {
+    let cur = "";
+    for (const piece of p.split(",")) {
+      if (cur && (RANGE.test(lowE(cur)) || DONE.test(lowE(cur))) && DAYW.test(piece)) { parts.push(cur.trim()); cur = piece; }
+      else cur = cur ? cur + "," + piece : piece;
+    }
+    if (cur.trim()) parts.push(cur.trim());
+  }
+  for (const part of parts) {
+    const low = lowE(part), m = RANGE.exec(low), off = /выходн(ой|ые|ых)?\s*$|закрыт|не\s+работа/.test(low.replace(/^\s*выходные\s+(?=\S)/, "")) && !m, all = /круглосуточно|24\s*часа|24\/7/.test(low);
+    if (!m && !off && !all) { errors.push(`не понял время в «${part}» — напишите, например, «Пн–Пт 10:00–20:00»`); continue; }
+    const daysText = (m ? low.slice(0, m.index) : low.replace(/выходн(ой|ые|ых)?\s*$|закрыто?|не\s+работа\S*|круглосуточно|24\s*часа|24\/7/g, " ")).replace(/[\s:,–—-]+$/, "").trim();
+    let days = [];
+    if (!daysText || /ежедневно|каждый\s+день|без\s+выходных|все\s+дни/.test(daysText)) days = [0, 1, 2, 3, 4, 5, 6];
+    else if (/будн/.test(daysText)) days = [1, 2, 3, 4, 5];
+    else if (/^выходн/.test(daysText)) days = [6, 0];
+    else {
+      for (const tok of daysText.split(/[,\s]+и\s+|[,]+|\s+и\s+/)) {
+        const r = tok.trim().split(/\s*[–—-]\s*|\s+по\s+/).map(x => x.replace(/^с\s+/, ""));
+        if (r.length === 2) {
+          const a = dayIdx(r[0]), b = dayIdx(r[1]);
+          if (a < 0 || b < 0) { errors.push(`не понял дни недели в «${part}»`); days = []; break; }
+          for (let d = a; ; d = (d + 1) % 7) { days.push(d); if (d === b) break; }
+        } else {
+          const ds = tok.trim().split(/\s+/).map(dayIdx);
+          if (!ds.length || ds.some(d => d < 0)) { errors.push(`не понял дни недели в «${part}»`); days = []; break; }
+          days.push(...ds);
+        }
+      }
+    }
+    if (!days.length) continue;
+    let val = null;
+    if (all) val = [0, 24];
+    else if (m) {
+      const a = +m[1] + (+(m[2] || 0)) / 60, b = +m[3] + (+(m[4] || 0)) / 60;
+      if (a > 24 || b > 24 || +(m[2] || 0) > 59 || +(m[4] || 0) > 59) { errors.push(`странное время в «${part}»`); continue; }
+      if (b <= a) { errors.push(`в «${part}» закрытие не позже открытия — график через полночь бот не поддерживает`); continue; }
+      val = [a, b];
+    }
+    for (const d of days) hours[d] = val;
+  }
+  const missing = hours.map((h, d) => h === undefined ? d : -1).filter(d => d >= 0);
+  const out = hours.map(h => h || null);
+  // обратно в текст — одинаковые дни подряд собираем: «Пн–Пт 10:00–20:00, Сб 10:00–18:00, Вс выходной»
+  const order = [1, 2, 3, 4, 5, 6, 0], same = (a, b) => JSON.stringify(a) === JSON.stringify(b), groups = [];
+  for (const d of order) { const g = groups[groups.length - 1]; if (g && same(g.h, out[d])) g.to = d; else groups.push({ from: d, to: d, h: out[d] }); }
+  const label = g => (g.from === g.to ? DAY_SHORT[g.from] : `${DAY_SHORT[g.from]}–${DAY_SHORT[g.to]}`) + " " + (g.h ? (g.h[0] === 0 && g.h[1] === 24 ? "круглосуточно" : `${hStr(g.h[0])}–${hStr(g.h[1])}`) : "выходной");
+  const txt = groups.length === 1 && groups[0].h ? "ежедневно " + label(groups[0]).replace(/^\S+\s/, "") : groups.map(label).join(", ");
+  return { hours: out, text: txt, errors, missing };
+}
+
+// ---- разбор услуг: по строке на услугу — «Мужская стрижка — 6000 — 60», «Чистка от 20 000 ₸», «Окрашивание 15000-30000, 2 часа», «Консультация — бесплатно»
+const numOf = s => { let t = String(s || "").replace(/[\s ]/g, ""); const k = /(к|k|тыс\.?)$/i.test(t); t = t.replace(/(к|k|тыс\.?)$/i, "").replace(/[.,](?=\d{3}(\D|$))/g, ""); const n = Math.round(parseFloat(t.replace(",", "."))); return isFinite(n) ? (k ? n * 1000 : n) : NaN; };
+function parseServices(src) {
+  const list = [], errors = [], seen = new Set();
+  const lines = String(src || "").replace(/\r/g, "").split("\n").map(x => x.replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, "").trim()).filter(Boolean);
+  lines.forEach((line, i) => {
+    const no = i + 1;
+    // длительность в конце: «60 мин», «1 час», «1,5 часа», «2 ч», либо третье число после тире
+    let rest = line, minutes = 0;
+    const dm = /[\s,;—–-]+(\d+(?:[.,]\d)?)\s*(минут[аы]?|мин\.?|м\.?|час(?:а|ов)?|ч\.?)\s*$/i.exec(rest);
+    if (dm) { const v = parseFloat(dm[1].replace(",", ".")); minutes = /^(ч|час)/i.test(dm[2]) ? Math.round(v * 60) : Math.round(v); rest = rest.slice(0, dm.index); }
+    else { const d3 = /\s+[—–-]\s+(\d{1,3})\s*$/.exec(rest); if (d3 && /\d[\d\s ]*(?:₸|тг|тенге|т\.?)?\s*$/i.test(rest.slice(0, d3.index)) && /[—–-]\s*(?:от\s*)?\d/.test(rest.slice(0, d3.index))) { minutes = +d3[1]; rest = rest.slice(0, d3.index); } }
+    rest = rest.replace(/[\s,;—–-]+$/, "");
+    // цена в конце: «6000», «от 6 000 ₸», «6000–8000 тг», «6к», «бесплатно»
+    let min = null, max = null, from = false, name = rest, unit = "";
+    const noPrice = /\s+[—–-]\s+(?:цен|по\s+договор|уточн|индивидуальн|договорн)[^—–]*$/i.exec(rest); // «Укладка — цену называет мастер»
+    if (noPrice) rest = name = rest.slice(0, noPrice.index);
+    const um = /\d\s*(?:₸|тг\.?|тенге|kzt)?\s+((?:за|в)\s+[\p{L}\d ]{2,24}|\/\s*[\p{L}]{2,12})\s*$/iu.exec(rest); // «от 300 000 ₸ за зуб», «5000 в месяц», «3000/час»
+    if (um && !/^(?:за|в)\s+\d+\s*(?:мин|час|ч)/i.test(um[1])) { unit = um[1].replace(/\s+/g, " ").trim(); rest = rest.slice(0, rest.length - um[1].length).trim(); name = rest; }
+    const free = /[\s—–:-]+(бесплатно|free|0\s*(?:₸|тг|тенге)?)\s*$/i.exec(rest);
+    const pm = /(?:^|[\s—–:=-]+)(от\s*)?(\d[\d\s .,]*(?:к|k|тыс\.?)?)\s*(?:₸|тг\.?|тенге|kzt|т\.?)?(?:\s*(?:[–—-]|до)\s*(\d[\d\s .,]*(?:к|k|тыс\.?)?)\s*(?:₸|тг\.?|тенге|kzt|т\.?)?)?\s*$/i.exec(rest);
+    if (free) { min = 0; max = 0; name = rest.slice(0, free.index); }
+    else if (pm && pm.index > 0) {
+      min = numOf(pm[2]); max = pm[3] ? numOf(pm[3]) : min; from = !!pm[1];
+      name = rest.slice(0, pm.index);
+      if (!isFinite(min) || !isFinite(max)) { errors.push(`услуги, строка ${no}: не понял цену в «${line}»`); return; }
+      if (max < min) [min, max] = [max, min];
+    }
+    name = altText(name.replace(/[\s—–:=-]+$/, ""), 80);
+    if (!name || !/\p{L}/u.test(name)) { errors.push(`услуги, строка ${no}: не вижу названия услуги в «${line}»`); return; }
+    if (min !== null && min > 0 && min < 100) { errors.push(`услуги, строка ${no}: цена ${min} ₸ выглядит ошибкой — «${line}»`); return; }
+    if (minutes && (minutes < 5 || minutes > 720)) { errors.push(`услуги, строка ${no}: длительность ${minutes} мин выглядит ошибкой`); return; }
+    const key = lowE(name);
+    if (seen.has(key)) { errors.push(`услуги, строка ${no}: «${name}» уже есть в списке`); return; }
+    seen.add(key);
+    list.push({ name, min, max, from, minutes, ...(unit && min ? { unit } : {}) });
+  });
+  return { list, errors };
+}
+const priceText = s => s.min === null ? "цену называет администратор" : s.min === 0 && s.max === 0 ? "бесплатно" : (s.max > s.min ? `от ${money(s.min)} до ${money(s.max)} ₸` : `${s.from ? "от " : ""}${money(s.min)} ₸`) + (s.unit ? " " + s.unit : "");
+function parseStaff(src) {
+  return String(src || "").replace(/\r/g, "").split("\n").map(x => x.replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, "").trim()).filter(Boolean).slice(0, 30).map(line => {
+    const [n, ...r] = line.split(/\s+[—–-]\s+|\s*[:(]\s*/);
+    return { name: altText(n, 40), role: altText(r.join(" ").replace(/\)\s*$/, ""), 60) };
+  }).filter(m => m.name && /\p{L}/u.test(m.name));
+}
+const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}` : String(p || ""); };
+const CFG_TEXT = { name: 60, address: 160, kind: 60, greeting: 300, safe: 200, extra: 3000, services: 6000, staff: 1500, schedule: 400, tg: 120 };
+
+// паспорт → { errors, warnings, client }: client — объект для движка (как запись в CLIENTS). С ошибками бот не сохраняется
+function compileClient(cfg) {
+  const errors = [], warnings = [], str = (k) => String(cfg[k] ?? "").replace(/\r/g, "").trim().slice(0, CFG_TEXT[k] || 200);
+  const id = String(cfg.id || "").trim();
+  if (!ID_RE.test(id)) errors.push("идентификатор: латинские буквы и цифры, от 2 до 16 знаков, начинается с буквы (например, kairat)");
+  else if (BUILTIN.has(id)) errors.push(`идентификатор «${id}» занят демо-ботом — выберите другой`);
+  const name = clean(str("name"), 60);
+  if (name.length < 2) errors.push("название компании не указано");
+  if (/[«»"<>\[\]{}]/.test(name)) errors.push("в названии не должно быть кавычек и скобок — они добавятся сами");
+  const nz = NICHES[cfg.niche] || null;
+  if (!nz) errors.push("ниша не выбрана");
+  const N = nz || NICHES.other;
+  const kind = cfg.niche === "other" && str("kind") ? clean(str("kind"), 60) : N.kind;
+  const sch = parseSchedule(str("schedule"));
+  errors.push(...sch.errors.map(e => "график: " + e));
+  if (!sch.errors.length && sch.missing.length) warnings.push(`в графике не указаны дни: ${sch.missing.map(d => DAY_SHORT[d]).join(", ")} — бот считает их выходными`);
+  const booking = ["altegio", "manual", "none"].includes(cfg.booking) ? cfg.booking : "";
+  if (!booking) errors.push("не выбран способ записи");
+  const loc = String(cfg.altegioLoc ?? "").trim();
+  if (booking === "altegio" && !/^\d{1,12}$/.test(loc)) errors.push("запись через Altegio: укажите номер филиала (только цифры)");
+  const sv = parseServices(str("services"));
+  errors.push(...sv.errors);
+  if (sv.list.length > 80) errors.push(`услуг ${sv.list.length} — бот уверенно работает со списком до 80 строк: объедините похожие`);
+  if (booking !== "altegio" && !sv.list.length) errors.push("услуги и цены не указаны — без них бот будет отвечать «уточните у администратора»");
+  if (booking === "altegio" && sv.list.length) warnings.push("услуги и цены бот берёт из Altegio — список в паспорте не используется");
+  if (booking !== "altegio" && sv.list.length && sv.list.every(s => s.min === null)) warnings.push("ни у одной услуги нет цены — бот не сможет отвечать на вопрос «сколько стоит»");
+  const staff = parseStaff(str("staff"));
+  let phone = "";
+  if (str("phone")) { phone = normPhone(str("phone")); if (!phone) errors.push("телефон компании: нужен номер полностью, например +7 701 123 45 67"); }
+  else warnings.push("телефон компании не указан — бот не сможет его назвать");
+  const address = clean(str("address"), 160);
+  if (!address) warnings.push("адрес не указан — бот не сможет его назвать");
+  const step = Math.round(+cfg.step || 60);
+  if (booking === "manual" && !(step >= 15 && step <= 240)) errors.push("шаг записи — от 15 до 240 минут");
+  const tg = str("tg").split(/[,\s]+/).filter(Boolean);
+  if (tg.some(x => !/^-?\d{5,20}$/.test(x))) errors.push("Telegram: номер чата — это число (можно несколько через запятую), например 123456789");
+  const bookDays = Math.min(7, Math.max(1, Math.round(+cfg.bookDays || 3)));
+  const extra = str("extra").split("\n").map(x => x.replace(/^\s*[-•*·]\s*/, "").trim()).filter(Boolean);
+  if (/https?:\/\/|www\./i.test(extra.join(" "))) warnings.push("в «Дополнительно» есть ссылка — бот сможет называть ссылки клиентам");
+  // расписание для записи заявкой: время начала через «шаг» от открытия до закрытия
+  const slots = sch.hours.map(h => {
+    if (!h || booking !== "manual") return [];
+    const out = [];
+    for (let m = Math.round(h[0] * 60); m + step <= Math.round(h[1] * 60) && out.length < 40; m += step) out.push(hStr(m / 60));
+    return out;
+  });
+  // факты — в том же виде, что у демо-клиентов: по этому тексту отвечает ИИ и по нему же защита сверяет цены и телефон
+  const F = [];
+  if (address || phone) F.push("- " + [address && `Адрес: ${address}`, phone && `Телефон: ${fmtPhone(phone)}`].filter(Boolean).join(". ") + ".");
+  if (booking !== "altegio" && sv.list.length) {
+    F.push(`- Услуги (других нет): ${sv.list.map(s => s.name).join(", ")}.`);
+    F.push(`- Цены: ${sv.list.map(s => `${s.name} — ${priceText(s)}${s.minutes ? `, около ${s.minutes} мин` : ""}`).join("; ")}.`);
+  }
+  if (booking !== "altegio" && staff.length) F.push(`- ${N.staffWord}: ${staff.map(m => m.role ? `${m.name} — ${m.role}` : m.name).join(", ")}.`);
+  if (booking === "none") F.push("- Запись через чат не ведётся: если клиент хочет записаться, возьми имя и телефон — администратор перезвонит.");
+  for (const line of extra) F.push("- " + line);
+  const facts = F.join("\n");
+  if (facts.length > 7000) errors.push("слишком длинное описание — сократите «Дополнительно» или список услуг");
+  const client = {
+    id, name, kind, niche: cfg.niche, topic: N.topic, goal: booking === "none" ? "ответить на вопросы и взять имя и телефон для звонка администратора" : N.goal,
+    greeting: clean(str("greeting"), 300) || `Здравствуйте! Я AI-администратор «${name}», отвечаю круглосуточно. ${N.hello}`,
+    chips: N.chips, ...(N.medical ? { medical: true, redFlags: N.redFlags } : {}),
+    hours: sch.hours, hoursText: sch.text || "уточняйте у администратора", slots, safe: clean(str("safe"), 200) || N.safe, facts,
+    hidden: true, dynamic: true, real: true, bookDays, booking, services: sv.list, staffList: staff, phone, address,
+    ...(booking === "altegio" && /^\d{1,12}$/.test(loc) ? { altegio: { location: +loc } } : {}),
+    ...(tg.length ? { tg: tg.join(",") } : {}),
+    ...(cfg.waPhoneId && /^\d{5,20}$/.test(String(cfg.waPhoneId).trim()) ? { waPhoneId: String(cfg.waPhoneId).trim() } : {}),
+    ...(cfg.keyHash ? { keyHash: String(cfg.keyHash) } : {}), off: !!cfg.off, v: +cfg.v || 0, updated: +cfg.updated || 0
+  };
+  if (cfg.waPhoneId && !client.waPhoneId) errors.push("WhatsApp: «Phone number ID» — это число из кабинета Meta (не сам номер телефона)");
+  return { errors, warnings, client };
+}
+
+// загрузка паспортов: раз в минуту на экземпляр воркера — одно чтение KV. Паспорт с ошибкой не загружается (остаётся прежняя версия бота)
+const DYN = { at: 0, raw: null, ids: [] };
+async function syncClients(env, force) {
+  const now = Date.now();
+  if (!force && DYN.at && Math.abs(now - DYN.at) < 60e3) return;
+  let raw;
+  try { raw = (await env.KV.get("cfg:all")) || ""; } catch (e) { console.log("cfg read", String(e)); return; } // хранилище не читается — работаем с тем, что уже загружено
+  DYN.at = now;
+  if (raw === DYN.raw) return;
+  let all = {};
+  try { all = raw ? JSON.parse(raw) || {} : {}; } catch (e) { console.log("cfg parse", String(e)); return; }
+  const next = [];
+  for (const [id, cfg] of Object.entries(all)) {
+    if (BUILTIN.has(id)) continue;
+    try { const r = compileClient({ ...cfg, id }); if (!r.errors.length) { CLIENTS[id] = r.client; next.push(id); } else console.log("cfg errors", id, r.errors.join("; ")); }
+    catch (e) { console.log("cfg compile", id, String(e)); }
+  }
+  for (const id of DYN.ids) if (!next.includes(id)) delete CLIENTS[id];
+  DYN.ids = next; DYN.raw = raw;
+}
+async function loadCfgs(env) { try { return JSON.parse((await env.KV.get("cfg:all")) || "{}") || {}; } catch (e) { return {}; } }
+
+// ================= ВХОД: владелец сервиса и сотрудники клиентов =================
+// Вход по ключу один раз, дальше — cookie (30 дней). Ключ в адресе страницы оставлять не нужно.
+// Владелец входит ключом LEADS_KEY и видит всё. Сотрудник клиента входит ключом клиента (KEY_<ID> в Cloudflare или ключ, выданный на странице «Мои боты») и видит только своего клиента.
+const enc8 = new TextEncoder();
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+async function hmacB64(secret, msg) {
+  const k = await crypto.subtle.importKey("raw", enc8.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return b64u(await crypto.subtle.sign("HMAC", k, enc8.encode(msg)));
+}
+async function sha256Hex(s) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", enc8.encode(String(s))))].map(b => b.toString(16).padStart(2, "0")).join(""); }
+const safeEq = (a, b) => { a = String(a); b = String(b); let d = a.length ^ b.length; for (let i = 0; i < a.length && i < b.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+const SESSION_MS = 30 * 86400e3, COOKIE = "aia";
+// отпечаток ключа сотрудника: ключ сменили — прежние сессии перестают действовать
+async function staffMark(env, cid) {
+  if (!hasClient(cid)) return "";
+  const ek = env["KEY_" + cid.toUpperCase()], kh = CLIENTS[cid].keyHash;
+  return ek ? (await sha256Hex("k:" + ek)).slice(0, 10) : kh ? String(kh).slice(0, 10) : "";
+}
+async function sessionMake(env, role, cid) {
+  const body = [role, cid, Date.now() + SESSION_MS, role === "staff" ? await staffMark(env, cid) : "o"].join(".");
+  return body + "." + await hmacB64("session:" + leadsKey(env), body);
+}
+async function sessionRead(env, request) {
+  if (!leadsKey(env)) return null;
+  const m = new RegExp("(?:^|;\\s*)" + COOKIE + "=([^;]+)").exec(request.headers.get("cookie") || "");
+  if (!m) return null;
+  const p = m[1].split(".");
+  if (p.length !== 5) return null;
+  const [role, cid, exp, mark, sig] = p, body = [role, cid, exp, mark].join(".");
+  if (!(+exp > Date.now()) || !safeEq(sig, await hmacB64("session:" + leadsKey(env), body))) return null;
+  if (role === "owner") return { role, cid: "*" };
+  if (role === "staff" && hasClient(cid)) { const cur = await staffMark(env, cid); return cur && safeEq(cur, mark) ? { role, cid } : null; }
+  return null;
+}
+const cookieSet = (token, maxAge = SESSION_MS / 1000) => `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+// кто входит с этим ключом: владелец, сотрудник клиента или никто
+async function loginRole(env, key, hint) {
+  key = String(key || "").trim();
+  if (!key || key.length > 200) return null;
+  if (leadsKey(env) && safeEq(key, leadsKey(env))) return { role: "owner", cid: "*" };
+  const h = await sha256Hex(key);
+  for (const id of hasClient(hint) ? [hint] : Object.keys(CLIENTS)) {
+    const ek = env["KEY_" + id.toUpperCase()], kh = CLIENTS[id].keyHash;
+    if ((ek && safeEq(key, ek)) || (kh && safeEq(h, kh))) return { role: "staff", cid: id };
+  }
+  return null;
+}
+// не больше 8 неверных ключей за 10 минут с одного адреса
+const loginFails = new Map();
+async function loginBlocked(env, request, failed) {
+  const ip = ipKey(request.headers.get("cf-connecting-ip") || "local"), slot = Math.floor(Date.now() / 600e3), k = `lg:${ip}:${slot}`;
+  let n = loginFails.get(k) || 0;
+  if (!failed) { if (n >= 8) return true; try { n = Math.max(n, +(await env.KV.get(k)) || 0); } catch (e) {} return n >= 8; }
+  n++; loginFails.set(k, n); if (loginFails.size > 2000) loginFails.clear();
+  try { await env.KV.put(k, String(n), { expirationTtl: 1200 }); } catch (e) {}
+  return n >= 8;
+}
+// доступ к данным клиента cid: владелец — к любому, сотрудник — к своему
+const canSee = (s, cid) => !!s && (s.role === "owner" || (s.role === "staff" && s.cid === cid));
+// запросы, которые что-то меняют, принимаем только со своей страницы (cookie сама по себе — не доказательство намерения)
+const sameOrigin = (request, url) => { const o = request.headers.get("origin"); return !o || o === url.origin; };
+function page(body, status = 200, extra = {}) { // страницы с личными данными: не кэшировать, не встраивать в чужие сайты, скрипты — только свои
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...extra } });
+}
+const safeNext = n => { n = String(n || ""); return /^\/[a-z]/.test(n) && !/[\\\s]/.test(n) && !n.startsWith("//") ? n.slice(0, 200) : "/studio"; };
+function loginPage(next, msg) {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — AI-администратор</title>
+<style>${BASE_CSS}.w{max-width:380px;margin:0 auto;padding:48px 16px}h1{font-size:21px;margin:0 0 6px}p{color:var(--muted);margin:0 0 16px;line-height:1.5}
+input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;font-size:16px;background:var(--panel);color:var(--ink)}button{width:100%;margin-top:12px;padding:13px;border:0;border-radius:12px;background:var(--acc);color:#fff;font-size:16px;font-weight:600}
+.e{color:var(--bad);margin:0 0 12px}</style></head><body><div class="w"><h1>Вход</h1><p>Введите ключ доступа. Он нужен один раз — дальше это устройство запомнится на 30 дней.</p>
+${msg ? `<p class="e">${esc(msg)}</p>` : ""}<form method="post" action="/login"><input type="hidden" name="next" value="${esc(next)}"><input type="password" name="key" placeholder="Ключ доступа" autocomplete="current-password" autofocus required><button>Войти</button></form></div>
+<script>if(location.hash){var n=document.querySelector('[name=next]');n.value+=location.hash}</script></body></html>`; // ссылка на чат из Telegram ведёт сразу в него и после входа
+}
+async function handleLogin(request, env, url) {
+  if (request.method === "GET") return page(loginPage(safeNext(url.searchParams.get("next")), ""));
+  let key = "", next = "/studio";
+  try { const f = await request.formData(); key = String(f.get("key") || ""); next = safeNext(f.get("next")); } catch (e) {}
+  if (!sameOrigin(request, url)) return page(loginPage(next, "Откройте страницу входа заново."), 403);
+  if (await loginBlocked(env, request, false)) return page(loginPage(next, "Слишком много попыток. Подождите 10 минут."), 429);
+  const hint = (/[?&]c=([a-z0-9]+)/.exec(next) || [])[1];
+  const who = await loginRole(env, key, hint);
+  if (!who) { await loginBlocked(env, request, true); return page(loginPage(next, "Ключ не подошёл."), 403); }
+  if (who.role === "staff" && /^\/(studio|launch)/.test(next)) next = "/inbox?c=" + who.cid;
+  return new Response(null, { status: 303, headers: { location: next, "set-cookie": cookieSet(await sessionMake(env, who.role, who.cid)), "cache-control": "no-store" } });
+}
+// страница, на которую нужен вход: с cookie — пускаем; с ключом в адресе (?key=) — запоминаем устройство и убираем ключ из адреса; иначе — на страницу входа
+async function enter(request, env, url) {
+  const s = await sessionRead(env, request);
+  if (s) return { s };
+  const key = url.searchParams.get("key");
+  if (key) {
+    if (await loginBlocked(env, request, false)) return { res: page(loginPage(url.pathname, "Слишком много попыток. Подождите 10 минут."), 429) };
+    const who = await loginRole(env, key, url.searchParams.get("c"));
+    if (who) { const u = new URL(url); u.searchParams.delete("key"); return { res: new Response(null, { status: 303, headers: { location: u.pathname + u.search, "set-cookie": cookieSet(await sessionMake(env, who.role, who.cid)), "cache-control": "no-store" } }) }; }
+    await loginBlocked(env, request, true);
+  }
+  return { res: new Response(null, { status: 303, headers: { location: "/login?next=" + encodeURIComponent(url.pathname + url.search.replace(/([?&])key=[^&]*&?/, "$1").replace(/[?&]$/, "")), "cache-control": "no-store" } }) };
+}
+
+// ================= «МОИ БОТЫ»: страница владельца =================
+const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "greeting", "safe", "tg", "waPhoneId", "off"];
+const cfgIn = b => { const o = {}; for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, 8000); return o; };
+// что подключено у клиента: по этим отметкам владелец видит, чего не хватает до запуска
+function clientState(env, c) {
+  const up = c.id.toUpperCase();
+  return {
+    id: c.id, name: c.name, kind: c.kind, niche: c.niche || "", dynamic: !!c.dynamic, off: !!c.off, updated: c.updated || 0,
+    booking: altLoc(env, c) ? "altegio" : c.booking || "manual",
+    key: !!(env["KEY_" + up] || c.keyHash),
+    tg: !!(env.TG_TOKEN && (env["TG_CHAT_" + up] || c.tg || env.TG_CHAT)), tgOwn: !!(env["TG_CHAT_" + up] || c.tg),
+    waToken: !!env["WA_TOKEN_" + up], waSecret: !!env["APP_SECRET_" + up]
+  };
+}
+async function studioApi(request, env, url, s) {
+  const P = url.pathname, M = request.method;
+  if (s.role !== "owner") return json({ error: "Эта страница — только для владельца сервиса." }, 403);
+  if (M === "GET" && P === "/api/studio/list") {
+    return json({ clients: Object.values(CLIENTS).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
+  }
+  if (M === "GET" && P === "/api/studio/get") {
+    const id = url.searchParams.get("c"), all = await loadCfgs(env);
+    if (!Object.hasOwn(all, id)) return json({ error: "Такого бота нет." }, 404);
+    const { keyHash, ...cfg } = all[id];
+    return json({ cfg: { ...cfg, id }, hasKey: !!keyHash });
+  }
+  if (M !== "POST" || !sameOrigin(request, url)) return json({ error: "Запрос отклонён." }, 403);
+  let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
+  const id = String(b.id || b.c || "").trim();
+  if (P === "/api/studio/check" || P === "/api/studio/save") {
+    const all = await loadCfgs(env), old = Object.hasOwn(all, id) ? all[id] : null;
+    const cfg = { ...cfgIn(b), id, ...(old && old.keyHash ? { keyHash: old.keyHash } : {}) };
+    const r = compileClient(cfg);
+    if (P === "/api/studio/save" && b.isNew && old) r.errors.push(`бот с идентификатором «${id}» уже есть — откройте его в списке`);
+    const preview = r.errors.length ? null : { facts: r.client.facts, hours: r.client.hoursText, greeting: r.client.greeting, slots: freeSlots(r.client, Date.now()).map(d => `${d.rel ? d.rel + ", " : ""}${d.label}: ${d.times.join(", ")}`), services: r.client.services.length };
+    if (P === "/api/studio/check" || r.errors.length) return json({ ok: !r.errors.length, errors: r.errors, warnings: r.warnings, preview }, P === "/api/studio/save" && r.errors.length ? 400 : 200);
+    all[id] = { ...cfg, v: ((old && old.v) || 0) + 1, updated: Date.now() };
+    delete all[id].id;
+    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ ok: false, errors: ["не удалось сохранить — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
+    await syncClients(env, true);
+    return json({ ok: true, id, warnings: r.warnings, preview });
+  }
+  if (P === "/api/studio/key") { // новый ключ для сотрудников клиента: показываем один раз, в хранилище — только его хеш
+    const all = await loadCfgs(env);
+    if (!Object.hasOwn(all, id)) return json({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
+    const raw = crypto.getRandomValues(new Uint8Array(15)), key = [...raw].map(x => "abcdefghjkmnpqrstuvwxyz23456789"[x % 31]).join("").replace(/(.{5})(?=.)/g, "$1-");
+    all[id].keyHash = await sha256Hex(key);
+    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    await syncClients(env, true);
+    return json({ ok: true, key });
+  }
+  if (P === "/api/studio/remove") {
+    const all = await loadCfgs(env);
+    if (!Object.hasOwn(all, id)) return json({ error: "Такого бота нет." }, 404);
+    if (String(b.confirm || "") !== id) return json({ error: "Для удаления введите идентификатор бота." }, 400);
+    delete all[id];
+    try { await env.KV.put("cfg:all", JSON.stringify(all)); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    await syncClients(env, true);
+    return json({ ok: true });
+  }
+  return json({ error: "Не найдено." }, 404);
+}
+const ADMIN_CSS = `${BASE_CSS}
+.top{background:var(--head);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5}.top b{font-size:17px;flex:1}.top a{color:#cfe9e2;font-size:14px;text-decoration:none}
+.w{max-width:760px;margin:0 auto;padding:16px}h2{font-size:19px;margin:18px 0 8px}h3{font-size:16px;margin:16px 0 6px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:10px 0}.card b{font-size:17px}.mut{color:var(--muted);font-size:14px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.tag{font-size:12.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}.tag.ok{border-color:var(--good);color:var(--good)}.tag.no{border-color:var(--bad);color:var(--bad)}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.btn{display:inline-block;padding:9px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14.5px;text-decoration:none;cursor:pointer}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}.btn.d{color:var(--bad)}.btn:disabled{opacity:.5}
+label{display:block;font-weight:600;margin:14px 0 4px;font-size:15px}label small{font-weight:400;color:var(--muted);display:block;margin-top:2px;line-height:1.4}
+input[type=text],input[type=number],select,textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:16px;background:var(--panel);color:var(--ink)}textarea{min-height:92px;line-height:1.45}
+.msg{border-radius:12px;padding:10px 14px;margin:12px 0;line-height:1.5;font-size:15px}.msg.e{background:#fdecea;color:#8c1d18}.msg.w{background:var(--lead);border:1px solid var(--leadl)}.msg.g{background:var(--bot)}
+@media (prefers-color-scheme:dark){.msg.e{background:#3b1512;color:#ffb4ab}}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border-radius:10px;padding:10px 12px;font:13.5px/1.5 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}[hidden]{display:none!important}`;
+function studioPage() {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Мои боты — AI-администратор</title><style>${ADMIN_CSS}</style></head><body>
+<div class="top"><b>Мои боты</b><a href="/leads">Заявки</a><a href="/logout">Выйти</a></div><div class="w">
+<div id="list"><p class="mut">Загрузка…</p></div>
+<div id="edit" hidden>
+<h2 id="etitle">Новый бот</h2><p class="mut">Заполните то, что знаете. Кнопка «Проверить» покажет ошибки и то, что бот будет знать о компании.</p>
+<div id="idrow"><label>Короткое имя бота<small>Латиницей, без пробелов — например kairat. Попадёт в адреса страниц, потом не меняется.</small></label><input type="text" id="f_id" maxlength="16" autocapitalize="off" autocomplete="off"></div>
+<label>Название компании</label><input type="text" id="f_name" maxlength="60">
+<label>Ниша</label><select id="f_niche"></select>
+<div id="kindrow" hidden><label>Чем занимается компания<small>Два-три слова: «студия массажа», «ветеринарная клиника».</small></label><input type="text" id="f_kind" maxlength="60"></div>
+<label>Адрес</label><input type="text" id="f_address" maxlength="160" placeholder="Астана, ул. …, дом …">
+<label>Телефон компании</label><input type="text" id="f_phone" maxlength="30" placeholder="+7 701 123 45 67" inputmode="tel">
+<label>График работы<small>Например: Пн–Пт 10:00–21:00; Сб–Вс 11:00–19:00. Или: ежедневно 9–21.</small></label><textarea id="f_schedule" style="min-height:60px"></textarea>
+<label>Как бот записывает</label><select id="f_booking"><option value="altegio">Сам записывает в Altegio</option><option value="manual">Собирает заявку — администратор подтверждает</option><option value="none">Не записывает — только отвечает и берёт телефон</option></select>
+<div id="altrow"><label>Номер филиала в Altegio<small>Число из адреса журнала в Altegio. Услуги, цены и мастеров бот возьмёт из Altegio сам.</small></label><input type="text" id="f_altegioLoc" maxlength="12" inputmode="numeric"></div>
+<div id="manrow"><label>Услуги и цены<small>Одна услуга на строке: название — цена — минуты. Например: Мужская стрижка — 6000 — 60</small></label><textarea id="f_services" style="min-height:150px"></textarea>
+<label>Мастера или специалисты<small>По одному на строке: Арман — топ-барбер. Можно не заполнять.</small></label><textarea id="f_staff" style="min-height:70px"></textarea>
+<div id="steprow"><label>Шаг записи, минут<small>Через сколько минут бот предлагает следующее время: 60 — каждый час, 30 — каждые полчаса.</small></label><input type="number" id="f_step" min="15" max="240" value="60"></div></div>
+<label>Дополнительно<small>Всё, что бот должен знать: оплата, предоплата, правила отмены, парковка, с какого возраста. Каждое правило — с новой строки. Чего здесь нет, бот не обещает.</small></label><textarea id="f_extra" style="min-height:120px"></textarea>
+<label>Telegram администратора<small>Номер чата, куда приходят заявки и просьбы клиентов. Пусто — уведомления идут вам.</small></label><input type="text" id="f_tg" maxlength="120" inputmode="numeric">
+<label><input type="checkbox" id="f_off"> Бот выключен<small>Клиентам в WhatsApp отвечает только администратор из пульта чатов.</small></label>
+<div id="out"></div>
+<div class="row"><button class="btn" id="b_check">Проверить</button><button class="btn p" id="b_save">Сохранить</button><button class="btn" id="b_back">К списку</button></div>
+<div id="extra" hidden><h3>Ключ для сотрудников</h3><p class="mut">С этим ключом администратор компании входит в пульт чатов и видит только своих клиентов. Ключ показывается один раз.</p>
+<div class="row"><button class="btn" id="b_key">Выдать новый ключ</button><button class="btn d" id="b_del">Удалить бота</button></div><div id="keyout"></div></div>
+</div></div>
+<script>
+var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','services','staff','extra','tg'],cur=null,niches=[];
+function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){return r.json().then(function(j){j._status=r.status;return j})})}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function tag(ok,t){return el('span','tag '+(ok===true?'ok':ok===false?'no':''),t)}
+function show(v){$('list').hidden=v!=='list';$('edit').hidden=v!=='edit';window.scrollTo(0,0)}
+function load(){api('/api/studio/list').then(function(d){if(d.error){$('list').textContent=d.error;return}niches=d.niches;var L=$('list');L.textContent='';
+ var mine=d.clients.filter(function(c){return c.dynamic}),demo=d.clients.filter(function(c){return !c.dynamic});
+ var h=el('h2','', 'Боты клиентов');L.appendChild(h);
+ if(!mine.length)L.appendChild(el('p','mut','Пока нет ни одного. Нажмите «Новый бот» и заполните паспорт компании.'));
+ mine.forEach(function(c){L.appendChild(card(c))});
+ var nb=el('button','btn p','+ Новый бот');nb.onclick=function(){openEdit(null)};L.appendChild(nb);
+ L.appendChild(el('h2','','Демо-боты'));L.appendChild(el('p','mut','Встроенные примеры для показа. Меняются только в коде.'));
+ demo.forEach(function(c){L.appendChild(card(c))})})}
+function card(c){var d=el('div','card');d.appendChild(el('b','',c.name));d.appendChild(el('div','mut',c.kind+' · '+c.id+(c.off?' · выключен':'')));
+ var t=el('div','tags');t.appendChild(tag(null,c.booking==='altegio'?'запись в Altegio':c.booking==='none'?'без записи':'заявки администратору'));
+ if(c.dynamic){t.appendChild(tag(c.tgOwn?true:c.tg?null:false,c.tgOwn?'Telegram администратора':c.tg?'Telegram: общий чат':'Telegram не настроен'));t.appendChild(tag(c.waToken&&c.waSecret,c.waToken&&c.waSecret?'WhatsApp подключён':'WhatsApp не подключён'));t.appendChild(tag(c.key,c.key?'ключ сотрудника выдан':'нет ключа сотрудника'))}
+ d.appendChild(t);var r=el('div','row');
+ function a(h,x,p){var e=el('a','btn'+(p?' p':''),x);e.href=h;r.appendChild(e)}
+ if(c.dynamic){var b=el('button','btn p','Изменить');b.onclick=function(){openEdit(c.id)};r.appendChild(b)}
+ a('/?c='+c.id,'Чат');a('/inbox?c='+c.id,'Пульт чатов');a('/leads?c='+c.id,'Заявки');if(c.dynamic)a('/launch?c='+c.id,'Проверка запуска');
+ d.appendChild(r);return d}
+function fill(cfg){FIELDS.forEach(function(k){var e=$('f_'+k);if(e)e.value=cfg[k]!==undefined&&cfg[k]!==null?cfg[k]:(k==='step'?60:k==='booking'?'altegio':k==='niche'?'barber':'')});$('f_off').checked=!!cfg.off;rows()}
+function rows(){var b=$('f_booking').value;$('altrow').hidden=b!=='altegio';$('manrow').hidden=b==='altegio';$('steprow').hidden=b!=='manual';$('kindrow').hidden=$('f_niche').value!=='other'}
+function read(){var o={id:cur||$('f_id').value.trim().toLowerCase(),isNew:!cur,off:$('f_off').checked};FIELDS.forEach(function(k){o[k]=$('f_'+k).value});return o}
+function openEdit(id){cur=id;$('out').textContent='';$('keyout').textContent='';var s=$('f_niche');s.textContent='';niches.forEach(function(n){var o=el('option','',n.title);o.value=n.id;s.appendChild(o)});
+ $('idrow').hidden=!!id;$('extra').hidden=!id;$('etitle').textContent=id?'Бот «'+id+'»':'Новый бот';$('f_id').value='';
+ if(!id){fill({});show('edit');return}
+ api('/api/studio/get?c='+encodeURIComponent(id)).then(function(d){if(d.error){alert(d.error);return}fill(d.cfg);show('edit')})}
+function report(d,saved){var o=$('out');o.textContent='';
+ if(d.errors&&d.errors.length){var e=el('div','msg e');e.appendChild(el('b','','Нужно исправить:'));d.errors.forEach(function(x){e.appendChild(el('div','','• '+x))});o.appendChild(e)}
+ if(d.warnings&&d.warnings.length){var w=el('div','msg w');w.appendChild(el('b','','Обратите внимание:'));d.warnings.forEach(function(x){w.appendChild(el('div','','• '+x))});o.appendChild(w)}
+ if(d.ok){o.appendChild(el('div','msg g',saved?'Сохранено. Изменения начнут действовать в течение минуты.':'Ошибок нет. Ниже — то, что бот будет знать о компании.'))}
+ if(d.preview){o.appendChild(el('h3','','Что знает бот'));o.appendChild(el('pre','',d.preview.facts||'(только то, что придёт из Altegio)'));o.appendChild(el('div','mut','График: '+d.preview.hours));
+  if(d.preview.slots&&d.preview.slots.length){o.appendChild(el('h3','','Какое время бот предложит'));o.appendChild(el('pre','',d.preview.slots.join('\\n')))}
+  o.appendChild(el('h3','','Приветствие'));o.appendChild(el('pre','',d.preview.greeting))}
+ o.scrollIntoView({behavior:'smooth',block:'nearest'})}
+$('f_booking').onchange=rows;$('f_niche').onchange=rows;$('b_back').onclick=function(){show('list');load()};
+$('b_check').onclick=function(){api('/api/studio/check',read()).then(function(d){report(d,false)})};
+$('b_save').onclick=function(){var b=read();api('/api/studio/save',b).then(function(d){report(d,true);if(d.ok&&!cur){cur=b.id;$('idrow').hidden=true;$('extra').hidden=false;$('etitle').textContent='Бот «'+cur+'»'}})};
+$('b_key').onclick=function(){if(!confirm('Выдать новый ключ? Прежний ключ сотрудников перестанет работать.'))return;api('/api/studio/key',{id:cur}).then(function(d){var o=$('keyout');o.textContent='';if(d.error){o.appendChild(el('div','msg e',d.error));return}
+ var m=el('div','msg g');m.appendChild(el('div','','Ключ сотрудников (сохраните сейчас — больше он не покажется):'));m.appendChild(el('pre','',d.key));m.appendChild(el('div','','Страница входа для администратора: '+location.origin+'/inbox?c='+cur));o.appendChild(m)})};
+$('b_del').onclick=function(){var x=prompt('Удалить бота «'+cur+'»? Переписка и заявки сотрутся сами через 30 дней. Для подтверждения введите его короткое имя:');if(x===null)return;api('/api/studio/remove',{id:cur,confirm:x.trim()}).then(function(d){if(d.error){alert(d.error);return}show('list');load()})};
+load();
+</script></body></html>`;
+}
+
+// ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
+// У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
+// Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.
+const CHAT_ID = { wa: /^\d{5,20}$/, ga: /^\d{5,20}$/, web: /^[a-zA-Z0-9-]{1,64}$/ };
+const jsonP = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+const NEED_TEXT = { human: "ждёт ответа", limit: "бот не ответил", media: "прислал файл", ai: "сбой бота", req: "просит отменить или перенести", lead: "новая заявка", call: "ждёт звонка", off: "бот выключен" };
+// через какой номер администратор пишет клиенту этого чата
+function waRoute(env, cid, prof) {
+  const up = cid.toUpperCase();
+  if (env["WA_TOKEN_" + up]) return { client: cid, pnid: (prof && prof.pn) || "", quiet: true };
+  if (env.WA_TOKEN && (!env.WA_CLIENT || env.WA_CLIENT === cid)) return { quiet: true, pnid: (prof && prof.pn) || "" };
+  return null;
+}
+async function leadPatch(env, cid, id, patch) { // статус заявки — в отдельном ключе (с метаданными) и в общем списке
+  let ok = false;
+  try {
+    const k = leadKey(cid, id), v = JSON.parse((await env.KV.get(k)) || "null");
+    if (v) { const nv = { ...v, ...patch }; await env.KV.put(k, JSON.stringify(nv), { expirationTtl: Math.max(3600, Math.ceil((leadTs(nv) + LEAD_TTL - Date.now()) / 1000)), metadata: { status: nv.status || "", note: clean(nv.note || "", 200) } }); ok = true; }
+  } catch (e) { console.log("lead key", String(e)); }
+  try { const list = await loadLeads(env.KV, cid), x = list.find(l => l.id === id); if (x) { Object.assign(x, patch); await saveLeads(env.KV, cid, list); ok = true; } } catch (e) { console.log("leads", String(e)); }
+  return ok;
+}
+async function inboxApi(request, env, url, s) {
+  const P = url.pathname, M = request.method, q = url.searchParams;
+  let b = {};
+  if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); try { b = (await request.json()) || {}; } catch (e) {} }
+  const cid = String((M === "POST" ? b.c : q.get("c")) || "");
+  if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
+  const c = CLIENTS[cid], now = Date.now();
+
+  if (M === "GET" && P === "/api/inbox/list") {
+    const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID ? ["wa", "ga"] : ["wa"], rows = [];
+    let more = false;
+    for (const ch of chans) {
+      const prefix = `h:${ch}:${cid}:`;
+      for (let cursor, page = 0; page < 3; page++) { // до 3000 чатов на канал
+        let r; try { r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) }); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+        for (const k of (r && r.keys) || []) {
+          const m = k.metadata || {}, id = String(k.name).slice(prefix.length);
+          if (!CHAT_ID[ch].test(id)) continue;
+          rows.push({ ch, id, t: m.t || 0, li: m.li || 0, s: m.s || "", d: m.d || "", nm: m.nm || "", ph: ch === "web" ? m.ph || "" : "+" + id, nd: m.nd || "", pu: m.pu > now ? m.pu : 0, st: m.st ? 1 : 0, bk: m.bk || 0 });
+        }
+        if (!r || r.list_complete || !r.cursor) break;
+        cursor = r.cursor; if (page === 2) more = true;
+      }
+    }
+    rows.sort((a, b2) => (b2.li || b2.t) - (a.li || a.t));
+    const need = rows.filter(r => r.nd).length;
+    return jsonP({ client: { id: cid, name: c.name, off: !!c.off }, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
+  }
+
+  const ch = String((M === "POST" ? b.ch : q.get("ch")) || ""), id = String((M === "POST" ? b.id : q.get("id")) || "");
+  if (!CHAT_ID[ch] || !CHAT_ID[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
+  const hk = `h:${ch}:${cid}:${id}`;
+  let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте ещё раз." }, 503); }
+  if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
+  let p = h.profile || {};
+  const view = async () => {
+    const phone = ch === "web" ? p.phone || "" : "+" + id;
+    let reqs = [];
+    if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
+    const open = ch === "ga" ? true : ch === "wa" ? !!p.li && now - p.li < 24 * 3600e3 : false;
+    return {
+      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
+      bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
+      need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "" } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
+      canSend: ch !== "web" && (ch === "ga" ? !!(env.GA_ID && env.GA_TOKEN) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now
+    };
+  };
+  if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
+
+  if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото. Отдаём только файл, который есть в этой переписке
+    const mid = q.get("mid"), t = mid ? (h.turns || []).find(x => x.m && x.m.id === mid) : (h.turns || [])[+q.get("n")];
+    if (!t || !t.m || !(t.m.id || t.m.url)) return jsonP({ error: "Файл не найден." }, 404);
+    try {
+      if (t.m.url) { const u = new URL(t.m.url); if (u.protocol !== "https:") throw new Error("bad url"); const r = await fetch(u.href); if (!r.ok) throw new Error("media " + r.status); return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || t.m.mime || "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": "inline", "x-content-type-options": "nosniff" } }); }
+      const route = waRoute(env, cid, p); if (!route) throw new Error("no route");
+      const token = waCreds(env, route).token;
+      const meta = await fetch(`${GRAPH}/${encodeURIComponent(t.m.id)}`, { headers: { authorization: "Bearer " + token } });
+      if (!meta.ok) throw new Error("media meta " + meta.status);
+      const mu = (await meta.json()).url; if (!/^https:\/\//.test(String(mu))) throw new Error("no url");
+      const r = await fetch(mu, { headers: { authorization: "Bearer " + token } });
+      if (!r.ok) throw new Error("media " + r.status);
+      const type = String(r.headers.get("content-type") || t.m.mime || "application/octet-stream");
+      return new Response(r.body, { headers: { "content-type": /^(audio|image|video)\/|^application\/pdf/.test(type) ? type : "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": /^(audio|image|video)\//.test(type) ? "inline" : "attachment", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } });
+    } catch (e) { console.log("media", String(e)); return jsonP({ error: "Файл недоступен: WhatsApp хранит его ограниченное время." }, 404); }
+  }
+  if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
+
+  // ответ администратора клиенту
+  const sendTo = async text => {
+    if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя — позвоните клиенту." };
+    if (ch === "ga") { if (!(env.GA_ID && env.GA_TOKEN)) return { ok: false, error: "Green-API не настроен." }; try { await sendGreen(env, id + "@c.us", text); return { ok: true }; } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; } }
+    const route = waRoute(env, cid, p);
+    if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
+    if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном — позвоните клиенту или дождитесь его сообщения." };
+    let r; try { r = await sendWA(env, id, text, route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
+    return r && r.ok ? { ok: true } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
+  };
+  const msg = clean(String(b.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " "), 2000);
+  const who = s.role === "owner" ? "владелец" : "администратор";
+  if (P === "/api/inbox/send") {
+    if (!msg) return jsonP({ error: "Напишите сообщение." }, 400);
+    const r = await sendTo(msg);
+    if (!r.ok) return jsonP({ error: r.error }, 409);
+    // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
+    h = await logTurns(env.KV, hk, [{ role: "model", text: msg, t: now, by: "admin" }], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; });
+    p = h.profile || {};
+    return jsonP({ ok: true, chat: await view() });
+  }
+  if (P === "/api/inbox/act") {
+    const act = String(b.act || "");
+    if (act === "resolve") h = await logTurns(env.KV, hk, [], pr => { delete pr.need; });
+    else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
+    else if (act === "resume") {
+      if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
+      h = await logTurns(env.KV, hk, [], pr => { delete pr.pausedUntil; delete pr.fw; delete pr.need; });
+    } else if (act === "done") {
+      // администратор выполнил просьбу клиента (отменил или перенёс запись, подтвердил заявку) и сообщает ему об этом
+      const lid = String(b.lead || "");
+      let lead = null; try { lead = (await loadLeads(env.KV, cid)).find(l => l.id === lid) || null; } catch (e) {}
+      if (!lead || (lead.phone && lead.phone !== (normPhone("+" + id) || p.phone) && lead.phone !== p.phone)) return jsonP({ error: "Заявка не найдена." }, 404);
+      if (msg) { const r = await sendTo(msg); if (!r.ok) return jsonP({ error: r.error }, 409); }
+      await leadPatch(env, cid, lid, { status: "выполнена", note: clean((lead.note ? lead.note + " " : "") + `Выполнил ${who}${msg ? ", клиенту сообщено" : ""}.`, 600) });
+      h = await logTurns(env.KV, hk, msg ? [{ role: "model", text: msg, t: now, by: "admin" }] : [], pr => {
+        if (lead.kind === "cancel" || lead.kind === "change") {
+          // запись в расписании изменил человек: бот больше не считает прежнюю запись действующей и знает, что сказал клиенту администратор
+          const had = (pr.bookings || []).some(x => x.rq);
+          if (pr.bookings) pr.bookings = pr.bookings.filter(x => had ? !x.rq : false);
+          delete pr.req;
+          pr.adminDid = { at: now, kind: lead.kind, text: snip(msg || (lead.kind === "cancel" ? "запись отменена" : "запись перенесена"), 300) };
+          if (pr.bookings && !pr.bookings.length) delete pr.bookings;
+          pr.booked = [(pr.bookings || []).map(x => altLabel(x, "ru", now, true)).join("; "), `администратор ${lead.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"}${msg ? ` и написал ему: «${snip(msg, 200)}»` : ""}`].filter(Boolean).join(". ");
+        }
+        if (msg) pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 10 * 60e3); // короткая пауза: клиент, скорее всего, ответит «спасибо»
+        delete pr.need;
+      });
+    } else return jsonP({ error: "Неизвестное действие." }, 400);
+    p = h.profile || {};
+    return jsonP({ ok: true, chat: await view() });
+  }
+  return jsonP({ error: "Не найдено." }, 404);
+}
+function inboxPage() {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Чаты — AI-администратор</title><style>${ADMIN_CSS}
+body{height:100dvh;display:flex;flex-direction:column}.app{flex:1;min-height:0;display:flex;max-width:1100px;width:100%;margin:0 auto}
+.pane{display:flex;flex-direction:column;min-height:0;min-width:0}#listp{flex:1;max-width:100%}#chatp{flex:1.6}
+@media (min-width:860px){#listp{max-width:380px;border-right:1px solid var(--line)}#chatp[hidden]{display:flex!important;visibility:hidden}#listp[hidden]{display:flex!important}#back{display:none}}
+.bar{display:flex;gap:6px;padding:10px 12px;flex-wrap:wrap;border-bottom:1px solid var(--line)}.chip{padding:7px 12px;border-radius:99px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;cursor:pointer}.chip.on{background:var(--head);color:#fff;border-color:var(--head)}
+#rows{flex:1;overflow:auto}.r{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;background:var(--panel)}.r.sel{background:var(--bot)}.r .h{display:flex;gap:8px;align-items:baseline}.r .h b{flex:1;font-size:15.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.r .h i{font-style:normal;color:var(--muted);font-size:12.5px}
+.r .s{color:var(--muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}.r .f{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}.bd{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--lead);border:1px solid var(--leadl)}.bd.n{background:#fdecea;border-color:#f0b4ae;color:#8c1d18}
+.chead{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel)}.chead>div{flex:1;min-width:0}.chead b{font-size:16px}#back{border:0;background:none;font-size:22px;color:var(--ink);padding:0 6px;cursor:pointer}
+#cards{padding:0 12px}.rq{background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 12px;margin:10px 0;font-size:14.5px;line-height:1.45}.rq b{display:block;margin-bottom:2px}.rq textarea{margin-top:8px;min-height:70px}
+#msgs{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:6px}.m{max-width:82%;padding:8px 11px;border-radius:14px;font-size:15px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.m.u{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}.m.b{align-self:flex-end;background:var(--bot)}.m.a{align-self:flex-end;background:var(--acc);color:#fff}.m small{display:block;font-size:11.5px;opacity:.7;margin-top:3px}.m audio,.m img{display:block;max-width:100%;margin-top:6px;border-radius:8px}
+#acts{padding:6px 12px;margin:0}#comp{display:flex;gap:8px;padding:8px 12px 12px;align-items:flex-end}#comp textarea{flex:1;min-height:46px;max-height:140px}#warn{padding:0 12px 10px}
+.empty{padding:28px 16px;color:var(--muted);text-align:center;line-height:1.5}</style></head><body>
+<div class="top"><b id="ttl">Чаты</b><a id="l_leads" href="/leads">Заявки</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div>
+<div class="app"><div id="listp" class="pane"><div class="bar"><button class="chip on" id="t_need">Ждут ответа</button><button class="chip" id="t_all">Все</button><button class="chip" id="t_web">Сайт</button><button class="chip" id="t_r" title="Обновить">↻</button></div><div id="rows"><div class="empty">Загрузка…</div></div></div>
+<div id="chatp" class="pane" hidden><div class="chead"><button id="back" aria-label="Назад">←</button><div><b id="cname"></b><div id="cstate" class="mut"></div></div><a id="call" class="btn">Позвонить</a></div>
+<div id="cards"></div><div id="msgs"></div><div id="acts" class="row"></div><div id="comp"><textarea id="txt" placeholder="Сообщение клиенту"></textarea><button class="btn p" id="send">Отправить</button></div><div id="warn" class="mut"></div></div></div>
+<script>
+var $=function(i){return document.getElementById(i)},Q=new URLSearchParams(location.search),C=Q.get('c')||'',F='need',CH='wa',cur=null,chat=null,busy=false;
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
+function tm(t){if(!t)return'';var d=new Date(t),n=new Date(),p=function(x){return(x<10?'0':'')+x};return d.toDateString()===n.toDateString()?p(d.getHours())+':'+p(d.getMinutes()):p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
+var NEED={human:'ждёт ответа',limit:'бот не ответил',media:'прислал файл',ai:'сбой бота',req:'просит отменить или перенести',lead:'новая заявка',call:'ждёт звонка',off:'бот выключен'};
+function pick(){api('/api/studio/list').then(function(d){var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}R.appendChild(el('div','empty','Выберите компанию'));
+ d.clients.forEach(function(c){var r=el('div','r');var h=el('div','h');h.appendChild(el('b','',c.name));r.appendChild(h);r.appendChild(el('div','s',c.kind+' · '+c.id));r.onclick=function(){location.href='/inbox?c='+c.id};R.appendChild(r)})})}
+function list(){if(!C){pick();return}api('/api/inbox/list?c='+C+'&f='+(CH==='web'?'all':F)+'&ch='+CH).then(function(d){var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}
+ $('ttl').textContent='Чаты · '+d.client.name+(d.client.off?' (бот выключен)':'');$('t_need').textContent='Ждут ответа'+(d.need&&CH!=='web'?' · '+d.need:'');document.title=(d.need?'('+d.need+') ':'')+'Чаты — '+d.client.name;
+ if(!d.chats.length){R.appendChild(el('div','empty',CH==='web'?'Чатов с сайта пока нет.':F==='need'?'Никто не ждёт ответа. Все чаты — на вкладке «Все».':'Чатов пока нет. Они появятся, когда клиенты напишут в WhatsApp.'));return}
+ d.chats.forEach(function(c){var r=el('div','r'+(cur&&cur.ch===c.ch&&cur.id===c.id?' sel':''));var h=el('div','h');h.appendChild(el('b','',c.nm||c.ph||'Гость сайта'));h.appendChild(el('i','',tm(c.li||c.t)));r.appendChild(h);
+  r.appendChild(el('div','s',(c.d==='u'?'':c.d==='a'?'Вы: ':'Бот: ')+c.s));var f=el('div','f');if(c.nd)f.appendChild(el('span','bd n',NEED[c.nd]||'нужен ответ'));if(c.pu)f.appendChild(el('span','bd','бот молчит до '+tm(c.pu)));if(c.st)f.appendChild(el('span','bd','просил не писать'));if(c.bk)f.appendChild(el('span','bd','есть запись'));if(c.nm&&c.ph)f.appendChild(el('span','bd',c.ph));
+  if(f.childNodes.length)r.appendChild(f);r.onclick=function(){open(c.ch,c.id)};R.appendChild(r)});
+ if(d.more)R.appendChild(el('div','empty','Показаны последние чаты.'))}).catch(function(){})}
+function open(ch,id){cur={ch:ch,id:id};history.replaceState(null,'','#'+ch+':'+id);$('chatp').hidden=false;if(window.innerWidth<860)$('listp').hidden=true;$('msgs').textContent='';$('cards').textContent='';$('cname').textContent='…';load(true)}
+function load(scroll){if(!cur)return;api('/api/inbox/chat?c='+C+'&ch='+cur.ch+'&id='+cur.id).then(function(d){if(d.error){$('cname').textContent=d.error;return}render(d,scroll)}).catch(function(){})}
+function render(d,scroll){var first=!chat||chat.id!==d.id||chat.ch!==d.ch,grew=!chat||first||d.turns.length!==chat.turns.length;chat=d;
+ $('cname').textContent=d.name||d.waName||d.phone||'Гость сайта';var st=[];if(d.phone&&(d.name||d.waName))st.push(d.phone);
+ st.push(d.off?'бот выключен — отвечаете вы':d.stop?'клиент просил не писать автоматически':d.paused?'бот молчит до '+tm(d.paused):'отвечает бот');if(d.bookings.length)st.push('запись: '+d.bookings.join('; '));else if(d.pend.length)st.push('заявка: '+d.pend.join('; '));else if(d.booked)st.push(d.booked);
+ $('cstate').textContent=st.join(' · ');var cl=$('call');if(d.phone){cl.href='tel:'+d.phone;cl.hidden=false}else cl.hidden=true;
+ var K=$('cards');if(!K.querySelector('textarea')){K.textContent='';d.reqs.forEach(function(q){K.appendChild(reqCard(q))})}
+ if(grew){var M=$('msgs'),atEnd=M.scrollHeight-M.scrollTop-M.clientHeight<80;M.textContent='';d.turns.forEach(function(t){var m=el('div','m '+t.r,t.x);
+   if(t.m&&t.m.f){var u='/api/inbox/media?c='+C+'&ch='+d.ch+'&id='+d.id+'&mid='+encodeURIComponent(t.m.id);if(t.m.k==='audio'){var a=el('audio');a.controls=true;a.preload='none';a.src=u;m.appendChild(a)}else if(t.m.k==='image'){var im=el('img');im.loading='lazy';im.alt='фото';im.src=u;m.appendChild(im)}else{var l=el('a','','Открыть файл');l.href=u;l.target='_blank';l.rel='noopener';m.appendChild(el('br'));m.appendChild(l)}}
+   m.appendChild(el('small','',(t.r==='a'?'Вы · ':t.r==='b'?'бот · ':'')+tm(t.t)));M.appendChild(m)});if(scroll||first||atEnd)M.scrollTop=M.scrollHeight}
+ var A=$('acts');A.textContent='';function b(x,a,p){var e=el('button','btn'+(p?' p':''),x);e.onclick=function(){act(a)};A.appendChild(e)}
+ if(d.need)b('Готово — убрать из «Ждут ответа»','resolve');if(d.ch!=='web'&&!d.off){if(d.paused&&!d.stop)b('Вернуть бота','resume');else if(!d.paused)b('Остановить бота на 12 часов','pause')}
+ $('comp').hidden=!d.canSend;$('warn').textContent=d.ch==='web'?'Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер.':!d.canSend?'Отправка не настроена: WhatsApp этой компании ещё не подключён.':!d.open?'Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения.':'После вашего ответа бот молчит в этом чате 2 часа.';
+ $('send').disabled=!d.open;$('txt').disabled=!d.open}
+function reqCard(q){var T={cancel:'Клиент просит отменить запись',change:'Клиент просит перенести запись',callback:'Нужно перезвонить клиенту',lead:'Заявка — подтвердите запись'},c=el('div','rq');c.appendChild(el('b','',T[q.kind]||'Просьба клиента'));
+ c.appendChild(el('div','',[q.name,q.service,q.time].filter(Boolean).join(' · ')));if(q.note)c.appendChild(el('div','mut',q.note));var r=el('div','row'),d=el('button','btn p',q.kind==='callback'?'Перезвонил — закрыть':'Сделано');
+ d.onclick=function(){if(q.kind==='callback'){act('done',{lead:q.id,text:''});return}r.hidden=true;var ta=el('textarea');var w=(q.service.split('→')[1]||'').trim();
+  ta.value=q.kind==='cancel'?'Здравствуйте! Вашу запись отменили. Будем рады видеть вас в другой раз.':q.kind==='change'?'Здравствуйте! Вашу запись перенесли'+(w?': '+w:'')+'. Ждём вас!':'Здравствуйте! Ваша запись подтверждена: '+[q.service,q.time].filter(Boolean).join(', ')+'. Ждём вас!';
+  c.appendChild(ta);var r2=el('div','row'),s1=el('button','btn p','Отправить клиенту и закрыть'),s2=el('button','btn','Закрыть без сообщения'),s3=el('button','btn','Отмена');
+  s1.onclick=function(){act('done',{lead:q.id,text:ta.value})};s2.onclick=function(){act('done',{lead:q.id,text:''})};s3.onclick=function(){$('cards').textContent='';load(false)};r2.appendChild(s1);r2.appendChild(s2);r2.appendChild(s3);c.appendChild(r2)};r.appendChild(d);c.appendChild(r);return c}
+function done(d){busy=false;if(d.error){alert(d.error);return}$('cards').textContent='';render(d.chat,true);list()}
+function act(a,x){if(busy||!cur)return;busy=true;var b={c:C,ch:cur.ch,id:cur.id,act:a};if(x){b.lead=x.lead;b.text=x.text}api('/api/inbox/act',b).then(done).catch(function(){busy=false})}
+$('send').onclick=function(){var t=$('txt').value.trim();if(!t||busy||!cur)return;busy=true;api('/api/inbox/send',{c:C,ch:cur.ch,id:cur.id,text:t}).then(function(d){if(!d.error)$('txt').value='';done(d)}).catch(function(){busy=false})};
+$('txt').onkeydown=function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))$('send').onclick()};
+$('back').onclick=function(){cur=null;chat=null;history.replaceState(null,'',location.pathname+location.search);$('chatp').hidden=true;$('listp').hidden=false;list()};
+function tab(f,ch){F=f;CH=ch;['t_need','t_all','t_web'].forEach(function(i){$(i).className='chip'});$(ch==='web'?'t_web':f==='need'?'t_need':'t_all').className='chip on';list()}
+$('t_need').onclick=function(){tab('need','wa')};$('t_all').onclick=function(){tab('all','wa')};$('t_web').onclick=function(){tab('all','web')};$('t_r').onclick=function(){list();load(false)};
+if(C){$('l_leads').href='/leads?c='+C}
+api('/api/inbox/me').then(function(d){if(d.owner)$('l_st').hidden=false}).catch(function(){});
+list();var hm=/^#(wa|ga|web):([\\w-]+)$/.exec(location.hash);if(hm&&C){if(hm[1]==='web')tab('all','web');else tab('all','wa');open(hm[1],hm[2])}
+setInterval(function(){if(!document.hidden)list()},60000);setInterval(function(){if(!document.hidden&&cur&&!busy&&!$('cards').querySelector('textarea'))load(false)},15000);
 </script></body></html>`;
 }
