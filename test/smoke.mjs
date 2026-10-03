@@ -1337,7 +1337,7 @@ ok("ИИ посчитал «7 200» → в повторном запросе с�
 }
 
 // ====== v7.5: находки пятой независимой проверки. Каждый сценарий повторяет найденную ошибку
-const tagOf =(o = {}) => `[ЗАЯВКА] Имя: ${o.name || "Тимур"}; Телефон: указан; Услуга: ${o.service || "Мужская стрижка"}; Мастер: ${o.staff || "любой"}; Дата: ${o.date || D1}; Время: ${o.time || "10:00"}`;
+const tagOf = (o = {}) => `[ЗАЯВКА] Имя: ${o.name || "Тимур"}; Телефон: указан; Услуга: ${o.service || "Мужская стрижка"}; Мастер: ${o.staff || "любой"}; Дата: ${o.date || D1}; Время: ${o.time || "10:00"}`;
 const booksOf = (c, s) => (profOf(c, s).bookings || []).map(b => `${b.name} ${b.time}`).join(", ");
 let locN = 2200; const newLoc = () => { env.ALTEGIO_LOC_ALT = String(++locN); ALT.records.length = 0; ALT.deleted.length = 0; calls.tg.length = 0; };
 // WhatsApp (официальный, с подписью Meta): текст и голосовое
