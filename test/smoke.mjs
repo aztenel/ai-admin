@@ -95,6 +95,10 @@ function altStub(url, init) {
   }
   if (/^\/book_check\/\d+/.test(path)) return J({ success: true, data: null, meta: { message: "Created" } }, 201);
   if (/^\/book_record\/\d+/.test(path) && method === "POST") {
+    const b = JSON.parse(init.body);
+    if (!("email" in b)) return J({ success: false, data: null, meta: { message: "The required parameter email was not passed." } }, 422); // так отвечает настоящий Altegio, если поля email нет совсем
+    if (ALT.emailRequired && !b.email) return J({ success: false, data: null, meta: { message: "The email field is required." } }, 422);     // локация требует настоящий email
+    if (ALT.phoneDigits && /\D/.test(b.phone)) return J({ success: false, data: null, meta: { message: "Ошибка", errors: [{ code: 431, message: "Invalid phone number format" }] } }, 422); // номер только цифрами
     if (ALT.taken) return J({ success: false, data: null, meta: { message: "Ошибка", errors: ALT.errObj ? { code: 433, message: "Selected time slot is already taken" } : [{ code: 433, message: "Selected time slot is already taken" }] } }, 422);
     if (ALT.needCode) return J({ success: false, data: null, meta: { message: "Ошибка", errors: [{ code: 432, message: "Incorrect SMS verification code" }] } }, 422);
     ALT.records.push(JSON.parse(init.body));
@@ -1015,6 +1019,24 @@ ALT.down = false;
   const h = JSON.parse(mem.get("h:wa:alt:77015550077") || "null");
   ok("WhatsApp: «сброс» начинает разговор заново, но запись в расписании бот помнит", !!h && h.turns.length === 0 && (h.profile.bookings || []).length === 1, JSON.stringify(h));
   env.WA_CLIENT = wc; }
+
+// --- настоящий Altegio: поле email и формат номера (найдено пробной записью вживую)
+env.ALTEGIO_LOC_ALT = "2113"; ALT.records.length = 0; ALT.deleted.length = 0;
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00")]; d = await chat("alt", sid(), "Тимур, +7 771 000 26 01, мужская стрижка завтра в 10:00");
+ok("в запросе на запись есть поле email (пустое): без него настоящий Altegio отвечает отказом", ALT.records.length === 1 && ALT.records[0].email === "" && ALT.records[0].phone === "+77710002601" && /Записала вас/.test(d.reply), JSON.stringify([d.reply, ALT.records]));
+ALT.phoneDigits = true;
+geminiQueue = ["Записала.\n" + tagAt("Марат", "11:00")]; d = await chat("alt", sid(), "Марат, +7 771 000 26 02, мужская стрижка завтра в 11:00");
+ok("Altegio не принял номер с «+» → бот повторяет запрос с номером цифрами, запись создана", ALT.records.length === 2 && ALT.records[1].phone === "77710002602" && /Записала вас/.test(d.reply), JSON.stringify([d.reply, ALT.records.at(-1)]));
+ALT.phoneDigits = false; ALT.emailRequired = true; calls.tg.length = 0;
+geminiQueue = ["Записала.\n" + tagAt("Серик", "13:00")]; d = await chat("alt", sid(), "Серик, +7 771 000 26 03, мужская стрижка завтра в 13:00");
+ok("локация требует настоящий email клиента → запись не создаётся, заявка уходит администратору с подсказкой про настройку", ALT.records.length === 2 && !!d.lead && /Передала вашу запись администратору/.test(d.reply) && tgHas("email необязательным"), JSON.stringify([d.reply, calls.tg]));
+env.OWNER_EMAIL = "owner@example.com";
+r = await call("/altegio", form({ key: "lk", phone: "+7 701 123 45 67" })); t = await r.text();
+ok("пробная запись: пустой email не подошёл → проба с почтой владельца, страница объясняет, что поменять в Altegio", t.includes("email необязательным") && t.includes("Пробная запись: создана ✅") && ALT.records.at(-1).email === "owner@example.com" && t.includes("Удаление пробной записи: ✅"), t.slice(t.indexOf("Пробная запись")));
+delete env.OWNER_EMAIL; ALT.emailRequired = false; ALT.phoneDigits = true;
+r = await call("/altegio", form({ key: "lk", phone: "+7 701 123 45 67" })); t = await r.text();
+ok("пробная запись: номер принят только цифрами → страница говорит об этом", t.includes("Пробная запись: создана ✅") && t.includes("только цифрами") && ALT.records.at(-1).phone === "77011234567", t.slice(t.indexOf("Пробная запись")));
+ALT.phoneDigits = false;
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 process.exit(fail ? 1 : 0);

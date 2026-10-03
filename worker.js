@@ -904,6 +904,21 @@ function altPickStaff(staff, raw) {
   return pick.length === 1 ? { staff: pick[0] } : { ask: pick };
 }
 
+// Запрос на создание записи. Проверено на настоящем Altegio: без поля email он отвечает 422 «The required parameter email was not passed» —
+// передаём его пустым (почты клиента у бота нет). Номер идёт с «+», как в справочнике; если формат не принят (431) — повторяем цифрами.
+async function altRecord(env, loc, body) {
+  const sent = { email: "", ...body }, post = () => altCall(env, "POST", `/book_record/${loc}`, sent);
+  try { return { data: await post(), sent }; }
+  catch (e) {
+    if (e.code !== 431 || !/^\+/.test(String(sent.phone))) throw e;
+    sent.phone = String(sent.phone).replace(/\D/g, ""); // запись при 431 не создана — повтор безопасен
+    return { data: await post(), sent };
+  }
+}
+// локация требует настоящий email клиента: пустой не подошёл
+const altEmailErr = e => !!e && e.status === 422 && /e-?mail/i.test(e.message || "");
+const ALT_EMAIL_TIP = "Altegio требует email клиента для онлайн-записи — сделайте поле email необязательным в настройках онлайн-записи Altegio";
+
 // создаёт запись в Altegio. Возвращает { ok } либо причину: soft — уточнить у клиента, иначе — передать администратору
 async function altBook(env, A, q, nowMs, test) {
   const list = arr => arr.slice(0, 6).join(", "), date = q.date || "", time = hm(q.time);
@@ -933,7 +948,7 @@ async function altBook(env, A, q, nowMs, test) {
   const appointments = [{ id: 1, services: ids, staff_id: staffId, datetime: slot.datetime || `${date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
   try {
     if (test) { await altCall(env, "POST", `/book_check/${A.loc}`, { appointments }); return { ok: true, dry: true, record_id: 0, record_hash: "", ...info }; }
-    const d = await altCall(env, "POST", `/book_record/${A.loc}`, { phone: q.phone, fullname: q.name, comment: "Запись через AI-администратора", appointments });
+    const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: "Запись через AI-администратора", appointments })).data;
     altDropTimes(A.loc);
     const rec = (Array.isArray(d) ? d[0] : d) || {};
     if (!rec.record_id) return { ok: false, reason: "api", maybe: true, error: "Altegio не вернул номер записи", ...info };
@@ -945,6 +960,7 @@ async function altBook(env, A, q, nowMs, test) {
     if (e.code === 438) { altCache.delete("base:" + A.loc); return { ok: false, soft: true, reason: "service", list: list(A.services.filter(x => !ids.includes(x.id)).map(x => x.title)), ...info }; }
     if (e.code === 432) return { ok: false, reason: "code", error: "локация требует код из SMS для онлайн-записи — отключите подтверждение номера в настройках онлайн-записи Altegio", ...info };
     if (e.code === 434) return { ok: false, reason: "api", error: "номер клиента в чёрном списке Altegio", ...info };
+    if (altEmailErr(e)) return { ok: false, reason: "api", error: ALT_EMAIL_TIP, ...info };
     if (e.status === 404 && staff) return { ok: false, soft: true, reason: "staffService", ...info }; // мастер не оказывает эту услугу
     // ответа нет, сбой сервера или «успех» с непонятным телом — запись могла создаться
     return { ok: false, reason: "api", maybe: !e.status || e.status >= 500 || (e.status >= 200 && e.status < 300), error: e.message, ...info };
@@ -1068,13 +1084,23 @@ async function altDiag(env, cid, locArg, bookPhone) {
     else {
       const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: first.datetime }];
       const where = `${first.date} в ${first.time}, клиент «Проверка бота (можно удалить)»`;
+      const body = { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Пробная запись AI-администратора: создаётся и сразу удаляется", appointments };
       lastErr = null;
+      let sent = null, needEmail = false;
       const rec = await step("Пробная запись", async () => {
-        const d = await altCall(env, "POST", `/book_record/${loc}`, { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Пробная запись AI-администратора: создаётся и сразу удаляется", appointments });
-        return (Array.isArray(d) ? d[0] : d) || {};
-      }, e => e.status === 404 ? " → услуга недоступна для онлайн-записи или локация не найдена" : hint(e));
+        let r;
+        try { r = await altRecord(env, loc, body); }
+        catch (e) { // пустой email не подошёл — пробуем с почтой владельца, чтобы понять, в email ли дело
+          if (!altEmailErr(e) || !env.OWNER_EMAIL) throw e;
+          needEmail = true; r = await altRecord(env, loc, { ...body, email: env.OWNER_EMAIL });
+        }
+        sent = r.sent;
+        return (Array.isArray(r.data) ? r.data[0] : r.data) || {};
+      }, e => e.status === 404 ? " → услуга недоступна для онлайн-записи или локация не найдена" : altEmailErr(e) ? " → " + ALT_EMAIL_TIP : hint(e));
+      if (needEmail) out.push(`⚠️ ${ALT_EMAIL_TIP}. Пока это не сделано, бот будет передавать записи администратору заявками (для пробы взята почта OWNER_EMAIL).`);
       if (rec && rec.record_id) {
         out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${first.date} в ${first.time}`);
+        if (sent && !/^\+/.test(String(sent.phone))) out.push("  (номер телефона Altegio принял только цифрами, без «+» — бот это учитывает)");
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
           e => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
