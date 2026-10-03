@@ -2039,7 +2039,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (!reply.trim()) reply = c.safe;                               // пустое сообщение клиенту не отправляем
   // состояние до разбора ответа: к нему возвращаемся, если заявка нигде не сохранилась (имя, подпись и список заявок — тоже, иначе повтор той же заявки сочтётся дублем)
   const prev = { leadId: saved.profile.leadId, booked: saved.profile.booked, cbAt: saved.profile.cbAt, adminLeads: saved.profile.adminLeads,
-    ...(plain ? { leadSig: saved.profile.leadSig, name: saved.profile.name, leads: saved.profile.leads ? JSON.parse(JSON.stringify(saved.profile.leads)) : undefined } : {}) };
+    ...(plain ? { leadSig: saved.profile.leadSig, name: saved.profile.name, lgone: saved.profile.lgone, leads: saved.profile.leads ? JSON.parse(JSON.stringify(saved.profile.leads)) : undefined } : {}) };
   const added = [], removed = [], droppedPend = [];               // изменения этого сообщения — нужны при слиянии истории
   const say = (reason, extra) => altSay(lang, { reason, ...(extra || {}) });
   const today = isoDay(nowMs), nowMin = mins(hhmm(local(nowMs)));
@@ -2628,8 +2628,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     const names = v => (!!v.time && [...text.matchAll(/(?<![\d.:])(\d{1,2})(?:[:.](\d{2}))?(?![\d.:])/g)].some(m => { const t = +m[1] * 60 + +(m[2] || 0), rt = mins(v.time); return t === rt || (+m[1] < 12 && t + 720 === rt); }))
       || nameToks(text).some(t => t.length >= 3 && caseName(v.name || "", t));
     // слова клиента подходят к этой заявке? Другой человек, день или время — значит, речь о другой. «Мою запись» и имя из заявки — прямое указание на неё
-    const fits = x => {
-      const v = view(x), mode = x.time ? "" : "person"; // у заявки без разобранного времени сверяем только людей
+    const fits = (x, move) => {
+      const v = view(x), mode = !x.time ? "person" : move ? "move" : ""; // у заявки без разобранного времени сверяем только людей; при переносе время и день в словах клиента — новые
       const why = altOther(v, text, oEnv, mode) || (wish && wish.n && !names(v) ? altOther(v, wish.text, oEnv, mode) : "");
       if (!why) return true;
       if (why !== "человек" && why !== "имя") return false;
@@ -2644,7 +2644,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     };
     // какую заявку отменить: { hit } | { all } | { which: [из каких выбрать] } | { none } — названной записи в этом чате нет
     const pickCancel = (line, moveName, keep) => {
-      const pool = list.filter(x => !keep.includes(x)), fit = pool.filter(fits), byLine = lineHits(line, pool);
+      const pool = list.filter(x => !keep.includes(x)), fit = pool.filter(x => fits(x, !!moveName)), byLine = lineHits(line, pool);
       if (byLine) {
         const both = byLine.filter(x => fit.includes(x));
         return both.length === 1 ? { hit: both[0] } : both.length > 1 ? { which: both } : byLine.length && fit.length ? { which: pool } : { none: true }; // ИИ назвал одну заявку, а слова клиента — о другой: переспрашиваем
@@ -2702,23 +2702,25 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       for (const s of list.filter(x => x.stub)) { patchLead(s.id, { status: "заменена", note: `клиент оформил заявку: ${[l.name, l.service, l.time].filter(Boolean).join(", ")}` }); list.splice(list.indexOf(s), 1); } // настоящая заявка заменяет заявку «уточните у клиента»
       if (swap) { patchLead(twin.id, { status: "заменена", note: `клиент изменил услугу — новая заявка: ${l.service}` }); list.splice(list.indexOf(twin), 1); }
       const rec = { id: made.id, name: l.name, date: day, time: t, service: l.service, text: l.time, at: nowMs, sig, ...(kin.length ? { kin } : {}) };
-      list.push(rec); madeNow.push(rec);
+      list.push(rec); madeNow.push(rec); k.made = rec;
     }
     let useCode = aiSilent || outs.length > 0; // ответ пишет код: ИИ ничего не написал либо часть его слов — неправда
     if (madeNow.length) msgs.push(say("plBooked", { what: named(madeNow) }));
 
     // 2) отмена и перенос
     const cxOne = (x, at) => {
+      if (!list.includes(x)) return false; // заявку «уточните у клиента» уже заменила новая — отменять нечего
       patchLead(x.id, { status: "отменена" });
       const msg = `❌ Отмена: ${x.name || "имя не указано"}, ${plText(x, "", nowMs)} (${c.name})\n${who}\n${said}`;
       if (!opts.test) { if (at != null) notes.splice(at, 0, msg); else notes.push(msg); } // при переносе администратор сначала видит отмену прежней заявки, потом новую
       list.splice(list.indexOf(x), 1);
       gone.push({ ...x, at: nowMs });
       cancel = true; acted = true;
+      return true;
     };
     // записи, о которой просит клиент, в этом чате нет: с телефоном — передаём администратору, без телефона — спрашиваем, на кого она оформлена
     const noSuch = move => {
-      const g = !list.length && !move ? gone.filter(fits).pop() : null;
+      const g = !list.length && !move ? gone.filter(x => fits(x)).pop() : null;
       if (g) return say("plGone", { what: named([g]) }); // эту заявку бот уже отменил — второй раз администратора не тревожим
       const also = list.length ? " " + say("also", { list: named(list) }) : "";
       if (!ph0()) { P.cxWho = { at: nowMs, text: maskPhones(text).slice(0, 300) }; return say("cancelWho") + also; } // следующее сообщение с номером или именем уйдёт администратору вместе с этим
@@ -2727,13 +2729,13 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       cancel = true; acted = true;
       return say(list.length || move ? "otherAdmin" : "cancelAdmin") + also;
     };
-    if (doCx && moving && !madeNow.length) {
+    if (doCx && moving && !cands[0].made) {
       // перенос, а новая заявка не создана (время не из свободных окон, нет имени или телефона) — прежняя остаётся, клиент об этом знает
       useCode = true;
       if (outs.length) { if (had.length) outs.push(say("keepOld").trim()); }
       else if (dups.length) msgs.push(say("pending", { what: named(dups) })); // на это время клиент уже записан
     } else if (doCx && moving) {
-      if (plan.hit) { const what = lab(plan.hit); cxOne(plan.hit, noteAt); msgs.push(say("plOldCx", { what })); }
+      if (plan.hit) { const what = lab(plan.hit); acted = true; if (cxOne(plan.hit, noteAt)) msgs.push(say("plOldCx", { what })); }
       else if (plan.which || plan.all) { keepWish = true; useCode = true; msgs.push(say("which", { list: named(plan.which || plan.all) })); } // новая заявка есть, а какую из прежних убрать — спрашиваем
       else { acted = true; msgs.push(say("oldAdmin")); } // прежней записи в этом чате нет — её отменит администратор (пометка в новой заявке)
     } else if (doCx && isMove && list.length && !saysCx && /\?\s*$/.test(reply)) {
