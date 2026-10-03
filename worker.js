@@ -1041,7 +1041,8 @@ function tidyTags(raw) {
     }
     if (TAG_HAS.test(ln)) {
       const at = ln.search(TAG_HAS);
-      let head = ln.slice(0, at), tail = ln.slice(at).replace(/(\[(ЗАЯВКА|ОТМЕНА)\])(?:[\s:—–*_`-]*\[\2\])+/g, "$1").replace(TAG_ITEM_IN, "$1"); // «[ЗАЯВКА] [ЗАЯВКА] …» — одна метка
+      // «[ЗАЯВКА] [ЗАЯВКА] …» — одна метка. Повтор «[ОТМЕНА]» не трогаем: строки отмены бот исполняет по одной, менять их число и порядок нельзя
+      let head = ln.slice(0, at), tail = ln.slice(at).replace(/(\[ЗАЯВКА\])(?:[\s:—–*_`-]*\[ЗАЯВКА\])+/g, "$1").replace(TAG_ITEM_IN, "$1");
       // перед меткой только разметка, номер пункта или слова «служебная строка» — это часть служебной строки, а не ответа клиенту; кавычка или скобка, открытая перед меткой, — тоже
       if (!head.replace(TAG_LABEL, "").replace(/[\s*_`~>«"“„'(\[{:.—–#•·\d)\\-]/g, "")) head = "";
       else { const h = rtrimSet(head, TAG_TRAIL + "«\"“„'([{"); if (h.length < head.length) head = h + " "; }
@@ -1071,12 +1072,11 @@ function tidyTags(raw) {
     }
     out.push(ln);
   }
-  // метка без полей, а следом та же метка с полями («[ЗАЯВКА]» и строкой ниже «[ЗАЯВКА] Имя: …») — это одна служебная строка
+  // «[ЗАЯВКА]» без полей, а строкой ниже «[ЗАЯВКА] Имя: …» — это одна служебная строка. С «[ОТМЕНА]» так не делаем: строка отмены без подробностей — отдельная просьба
   for (let k = out.length - 2; k >= 0; k--) {
-    const a = /^\s*\[(ЗАЯВКА|ОТМЕНА)\]\s*$/.exec(out[k]);
-    if (!a) continue;
+    if (!/^\s*\[ЗАЯВКА\]\s*$/.test(out[k])) continue;
     let n = k + 1; while (n < out.length && !out[n].trim()) n++;
-    if (n < out.length && out[n].trimStart().startsWith(`[${a[1]}]`)) out.splice(k, 1);
+    if (n < out.length && out[n].trimStart().startsWith("[ЗАЯВКА]")) out.splice(k, 1);
   }
   return out.join("\n");
 }
@@ -2152,7 +2152,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const adminCap = () => { const a = saved.profile.adminLeads; return a && a.d === today ? a.n : 0; }; // заявок администратору из этого чата за сегодня
   const adminInc = () => { saved.profile.adminLeads = { d: today, n: adminCap() + 1 }; };
   // имя из служебной строки: без возраста («Алихан, 7 лет») и без всего, что именем не является (cleanName); несколько имён остаются через запятую
-  const nameOf = v => cleanName(clean(v, 200).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, ""), true);
+  // в поле «Имя» что-то есть, но имени в нём нет («???», «😀») — отдаём «—»: записать на такое «имя» нельзя (бот спросит настоящее), а строка отмены с ним не совпадёт ни с одной записью — бот переспросит, а не удалит
+  const nameOf = v => { const raw = clean(v, 200).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, ""); return cleanName(raw, true) || (raw.replace(/[\s.,;:]+$/, "") ? "—" : ""); };
   const ph0 = () => opts.phone || saved.profile.phone || "";
   // обратный звонок: бот записать не может (расписание недоступно, свободного времени нет, запись не оформляется), а телефон клиента известен. Не чаще раза в час на чат
   const callback = why => {
