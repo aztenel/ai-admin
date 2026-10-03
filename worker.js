@@ -971,24 +971,100 @@ function altDateOf(s, nowMs) {
   if (dw.length === 1) return isoDay(nowMs + (((dw[0] - local(nowMs).getUTCDay() + 7) % 7) || 7) * 86400e3);
   return "";
 }
-// ---- служебные строки ИИ приводим к одному виду: «(ЗАЯВКА)», «ЗАЯВКА: …», «[БРОНЬ]», «[BOOKING]», «[ЗАЯВК]» → «[ЗАЯВКА]»; поля столбиком — в одну строку
+// ---- служебные строки ИИ приводим к одному виду: «(ЗАЯВКА)», «ЗАЯВКА: …», «[БРОНЬ]», «[BOOKING]», «[ЗАЯВК]» → «[ЗАЯВКА]»; поля столбиком — в одну строку.
+// Служебная строка не должна дойти до клиента, что бы ИИ ни дописал к метке: номер («[ЗАЯВКА 1]»), пояснение («[ОТМЕНА записи]», «[BOOKING REQUEST]»), поля внутри скобок
+// («[ЗАЯВКА: Имя: …]»), JSON, жирный шрифт, кавычки, слова перед меткой («Служебная строка: [ЗАЯВКА] …»). Обычная фраза со словом «заявка», «запись» или «отмена»
+// («Ваша заявка принята», «Отмена бесплатна») служебной строкой не становится: без скобок метка — это слово заглавными буквами либо слово с двоеточием, после которого идёт поле («Имя: …»)
 const TAGW_BOOK = "ЗАЯВК[АИУ]?|ЗАПИСЬ|БРОНЬ|БРОНИРОВАНИЕ|BOOKING|BOOK|ORDER|REQUEST|APPOINTMENT|ӨТІНІМ|ӨТІНІШ|ТАПСЫРЫС|ЖАЗЫЛУ";
 const TAGW_CANCEL = "ОТМЕН[АЫУ]?|ОТМЕНИТЬ|CANCEL|CANCELLATION|CANCELATION|БОЛДЫРМАУ";
-const TAG_KEY_ALT = Object.keys(TAG_KEYS).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
-const TAG_SQ = new RegExp("\\[\\s*(" + TAGW_BOOK + "|" + TAGW_CANCEL + ")\\s*\\]", "gi");                                    // в квадратных скобках — в любом регистре
-const TAG_BARE = new RegExp("^([\\s*_`>-]*)(?:[(<{【«]\\s*(" + TAGW_BOOK + "|" + TAGW_CANCEL + ")\\s*[)>}】»]|(" + TAGW_BOOK + "|" + TAGW_CANCEL + "))\\s*[:—–-]?\\s*(.*)$"); // в других скобках и без скобок — только заглавными, в начале строки
-const TAG_KEY_START = new RegExp("^\\s*(?:[-•*]\\s*)?(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
+const TAGW = TAGW_BOOK + "|" + TAGW_CANCEL, TAG_LT = "A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+const tagKeyAlt = pick => Object.keys(TAG_KEYS).filter(pick).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
+const TAG_KEY_ALT = tagKeyAlt(() => true), TAG_NAME_ALT = tagKeyAlt(k => TAG_KEYS[k] === "имя");
+const TAG_NUM = "(?:\\s*(?:(?:№|#|N)\\s*)?\\d{1,3})?";                                                 // номер после метки: «ЗАЯВКА 1», «ЗАЯВКА №2»
+const TAG_OPEN = "\\\\?\\[\\s*(?:(?:НОВАЯ|НОВЫЙ|NEW|СЛУЖЕБНАЯ\\s+СТРОКА|СТРОКА|МЕТКА|TAG)[\\s:—–-]+)?(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM;
+// метка в квадратных скобках — в любом регистре, с номером и пояснением: «[Заявка]», «[ЗАЯВКА №1]», «[BOOKING REQUEST]», «[ОТМЕНА ЗАПИСИ]», «[НОВАЯ ЗАЯВКА]», «\[ЗАЯВКА\]»
+const TAG_SQ = new RegExp(TAG_OPEN + "(?:\\s+(?:ЗАПИСИ|ЗАПИСЬ|ЗАЯВКИ|БРОНИ|КЛИЕНТА|НА\\s+ЗАПИСЬ|REQUEST|BOOKING|LINE))?" + TAG_NUM + "\\s*\\\\?\\]", "gi");
+const TAG_SQ_IN = new RegExp(TAG_OPEN + "\\s*(?:([:=—–])\\s*|(?<=\\s)(?=(?:" + TAG_KEY_ALT + ")\\s*[:=]))", "gi"); // поля внутри скобок: «[ЗАЯВКА: Имя: …]», «[ЗАЯВКА Имя: …]»
+const TAG_SQ_ANY = new RegExp("\\\\?\\[([^\\[\\]\\n]*?)(?<![" + TAG_LT + "])(ЗАЯВКА|ОТМЕНА)(?![" + TAG_LT + "])([^\\[\\]\\n]*)\\]", "g"); // метка заглавными где угодно в скобках: «[ОТМЕНА записи на 15:00]»
+const TAG_MARK = "[\\s*_`~>«\"“„'-]*";                                                                  // разметка и кавычки перед меткой
+// в других скобках и без скобок — только заглавными, в начале строки: «(ЗАЯВКА) …», «ЗАЯВКА: …», «**ЗАЯВКА №1:** …»
+const TAG_BARE = new RegExp("^[\\s*_`~>\"“„'-]*(?:[(<{【«]\\s*(" + TAGW + ")" + TAG_NUM + "\\s*[)>}】»]|«?(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM + ")[*_`]*\\s*[:—–-]?\\s*[*_`]*\\s*(.*)$");
+// слово «Заявка», «Отмена», «Booking» не заглавными — метка, только если после него двоеточие или тире, а дальше поле
+const TAG_SOFT = new RegExp("^" + TAG_MARK + "(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM + "[*_`]*\\s*[:—–=-]\\s*[*_`]*\\s*(.*)$", "i");
+const TAG_ITEM = "(?:(?:[-•*·]|\\d{1,2}[.)])\\s*)?";                                                    // пункт списка перед полем: «- Имя: …», «1. Имя: …»
+const TAG_KEY_START = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
+const TAG_KEY_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*[:=]", "i"), TAG_NAME_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_NAME_ALT + ")\\s*[:=]", "i");
+const TAG_FIELD_LINE = new RegExp("^\\s*" + TAG_ITEM + "[" + TAG_LT + "][^:=\\n]{0,30}[:=]\\s*\\S");     // «Возраст: 30» — строка похожа на поле, хотя ключ незнакомый
+const TAG_ITEM_HEAD = /^\s*(?:[-•*·]|\d{1,2}[.)])\s*/;
+const TAG_ITEM_IN = new RegExp("(\\]\\s*(?:[:—–-]\\s*)?|[;|]\\s*)\\d{1,2}[.)]\\s*(?=(?:" + TAG_KEY_ALT + ")\\s*[:=])", "gi"); // «[ЗАЯВКА] 1) Имя: …; 2) Телефон: …» — номера полей в одной строке
 const TAG_IS_CANCEL = new RegExp("^(?:" + TAGW_CANCEL + ")$", "i");
+const TAG_JSON = new RegExp("\\{\\s*\"(" + TAGW + ")\"\\s*:\\s*\\{([^{}]*)\\}\\s*\\}", "gi");             // {"ЗАЯВКА": {"Имя": "…", …}} — одной строкой или столбиком
+const TAG_JSON_AFTER = new RegExp("(\\[\\s*(?:" + TAGW + ")\\s*\\][*_`]*\\s*(?::\\s*)?)\\{([^{}]*)\\}", "gi"); // [ЗАЯВКА] {"Имя": "…", …}
+const TAG_LABEL = /(?:служебн[а-яё]*\s+строк[а-яё]*|строка\s+для\s+(?:системы|администратора)|service\s+line|system\s+line|метка|tag)\s*[:—–-]?/gi; // слова, которыми ИИ подписывает метку
+const TAG_HAS = /\[(?:ЗАЯВКА|ОТМЕНА)\]/, TAG_ONLY = /^\[(?:ЗАЯВКА|ОТМЕНА)\]$/, TAG_JSON_START = /^\{\s*"/;
+const TAG_TRAIL = " \t\r*_`~\\", TAG_PAIRS = [["[", "]"], ["«", "»"], ["(", ")"], ["{", "}"], ["“", "”"]]; // разметка в конце служебной строки; скобки и кавычки, которые могут остаться без пары
+// знаки из набора в конце строки — без регулярного выражения: «[…]+$» на длинной строке работает за квадрат её длины
+const rtrimSet = (s, set) => { let e = s.length; while (e > 0 && set.includes(s[e - 1])) e--; return e < s.length ? s.slice(0, e) : s; };
+// поля из JSON: «"Имя": "Азамат", "Время": "завтра, 12:00"» → «Имя: Азамат; Время: завтра, 12:00»
+const tagJson = body => [...String(body).matchAll(/"([^"\n]{1,40})"\s*:\s*(?:"([^"]*)"|\[([^\]]*)\]|([^,"{}\n]+))/g)]
+  .map(m => m[1].trim() + ": " + (m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3].replace(/"\s*,\s*"/g, " | ").replace(/"/g, "") : m[4]).trim().replace(/;/g, ",")).join("; ");
 function tidyTags(raw) {
   const canon = w => TAG_IS_CANCEL.test(w.trim()) ? "[ОТМЕНА]" : "[ЗАЯВКА]";
-  const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";").split("\n"), out = [];
+  const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";")
+    .replace(TAG_JSON, (m, w, body) => "\n" + canon(w) + " " + tagJson(body) + "\n")
+    .replace(TAG_JSON_AFTER, (m, head, body) => /"\s*:/.test(body) ? head + tagJson(body) : m)
+    .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, "") // границы блока кода клиенту не нужны
+    .split("\n"), out = [];
+  const nextText = i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
   for (let i = 0; i < lines.length; i++) {
-    let ln = lines[i].replace(TAG_SQ, (m, w) => canon(w));
+    let ln = lines[i];
+    if (ln.includes("[")) ln = ln.replace(TAG_SQ, (m, w) => canon(w))
+      .replace(TAG_SQ_IN, (m, w, sep, at, s) => sep && w !== w.toUpperCase() && !TAG_KEY_COLON.test(s.slice(at + m.length)) ? m : canon(w) + " ") // «[Запись: завтра в 12:00]» — не метка
+      .replace(TAG_SQ_ANY, (m, a, w, b) => { const rest = (a + " " + b).replace(/\\+$/, "").replace(/^[\s:—–=№#\d-]+/, "").trim(); return rest ? `[${w}] ${rest}` : `[${w}]`; });
     const m = ln.match(TAG_BARE);
-    if (m && (m[2] || !m[4] || TAG_KEY_START.test(m[4]))) ln = canon(m[2] || m[3]) + (m[4] ? " " + m[4] : "");
-    if (/\[(ЗАЯВКА|ОТМЕНА)\]/.test(ln)) // поля столбиком: за меткой идут строки «Ключ: значение»
-      while (i + 1 < lines.length && TAG_KEY_START.test(lines[i + 1])) ln += (/\]\s*$/.test(ln) ? " " : "; ") + lines[++i].replace(/^\s*[-•*]\s*/, "").trim();
+    if (m && (m[1] || !m[3] || TAG_KEY_START.test(m[3]) || TAG_JSON_START.test(m[3]))) ln = canon(m[1] || m[2]) + (m[3] ? " " + (TAG_JSON_START.test(m[3]) ? tagJson(m[3]) : m[3]) : "");
+    else if (!TAG_HAS.test(ln)) {
+      const s = ln.match(TAG_SOFT);
+      if (s && ((TAG_IS_CANCEL.test(s[1]) ? TAG_KEY_COLON : TAG_NAME_COLON).test(s[2] || nextText(i)) || TAG_JSON_START.test(s[2]))) ln = canon(s[1]) + (s[2] ? " " + (TAG_JSON_START.test(s[2]) ? tagJson(s[2]) : s[2]) : "");
+    }
+    if (TAG_HAS.test(ln)) {
+      const at = ln.search(TAG_HAS);
+      let head = ln.slice(0, at), tail = ln.slice(at).replace(/(\[(ЗАЯВКА|ОТМЕНА)\])(?:[\s:—–*_`-]*\[\2\])+/g, "$1").replace(TAG_ITEM_IN, "$1"); // «[ЗАЯВКА] [ЗАЯВКА] …» — одна метка
+      // перед меткой только разметка, номер пункта или слова «служебная строка» — это часть служебной строки, а не ответа клиенту; кавычка или скобка, открытая перед меткой, — тоже
+      if (!head.replace(TAG_LABEL, "").replace(/[\s*_`~>«"“„'(\[{:.—–#•·\d)\\-]/g, "")) head = "";
+      else { const h = rtrimSet(head, TAG_TRAIL + "«\"“„'([{"); if (h.length < head.length) head = h + " "; }
+      // в конце строки — разметка и закрывающая скобка или кавычка без пары: они остались от «[ЗАЯВКА: …]», ««[ЗАЯВКА] …»», «**[ЗАЯВКА] …**»
+      const cnt = ch => tail.split(ch).length - 1, over = TAG_PAIRS.map(([o, c]) => cnt(c) - cnt(o));
+      let end = tail.length, odd = cnt('"') % 2;
+      for (let go = true; go;) {
+        while (end > 0 && TAG_TRAIL.includes(tail[end - 1])) end--;
+        const p = TAG_PAIRS.findIndex(([, c], k) => over[k] > 0 && tail[end - 1] === c);
+        go = p >= 0 || (odd === 1 && tail[end - 1] === '"');
+        if (p >= 0) over[p]--; else if (go) odd = 0;
+        if (go) end--;
+      }
+      tail = tail.slice(0, end);
+      // поля столбиком: за меткой идут строки «Ключ: значение» — с номерами, после пустой строки, с незнакомым полем между знакомыми
+      let j = i + 1;
+      if (TAG_ONLY.test(tail)) { let k = j; while (k < lines.length && !lines[k].trim()) k++; if (k < lines.length && TAG_KEY_START.test(lines[k])) j = k; }
+      const extra = [], isKey = x => TAG_KEY_START.test(x || ""), isField = x => TAG_FIELD_LINE.test(x || "");
+      for (; j < lines.length; j++) {
+        if (isKey(lines[j])) tail += (/\]$/.test(tail) ? " " : "; ") + lines[j].replace(TAG_ITEM_HEAD, "").trim();
+        else if (isField(lines[j]) && (isKey(lines[j + 1]) || (isField(lines[j + 1]) && isKey(lines[j + 2])))) extra.push(lines[j].replace(TAG_ITEM_HEAD, "").trim());
+        else break;
+      }
+      if (extra.length) tail += "; Комментарий: " + extra.join(", "); // незнакомые поля не теряются: администратор увидит их в заявке
+      i = j - 1;
+      ln = head + tail;
+    }
     out.push(ln);
+  }
+  // метка без полей, а следом та же метка с полями («[ЗАЯВКА]» и строкой ниже «[ЗАЯВКА] Имя: …») — это одна служебная строка
+  for (let k = out.length - 2; k >= 0; k--) {
+    const a = /^\s*\[(ЗАЯВКА|ОТМЕНА)\]\s*$/.exec(out[k]);
+    if (!a) continue;
+    let n = k + 1; while (n < out.length && !out[n].trim()) n++;
+    if (n < out.length && out[n].trimStart().startsWith(`[${a[1]}]`)) out.splice(k, 1);
   }
   return out.join("\n");
 }
