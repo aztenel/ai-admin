@@ -1477,7 +1477,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const cl = altClaims(reply);
       if (cl.change) reply = books.length ? say("noop", { list: listOf(books) }) : goneLike({}) ? say("goneAlready", { what: label(goneLike({})) }) : noSuch();
       else if (cl.book) reply = books.length ? join([cl.keep, say("yours", { list: listOf(books) })]) // оставляем всё, кроме фраз о записи, и добавляем то, что есть на самом деле
-        : join([cl.before, pend.length ? say("pending", { what: pendText(pend[pend.length - 1], lang) }) : say("confirm")]);
+        : pend.length ? join([cl.before, say("pending", { what: pendText(pend[pend.length - 1], lang) })])
+        : /\?\s*$/.test(cl.keep) ? cl.keep // «Записала вас на 10:00. Как вас зовут?» — фразу о записи убираем, вопрос ИИ оставляем
+        : join([cl.before, say("confirm")]);
     }
     // записать сейчас нельзя (свободного времени нет или день не читается), а клиент оставил телефон или просит запись — передаём администратору
     if (!madeNow.length && !cancel && !alt.slots.length && !saved.profile.cxAsk) { // если бот только что спросил «Отменить запись …?», вопрос должен дойти до клиента как есть
@@ -1729,6 +1731,8 @@ const hasnt = re => r => !re.test(r.reply);
 const noOffer = r => !(r.offer || []).length && !/\d{1,2}:\d{2}/.test(r.reply);
 const pickSlot = r => (r.offer && r.offer[0]) ? "давайте в " + r.offer[0] : "давайте в ближайшее свободное время";
 const KZ = /[әғқңөұүһі]/i;
+const altSlot = r => "Запишите на первую услугу из списка, мастер любой, " + pickSlot(r);
+const altMade = (r, all) => all.some(x => x.lead && x.lead.altegio); // запись дошла до проверки в Altegio (в автотесте она не создаётся)
 
 const CASES = [
   // ---- стоматология: факты
@@ -1795,7 +1799,12 @@ const CASES = [
   { c: "barber", t: "Цену топ-барбера не считает сам", msgs: ["Сколько стоит стрижка у Армана?"], checks: [["нет выдуманной суммы 7 200", hasnt(/7\s?200/)], ["названа цена 6 000", has(/6\s?000/)], ["сказано про +20% у Армана", has(/20\s?%/)]] },
   { c: "barber", t: "Нет услуги (окрашивание)", msgs: ["Покрасить волосы в синий сможете? Сколько стоит?"], checks: [["не согласился покрасить", hasnt(/(да|конечно)[,!. ]+(мы\s+)?(по)?красим|можем (по)?красить|сможем (по)?красить|окрашивани[ея]\s+(стоит|от)\s/i)], ["сказал, что такой услуги нет", has(/нет|не (делаем|оказываем|занимаемся|предоставляем|выполняем|красим|предлагаем)|только/i)]] },
   { c: "barber", t: "Запись к мастеру до конца", msgs: ["Хочу стрижку и бороду к Арману", pickSlot, "Азамат", "+7 777 123 45 67"], checks: [["заявка создана", (r, all) => all.some(x => x.lead)], ["в заявке телефон", (r, all) => all.some(x => x.lead && x.lead.phone === "+77771234567")], ["честное «администратор подтвердит»", (r, all) => all.some(x => x.lead && /подтверд/i.test(x.reply))]] },
-  { c: "barber", t: "Казахский", msgs: ["Сәлеметсіз бе, шаш қию қанша тұрады?"], checks: [["ответ на казахском", has(KZ)], ["цена 6 000", has(/6\s?000/)]] }
+  { c: "barber", t: "Казахский", msgs: ["Сәлеметсіз бе, шаш қию қанша тұрады?"], checks: [["ответ на казахском", has(KZ)], ["цена 6 000", has(/6\s?000/)]] },
+  // ---- запись в расписание Altegio (пробный клиент). Расписание читается настоящее, запись проверяется без создания
+  { c: "alt", t: "Altegio: услуги и свободное время", msgs: ["Какие услуги есть и когда можно прийти?"], checks: [["предложено время из расписания", r => r.offer.length > 0], ["ответ ИИ не заменён заготовкой", r => !/заготовка/.test(r.guard || "")]] },
+  { c: "alt", t: "Altegio: запись до конца (без создания)", msgs: ["Хочу записаться", altSlot, "Меня зовут Азамат, мой номер +7 777 123 45 67"], checks: [["запись проверена в Altegio", altMade], ["клиенту сказано «Записала вас»", (r, all) => all.some(x => /Записала вас/.test(x.reply))]] },
+  { c: "alt", t: "Altegio: время, которого нет в расписании", msgs: ["Запишите меня сегодня в 03:15, Азамат, +7 777 123 45 67"], checks: [["записи нет", (r, all) => !altMade(r, all)], ["не сказано «Записала вас»", hasnt(/Записала вас/)]] },
+  { c: "alt", t: "Altegio: запись и отмена (без создания)", msgs: ["Хочу записаться", altSlot, "Меня зовут Азамат, мой номер +7 777 123 45 67", "Отмените, пожалуйста, мою запись"], checks: [["запись была", altMade], ["запись отменена", r => r.cancelDone === true && /Отменила вашу запись/.test(r.reply)]] },
 ];
 
 const COMMON = [
@@ -2203,7 +2212,7 @@ button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px
 .ok{color:var(--good)}.bad{color:var(--bad)}select{padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px}</style></head>
 <body><div class="w"><h1>Автотест AI-администратора</h1>
 <p>Прогоняет ${CASES.length} диалогов через живую модель и проверяет ответы. Бесплатный лимит Gemini небольшой, поэтому сценарии идут по одному: весь прогон — 3–8 минут. Заявки автотеста в реальный список не попадают.</p>
-<select id="only"><option value="">Все ниши</option>${Object.values(CLIENTS).filter(c => !c.hidden).map(c => `<option>${esc(c.name)}</option>`).join("")}</select>
+<select id="only"><option value="">Все ниши</option>${Object.values(CLIENTS).filter(c => !c.hidden || CASES.some(k => k.c === c.id)).map(c => `<option>${esc(c.name)}</option>`).join("")}</select>
 <button id="go">Запустить</button><div id="sum"></div><div id="out"></div></div>
 <script>
 const L=${list},KEY=${JSON.stringify(key)};const out=document.getElementById('out'),sum=document.getElementById('sum'),go=document.getElementById('go');

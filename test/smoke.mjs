@@ -1038,5 +1038,16 @@ r = await call("/altegio", form({ key: "lk", phone: "+7 701 123 45 67" })); t = 
 ok("пробная запись: номер принят только цифрами → страница говорит об этом", t.includes("Пробная запись: создана ✅") && t.includes("только цифрами") && ALT.records.at(-1).phone === "77011234567", t.slice(t.indexOf("Пробная запись")));
 ALT.phoneDigits = false;
 
+// --- живой автотест: сценарии с расписанием Altegio записей не создают
+env.ALTEGIO_LOC_ALT = "2114"; ALT.records.length = 0; ALT.deleted.length = 0; ALT.calls.length = 0;
+geminiQueue = [b => { const u = b.contents.at(-1).parts[0].text;
+  return /Отмените/.test(u) ? "Отменяю.\n[ОТМЕНА]" : /Азамат/.test(u) ? "Записала.\n" + tagAt("Азамат", "10:00") : /первую услугу/.test(u) ? "Хорошо. Как вас зовут и какой у вас номер телефона?" : "Есть мужская стрижка от 6 000 ₸. Завтра свободно в 10:00 и 11:00. На какое время записать?"; }];
+r = await call("/api/selftest?key=lk&i=55"); { const st = await r.json();
+  ok("автотест «запись и отмена» в Altegio проходит, а записей в расписании не создаёт и не удаляет", st.pass === true && ALT.records.length === 0 && ALT.deleted.length === 0 && ALT.calls.some(x => x.startsWith("POST /book_check/")), JSON.stringify([st.t, st.fails, st.transcript && st.transcript.map(x => x.b), ALT.records.length])); }
+r = await call("/selftest?key=lk"); t = await r.text();
+ok("на странице автотеста есть сценарии Altegio", t.includes("Altegio: запись до конца") && t.includes("<option>Тест Altegio</option>"));
+geminiQueue = ["Записала вас на завтра в 10:00 — свободно. Как вас зовут?"]; d = await chat("alt", sid(), "Хочу на стрижку завтра в 10:00");
+ok("ИИ написал «Записала вас… Как вас зовут?» до записи → фраза о записи убрана, вопрос остался", d.reply === "Как вас зовут?", d.reply);
+
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 process.exit(fail ? 1 : 0);
