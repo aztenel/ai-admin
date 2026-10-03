@@ -269,14 +269,15 @@ const getSlots = (c, ctx) => ctx.slots || freeSlots(c, ctx.nowMs);
 // у клиента с расписанием Altegio запись, отмена и перенос описаны в отдельном разделе: общие правила 12 и 14 ему противоречат («добавь [ОТМЕНА]» без подробностей, «оформи новую бронь»)
 const RULES_ALT = RULES.replace(/^12\. [\s\S]*?(?=^13\. )/m, "12. Запись оформляй по правилам раздела «Запись в расписание» ниже.\n").replace(/^14\. .*$/m, "14. Отмену и перенос оформляй по правилам раздела «Запись в расписание» ниже.");
 function systemPrompt(c, ctx) {
+  // имя клиента пришло из строки ИИ с его слов: в подсказку идёт только само имя (cleanName), а не всё, что стояло в поле «Имя»
+  if (ctx.profile && ctx.profile.name) ctx = { ...ctx, profile: { ...ctx.profile, name: cleanName(ctx.profile.name) } };
   const n = local(ctx.nowMs);
   const slots = getSlots(c, ctx).map(s => `- ${s.rel ? s.rel[0].toUpperCase() + s.rel.slice(1) + ", " : ""}${s.label}${s.date ? ` (${s.date})` : ""}: ${s.times.join(", ")}`).join("\n") || "- Свободных окон нет — предложи оставить имя и телефон для обратного звонка.";
   const dates = c.eventDates ? `\n\nСвободные даты для мероприятий (других нет):\n${eventDates(c, ctx.nowMs).map(x => "- " + x).join("\n")}` : "";
   const phoneRule = ctx.phoneKnown || ctx.profile?.phone
     ? "Телефон клиента уже известен, не спрашивай его. В строке заявки пиши «Телефон: указан»."
     : "Затем обязательно спроси номер телефона для подтверждения. Номера телефонов от тебя скрыты: вместо номера в сообщении будет «[телефон указан]» — это значит, что номер получен, в строке заявки пиши «Телефон: указан».";
-  const knownName = cleanName(ctx.profile?.name); // имя пришло из строки ИИ со слов клиента: в подсказку идёт только само имя, а не всё, что стояло в поле
-  const known = [knownName && `имя ${knownName}`, ctx.profile?.phone && "телефон известен", ctx.profile?.booked && (/^запись ещё НЕ/.test(ctx.profile.booked) ? ctx.profile.booked : `уже есть бронь: ${ctx.profile.booked}`)].filter(Boolean).join("; ");
+  const known = [ctx.profile?.name && `имя ${ctx.profile.name}`, ctx.profile?.phone && "телефон известен", ctx.profile?.booked && (/^запись ещё НЕ/.test(ctx.profile.booked) ? ctx.profile.booked : `уже есть бронь: ${ctx.profile.booked}`)].filter(Boolean).join("; ");
   let p = `Ты — AI-администратор компании «${c.name}» (${c.kind}). Цель — ${c.goal}.
 
 Сейчас: ${dayLabel(n)} ${n.getUTCFullYear()}, ${hhmm(n)} по Астане. Компания сейчас ${openNow(c, ctx.nowMs) ? "открыта" : "закрыта"}. График: ${c.hoursText}.
