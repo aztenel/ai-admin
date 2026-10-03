@@ -511,9 +511,9 @@ const P_CUR = new RegExp("^" + P_SP + "*(?:" + P_CUR_SRC + ")", "i");
 const P_CUR_T = new RegExp("^" + P_SP + "*т(?![а-яёәғқңөұүһіa-z])(?!\\.[а-яё])", "i");
 // знак валюты перед числом: «$50», «KZT 12,000». Если перед знаком уже стоит число («6,000 KZT 60 minutes»), знак относится к нему
 const P_CUR_PRE = new RegExp("(?:^|[^\\d \\u00a0\\u202f])" + P_SP + "*(?:[$€]|(?<![a-zа-яё])(?:kzt|usd|eur))" + P_SP + "*$", "i");
-// множитель: «тыс.», «тысяч», «мың», «млн». «к» и «k» — когда стоят вплотную к числу («12к») либо через пробел, но дальше не слово и не число:
-// «12 к.» — цена, а «в 10 к мастеру», «к 22:00 к Ерлану» и «2 к 1» — предлог
-const P_MULT = new RegExp("^(?:" + P_SP + "*(тыс[а-яё]*\\.?|мың[а-яёәғқңөұүһі]*|thousand)|" + P_SP + "*(млн\\.?|миллион[а-яё]*|million|mln(?![a-z]))|([кk])(?![а-яёәғқңөұүһіa-z])|" + P_SP + "+([кk])(?=" + P_SP + "*(?:$|[.,;:!?)»\"”\\n—–-]|" + P_CUR_SRC + ")))", "i");
+// множитель: «тыс.», «тысяч», «мың», «млн». «к» и «k» — когда стоят вплотную к числу («12к»; «дом 10к2» — корпус, «12кг» — мера) либо через пробел,
+// но дальше не слово и не число: «12 к.» — цена, а «в 10 к мастеру», «к 22:00 к Ерлану» и «2 к 1» — предлог
+const P_MULT = new RegExp("^(?:" + P_SP + "*(тыс[а-яё]*\\.?|мың[а-яёәғқңөұүһі]*|thousand)|" + P_SP + "*(млн\\.?|миллион[а-яё]*|million|mln(?![a-z]))|([кk])(?![а-яёәғқңөұүһіa-z\\d])|" + P_SP + "+([кk])(?=" + P_SP + "*(?:$|[.,;:!?)»\"”\\n—–-]|" + P_CUR_SRC + ")))", "i");
 // после числа стоит не валюта, а мера: «10 тыс. км», «от 1000 гостей», «каждые 7 500 км», «2019 года» — это не цена.
 // Часов, дней и месяцев в списке нет: цену называют и «за месяц»
 const P_UNIT = new RegExp("^" + P_SP + "*(?:(?:[–—-]|до|to)" + P_SP + "*\\d[\\d \\u00a0\\u202f.,]*)?" + P_SP + "*(?:%|км|кв\\.|м²|м2|мл|кг|шт|лет(?![а-яё])|год|г\\.|гост|человек|чел\\.|персон|мест(?![а-яё])|балл|раз(?![а-яё])|слов(?![а-яё])|знак|клиент|ученик|адам|қонақ|жыл|km(?![a-z])|kg(?![a-z])|ml(?![a-z])|guests?(?![a-z])|people|persons?(?![a-z])|years?(?![a-z])|seats?(?![a-z]))", "i");
@@ -530,8 +530,8 @@ function priceMark(s, t) {
   if (P_CUR.test(rest) || (!m && t.v >= 1000 && P_CUR_T.test(rest)) || P_CUR_PRE.test(s.slice(Math.max(0, t.at - 8), t.at))) return m ? (m[2] ? 1e6 : 1e3) : 1;
   return m && !P_UNIT.test(rest) ? (m[2] ? 1e6 : 1e3) : 0;
 }
-// год («2026»), цифры телефона и номер записи или заказа — не цена, даже если рядом стоит слово о цене или знак «—» перед ценой
-const notPrice = (s, t, year, spans) => (/^\d{4}$/.test(t.raw) && t.v >= year - 1 && t.v <= year + 5) || spans.some(x => t.at >= x[0] && t.end <= x[1]) || P_NUMBER_OF.test(s.slice(Math.max(0, t.at - 24), t.at));
+// год («2026», «с 2020 по 2024»: десять лет назад — пять вперёд), цифры телефона и номер записи или заказа — не цена, даже если рядом стоит слово о цене или знак «—» перед ценой
+const notPrice = (s, t, year, spans) => (/^\d{4}$/.test(t.raw) && t.v >= year - 10 && t.v <= year + 5) || spans.some(x => t.at >= x[0] && t.end <= x[1]) || P_NUMBER_OF.test(s.slice(Math.max(0, t.at - 24), t.at));
 // число от 1000 без знака валюты: цена, если рядом слово о цене. Мера («км», «гостей») и модель машины — не цена
 function barePrice(s, t, year, spans) {
   if (t.v < 1000 || t.n.includes(".") || notPrice(s, t, year, spans)) return false;
@@ -567,15 +567,23 @@ function factNums(facts) {
   return set;
 }
 const PHONE_LOOSE = /(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g; // всё, что похоже на номер телефона, даже с несуществующим кодом («+7 000 000 00 00»)
-// адрес сайта в ответе: «demo-dent.kz», «kaspi.kz/pay/…». Название сервиса из фактов без пути («Kaspi.kz», когда в фактах есть Kaspi) — не ссылка
-function siteIn(r, facts) {
-  let words = null;
-  for (const m of r.matchAll(/\.(kz|com|ru)\b(\/\S)?/gi)) {
-    words = words || new Set(lowE(facts).match(/[a-zа-яәғқңөұүһі0-9]+/g) || []);
-    const name = lowE((r.slice(Math.max(0, m.index - 64), m.index).match(/[a-zа-яёәғқңөұүһі0-9.-]*$/i) || [""])[0]);
-    if (m[2] || name.length < 3 || !words.has(name)) return true;
+// адреса сайтов и почты в тексте: «demo-dent.kz», «kaspi.kz/pay/…», «info@demo.kz» — целиком, строчными буквами
+function siteToks(s) {
+  const low = lowE(s), out = [];
+  for (const m of low.matchAll(/\.(?:kz|com|ru)\b/g)) {
+    const left = low.slice(Math.max(0, m.index - 80), m.index).match(/[^\s,;()«»"“”<>]*$/)[0], right = low.slice(m.index + m[0].length, m.index + m[0].length + 80).match(/^(?:\/[^\s,;()«»"“”<>]*)?/)[0];
+    out.push((left + m[0] + right).replace(/[.!?:]+$/, ""));
   }
-  return false;
+  return out;
+}
+// есть ли в ответе адрес, которого нет в фактах. Не ссылка: адрес, который слово в слово стоит в фактах («hello@salon.kz»), и название сервиса из фактов
+// с «.kz» без пути («Kaspi.kz», когда в фактах есть Kaspi). Слово, которое в фактах стоит только внутри адреса, названием сервиса не считается: «info@salon.kz» и «salon.kz» — выдумка
+function siteIn(r, facts) {
+  const found = siteToks(r);
+  if (!found.length) return false;
+  const own = new Set(siteToks(facts)), words = new Set();
+  for (const chunk of lowE(facts).split(/\s+/)) if (!/@|\.(?:kz|com|ru)\b/.test(chunk)) for (const w of chunk.match(/[a-zа-яәғқңөұүһі0-9]+/g) || []) words.add(w);
+  return found.some(t => !own.has(t) && !(/^[a-zа-яәғқңөұүһі0-9-]{3,}\.(?:kz|com|ru)$/.test(t) && words.has(t.replace(/\.[a-z]+$/, ""))));
 }
 
 function allowedTimes(c, ctx, userText) {
