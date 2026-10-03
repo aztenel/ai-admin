@@ -4,11 +4,17 @@ import { createHmac } from "node:crypto";
 
 const mem = new Map();
 const puts = new Map(); // сколько раз за прогон записан каждый ключ
-const KVFAIL = { put: null }; // функция (ключ) → true, если запись в хранилище должна упасть
-const KV = { get: async k => mem.get(k) ?? null, put: async (k, v) => { if (KVFAIL.put && KVFAIL.put(k)) throw new Error("KV PUT failed: 429 Too Many Requests"); mem.set(k, v); puts.set(k, (puts.get(k) || 0) + 1); }, delete: async k => { mem.delete(k); } };
+const KVFAIL = { put: null, get: null, delayGet: 0, delayPut: 0 }; // put/get: функция (ключ) → true, если операция с хранилищем должна упасть; delay* — задержка в мс
+const wait = ms => new Promise(s => setTimeout(s, ms));
+const KV = {
+  get: async k => { if (KVFAIL.delayGet) await wait(KVFAIL.delayGet); if (KVFAIL.get && KVFAIL.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return mem.get(k) ?? null; },
+  put: async (k, v) => { if (KVFAIL.delayPut) await wait(KVFAIL.delayPut); if (KVFAIL.put && KVFAIL.put(k)) throw new Error("KV PUT failed: 429 Too Many Requests"); mem.set(k, v); puts.set(k, (puts.get(k) || 0) + 1); },
+  delete: async k => { mem.delete(k); },
+  list: async ({ prefix = "", limit = 1000 } = {}) => ({ keys: [...mem.keys()].filter(k => k.startsWith(prefix)).sort().slice(0, limit).map(name => ({ name })), list_complete: true })
+};
 const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite" };
 
-let geminiQueue = [], calls = { gemini: [], tg: [], wa: [] };
+let geminiQueue = [], calls = { gemini: [], tg: [], wa: [], seq: [] }; // seq — порядок сообщений: «wa» клиенту, «tg» администратору
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, init = {}) => {
   const url = String(u);
@@ -20,8 +26,8 @@ globalThis.fetch = async (u, init = {}) => {
     if (typeof next === "number") return new Response("err", { status: next });
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }] }), { status: 200, headers: { "content-type": "application/json" } });
   }
-  if (url.includes("api.telegram.org")) { calls.tg.push(JSON.parse(init.body).text); return new Response("{}", { status: 200 }); }
-  if (url.includes("graph.facebook.com")) { calls.wa.push(JSON.parse(init.body)); return new Response("{}", { status: 200 }); }
+  if (url.includes("api.telegram.org")) { calls.tg.push(JSON.parse(init.body).text); calls.seq.push("tg"); return new Response("{}", { status: 200 }); }
+  if (url.includes("graph.facebook.com")) { calls.wa.push(JSON.parse(init.body)); calls.seq.push("wa"); return new Response("{}", { status: 200 }); }
   if (url.startsWith("https://api.alteg.io/")) return altStub(url, init);
   throw new Error("unexpected fetch " + url);
 };
@@ -62,6 +68,11 @@ function altData(loc) {
   }
   if (loc === "2032") d.dates = []; // свободных дат нет
   if (loc === "2033") { const t = []; for (let m = 9 * 60 + 15; m <= 20 * 60 + 45; m += 30) t.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`); d.times = { 0: t }; } // плотная сетка 9:15–20:45
+  if (loc === "2104") { // похожие названия: «Стрижка бороды» и «Экспресс-стрижка (30 мин)»
+    const sv = (id, title, price, min) => ({ id, title, category_id: 1, price_min: price, price_max: price, active: 1, seance_length: min * 60 });
+    d.services = [sv(401, "Мужская стрижка", 6000, 60), sv(402, "Стрижка бороды", 4000, 30), sv(403, "Оформление бороды и усов", 5000, 30), sv(404, "Экспресс-стрижка (30 мин)", 4000, 30), sv(405, "Детская стрижка", 4000, 45)];
+  }
+  if (loc === "2105") d.services = []; // в Altegio нет услуг для онлайн-записи
   if (loc === "2034") d.services = Array.from({ length: 160 }, (_, i) => ({ id: 1000 + i + 1, title: "Услуга " + (i + 1), category_id: 1, price_min: 1000, price_max: 1000, active: 1, seance_length: 1800 }));
   return d;
 }
@@ -103,6 +114,7 @@ const ctx = { waitUntil: p => pending.push(p) };
 const call = async (path, init) => worker.fetch(new Request("https://x.test" + path, init), env, ctx);
 const chatIp = async (c, sid, text, ip) => {
   const r = await (await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify({ c, sid, text }) })).json();
+  await Promise.all(pending.splice(0)); // уведомления администратору уходят уже после ответа клиенту — дожидаемся их
   if (process.env.SHOW) console.log(`      [${c}] ${text}\n        → ${r.reply}`); // SHOW=1 node test/smoke.mjs — показать ответы бота
   return r;
 };
@@ -629,7 +641,7 @@ env.ALTEGIO_LOC_ALT = "2044"; ALT.times404 = true; calls.tg.length = 0; s2 = sid
 geminiQueue = ["Свободного времени сейчас нет. Оставьте, пожалуйста, имя и телефон — администратор перезвонит."]; d = await chat("alt", s2, "Есть время?");
 ok("ответ 404 на запрос времени — это «свободного времени нет», а не сбой Altegio", sysOf().includes("Свободных окон нет") && sysOf().includes("Запись в расписание") && !calls.tg.some(x => x.includes("не отвечает")), JSON.stringify(calls.tg));
 geminiQueue = ["Спасибо, Руслан! Администратор перезвонит вам."]; d = await chat("alt", s2, "Руслан, +7 771 000 03 01");
-ok("свободного времени нет, клиент оставил телефон → администратор получает заявку на звонок", !!d.lead && /Перезвонить клиенту/.test(d.lead.service) && calls.tg.some(x => x.includes("Перезвоните клиенту") && x.includes("+77710000301")), JSON.stringify([d.lead, calls.tg]));
+ok("свободного времени нет, клиент оставил телефон → администратор получает заявку на звонок", !!d.lead && d.lead.kind === "callback" && /Перезвонить клиенту/.test(lastLead("alt").service) && calls.tg.some(x => x.includes("Перезвоните клиенту") && x.includes("+77710000301")), JSON.stringify([d.lead, calls.tg]));
 ALT.times404 = false;
 env.ALTEGIO_LOC_ALT = "2032"; calls.tg.length = 0;
 geminiQueue = ["Записала.\n" + tagAt("Азамат", "10:00")]; d = await chat("alt", sid(), "Азамат, +7 771 000 03 02, мужская стрижка завтра в 10:00");
@@ -657,17 +669,7 @@ geminiQueue = ["Записала.\n" + tagAt("Ербол", "11:00")];
 r = await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "10.0.7.7" }, body: JSON.stringify({ c: "alt", sid: s3, text: "Ербол, +7 771 000 05 02, мужская стрижка завтра в 11:00" }) });
 d = r.status === 200 ? await r.json() : {};
 ok("история чата не сохранилась → клиент всё равно получает ответ, администратор — предупреждение", r.status === 200 && /Записала вас/.test(d.reply || "") && calls.tg.some(x => x.includes("Не сохранилась история чата")), JSON.stringify([r.status, d.reply, calls.tg]));
-s3 = sid(); calls.tg.length = 0; KVFAIL.put = k => k === "leads:barber";
-const tagB = name => `Забронировала вас на завтра в 12:00. Администратор подтвердит запись.\n[ЗАЯВКА] Имя: ${name}; Телефон: указан; Услуга: стрижка; Время: завтра, 12:00`;
-geminiQueue = [tagB("Мурат")]; d = await chat("barber", s3, "Мурат, +7 771 000 05 03, стрижка завтра в 12:00");
-ok("список заявок не сохранился, но Telegram настроен → администратор получает и заявку, и предупреждение", !!d.lead && calls.tg.some(x => x.includes("Новая заявка")) && calls.tg.some(x => x.includes("не сохранилась")), JSON.stringify([d.reply, calls.tg]));
-const tgTok = env.TG_TOKEN; delete env.TG_TOKEN; s3 = sid();
-geminiQueue = [tagB("Нуржан")]; d = await chat("barber", s3, "Нуржан, +7 771 000 05 04, стрижка завтра в 12:00");
-ok("список заявок не сохранился и Telegram не настроен → клиента честно просят повторить", !d.lead && /Не получилось сохранить заявку/.test(d.reply), JSON.stringify(d));
 KVFAIL.put = null;
-geminiQueue = [tagB("Нуржан")]; d = await chat("barber", s3, "Нуржан, стрижка завтра в 12:00");
-ok("после сбоя та же заявка создаётся при повторе", !!d.lead && leadsOf("barber").some(l => l.phone === "+77710000504"), JSON.stringify(d));
-env.TG_TOKEN = tgTok;
 
 // похожие имена клиентов
 env.ALTEGIO_LOC_ALT = "2047"; ALT.records.length = 0; ALT.deleted.length = 0; s2 = sid(); calls.tg.length = 0;
@@ -820,6 +822,199 @@ ok("«men's haircut» — это английский, а не казахски�
 geminiQueue = ["Забронировала вас на завтра в 12:00. Администратор подтвердит запись.\n[Заявка] Имя: Ержан; Телефон: указан; Услуга: стрижка; Время: завтра, 12:00"];
 d = await chat("barber", sid(), "Ержан, +7 771 000 10 01, стрижка завтра в 12:00");
 ok("обычный клиент: строка заявки в другом регистре исполняется, а не просто скрывается", !!d.lead && !/аявка\]/.test(d.reply), JSON.stringify(d));
+
+// ================= четвёртая проверка кода: исправления после неё =================
+const dmy = `${D1.slice(8, 10)}/${D1.slice(5, 7)}/${D1.slice(0, 4)}`;
+const tgHas = s => calls.tg.some(x => x.includes(s));
+const profOf = (c, s) => (JSON.parse(mem.get(`h:web:${c}:${s}`) || "null") || { profile: {} }).profile;
+const cancelTag = (name, time) => `[ОТМЕНА] Имя: ${name}; Дата: ${D1}; Время: ${time}`;
+
+// --- обычный клиент (без Altegio): разбор служебной строки
+geminiQueue = ["Забронировала вас на завтра в 12:00. Администратор подтвердит запись.\n[ЗАЯВКА] Имя: Ержан; Телефон: [телефон указан]; Услуга: стрижка; Время: завтра, 12:00"];
+d = await chat("barber", sid(), "Ержан, +7 771 000 20 01, стрижка завтра в 12:00");
+ok("«[телефон указан]» внутри строки заявки не обрывает её: услуга и время на месте", !!d.lead && d.lead.service === "стрижка" && d.lead.time === "завтра, 12:00" && d.lead.phone === "+77710002001", JSON.stringify(d.lead));
+geminiQueue = ["Забронировала.\n[ЗАЯВКА]: Имя: Ержан. Телефон: указан. Услуга: стрижка. Время: завтра, 12:00"];
+d = await chat("barber", sid(), "Ержан, +7 771 000 20 02, стрижка завтра в 12:00");
+ok("строка заявки с двоеточием после метки и точками вместо «;» разбирается", !!d.lead && d.lead.name === "Ержан" && d.lead.service === "стрижка" && d.lead.time === "завтра, 12:00", JSON.stringify(d.lead));
+
+// --- «позовите человека», номера, язык
+d = await chat("barber", sid(), "Позовите человека, я хочу записаться");
+ok("«Позовите человека, я хочу записаться» — это просьба позвать администратора", d.handoff === true, JSON.stringify(d));
+geminiQueue = ["Да, конечно. На какое время?"]; d = await chat("barber", sid(), "Нужно 3 человека записать на завтра");
+ok("«нужно 3 человека записать» — это запись, а не просьба позвать администратора", !d.handoff, JSON.stringify(d));
+s2 = sid(); geminiQueue = ["Спасибо! На какое время вас записать?"]; d = await chat("barber", s2, "Мой телефон и ИИН: 87011234567 990101300123");
+{ const u = calls.gemini.at(-1).contents.at(-1).parts[0].text;
+  ok("телефон и следом ИИН: телефон распознан, ИИН скрыт от ИИ и не сохранён", u.includes("[телефон указан]") && u.includes("[скрыто]") && !u.includes("990101300123") && !mem.get("h:web:barber:" + s2).includes("990101300123") && profOf("barber", s2).phone === "+77011234567", u); }
+s2 = sid(); geminiQueue = ["Спасибо, Азамат! На какое время?"]; d = await chat("barber", s2, "Азамат, 702 111 22 33");
+ok("номер из десяти цифр без «+7» и «8» распознаётся как телефон", profOf("barber", s2).phone === "+77021112233", JSON.stringify(profOf("barber", s2)));
+env.ALTEGIO_LOC_ALT = "2101"; s2 = sid(); geminiQueue = ["Чем могу помочь?"]; d = await chat("alt", s2, "Я звонил вам на +7 700 000 00 40, никто не взял");
+ok("телефон самой компании из фактов не считается номером клиента", !profOf("alt", s2).phone, JSON.stringify(profOf("alt", s2)));
+s2 = sid(); geminiQueue = ["A men's haircut is from 6 000 ₸. Shall I book you?"]; d = await chat("barber", s2, "Hi! How much is a men's haircut?");
+geminiQueue = ["Great. What time suits you?"]; d = await chat("barber", s2, "ok");
+ok("короткий ответ «ok» языка не меняет: чат остаётся английским", sysOf().includes("по-английски"), sysOf().slice(-200));
+ok("в подсказке про язык сказано, что служебные строки остаются по-русски", sysOf().includes("Служебные строки [ЗАЯВКА] и [ОТМЕНА] пиши как в правилах"), sysOf().slice(-200));
+
+// --- хранение заявок: общий список и отдельный ключ на заявку
+const tagC = name => `Забронировала вас на завтра в 12:00. Администратор подтвердит запись.\n[ЗАЯВКА] Имя: ${name}; Телефон: указан; Услуга: стрижка; Время: завтра, 12:00`;
+s3 = sid(); calls.tg.length = 0; KVFAIL.put = k => k === "leads:barber";
+geminiQueue = [tagC("Мурат")]; d = await chat("barber", s3, "Мурат, +7 771 000 05 03, стрижка завтра в 12:00");
+ok("общий список заявок не записался, но заявка сохранена отдельным ключом → клиенту подтверждение, администратору заявка", !!d.lead && tgHas("Новая заявка") && !/Не получилось/.test(d.reply) && !leadsOf("barber").some(l => l.phone === "+77710000503"), JSON.stringify([d.reply, calls.tg]));
+KVFAIL.put = null;
+r = await call("/leads?key=lk"); t = await r.text();
+ok("страница заявок показывает заявку, выпавшую из общего списка, и возвращает её в список", t.includes("+77710000503") && leadsOf("barber").some(l => l.phone === "+77710000503"), String(leadsOf("barber").length));
+s3 = sid(); calls.tg.length = 0; KVFAIL.put = k => k.startsWith("lead");
+geminiQueue = [tagC("Санжар")]; d = await chat("barber", s3, "Санжар, +7 771 000 05 05, стрижка завтра в 12:00");
+ok("не сохранились ни список, ни отдельный ключ, но Telegram настроен → администратор получает и заявку, и предупреждение", !!d.lead && tgHas("Новая заявка") && tgHas("не сохранилась"), JSON.stringify([d.reply, calls.tg]));
+const tgTok = env.TG_TOKEN; delete env.TG_TOKEN; s3 = sid();
+geminiQueue = [tagC("Нуржан")]; d = await chat("barber", s3, "Нуржан, +7 771 000 05 04, стрижка завтра в 12:00");
+ok("заявку сохранить негде и Telegram не настроен → клиента честно просят повторить", !d.lead && /Не получилось сохранить заявку/.test(d.reply), JSON.stringify(d));
+KVFAIL.put = null;
+geminiQueue = [tagC("Нуржан")]; d = await chat("barber", s3, "Нуржан, стрижка завтра в 12:00");
+ok("после сбоя та же заявка создаётся при повторе", !!d.lead && leadsOf("barber").some(l => l.phone === "+77710000504"), JSON.stringify(d));
+env.TG_TOKEN = tgTok;
+{ // шесть разных чатов сохраняют заявки одновременно: в общем списке часть теряется, на странице заявок — все
+  KVFAIL.delayGet = 15; KVFAIL.delayPut = 40;
+  geminiQueue = [b => { const u = b.contents.at(-1).parts[0].text; return tagC((u.match(/Гость[А-Я]/) || ["Гость"])[0]); }];
+  const names = ["ГостьА", "ГостьБ", "ГостьВ", "ГостьГ", "ГостьД", "ГостьЕ"], ps = [];
+  for (let i = 0; i < names.length; i++) { ps.push(chat("barber", sid(), `${names[i]}, +7 771 000 06 0${i + 1}, стрижка завтра в 12:00`)); await new Promise(s => setTimeout(s, 8)); }
+  await Promise.all(ps); KVFAIL.delayGet = 0; KVFAIL.delayPut = 0;
+  const inList = names.filter(n => leadsOf("barber").some(l => l.name === n)).length;
+  r = await call("/leads?key=lk"); t = await r.text();
+  ok("шесть чатов записали заявки одновременно → на странице заявок все шесть (в общем списке до этого были не все)", names.every(n => t.includes(n)) && names.every(n => leadsOf("barber").some(l => l.name === n)), `в списке до открытия страницы: ${inList} из 6`);
+}
+
+// --- страховка от сбоев
+s3 = sid(); calls.tg.length = 0; KVFAIL.get = k => k === "h:web:barber:" + s3;
+geminiQueue = ["Здравствуйте!"];
+r = await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "10.0.8.1" }, body: JSON.stringify({ c: "barber", sid: s3, text: "Здравствуйте" }) });
+d = r.status === 200 ? await r.json() : {}; await Promise.all(pending.splice(0));
+ok("хранилище не отдаёт историю чата → клиент получает ответ, а не ошибку, администратор — сигнал", r.status === 200 && /Администратор ответит/.test(d.reply || "") && tgHas("Сбой бота"), JSON.stringify([r.status, d, calls.tg]));
+KVFAIL.get = null; KVFAIL.put = k => k.startsWith("ip:");
+geminiQueue = ["Здравствуйте! Чем помочь?"];
+r = await call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "10.0.8.2" }, body: JSON.stringify({ c: "barber", sid: sid(), text: "Здравствуйте" }) });
+ok("счётчик сообщений не записался → чат всё равно отвечает", r.status === 200 && (await r.json()).reply === "Здравствуйте! Чем помочь?");
+KVFAIL.put = null;
+
+// --- защита ответа у клиента с расписанием Altegio: часы работы и время окончания услуги
+env.ALTEGIO_LOC_ALT = "2102";
+const guardWhy = async (reply, q = "Вопрос") => { geminiQueue = [reply, reply]; return (await chat("alt", sid(), q)).guard; };
+ok("«Мы открываемся в 9:00» — обычный ответ о часах работы проходит", !(await guardWhy("Мы открываемся в 9:00.", "Во сколько вы открываетесь?")));
+ok("«Сегодня до 21:00» проходит", !(await guardWhy("Сегодня работаем до 21:00, приходите.", "До скольки вы работаете?")));
+ok("«могу записать вас на 21:00» (время закрытия, в расписании его нет) — не проходит", /время 21:00/.test(await guardWhy("Мы работаем, могу записать вас на 21:00.", "Есть время?") || ""));
+ok("«свободно с 13:00 до 14:00» — выдуманное окно не проходит как «время окончания услуги»", /время 14:00/.test(await guardWhy("Завтра свободно с 13:00 до 14:00.", "Есть время?") || ""));
+ok("«стрижка длится час: с 11:00 до 12:00» проходит", !(await guardWhy("Стрижка длится час: с 11:00 до 12:00. Записать вас?", "Сколько длится стрижка?")));
+
+// --- ИИ пишет «записала / отменила / перенесла» без служебной строки
+env.ALTEGIO_LOC_ALT = "2103"; ALT.records.length = 0; ALT.deleted.length = 0;
+geminiQueue = ["Тимур, я внесла вас в расписание на завтра в 10:00."]; d = await chat("alt", sid(), "Тимур, +7 771 000 21 01, завтра в 10:00");
+ok("«я внесла вас в расписание» без строки заявки до клиента не доходит", !/внесла/.test(d.reply) && ALT.records.length === 0, d.reply);
+geminiQueue = ["Когда вы написали я сразу записала вас на 10:00."]; d = await chat("alt", sid(), "Тимур, +7 771 000 21 02, завтра в 10:00");
+ok("«когда вы написали я сразу записала вас» — утверждение не прячется за словом «когда»", !/записала вас на 10:00/.test(d.reply), d.reply);
+geminiQueue = ["Спасибо, Тимур! Имя и телефон записала. На какое время вас записать: 10:00 или 11:00?"]; d = await chat("alt", sid(), "Тимур, +7 771 000 21 03");
+ok("«имя и телефон записала» — обычный ответ не заменяется", /Имя и телефон записала/.test(d.reply), d.reply);
+s2 = sid(); geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00")]; d = await chat("alt", s2, "Тимур, +7 771 000 21 04, мужская стрижка завтра в 10:00");
+geminiQueue = ["Готово, теперь ваша запись на 13:00."]; d = await chat("alt", s2, "Перенесите на 13:00");
+ok("«теперь ваша запись на 13:00» без служебных строк → клиенту сказано, что ничего не изменилось", /ничего не изменилось/.test(d.reply) && ALT.deleted.length === 0, d.reply);
+geminiQueue = ["Перенесу вашу запись, как только выберете время. Свободно 11:00 и 13:00."]; d = await chat("alt", s2, "Хочу перенести запись");
+ok("«перенесу, как только выберете время» — обещание с условием не считается ложным итогом", /Перенесу вашу запись/.test(d.reply) && !d.cancel, d.reply);
+
+// --- отмена: подтверждение, уже отменённая запись, отмена заявки
+calls.tg.length = 0;
+geminiQueue = ["Отменяю.\n[ОТМЕНА]"]; d = await chat("alt", s2, "Отмените запись Армана на 15:00");
+ok("клиент назвал другое имя и время, а ИИ поставил [ОТМЕНА] без подробностей → бот переспрашивает, запись цела", /Отменить вашу запись/.test(d.reply) && ALT.deleted.length === 0 && !d.cancel, d.reply);
+geminiQueue = ["Хорошо, оставляю как есть."]; d = await chat("alt", s2, "нет, не надо");
+ok("ответ «нет» на вопрос об отмене ничего не удаляет", ALT.deleted.length === 0 && (profOf("alt", s2).bookings || []).length === 1, d.reply);
+geminiQueue = ["Отменяю.\n" + cancelTag("Айгуль", "10:00")]; d = await chat("alt", s2, "Отмените мою запись");
+ok("в строке отмены день и время записи, а имя другое → бот переспрашивает, а не удаляет молча", /Отменить вашу запись/.test(d.reply) && ALT.deleted.length === 0, d.reply);
+geminiQueue = ["Хорошо."]; d = await chat("alt", s2, "да, отменить");
+ok("ответ «да, отменить» отменяет именно эту запись, что бы ни написал ИИ", /Отменила вашу запись/.test(d.reply) && ALT.deleted.length === 1 && d.cancelDone === true, JSON.stringify(d));
+calls.tg.length = 0;
+geminiQueue = ["Да, ваша запись на завтра в 10:00 отменена."]; d = await chat("alt", s2, "Точно отменили?");
+ok("«Точно отменили?» после отмены → «эта запись уже отменена», администратора не дёргаем", /уже отменена/.test(d.reply) && !tgHas("которой нет в этом чате"), JSON.stringify([d.reply, calls.tg]));
+ALT.needCode = true; s2 = sid(); calls.tg.length = 0;
+geminiQueue = ["Записала.\n" + tagAt("Марат", "11:00")]; d = await chat("alt", s2, "Марат, +7 771 000 21 05, мужская стрижка завтра в 11:00");
+ALT.needCode = false; const pendLead = d.lead && d.lead.id;
+geminiQueue = ["Отменяю.\n[ОТМЕНА]"]; d = await chat("alt", s2, "Отмените мою заявку");
+ok("записи нет, но есть заявка у администратора → бот отменяет заявку и сообщает администратору", /Отменила вашу заявку/.test(d.reply) && tgHas("Клиент отменил заявку") && (leadsOf("alt").find(l => l.id === pendLead) || {}).status === "отменена", JSON.stringify([d.reply, calls.tg]));
+
+// --- лимит заявок администратору из одного чата — на сутки, а не навсегда
+s2 = sid(); ALT.needCode = true;
+geminiQueue = ["Записала.\n" + tagAt("Ринат", "9:30")]; d = await chat("alt", s2, "Ринат, +7 771 000 21 06, мужская стрижка завтра в 9:30");
+{ const h = JSON.parse(mem.get("h:web:alt:" + s2)); h.profile.adminLeads = { d: iso(Date.now()), n: 6 }; mem.set("h:web:alt:" + s2, JSON.stringify(h)); }
+geminiQueue = ["Записала.\n" + tagAt("Ринат", "13:00")]; d = await chat("alt", s2, "А на 13:00?");
+ok("шесть заявок администратору за сегодня из одного чата → седьмая не создаётся, клиенту честный ответ", !d.lead && /уже получил ваши заявки/.test(d.reply), d.reply);
+{ const h = JSON.parse(mem.get("h:web:alt:" + s2)); h.profile.adminLeads = { d: "2026-01-01", n: 6 }; mem.set("h:web:alt:" + s2, JSON.stringify(h)); }
+geminiQueue = ["Записала.\n" + tagAt("Ринат", "13:00")]; d = await chat("alt", s2, "А на 13:00?");
+ok("на следующий день счётчик заявок сбрасывается: новая заявка доходит до администратора", !!d.lead && /Передала вашу запись администратору/.test(d.reply), d.reply);
+ALT.needCode = false;
+
+// --- услуги: не угадываем
+b1 = await bookS("Стрижка бороды, 30 мин", "2104");
+ok("«Стрижка бороды, 30 мин» — это одна услуга, а не две («30 мин» — не название)", b1.ids === "[402]", JSON.stringify([b1.ids, b1.x.reply]));
+b1 = await bookS("Мужская стрижка и усы", "2104");
+ok("«Мужская стрижка и усы» — такой услуги нет: бот уточняет, а не записывает на одну стрижку", b1.ids === null && /на какую услугу/.test(b1.x.reply), JSON.stringify([b1.ids, b1.x.reply]));
+b1 = await bookS("Мужская стрижка | Стрижка бороды", "2104");
+ok("две услуги через « | » записываются вместе", b1.ids === "[401,402]", JSON.stringify([b1.ids, b1.x.reply]));
+b1 = await bookS("Маникюр", "2105");
+ok("в Altegio нет ни одной услуги → заявка администратору, а не «уточните услугу» с пустым списком", b1.ids === null && /Передала вашу запись администратору/.test(b1.x.reply) && tgHas("нет услуг"), JSON.stringify([b1.x.reply, calls.tg.at(-1)]));
+
+// --- мастера: «не Арман», «любой, лучше Ерлан»
+env.ALTEGIO_LOC_ALT = "2106"; ALT.records.length = 0;
+geminiQueue = ["Записала.\n" + tagM("Данияр", "не Арман", "9:30")]; d = await chat("alt", sid(), "Данияр, +7 771 000 22 01, стрижка завтра в 9:30, только не к Арману");
+ok("«не Арман» → бот уточняет мастера, Армана и «любого свободного» не предлагает", ALT.records.length === 0 && /к какому мастеру/.test(d.reply) && d.reply.includes("Ерлан") && !d.reply.includes("Арман") && !/любой свободный/.test(d.reply), d.reply);
+geminiQueue = ["Записала.\n" + tagM("Данияр", "любой, лучше Ерлан", "9:30")]; d = await chat("alt", sid(), "Данияр, +7 771 000 22 02, стрижка завтра в 9:30, лучше к Ерлану");
+ok("«любой, лучше Ерлан» → запись к Ерлану", ALT.records.length === 1 && ALT.records[0].appointments[0].staff_id === 12, JSON.stringify([d.reply, ALT.records.at(-1)]));
+geminiQueue = ["Записала.\n" + tagM("Данияр", "Ерлан (не Арман)", "9:30")]; d = await chat("alt", sid(), "Данияр, +7 771 000 22 03, стрижка послезавтра в 9:30 к Ерлану, не к Арману");
+ok("«Ерлан (не Арман)» → понятно, что к Ерлану", /у мастера Ерлан|Записала вас/.test(d.reply) && !/к какому мастеру/.test(d.reply), d.reply);
+
+// --- имена латиницей и по-казахски; ключи служебной строки на английском; дата в другом виде
+env.ALTEGIO_LOC_ALT = "2107"; ALT.records.length = 0; ALT.deleted.length = 0; s2 = sid();
+geminiQueue = ["Записала.\n" + tagAt("Timur", "10:00")]; d = await chat("alt", s2, "Timur, +7 771 000 23 01, мужская стрижка завтра в 10:00");
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00")]; d = await chat("alt", s2, "Я точно записан?");
+ok("«Timur» и «Тимур» — один человек: второй записи на то же время нет", ALT.records.length === 1 && /уже записаны/.test(d.reply), d.reply);
+geminiQueue = ["Отменяю.\n" + cancelTag("Тимур", "10:00")]; d = await chat("alt", s2, "Отмените запись");
+ok("запись на «Timur» отменяется по строке с именем «Тимур»", ALT.deleted.length === 1 && /Отменила вашу запись/.test(d.reply), d.reply);
+s2 = sid(); geminiQueue = ["Записала.\n" + tagAt("Арман", "11:00")]; d = await chat("alt", s2, "Арман, +7 771 000 23 02, мужская стрижка завтра в 11:00");
+geminiQueue = ["Болдырамын.\n" + cancelTag("Арманның", "11:00")]; d = await chat("alt", s2, "Арманның жазбасын болдырмаңызшы");
+ok("казахское окончание имени («Арманның») при совпавших дне и времени — тот же Арман", ALT.deleted.length === 2 && d.cancelDone === true, d.reply);
+geminiQueue = [`You're booked.\n[ЗАЯВКА] Name: Daniyar; Phone: provided; Service: Мужская стрижка; Master: any; Date: ${D1}; Time: 13:00`];
+d = await chat("alt", sid(), "Hello, I'm Daniyar, +7 771 000 23 03. Please book a men's haircut tomorrow at 13:00");
+ok("ИИ перевёл названия полей служебной строки на английский → запись всё равно создана", ALT.records.length === 3 && /You're booked/.test(d.reply), d.reply);
+geminiQueue = [`Записала.\n[ЗАЯВКА] Имя: Серик; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${dmy}; Время: 9:30`];
+d = await chat("alt", sid(), "Серик, +7 771 000 23 04, мужская стрижка завтра в 9:30");
+ok("дата в виде ДД/ММ/ГГГГ понимается", ALT.records.length === 4 && ALT.records.at(-1).appointments[0].datetime.startsWith(D1), d.reply);
+
+// --- две строки заявки, одна из них — уже существующая запись
+env.ALTEGIO_LOC_ALT = "2108"; ALT.records.length = 0; s2 = sid();
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00")]; d = await chat("alt", s2, "Тимур, +7 771 000 24 01, мужская стрижка завтра в 10:00");
+geminiQueue = ["Записала.\n" + tagAt("Тимур", "10:00") + "\n" + tagS("Алихан", "Детская стрижка", "11:00")]; d = await chat("alt", s2, "И сына Алихана на детскую в 11:00, и меня не забудьте");
+ok("новая запись и повтор старой в одном ответе: старая упомянута один раз", ALT.records.length === 2 && (d.reply.match(/в 10:00/g) || []).length === 1 && !/уже записаны/.test(d.reply), d.reply);
+
+// --- свободного времени нет; расписание недоступно
+env.ALTEGIO_LOC_ALT = "2109"; ALT.times404 = true; calls.tg.length = 0; s2 = sid();
+geminiQueue = ["Завтра свободно в 10:00. Записать вас?"]; d = await chat("alt", s2, "Есть время?");
+ok("свободного времени нет, а ИИ называет время → клиенту сказано как есть и предложено оставить телефон", /свободного времени в расписании нет/.test(d.reply) && /номер телефона/.test(d.reply) && !/Подобрать вам удобное время/.test(d.reply), d.reply);
+geminiQueue = ["К сожалению, свободного времени на ближайшие дни нет."]; d = await chat("alt", s2, "А на завтра? Мой номер +7 771 000 25 01");
+ok("свободного времени нет, клиент оставил телефон → заявка на звонок, и клиенту сказано, что с ним свяжутся", !!d.lead && d.lead.kind === "callback" && Object.keys(d.lead).sort().join() === "id,kind,phone" && /свяжется с вами|перезвонит/.test(d.reply) && tgHas("Перезвоните клиенту"), JSON.stringify([d.reply, d.lead, calls.tg]));
+ALT.times404 = false;
+env.ALTEGIO_LOC_ALT = "2110"; s2 = sid(); geminiQueue = ["Чем могу помочь?"]; d = await chat("alt", s2, "Здравствуйте, мой номер +7 771 000 25 02");
+env.ALTEGIO_LOC_ALT = "2112"; ALT.down = true; calls.tg.length = 0; lN = leadsOf("alt").length; // другая локация: в памяти бота нет её расписания
+geminiQueue = ["Стрижка занимает около часа."]; d = await chat("alt", s2, "Сколько длится стрижка?");
+ok("расписание недоступно, клиент просто спрашивает о длительности → заявка на звонок не создаётся", leadsOf("alt").length === lN && !tgHas("Перезвоните клиенту"), JSON.stringify([d.reply, calls.tg]));
+geminiQueue = ["Завтра свободно в 10:00 и 11:00. Какое время вам подойдёт?"]; d = await chat("alt", s2, "Запишите меня на завтра");
+ok("расписание недоступно, а ИИ называет время → клиенту «не вижу расписание», администратору заявка на звонок", /не вижу расписание/.test(d.reply) && !/Подобрать вам удобное время/.test(d.reply) && tgHas("Перезвоните клиенту"), JSON.stringify([d.reply, calls.tg]));
+ALT.down = false;
+
+// --- WhatsApp: ответ клиенту уходит раньше уведомлений администратору; «сброс» не стирает записи
+{ const wc = env.WA_CLIENT; env.WA_CLIENT = "alt"; env.ALTEGIO_LOC_ALT = "2111"; ALT.records.length = 0; calls.tg.length = 0; calls.wa.length = 0; calls.seq.length = 0; pending.length = 0;
+  const waSend = async text => { const b2 = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id: "wamid.r5." + Math.random(), from: "77015550077", type: "text", text: { body: text } }] } }] }] });
+    await call("/", { method: "POST", body: b2, headers: { "x-hub-signature-256": "sha256=" + createHmac("sha256", env.APP_SECRET).update(b2).digest("hex") } }); await Promise.all(pending.splice(0)); };
+  geminiQueue = ["Записала.\n" + tagAt("Фарух", "10:00")]; await waSend("Фарух, мужская стрижка завтра в 10:00");
+  ok("WhatsApp: запись создана, ответ клиенту отправлен раньше уведомления администратору", ALT.records.length === 1 && calls.seq.lastIndexOf("wa") >= 0 && calls.seq.indexOf("tg") > calls.seq.lastIndexOf("wa"), calls.seq.join(","));
+  await waSend("сброс");
+  const h = JSON.parse(mem.get("h:wa:alt:77015550077") || "null");
+  ok("WhatsApp: «сброс» начинает разговор заново, но запись в расписании бот помнит", !!h && h.turns.length === 0 && (h.profile.bookings || []).length === 1, JSON.stringify(h));
+  env.WA_CLIENT = wc; }
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 process.exit(fail ? 1 : 0);
