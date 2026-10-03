@@ -275,7 +275,8 @@ function systemPrompt(c, ctx) {
   const phoneRule = ctx.phoneKnown || ctx.profile?.phone
     ? "Телефон клиента уже известен, не спрашивай его. В строке заявки пиши «Телефон: указан»."
     : "Затем обязательно спроси номер телефона для подтверждения. Номера телефонов от тебя скрыты: вместо номера в сообщении будет «[телефон указан]» — это значит, что номер получен, в строке заявки пиши «Телефон: указан».";
-  const known = [ctx.profile?.name && `имя ${ctx.profile.name}`, ctx.profile?.phone && "телефон известен", ctx.profile?.booked && (/^запись ещё НЕ/.test(ctx.profile.booked) ? ctx.profile.booked : `уже есть бронь: ${ctx.profile.booked}`)].filter(Boolean).join("; ");
+  const knownName = cleanName(ctx.profile?.name); // имя пришло из строки ИИ со слов клиента: в подсказку идёт только само имя, а не всё, что стояло в поле
+  const known = [knownName && `имя ${knownName}`, ctx.profile?.phone && "телефон известен", ctx.profile?.booked && (/^запись ещё НЕ/.test(ctx.profile.booked) ? ctx.profile.booked : `уже есть бронь: ${ctx.profile.booked}`)].filter(Boolean).join("; ");
   let p = `Ты — AI-администратор компании «${c.name}» (${c.kind}). Цель — ${c.goal}.
 
 Сейчас: ${dayLabel(n)} ${n.getUTCFullYear()}, ${hhmm(n)} по Астане. Компания сейчас ${openNow(c, ctx.nowMs) ? "открыта" : "закрыта"}. График: ${c.hoursText}.
@@ -818,6 +819,22 @@ const hm = t => {
 };
 const clean = (s, n = 80) => String(s ?? "").replace(/[​-‏⁠﻿­]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 const lowE = s => String(s ?? "").toLowerCase().replace(/ё/g, "е");
+// Имя человека из строки ИИ попадает в подсказку ИИ и в расписание, поэтому от поля «Имя» остаётся только имя: до трёх слов из букв
+// (русских, казахских, латинских; дефис и апостроф — внутри слова), не длиннее 40 знаков. Всё после точки, запятой, цифры, скобки и любого другого знака отбрасывается.
+// «А. Иванов», «Иванов А.С.» — точка после одной буквы считается инициалом. many — имён может быть несколько («Тимур, Алихан», «Тимур + Алихан»): они остаются через запятую
+const NAME_CH = "A-Za-zÀ-ÖØ-öø-ɏА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+const NAME_HEAD = new RegExp("^[^" + NAME_CH + "]+"), NAME_INITIAL = new RegExp("(^|[ ,+&])([" + NAME_CH + "])\\.(?=[ " + NAME_CH + "]|$)", "g");
+const NAME_ONE = new RegExp("^[" + NAME_CH + "'’ʼ\\s-]*"), NAME_MANY = new RegExp("^[" + NAME_CH + "'’ʼ\\s,+&-]*");
+function cleanName(s, many) {
+  const t = clean(s, 200).replace(NAME_HEAD, "").replace(NAME_INITIAL, "$1$2 ").replace(NAME_INITIAL, "$1$2 "); // второй проход — для инициалов подряд: «А.С. Иванов»
+  const one = x => { // слова до первого «слова» без букв: «Тимур - постоянный клиент» → «Тимур»
+    const out = [];
+    for (const w0 of x.trim().split(/\s+/)) { const w = w0.replace(/^['’ʼ-]+|['’ʼ-]+$/g, ""); if (!w || out.push(w) === 3) break; }
+    return out.join(" ").slice(0, 40).replace(/[\s'’ʼ-]+$/, "");
+  };
+  const body = t.match(many ? NAME_MANY : NAME_ONE)[0];
+  return many ? body.split(/\s*[,+&]\s*/).map(one).filter(Boolean).slice(0, 3).join(", ").slice(0, 60).replace(/[\s,'’ʼ-]+$/, "") : one(body);
+}
 // названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
 const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "(").replace(/[\]}>]/g, ")").replace(/;/g, ",").replace(/\|/g, "/")
   .replace(/(\d{1,2}):(\d{2})/g, "$1.$2").replace(/\s*:\s*/g, " — "), n);
@@ -2046,8 +2063,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const pendLive = p => (!isoOk(p.date) || p.date >= today) && (!p.at || nowMs - p.at < 7 * 86400e3);
   const adminCap = () => { const a = saved.profile.adminLeads; return a && a.d === today ? a.n : 0; }; // заявок администратору из этого чата за сегодня
   const adminInc = () => { saved.profile.adminLeads = { d: today, n: adminCap() + 1 }; };
-  // имя из служебной строки: без возраста («Алихан, 7 лет») и знаков в конце
-  const nameOf = v => clean(v, 60).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, "").replace(/[\s.,;:]+$/, "").trim();
+  // имя из служебной строки: без возраста («Алихан, 7 лет») и без всего, что именем не является (cleanName); несколько имён остаются через запятую
+  const nameOf = v => cleanName(clean(v, 200).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, ""), true);
   const ph0 = () => opts.phone || saved.profile.phone || "";
   // обратный звонок: бот записать не может (расписание недоступно, свободного времени нет, запись не оформляется), а телефон клиента известен. Не чаще раза в час на чат
   const callback = why => {
