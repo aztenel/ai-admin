@@ -627,7 +627,9 @@ function checkReply(c, reply, userText, ctx) {
     }
     return { text: r, why: "время " + m[0] };
   }
-  const factPhones = new Set([...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
+  // телефон — только из фактов. Номер в фактах и в ответе ищем одинаково (phonesIn): «8 (701) 123-45-67» и «+7-701-123-45-67» — тот же номер, что «+7 701 123 45 67»
+  const factPhones = new Set([...phonesIn(c.facts).map(p => p.phone), ...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));
+  if (phonesIn(r).some(p => !factPhones.has(p.phone))) return { text: r, why: "телефон" };
   for (const m of r.matchAll(PHONE_LOOSE)) if (!factPhones.has(normPhone(m[0]))) return { text: r, why: "телефон" };
   if ((/https?:\/\/|www\./i.test(r) || siteIn(r, c.facts)) && !/https?:\/\/|www\./.test(c.facts)) return { text: r, why: "ссылка" };
   if (r.length > 600) r = (r.slice(0, 600).match(/^[\s\S]*[.!?]/) || [r.slice(0, 600)])[0];
