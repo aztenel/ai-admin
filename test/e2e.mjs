@@ -167,6 +167,11 @@ try {
   await st.check("#f_ok"); await st.click("#b_make");
   await st.waitForSelector("#list .card");
   ok("рассылка создана и готова к запуску", /готова к запуску/.test(await st.locator("#list .card").first().innerText()));
+  // «Запустить» спрашивает подтверждение: отказ — рассылка не стартует
+  const asked = []; st.removeAllListeners("dialog"); st.once("dialog", d => { asked.push(d.message()); d.dismiss(); });
+  await st.click("#list .card >> text=Запустить"); await st.waitForTimeout(400);
+  ok("«Запустить»: перед стартом вопрос, при отказе рассылка не идёт", asked.length === 1 && /Запустить рассылку «Октябрь: скидка»/.test(asked[0]) && /3 человек/.test(asked[0]) && /готова к запуску/.test(await st.locator("#list .card").first().innerText()), JSON.stringify(asked));
+  st.on("dialog", d => d.accept(d.type() === "prompt" ? "kairat" : undefined));
   await st.click("#list .card >> text=Запустить");
   await st.waitForFunction(() => /идёт/.test(document.querySelector("#list .card").textContent));
   await shot(st, "15-broadcast-running");
@@ -175,6 +180,11 @@ try {
   const doneText = await st.locator("#list .card").first().innerText();
   ok("фоновая отправка: все получили шаблон, страница сама показала итог", /отправлено 3 из 3/.test(doneText) && ["77051110001", "77051110002", "77051110003"].every(x => S.sentTo(x).includes("[шаблон promo_october]")), doneText);
   await shot(st, "16-broadcast-done");
+  await st.route("**/api/bc/list*", r => r.abort());
+  await st.evaluate(() => load());
+  await st.waitForFunction(() => /Нет связи/.test(document.getElementById("info").textContent), null, { timeout: 5000 }).catch(() => {});
+  ok("страница рассылок при сбое запроса пишет об этом, а не молчит", /Нет связи/.test(await st.locator("#info").innerText()));
+  await st.unroute("**/api/bc/list*");
   await wa({ c: "kairat", from: "77051110002", name: "Айгерим", text: "Здравствуйте, хочу по акции" });
   await st.goto(url + "/inbox?c=kairat#wa:77051110002");
   await st.waitForSelector("#msgs .sys");

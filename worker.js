@@ -5384,6 +5384,7 @@ function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'appli
 function tm(ms){var d=new Date(ms+5*3600e3);return ('0'+d.getUTCHours()).slice(-2)+':'+('0'+d.getUTCMinutes()).slice(-2)}
 var ST={ready:'готова к запуску',running:'идёт',paused:'на паузе',done:'завершена',stopped:'остановлена'},QL={GREEN:'высокое',YELLOW:'среднее — есть жалобы',RED:'низкое — много жалоб'};
 function msg(box,cls,lines){box.textContent='';var m=el('div','msg '+cls);lines.forEach(function(x){m.appendChild(el('div','',x))});box.appendChild(m)}
+function fail(e,box){if(e===0)return;msg(box||$('info'),'e',['Нет связи с сервером или он не ответил. Проверьте интернет и попробуйте ещё раз — ничего не потеряно.'])}
 function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('info');L.textContent='';I.textContent='';if(d.error){msg(I,'e',[d.error]);return}
  $('ttl').textContent='Рассылки · '+d.client.name;$('l_in').href='/inbox?c='+C;$('l_st').hidden=!d.owner;
  if(!d.ready)I.appendChild(el('div','msg e',d.why));
@@ -5393,7 +5394,7 @@ function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('i
  var p=el('p','mut','Отправлено за последние 24 часа: '+d.used+'. Просили не писать: '+d.stops+' — им рассылки не уходят.');I.appendChild(p);
  if(d.fail)I.appendChild(el('p','mut','Не доставлено сегодня: '+d.fail.n+' ('+d.fail.codes.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')+').'));
  if(!d.list.length)L.appendChild(el('p','mut','Рассылок пока нет.'));
- live={};d.list.forEach(function(b){var c=el('div','card');c.id='bc'+b.id;L.appendChild(c);fillCard(c,b);if(b.status!=='done'&&b.status!=='stopped')refresh(b.id)});watch()}).catch(function(){})}
+ live={};d.list.forEach(function(b){var c=el('div','card');c.id='bc'+b.id;L.appendChild(c);fillCard(c,b);if(b.status!=='done'&&b.status!=='stopped')refresh(b.id)});watch()}).catch(function(e){fail(e,$('info'))})}
 function refresh(id){return api('/api/bc/get?c='+C+'&id='+id).then(function(d){var c=$('bc'+id);if(!c||d.error)return;var was=live[id];fillCard(c,d.b);if(was&&!live[id])load()}).catch(function(){})}
 function watch(){clearTimeout(poll);if(!Object.keys(live).length)return;poll=setTimeout(function(){if(document.hidden){watch();return}Promise.all(Object.keys(live).map(refresh)).then(watch)},5000)}
 function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;else delete live[b.id];
@@ -5402,25 +5403,26 @@ function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;els
  if(b.note&&b.status==='paused')c.appendChild(el('div','msg e',b.note));if(b.waitNote&&b.status==='running')c.appendChild(el('div','msg w',b.waitNote));
  if(b.fails&&b.fails.length)c.appendChild(el('div','mut','Ошибки: '+b.fails.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')));
  var out=el('div');out.id='o'+b.id;c.appendChild(out);
- var r=el('div','row');function btn(t,a,p){var e=el('button','btn'+(p?' p':''),t);e.onclick=function(){act(b.id,a,e)};r.appendChild(e);return e}
+ var r=el('div','row');function btn(t,a,p){var e=el('button','btn'+(p?' p':''),t);e.onclick=function(){act(b.id,a,e,0,b)};r.appendChild(e);return e}
  if(b.status==='ready')btn('Запустить','start',1);if(b.status==='paused')btn('Продолжить','start',1);if(b.status==='running')btn('Пауза','pause');
  if(b.status==='running'&&b.stalled){c.appendChild(el('div','msg w','Фоновая отправка молчит больше двух минут. Можно отправить порцию вручную.'));btn('Отправить порцию сейчас','tick',1)}
  if(b.status!=='done'&&b.status!=='stopped')btn('Остановить совсем','stop');if(b.failed)btn('Номера с ошибками','bad');if(b.status!=='running')btn('Удалить','delete').className='btn d';
  c.appendChild(r);if(b.status==='running'&&!b.stalled&&!b.waitNote)c.appendChild(el('div','mut','Отправка идёт в фоне — по порции в минуту. Страницу можно закрыть: итог придёт в Telegram.'+(b.last?' Последняя порция: '+tm(b.last)+'.':'')))}
-function act(id,a,btn,force){var o=$('o'+id);
+function act(id,a,btn,force,b){var o=$('o'+id);
+ if(a==='start'&&!force&&b&&!confirm((b.status==='paused'?'Продолжить':'Запустить')+' рассылку «'+b.name+'»? Сообщение получат до '+(b.total-(b.pos||0))+' человек. Остановить можно, но уже отправленное не вернуть.'))return;
  if(a==='stop'&&!confirm('Остановить рассылку совсем? Продолжить её будет нельзя.'))return;if(a==='delete'&&!confirm('Удалить рассылку вместе со списком номеров?'))return;
- if(a==='bad'){api('/api/bc/get?c='+C+'&id='+id+'&bad=1').then(function(d){o.textContent='';var p=el('pre','',(d.bad||[]).join(String.fromCharCode(10))||'нет');o.appendChild(p)}).catch(function(){});return}
+ if(a==='bad'){api('/api/bc/get?c='+C+'&id='+id+'&bad=1').then(function(d){o.textContent='';var p=el('pre','',(d.bad||[]).join(String.fromCharCode(10))||'нет');o.appendChild(p)}).catch(function(e){fail(e,o)});return}
  btn.disabled=true;
  var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',{c:C,id:id,act:a,force:!!force});
- call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(){btn.disabled=false})}
+ call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(e){btn.disabled=false;fail(e,o)})}
 function body(){return{c:C,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
 $('b_new').onclick=function(){$('form').hidden=false;$('b_new').hidden=true;$('form').scrollIntoView()};$('b_cancel').onclick=function(){$('form').hidden=true;$('b_new').hidden=false};
 $('f_file').onchange=function(){var f=this.files&&this.files[0];if(!f)return;if(f.size>3e6){msg($('fout'),'e',['Файл слишком большой. Нужен текстовый файл или CSV со списком номеров.']);return}var r=new FileReader();r.onload=function(){$('f_rec').value=String(r.result||'')};r.readAsText(f)};
 $('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.error){msg($('fout'),'e',[d.error]);return}var l=['Номеров: '+d.valid+(d.named?' · с именем: '+d.named:'')+(d.dup?' · повторов убрано: '+d.dup:'')+(d.stopped?' · просили не писать: '+d.stopped+' (им не уйдёт)':'')];if(d.sample&&d.sample.length)l.push('Первые строки: '+d.sample.join('; '));
  if(d.preview&&d.preview.length)l.push('Подстановки для первого клиента: '+d.preview.join(' | '));if(d.badN)l.push('Не понял строк: '+d.badN+' — например: '+d.bad.join(' | '));if(d.cut)l.push('Список слишком длинный: '+d.cut+' строк в конце не попадут в рассылку.');
- if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l)}).catch(function(){})};
-$('b_test').onclick=function(){var b=body();b.to=$('f_to1').value;var t=$('b_test');t.disabled=true;api('/api/bc/test',b).then(function(d){t.disabled=false;msg($('tout'),d.error?'e':'g',[d.error||d.text])}).catch(function(){t.disabled=false})};
-$('b_make').onclick=function(){var t=$('b_make');t.disabled=true;api('/api/bc/create',body()).then(function(d){t.disabled=false;if(!d.ok){msg($('fout'),'e',(d.errors||[d.error||'Не получилось.']).map(function(x){return'• '+x}));return}$('form').hidden=true;$('b_new').hidden=false;$('f_rec').value='';$('fout').textContent='';load()}).catch(function(){t.disabled=false})};
+ if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l)}).catch(function(e){fail(e,$('fout'))})};
+$('b_test').onclick=function(){var b=body();b.to=$('f_to1').value;var t=$('b_test');t.disabled=true;api('/api/bc/test',b).then(function(d){t.disabled=false;msg($('tout'),d.error?'e':'g',[d.error||d.text])}).catch(function(e){t.disabled=false;fail(e,$('tout'))})};
+$('b_make').onclick=function(){var t=$('b_make');t.disabled=true;api('/api/bc/create',body()).then(function(d){t.disabled=false;if(!d.ok){msg($('fout'),'e',(d.errors||[d.error||'Не получилось.']).map(function(x){return'• '+x}));return}$('form').hidden=true;$('b_new').hidden=false;$('f_rec').value='';$('fout').textContent='';load()}).catch(function(e){t.disabled=false;fail(e,$('fout'))})};
 document.addEventListener('visibilitychange',function(){if(!document.hidden)watch()});
 load();
 </script></body></html>`;
