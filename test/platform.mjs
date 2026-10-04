@@ -635,6 +635,31 @@ section("рассылки");
 
   // --- сигналы Meta
   const signal = (field, value, statuses) => S.waPost("/wa/kairat", [], { secret: "sec-kairat", raw: JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "waba1", changes: [statuses ? { field: "messages", value: { messaging_product: "whatsapp", metadata: { phone_number_id: "900111" }, statuses } } : { field, value }] }] }) });
+  // --- сосуществование: ответ с телефона и история чатов
+  {
+    const coex = (field, value, secret = "sec-kairat") => S.waPost("/wa/kairat", [], { secret, raw: JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "waba1", changes: [{ field, value: { messaging_product: "whatsapp", metadata: { phone_number_id: "900111" }, ...value } }] }] }) });
+    const C = "77015550001", hk = "h:wa:kairat:" + C;
+    await S.waPost("/wa/kairat", text(C, "Здравствуйте, сколько стоит стрижка?"), { secret: "sec-kairat", pnid: "900111" });
+    const echo = { from: "77000000000", to: C, id: "wamid.echo.1", timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: "Добрый день! Стрижка 6000, ждём вас" } };
+    let r = await coex("smb_message_echoes", { message_echoes: [echo] });
+    let h = S.hist("wa", "kairat", C);
+    ok("ответ с телефона попадает в чат как ответ администратора", r.status === 200 && h.turns.some(t => t.by === "admin" && /ждём вас/.test(t.text)), JSON.stringify(h.turns.slice(-2)));
+    ok("после ответа с телефона бот на паузе", h.profile.pausedUntil > Date.now());
+    await coex("smb_message_echoes", { message_echoes: [echo] });
+    ok("повторная доставка того же ответа не дублирует его", S.hist("wa", "kairat", C).turns.filter(t => /ждём вас/.test(t.text)).length === 1);
+    await coex("smb_message_echoes", { message_echoes: [{ ...echo, id: "wamid.echo.2", to: "77015550099" }] });
+    ok("ответ незнакомому номеру чат не ломает", true);
+    const before = S.hist("wa", "kairat", C).turns.length;
+    await coex("smb_message_echoes", { message_echoes: [{ ...echo, id: "wamid.echo.3", text: { body: "подделка" } }] }, "wrong");
+    ok("ответ с телефона без подписи Meta не принимается", S.hist("wa", "kairat", C).turns.length === before);
+    const C2 = "77015550002", t0 = Math.floor(Date.now() / 1000) - 86400 * 3;
+    await coex("history", { history: [{ metadata: { phase: 0, chunk_order: 1, progress: 10 }, threads: [{ id: C2, messages: [{ from: C2, id: "h1", timestamp: String(t0), type: "text", text: { body: "Хочу записаться на пятницу" } }, { from: "77000000000", to: C2, id: "h2", timestamp: String(t0 + 60), type: "text", text: { body: "Хорошо, в 18:00 удобно?" } }] }] }] });
+    h = S.hist("wa", "kairat", C2);
+    ok("история чата из приложения подгружается: реплики клиента и администратора по порядку", h && h.turns.length === 2 && h.turns[0].role === "user" && h.turns[1].by === "admin" && h.turns[0].t < h.turns[1].t, JSON.stringify(h && h.turns));
+    ok("подгруженная история не поднимает чат в «Ждут ответа» и не включает паузу", !h.profile.need && !h.profile.pausedUntil);
+    await coex("history", { history: [{ threads: [{ id: C2, messages: [{ from: C2, id: "h1", timestamp: String(t0), type: "text", text: { body: "Хочу записаться на пятницу" } }] }] }] });
+    ok("повторная подгрузка не дублирует реплики", S.hist("wa", "kairat", C2).turns.length === 2);
+  }
   id = await fresh("Сигнал", 30, 1100);
   await S.cron();
   ok("первая порция ушла", tpls().length === 20);
