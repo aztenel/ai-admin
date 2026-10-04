@@ -192,6 +192,53 @@ try {
   await shot(st, "17-inbox-after-broadcast");
   net.graphReply = null;
 
+  // ---- пульт: ответ уходит тому, чей чат открыт; черновик не переезжает; запоздавший ответ сервера не перерисовывает чужой чат
+  const v = await newPage({ width: 1200, height: 800 });
+  await v.goto(url + "/inbox?c=kairat&key=" + OWNER);
+  await v.click("#t_all"); await v.waitForSelector("#rows .r");
+  const rowOf = n => v.locator(`#rows .r:has(.h b:text-is("${n}"))`);
+  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  await v.fill("#txt", "черновик для Данияра");
+  await rowOf("Айгерим").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Айгерим");
+  ok("черновик ответа не переезжает в другой чат", (await v.inputValue("#txt")) === "");
+  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  ok("…а при возвращении в чат черновик на месте", (await v.inputValue("#txt")) === "черновик для Данияра");
+  let slow = true;
+  await v.route(u => u.pathname === "/api/inbox/chat" && u.searchParams.get("id") === "77051110001", async r => { if (slow) { slow = false; await new Promise(x => setTimeout(x, 1500)); } await r.continue(); });
+  await rowOf("Айгерим").click(); await rowOf("Данияр").click(); await rowOf("Айгерим").click(); // Данияр открыт и не дождались; ответ сервера придёт позже
+  await v.waitForTimeout(2200);
+  ok("запоздавший ответ сервера не перерисовывает чужой чат", (await v.locator("#cname").innerText()) === "Айгерим");
+  await v.unroute(u => u.pathname === "/api/inbox/chat" && u.searchParams.get("id") === "77051110001");
+  const toD0 = S.sentTo("77051110001").length, toA0 = S.sentTo("77051110002").length;
+  await v.fill("#txt", "Ответ Айгерим про запись"); await v.click("#send"); await v.waitForSelector("#msgs .m.a >> text=Ответ Айгерим про запись");
+  ok("ответ ушёл тому, чей чат на экране", S.sentTo("77051110002").length === toA0 + 1 && S.sentTo("77051110001").length === toD0 && /Ответ Айгерим/.test(S.sentTo("77051110002").at(-1)));
+  // отправка уходит адресату на момент нажатия, даже если чат успели сменить до ответа сервера
+  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  await v.fill("#txt", "Данияр, ждём вас");
+  await v.route("**/api/inbox/send", async r => { await new Promise(x => setTimeout(x, 800)); await r.continue(); });
+  await v.click("#send"); await rowOf("Айгерим").click();
+  await v.waitForTimeout(1500);
+  ok("медленная отправка: ответ ушёл Данияру, а экран остался на открытом чате", S.sentTo("77051110001").some(x => /Данияр, ждём вас/.test(x)) && (await v.locator("#cname").innerText()) === "Айгерим" && !(await v.locator("#msgs").innerText()).includes("Данияр, ждём вас"));
+  await v.unroute("**/api/inbox/send");
+  // чат с заявкой: «Готово» не прячет чат, а «отправить клиенту» не предлагается там, где писать нельзя
+  const webSid = [...S.kv.mem.keys()].find(k => k.startsWith("h:web:kairat:")).split(":").pop();
+  await v.goto("about:blank"); await v.goto(url + "/inbox?c=kairat#web:" + webSid); await v.waitForSelector(".rq");
+  ok("чат с сайта: заявка видна, кнопки «Готово — убрать» нет", !(await v.locator("#acts").innerText()).includes("Готово — убрать"));
+  await v.click(".rq >> text=Позвонил и подтвердил");
+  await v.waitForFunction(() => !document.querySelector(".rq"));
+  ok("чат с сайта: «Отправить клиенту и закрыть» не предлагается, заявка закрывается без сообщения", !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть") && S.leads("kairat").some(l => l.status === "выполнена"));
+  await wa({ c: "kairat", from: "77051110009", name: "Тимур", text: "Тимур, +7 705 111 22 77, завтра в 12:00" });
+  { const k = "h:wa:kairat:77051110009", h = S.kv.json(k), old = Date.now() - 26 * 3600e3; h.profile.li = old; await S.kv.api.put(k, JSON.stringify(h), { metadata: { ...(S.kv.meta.get(k) || {}), li: old } }); }
+  await v.goto("about:blank"); await v.goto(url + "/inbox?c=kairat#wa:77051110009"); await v.waitForSelector(".rq");
+  ok("чат старше 24 часов с заявкой: «Готово — убрать» скрыта", !(await v.locator("#acts").innerText()).includes("Готово — убрать"));
+  await v.click(".rq .btn.p");
+  ok("чат старше 24 часов: сразу закрытие без «Отправить клиенту»", !(await v.locator(".rq textarea").count()) && !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть"));
+  await v.route("**/api/inbox/list*", r => r.abort());
+  await v.evaluate(() => list());
+  await v.waitForFunction(() => !document.getElementById("net").hidden, null, { timeout: 5000 }).catch(() => {});
+  ok("пульт при сбое запроса пишет об этом", await v.locator("#net").isVisible());
+  await v.unroute("**/api/inbox/list*");
+
   // ---- проверка запуска: чек-лист и экзамен
   await p.goto(url + "/launch?c=kairat");
   await p.waitForSelector("#checks .ck");

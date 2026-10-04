@@ -4690,7 +4690,10 @@ async function inboxApi(request, env, url, s) {
   }
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
-    if (act === "resolve") h = await logTurns(env.KV, hk, [], pr => { delete pr.need; });
+    if (act === "resolve") {
+      if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке — тогда чат закроется сам." }, 409);
+      h = await logTurns(env.KV, hk, [], pr => { delete pr.need; });
+    }
     else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
@@ -4737,49 +4740,54 @@ body{height:100dvh;display:flex;flex-direction:column}.app{flex:1;min-height:0;d
 .sys{align-self:center;max-width:92%;font-size:13px;line-height:1.4;color:var(--muted);border:1px dashed var(--line);border-radius:10px;padding:6px 10px;white-space:pre-wrap;word-break:break-word}
 .empty{padding:28px 16px;color:var(--muted);text-align:center;line-height:1.5}</style></head><body>
 <div class="top"><b id="ttl">Чаты</b><a id="l_leads" href="/leads">Заявки</a><a id="l_bc" href="/broadcast">Рассылки</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div>
-<div class="app"><div id="listp" class="pane"><div class="bar"><button class="chip on" id="t_need">Ждут ответа</button><button class="chip" id="t_all">Все</button><button class="chip" id="t_web">Сайт</button><button class="chip" id="t_r" title="Обновить">↻</button></div><div id="rows"><div class="empty">Загрузка…</div></div></div>
+<div class="app"><div id="listp" class="pane"><div class="bar"><button class="chip on" id="t_need">Ждут ответа</button><button class="chip" id="t_all">Все</button><button class="chip" id="t_web">Сайт</button><button class="chip" id="t_r" title="Обновить">↻</button></div><div id="net" class="msg e" hidden>Нет связи с сервером — список может быть устаревшим. Проверьте интернет; страница попробует снова сама.</div><div id="rows"><div class="empty">Загрузка…</div></div></div>
 <div id="chatp" class="pane" hidden><div class="chead"><button id="back" aria-label="Назад">←</button><div><b id="cname"></b><div id="cstate" class="mut"></div></div><a id="call" class="btn">Позвонить</a></div>
 <div id="cards"></div><div id="msgs"></div><div id="acts" class="row"></div><div id="comp"><textarea id="txt" placeholder="Сообщение клиенту"></textarea><button class="btn p" id="send">Отправить</button></div><div id="warn" class="mut"></div></div></div>
 <script>
-var $=function(i){return document.getElementById(i)},Q=new URLSearchParams(location.search),C=Q.get('c')||'',F='need',CH='wa',cur=null,chat=null,busy=false;
+var $=function(i){return document.getElementById(i)},Q=new URLSearchParams(location.search),C=Q.get('c')||'',F='need',CH='wa',cur=null,chat=null,busy=false,drafts={};
+function same(a,b){return !!a&&!!b&&a.ch===b.ch&&a.id===b.id}
+function keyOf(x){return x.ch+':'+x.id}
+function netErr(on){var n=$('net');n.hidden=!on}
+function oops(e){busy=false;if(e===0)return;alert('Нет связи с сервером — действие не выполнено, ничего не отправлено. Проверьте интернет и повторите.')}
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
 function tm(t){if(!t)return'';var d=new Date(t),n=new Date(),p=function(x){return(x<10?'0':'')+x};return d.toDateString()===n.toDateString()?p(d.getHours())+':'+p(d.getMinutes()):p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
 var NEED={human:'ждёт ответа',limit:'бот не ответил',media:'прислал файл',ai:'сбой бота',req:'просит отменить или перенести',lead:'новая заявка',call:'ждёт звонка',off:'бот выключен'};
 function pick(){api('/api/studio/list').then(function(d){var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}R.appendChild(el('div','empty','Выберите компанию'));
  d.clients.forEach(function(c){var r=el('div','r');var h=el('div','h');h.appendChild(el('b','',c.name));r.appendChild(h);r.appendChild(el('div','s',c.kind+' · '+c.id));r.onclick=function(){location.href='/inbox?c='+c.id};R.appendChild(r)})})}
-function list(){if(!C){pick();return}api('/api/inbox/list?c='+C+'&f='+(CH==='web'?'all':F)+'&ch='+CH).then(function(d){var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}
+function list(){if(!C){pick();return}api('/api/inbox/list?c='+C+'&f='+(CH==='web'?'all':F)+'&ch='+CH).then(function(d){netErr(false);var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}
  $('ttl').textContent='Чаты · '+d.client.name+(d.client.off?' (бот выключен)':'');$('t_need').textContent='Ждут ответа'+(d.need&&CH!=='web'?' · '+d.need:'');document.title=(d.need?'('+d.need+') ':'')+'Чаты — '+d.client.name;
  if(!d.chats.length){R.appendChild(el('div','empty',CH==='web'?'Чатов с сайта пока нет.':F==='need'?'Никто не ждёт ответа. Все чаты — на вкладке «Все».':'Чатов пока нет. Они появятся, когда клиенты напишут в WhatsApp.'));return}
  d.chats.forEach(function(c){var r=el('div','r'+(cur&&cur.ch===c.ch&&cur.id===c.id?' sel':''));var h=el('div','h');h.appendChild(el('b','',c.nm||c.ph||'Гость сайта'));h.appendChild(el('i','',tm(c.li||c.t)));r.appendChild(h);
   r.appendChild(el('div','s',(c.d==='u'?'':c.d==='a'?'Вы: ':'Бот: ')+c.s));var f=el('div','f');if(c.nd)f.appendChild(el('span','bd n',NEED[c.nd]||'нужен ответ'));if(c.pu)f.appendChild(el('span','bd','бот молчит до '+tm(c.pu)));if(c.st)f.appendChild(el('span','bd','просил не писать'));if(c.bk)f.appendChild(el('span','bd','есть запись'));if(c.nm&&c.ph)f.appendChild(el('span','bd',c.ph));
   if(f.childNodes.length)r.appendChild(f);r.onclick=function(){open(c.ch,c.id)};R.appendChild(r)});
- if(d.more)R.appendChild(el('div','empty','Показаны последние чаты.'))}).catch(function(){})}
-function open(ch,id){cur={ch:ch,id:id};history.replaceState(null,'','#'+ch+':'+id);$('chatp').hidden=false;if(window.innerWidth<860)$('listp').hidden=true;$('msgs').textContent='';$('cards').textContent='';$('cname').textContent='…';load(true)}
-function load(scroll){if(!cur)return;api('/api/inbox/chat?c='+C+'&ch='+cur.ch+'&id='+cur.id).then(function(d){if(d.error){$('cname').textContent=d.error;return}render(d,scroll)}).catch(function(){})}
+ if(d.more)R.appendChild(el('div','empty','Показаны последние чаты.'))}).catch(function(e){if(e!==0)netErr(true)})}
+function saveDraft(){if(cur){var v=$('txt').value;if(v)drafts[keyOf(cur)]=v;else delete drafts[keyOf(cur)]}}
+function open(ch,id){saveDraft();cur={ch:ch,id:id};$('txt').value=drafts[keyOf(cur)]||'';history.replaceState(null,'','#'+ch+':'+id);$('chatp').hidden=false;if(window.innerWidth<860)$('listp').hidden=true;$('msgs').textContent='';$('cards').textContent='';$('cname').textContent='…';load(true)}
+function load(scroll){if(!cur)return;var want=cur;api('/api/inbox/chat?c='+C+'&ch='+want.ch+'&id='+want.id).then(function(d){if(!same(cur,want))return;netErr(false);if(d.error){$('cname').textContent=d.error;return}render(d,scroll)}).catch(function(e){if(e!==0&&same(cur,want)){netErr(true);if($('cname').textContent==='…')$('cname').textContent='Не удалось открыть чат'}})}
 function render(d,scroll){var first=!chat||chat.id!==d.id||chat.ch!==d.ch,grew=!chat||first||d.turns.length!==chat.turns.length;chat=d;
  $('cname').textContent=d.name||d.waName||d.phone||'Гость сайта';var st=[];if(d.phone&&(d.name||d.waName))st.push(d.phone);
  st.push(d.off?'бот выключен — отвечаете вы':d.stop?'клиент просил не писать автоматически':d.paused?'бот молчит до '+tm(d.paused):'отвечает бот');if(d.bookings.length)st.push('запись: '+d.bookings.join('; '));else if(d.pend.length)st.push('заявка: '+d.pend.join('; '));else if(d.booked)st.push(d.booked);
  $('cstate').textContent=st.join(' · ');var cl=$('call');if(d.phone){cl.href='tel:'+d.phone;cl.hidden=false}else cl.hidden=true;
- var K=$('cards');if(!K.querySelector('textarea')){K.textContent='';d.reqs.forEach(function(q){K.appendChild(reqCard(q))})}
+ var K=$('cards');if(!K.querySelector('textarea')){K.textContent='';d.reqs.forEach(function(q){K.appendChild(reqCard(q,d.canSend&&d.open&&d.ch!=='web'))})}
  if(grew){var M=$('msgs'),atEnd=M.scrollHeight-M.scrollTop-M.clientHeight<80;M.textContent='';var pr=d.promo;d.turns.forEach(function(t){if(pr&&t.t>=pr.at){M.appendChild(el('div','sys','Рассылка'+(pr.name?' «'+pr.name+'»':'')+' от '+tm(pr.at)+' (клиент мог ответить на неё): '+pr.text));pr=null}var m=el('div','m '+t.r,t.x);
    if(t.m&&t.m.f){var u='/api/inbox/media?c='+C+'&ch='+d.ch+'&id='+d.id+'&mid='+encodeURIComponent(t.m.id);if(t.m.k==='audio'){var a=el('audio');a.controls=true;a.preload='none';a.src=u;m.appendChild(a)}else if(t.m.k==='image'){var im=el('img');im.loading='lazy';im.alt='фото';im.src=u;m.appendChild(im)}else{var l=el('a','','Открыть файл');l.href=u;l.target='_blank';l.rel='noopener';m.appendChild(el('br'));m.appendChild(l)}}
    m.appendChild(el('small','',(t.r==='a'?'Вы · ':t.r==='b'?'бот · ':'')+tm(t.t)));M.appendChild(m)});if(scroll||first||atEnd)M.scrollTop=M.scrollHeight}
  var A=$('acts');A.textContent='';function b(x,a,p){var e=el('button','btn'+(p?' p':''),x);e.onclick=function(){act(a)};A.appendChild(e)}
- if(d.need)b('Готово — убрать из «Ждут ответа»','resolve');if(d.ch!=='web'&&!d.off){if(d.paused&&!d.stop)b('Вернуть бота','resume');else if(!d.paused)b('Остановить бота на 12 часов','pause')}
+ if(d.need&&!d.reqs.length)b('Готово — убрать из «Ждут ответа»','resolve');if(d.ch!=='web'&&!d.off){if(d.paused&&!d.stop)b('Вернуть бота','resume');else if(!d.paused)b('Остановить бота на 12 часов','pause')}
  $('comp').hidden=!d.canSend;$('warn').textContent=d.ch==='web'?'Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер.':!d.canSend?'Отправка не настроена: WhatsApp этой компании ещё не подключён.':!d.open?'Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения.':'После вашего ответа бот молчит в этом чате 2 часа.';
  $('send').disabled=!d.open;$('txt').disabled=!d.open}
-function reqCard(q){var T={cancel:'Клиент просит отменить запись',change:'Клиент просит перенести запись',callback:'Нужно перезвонить клиенту',lead:'Заявка — подтвердите запись'},c=el('div','rq');c.appendChild(el('b','',T[q.kind]||'Просьба клиента'));
- c.appendChild(el('div','',[q.name,q.service,q.time].filter(Boolean).join(' · ')));if(q.note)c.appendChild(el('div','mut',q.note));var r=el('div','row'),d=el('button','btn p',q.kind==='callback'?'Перезвонил — закрыть':'Сделано');
- d.onclick=function(){if(q.kind==='callback'){act('done',{lead:q.id,text:''});return}r.hidden=true;var ta=el('textarea');var w=(q.service.split('→')[1]||'').trim();
+function reqCard(q,canMsg){var T={cancel:'Клиент просит отменить запись',change:'Клиент просит перенести запись',callback:'Нужно перезвонить клиенту',lead:'Заявка — подтвердите запись'},c=el('div','rq');c.appendChild(el('b','',T[q.kind]||'Просьба клиента'));
+ c.appendChild(el('div','',[q.name,q.service,q.time].filter(Boolean).join(' · ')));if(q.note)c.appendChild(el('div','mut',q.note));var r=el('div','row'),d=el('button','btn p',q.kind==='callback'?'Перезвонил — закрыть':canMsg?'Сделано':q.kind==='lead'?'Позвонил и подтвердил — закрыть':'Сделано — закрыть (клиенту написать нельзя)');
+ d.onclick=function(){if(q.kind==='callback'||!canMsg){act('done',{lead:q.id,text:''});return}r.hidden=true;var ta=el('textarea');var w=(q.service.split('→')[1]||'').trim();
   ta.value=q.kind==='cancel'?'Здравствуйте! Вашу запись отменили. Будем рады видеть вас в другой раз.':q.kind==='change'?'Здравствуйте! Вашу запись перенесли'+(w?': '+w:'')+'. Ждём вас!':'Здравствуйте! Ваша запись подтверждена: '+[q.service,q.time].filter(Boolean).join(', ')+'. Ждём вас!';
   c.appendChild(ta);var r2=el('div','row'),s1=el('button','btn p','Отправить клиенту и закрыть'),s2=el('button','btn','Закрыть без сообщения'),s3=el('button','btn','Отмена');
   s1.onclick=function(){act('done',{lead:q.id,text:ta.value})};s2.onclick=function(){act('done',{lead:q.id,text:''})};s3.onclick=function(){$('cards').textContent='';load(false)};r2.appendChild(s1);r2.appendChild(s2);r2.appendChild(s3);c.appendChild(r2)};r.appendChild(d);c.appendChild(r);return c}
-function done(d){busy=false;if(d.error){alert(d.error);return}if(d.warn)alert(d.warn);$('cards').textContent='';render(d.chat,true);list()}
-function act(a,x){if(busy||!cur)return;busy=true;var b={c:C,ch:cur.ch,id:cur.id,act:a};if(x){b.lead=x.lead;b.text=x.text}api('/api/inbox/act',b).then(done).catch(function(){busy=false})}
-$('send').onclick=function(){var t=$('txt').value.trim();if(!t||busy||!cur)return;busy=true;api('/api/inbox/send',{c:C,ch:cur.ch,id:cur.id,text:t}).then(function(d){if(!d.error)$('txt').value='';done(d)}).catch(function(){busy=false})};
+function done(d,tgt){busy=false;if(d.error){alert(d.error);return}if(d.warn)alert(d.warn);if(tgt&&!same(cur,tgt)){list();return}$('cards').textContent='';render(d.chat,true);list()}
+function act(a,x){if(busy||!cur)return;busy=true;var tgt=cur,b={c:C,ch:tgt.ch,id:tgt.id,act:a};if(x){b.lead=x.lead;b.text=x.text}api('/api/inbox/act',b).then(function(d){done(d,tgt)}).catch(oops)}
+$('send').onclick=function(){var t=$('txt').value.trim();if(!t||busy||!cur)return;busy=true;var tgt=cur;api('/api/inbox/send',{c:C,ch:tgt.ch,id:tgt.id,text:t}).then(function(d){if(!d.error){delete drafts[keyOf(tgt)];if(same(cur,tgt))$('txt').value=''}done(d,tgt)}).catch(oops)};
 $('txt').onkeydown=function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))$('send').onclick()};
-$('back').onclick=function(){cur=null;chat=null;history.replaceState(null,'',location.pathname+location.search);$('chatp').hidden=true;$('listp').hidden=false;list()};
+$('back').onclick=function(){saveDraft();cur=null;chat=null;history.replaceState(null,'',location.pathname+location.search);$('chatp').hidden=true;$('listp').hidden=false;list()};
 function tab(f,ch){F=f;CH=ch;['t_need','t_all','t_web'].forEach(function(i){$(i).className='chip'});$(ch==='web'?'t_web':f==='need'?'t_need':'t_all').className='chip on';list()}
 $('t_need').onclick=function(){tab('need','wa')};$('t_all').onclick=function(){tab('all','wa')};$('t_web').onclick=function(){tab('all','web')};$('t_r').onclick=function(){list();load(false)};
 if(C){$('l_leads').href='/leads?c='+C;$('l_bc').href='/broadcast?c='+C}
