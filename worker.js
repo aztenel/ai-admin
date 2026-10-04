@@ -2815,10 +2815,25 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     const whoAns = !!who0 && !ALT_KEEP.test(text) && !/\?/.test(text) && (!!phoneInText || (lowE(text).match(/[a-zа-яәғқңөұүһі]{3,}/g) || []).some(whoWord));
     const bookLines = whoAns ? [] : tagsOf(raw, "ЗАЯВКА").slice(0, 3), cancelLines = whoAns ? [] : tagsOf(raw, "ОТМЕНА");
     const slots = getSlots(c, ctx), freeT = new Set(slots.flatMap(s => s.times));
+    const noWin = c.booking === "none"; // бот «без записи»: окон нет, время называет клиент, администратор перезвонит и согласует — заявку со временем не отбрасываем
     // Дни, на которые открыта запись через чат: от сегодня до последнего дня свободных окон. Время из строки сверяем с окнами только для них:
     // дата мероприятия у банкетного зала (или день через две недели) окнам ближайших дней не подчиняется — такую заявку подтверждает администратор
     const lastWin = slots.length ? slots[slots.length - 1].date || altDateOf(slots[slots.length - 1].label, nowMs) : "";
     const inWin = (day, src) => !day || !lastWin || day <= lastWin || (day === isoDay(nowMs + 7 * 86400e3) && dowsIn(lowE(src)).includes(local(nowMs).getUTCDay())); // «понедельник», написанный в понедельник, — возможно, сегодня
+    // время в конкретный день: окна этого дня (в выходной, после закрытия и в прошлом окон нет); дальше окон — только день недели и часы работы (ближайшие две недели)
+    const todayIso = isoDay(nowMs), slotDay = sl => sl.date || altDateOf(sl.label, nowMs);
+    const dayOk = (day, t) => {
+      if (noWin) return true;
+      if (!day) return freeT.has(t);
+      if (day < todayIso) return false;
+      if (!c.real) return !!c.hours[new Date(day + "T00:00:00Z").getUTCDay()] && freeT.has(t); // демо-клиенты: «занятость» псевдослучайна и по дням не сверяется — только выходной и общий набор времени
+      const sl = slots.find(x => slotDay(x) === day);
+      if (sl) return sl.times.includes(t);
+      if (day <= lastWin) return false;
+      if (!c.real || day > isoDay(nowMs + 14 * 86400e3)) return true;
+      const h = c.hours[new Date(day + "T00:00:00Z").getUTCDay()];
+      return !!h && mins(t) >= h[0] * 60 && mins(t) < h[1] * 60;
+    };
     const noTime = () => slots[0] ? say("plNoTime", { day: plDay(slots[0], lang, nowMs), times: slots[0].times.slice(0, 2) }) : lang === "ru" ? `${c.safe} Подобрать вам удобное время?` : say("plNoSlots");
     const lab = x => plText(x, lang, nowMs), named = arr => plList(arr, lang, nowMs, owner), ru = x => (x.name ? x.name + ": " : "") + plText(x, "", nowMs);
     // Просьба клиента об отмене или переносе: без неё заявка не отменяется, что бы ни написал ИИ. Действует 15 минут и до трёх уточнений («Отмените запись» → «Какую?» → «на 18:00»)
@@ -2897,7 +2912,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (badName(l.name)) { outs.push(say("plNeedName")); continue; }
       const kin = kinNear(kinTexts, l.name, [...cands.map(x => x.l.name), ...list.map(x => x.name || "")].filter(n => n && !samePerson(n, l.name)), !!owner && !samePerson(l.name, owner) && cands.length === 1);
       if (!l.phone) { if (!P.name && !kin.length) P.name = l.name; outs.push(say("plNeedPhone")); continue; }
-      if (t && inWin(day, l.time) && !freeT.has(t)) { outs.push(noTime()); continue; } // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
+      if (t && (inWin(day, l.time) ? !dayOk(day, t) : !dayOk(day, t) && c.real) && !noWin) { outs.push(noTime()); continue; } // время, которого нет в свободных окнах (его назвал клиент или это час закрытия), — заявку не создаём
       if (adminCap() >= ALT_MAX_ADMIN_LEADS) { outs.push(say("adminBusy")); continue; } // за сегодня из этого чата уже много заявок — новых не плодим
       const old = i === 0 ? moveOld : null;
       const swap = !!twin && !old && had.includes(twin) && PL_SWAP.test(text) && !ADD_WISH.test(text);  // та же запись с другой услугой: «не чистку, а отбеливание»
@@ -3009,7 +3024,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   }
   // ИИ пообещал, что с клиентом свяжется администратор, а ни заявки, ни уведомления об этом нет: с номером — сообщаем администратору, без номера — просим номер
   if (reply === checked.text && !newLeads.length && !notes.length && CB_PROMISE.test(reply) && !(plain && (saved.profile.leads || []).length)) { // у обычного клиента с действующей заявкой администратор и так с ним свяжется
-    if (ph0()) { if (!(alt && callback("бот пообещал клиенту, что с ним свяжется администратор"))) tellOnce("pr:" + histKey, `📞 Бот пообещал клиенту, что с ним свяжется администратор — ${c.name}\n${who}\n${quote}`); }
+    if (ph0() && plain && c.booking === "none" && adminCap() < ALT_MAX_ADMIN_LEADS) { // бот «без записи»: обещанный звонок должен быть виден на странице заявок и в пульте, а не только в Telegram
+      const made = addLead({ name: saved.profile.name || "", service: "перезвонить клиенту", time: "уточнить у клиента", phone: ph0() }, { note: `Бот пообещал клиенту звонок администратора. ${quote}` }, "📞 Клиент ждёт звонка администратора", true);
+      adminInc(); (saved.profile.leads = saved.profile.leads || []).push({ id: made.id, name: saved.profile.name || "", date: "", time: "", service: "", text: "", at: nowMs, sig: "", stub: true });
+    } else if (ph0()) { if (!(alt && callback("бот пообещал клиенту, что с ним свяжется администратор"))) tellOnce("pr:" + histKey, `📞 Бот пообещал клиенту, что с ним свяжется администратор — ${c.name}\n${who}\n${quote}`); }
     else if (!/телефон|номер|phone|number|нөмір/i.test(reply)) reply = join([reply, say("needPhoneCb")]);
   }
   } catch (e) {
@@ -3559,6 +3577,7 @@ async function waText(env, channel, fromDigits, text, send, phone, wx) {
   }
   if (CLIENTS[niche] && CLIENTS[niche].off) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор
     const now = Date.now();
+    if (STOP.test(text)) await markOptout(env, niche, fromDigits); // «стоп» на рассылку записываем и при выключенном боте
     await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
     try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
     return;
@@ -3672,6 +3691,11 @@ async function waCoex(env, wx, field, val) {
     });
   }
 }
+// отказ от рассылок: отметка без срока, не зависит от того, включён ли бот и дошло ли дело до разговора
+async function markOptout(env, client, digits) {
+  if (!client || !/^\d{8,15}$/.test(String(digits))) return;
+  try { await env.KV.put(`optout:${client}:${digits}`, String(Date.now())); } catch (e) { console.log("optout", String(e)); }
+}
 const WA_BATCH = 12; // столько сообщений из одного запроса бот отвечает сам; остальные (всплеск после рассылки) сохраняет в чатах для администратора
 async function handleWhatsApp(body, env, wx = {}) {
   const jobs = [];
@@ -3701,6 +3725,10 @@ async function handleWhatsApp(body, env, wx = {}) {
   await Promise.allSettled([...bySender.values()].map(async list => {
     for (const j of list) { try { await handleWAMessage(env, j.msg, j.wx); } catch (e) { console.log("wa msg", String((e && e.stack) || e)); } }
   }));
+  for (const j of jobs.slice(WA_BATCH)) { // «стоп» из хвоста пачки фиксируем у всех, даже у тех, кого бот не обрабатывает
+    const m = j.msg, t = m.type === "text" ? (m.text?.body || "") : m.type === "button" ? (m.button?.text || "") : "";
+    if (t && STOP.test(t.trim())) { try { const niche = await nicheOf(env, "wa", m.from, j.wx); if (niche) await markOptout(env, niche, String(m.from).replace(/\D/g, "")); } catch (e) { console.log("wa optout", String(e)); } }
+  }
   const rest = jobs.slice(WA_BATCH, WA_BATCH + 60);
   if (rest.length) { // на эти сообщения бот не отвечает (лимиты одного запроса), но они не теряются: лежат в чатах и помечены для администратора
     for (const j of rest) {

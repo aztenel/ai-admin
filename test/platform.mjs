@@ -837,6 +837,64 @@ section("после проверки: безопасность");
   ok("без подписи: с одного адреса — не больше 30 запросов в минуту", codes[200] === 30 && codes[429] === 10, JSON.stringify(codes));
 }
 
+// ====== 9. «Стоп» записывается всегда (бот выключен, пауза, хвост пачки)
+section("отказ от рассылки: выключенный бот, пауза, всплеск");
+{
+  const o = { secret: "sec-kairat", pnid: "900111" }, own = S.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", { ...PASS, isNew: false, off: true });
+  net.reset();
+  await S.waText("/wa/kairat", "77061110001", "Привет", o);
+  await S.waText("/wa/kairat", "77061110001", "СТОП", o);
+  await S.waPost("/wa/kairat", { from: "77061110002", type: "button", button: { text: "Остановить рекламу", payload: "STOP" } }, o);
+  ok("бот выключен: «СТОП» и кнопка «Остановить рекламу» записаны в список «не писать»", S.kv.mem.has("optout:kairat:77061110001") && S.kv.mem.has("optout:kairat:77061110002"), JSON.stringify([...S.kv.mem.keys()].filter(k => k.startsWith("optout:"))));
+  await own.post("/api/studio/save", { ...PASS, isNew: false, off: false });
+  // бот включён, но чат на паузе (администратор ответил)
+  net.reset(); net.ai = ["Здравствуйте!"];
+  await S.waText("/wa/kairat", "77061110003", "Привет", o);
+  const hk = "h:wa:kairat:77061110003", h3 = S.hist("wa", "kairat", "77061110003");
+  S.kv.mem.set(hk, JSON.stringify({ ...h3, profile: { ...h3.profile, pausedUntil: Date.now() + 3600e3 } }));
+  await S.waText("/wa/kairat", "77061110003", "стоп", o);
+  ok("чат на паузе: «стоп» всё равно записан", S.kv.mem.has("optout:kairat:77061110003"));
+  // всплеск: «стоп» в хвосте пачки (после 12-го) и после 72-го
+  const burst = []; for (let i = 0; i < 80; i++) burst.push({ from: "7707" + String(2000000 + i), type: "text", text: { body: i === 14 || i === 75 ? "стоп" : "Привет " + i } });
+  net.reset(); net.ai = ["Здравствуйте!"];
+  await S.waPost("/wa/kairat", burst, o);
+  ok("всплеск: «стоп» из хвоста пачки (15-е и 76-е сообщения) записан", S.kv.mem.has("optout:kairat:" + burst[14].from) && S.kv.mem.has("optout:kairat:" + burst[75].from), JSON.stringify([...S.kv.mem.keys()].filter(k => k.startsWith("optout:kairat:7707"))));
+  ok("всплеск: обычное сообщение из хвоста в список «не писать» не попало", !S.kv.mem.has("optout:kairat:" + burst[16].from));
+}
+
+// ====== 10. Заявка на выходной, после закрытия и в прошлом не проходит как обычная; бот «без записи» не теряет обращение
+section("заявка: выходной, после закрытия, прошлое; бот без записи");
+{
+  const S10 = mk(), own = S10.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", { id: "dl", isNew: true, name: "Дент Люкс", niche: "dent", address: "г. Шымкент, ул. Байтурсынова 78", phone: "+7 705 888 12 12", schedule: "Пн-Пт 9:00-19:00, Сб 9:00-15:00, Вс выходной", booking: "manual", step: "60", bookDays: "3", services: "Консультация — бесплатно\nПроф. чистка 15 000" });
+  let n = 0;
+  const lead = day => `Забронировала вас на ${day}. Администратор подтвердит запись.\n[ЗАЯВКА] Имя: Айдос; Телефон: указан; Услуга: Проф. чистка; Время: ${day}`;
+  const t = async (user, day) => { net.reset(); const r = await S10.chat("dl", "d" + (++n), user + ` Айдос, 8 701 111 22 ${30 + n}`, [lead(day)]); return { r, tg: net.tg.map(x => x.text) }; };
+  let x = await t("Запишите меня завтра, в воскресенье, в 11:00 на чистку.", "воскресенье, 4 октября, 11:00");
+  ok("запись на выходной (воскресенье) заявкой не становится, клиенту — ближайшее рабочее время", !x.r.lead && /Ближайшее свободное/.test(x.r.reply) && !/Забронировала/.test(x.r.reply), JSON.stringify(x.r));
+  x = await t("Запишите меня сегодня в 17:00 на чистку.", "сегодня, 17:00");
+  ok("запись на время после закрытия (суббота до 15:00) — не заявка", !x.r.lead && /Ближайшее свободное/.test(x.r.reply), JSON.stringify(x.r));
+  x = await t("Запишите меня сегодня на 10:00 на чистку.", "сегодня, 10:00");
+  ok("запись на время, которое уже прошло — не заявка", !x.r.lead && /Ближайшее свободное/.test(x.r.reply), JSON.stringify(x.r));
+  x = await t("Запишите на следующую субботу в 18:00.", "суббота, 10 октября, 18:00");
+  ok("суббота через неделю после закрытия — не заявка", !x.r.lead, JSON.stringify(x.r));
+  x = await t("Запишите меня в понедельник в 10:00.", "понедельник, 5 октября, 10:00");
+  ok("обычная запись в рабочее время проходит", !!x.r.lead && /Забронировала/.test(x.r.reply), JSON.stringify(x.r));
+  x = await t("Запишите меня сегодня в 14:00 на чистку.", "сегодня, 14:00");
+  ok("время сегодня, которое есть в окнах, проходит", !!x.r.lead, JSON.stringify(x.r));
+
+  // бот «без записи»: обращение со временем не теряется
+  await own.post("/api/studio/save", { id: "zal", isNew: true, name: "Алтын Орда", niche: "other", kind: "банкетный зал", address: "Астана, шоссе Алаш 24", phone: "+7 702 111 00 99", schedule: "ежедневно с 10:00 до 20:00", booking: "none", services: "Оформление зала от 150 000\nМеню стандарт — 12 000" });
+  const z = async (user, ai) => { net.reset(); const r = await S10.chat("zal", "z" + (++n), user, ai); return { r, tg: net.tg.map(x => x.text) }; };
+  x = await z("Здравствуйте, хотим той 24 октября на 150 человек, начало в 18:00. Меня зовут Асхат, 8 701 555 66 77", "Спасибо, Асхат! Передала заявку администратору — он перезвонит и подтвердит дату.\n[ЗАЯВКА] Имя: Асхат; Телефон: указан; Услуга: той, 150 гостей; Время: 24 октября, 18:00");
+  ok("бот без записи: обращение со временем → заявка и уведомление", !!x.r.lead && S10.leads("zal").length === 1 && x.tg.some(m => /Новая заявка/.test(m)), JSON.stringify([x.r, x.tg]));
+  x = await z("Хочу посмотреть зал завтра в 15:00. Асхат, 8 701 555 66 80", "Хорошо, Асхат! Передала администратору, он перезвонит.\n[ЗАЯВКА] Имя: Асхат; Телефон: указан; Услуга: просмотр зала; Время: завтра, 15:00");
+  ok("бот без записи: «завтра в 15:00» → заявка", !!x.r.lead && S10.leads("zal").length === 2, JSON.stringify([x.r, x.tg]));
+  x = await z("Хотим юбилей 7 ноября на 60 человек. Сауле, 8 705 000 11 22", "Спасибо, Сауле! Администратор перезвонит вам и подтвердит дату.");
+  ok("бот без записи: ИИ взял имя и телефон без служебной строки → заявка в списке или чат помечен", S10.leads("zal").length >= 3 || (S10.kv.meta.get("h:web:zal:z" + n) || {}).nd, JSON.stringify([x.r, S10.leads("zal").length, S10.kv.meta.get("h:web:zal:z" + n)]));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
