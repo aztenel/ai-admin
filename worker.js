@@ -3931,7 +3931,7 @@ go.disabled=false};
 }
 
 function chatPage(id, c) {
-  const cfg = JSON.stringify({ id, name: c.name, greeting: c.greeting, chips: c.chips }).replace(/</g, "\\u003c");
+  const cfg = JSON.stringify({ id, name: c.name, greeting: c.greeting, chips: c.chips, real: !!c.real }).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(c.name)} — AI-администратор</title>
@@ -3977,7 +3977,7 @@ if(d.cancel&&!rq)card(d.cancelDone?'Запись отменена':'Просьб
 L.forEach(l=>l.kind==='callback'?card('Администратор перезвонит вам',[['Телефон',l.phone]]):l.kind?card('Просьба передана администратору',[['Телефон',l.phone]]):card(l.altegio&&l.altegio.record_id?'Запись создана в расписании':'Новая заявка передана администратору',[['Имя',l.name],['Телефон',l.phone],['Услуга',l.service],['Время',l.time]]));
 chips((d.offer||[]).map(x=>'В '+x))}
 catch(e){typing.remove();add('b','Нет связи, попробуйте ещё раз.')}busy=false}
-function intro(){ch.innerHTML='';note('Демо. Компания и цены условные. Напишите как клиент и посмотрите, как AI записывает.');add('b',C.greeting)}
+function intro(){ch.innerHTML='';if(!C.real)note('Демо. Компания и цены условные. Напишите как клиент и посмотрите, как AI записывает.');add('b',C.greeting)}
 async function start(){intro();chips(C.chips);
 try{const r=await fetch('/api/history?c='+C.id+'&sid='+encodeURIComponent(sid));const d=await r.json();
 if(d.turns&&d.turns.length){d.turns.forEach(t=>add(t.role==='user'?'u':'b',t.text,null,''));chips([])}}catch(e){}}
@@ -4022,7 +4022,7 @@ const dayIdx = w => { w = lowE(w).replace(/[^a-zа-я]/g, ""); return w ? DAY_KE
 function parseSchedule(src) {
   const hours = [undefined, undefined, undefined, undefined, undefined, undefined, undefined], errors = [];
   const T = "(\\d{1,2})(?:[:.](\\d{2}))?", RANGE = new RegExp("(?:(?<![а-яё])с\\s+)?" + T + "\\s*(?:[–—-]|до|по)\\s*" + T, "i");
-  const text = String(src || "").replace(/\r/g, "").trim();
+  const text = String(src || "").replace(/\r/g, "").trim().replace(/(\d(?::\d{2})?)\s+(?=(?:пн|вт|ср|чт|пт|сб|вс|пон|втор|сред|четв|пятн|субб|воскр|будн|выходн)[а-яё]*(?![а-яё]))/gi, "$1; ");
   if (!text) return { hours: hours.map(() => null), text: "", errors: ["график работы не указан"], missing: [] };
   // куски: по «;» и переводам строк; запятая делит, только если после неё снова идут дни («Пн–Пт 10–20, Сб 10–18»)
   const parts = [], DAYW = /^\s*(?:с\s+)?(?:пн|вт|ср|чт|пт|сб|вс|пон|втор|сред|четв|пятн|субб|воскр|будн|выходн|ежедн|кажд)/i, DONE = /выходн(ой|ые|ых)?\s*$|закрыт|круглосуточно/;
@@ -4039,7 +4039,9 @@ function parseSchedule(src) {
     if (!m && !off && !all) { errors.push(`не понял время в «${part}» — напишите, например, «Пн–Пт 10:00–20:00»`); continue; }
     const daysText = (m ? low.slice(0, m.index) : low.replace(/выходн(ой|ые|ых)?\s*$|закрыто?|не\s+работа\S*|круглосуточно|24\s*часа|24\/7/g, " ")).replace(/[\s:,–—-]+$/, "").trim();
     let days = [];
-    if (!daysText || /ежедневно|каждый\s+день|без\s+выходных|все\s+дни/.test(daysText)) days = [0, 1, 2, 3, 4, 5, 6];
+    const kr = /кроме\s+([а-яё\s,и]+)$/.exec(daysText);
+    if (kr) { const ex = kr[1].split(/[\s,]+и\s+|[\s,]+/).filter(Boolean).map(dayIdx); if (ex.some(d => d < 0)) { errors.push(`не понял дни после «кроме» в «${part}»`); continue; } days = [0, 1, 2, 3, 4, 5, 6].filter(d => !ex.includes(d)); }
+    else if (!daysText || /ежедневно|каждый\s+день|без\s+выходных|все\s+дни/.test(daysText)) days = [0, 1, 2, 3, 4, 5, 6];
     else if (/будн/.test(daysText)) days = [1, 2, 3, 4, 5];
     else if (/^выходн/.test(daysText)) days = [6, 0];
     else {
@@ -4078,7 +4080,7 @@ function parseSchedule(src) {
 }
 
 // ---- разбор услуг: по строке на услугу — «Мужская стрижка — 6000 — 60», «Чистка от 20 000 ₸», «Окрашивание 15000-30000, 2 часа», «Консультация — бесплатно»
-const numOf = s => { let t = String(s || "").replace(/[\s ]/g, ""); const k = /(к|k|тыс\.?)$/i.test(t); t = t.replace(/(к|k|тыс\.?)$/i, "").replace(/[.,](?=\d{3}(\D|$))/g, ""); const n = Math.round(parseFloat(t.replace(",", "."))); return isFinite(n) ? (k ? n * 1000 : n) : NaN; };
+const numOf = s => { let t = String(s || "").replace(/[\s ]/g, ""); const k = /(к|k|тыс\.?)$/i.test(t); t = t.replace(/(к|k|тыс\.?)$/i, "").replace(/[.,](?=\d{3}(\D|$))/g, ""); const f = parseFloat(t.replace(",", ".")); const n = Math.round(k ? f * 1000 : f); return isFinite(n) ? n : NaN; };
 function parseServices(src) {
   const list = [], errors = [], seen = new Set();
   const lines = String(src || "").replace(/\r/g, "").split("\n").map(x => x.replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, "").trim()).filter(Boolean);
@@ -4089,6 +4091,7 @@ function parseServices(src) {
     const dm = /[\s,;—–-]+(\d+(?:[.,]\d)?)\s*(минут[аы]?|мин\.?|м\.?|час(?:а|ов)?|ч\.?)\s*$/i.exec(rest);
     if (dm) { const v = parseFloat(dm[1].replace(",", ".")); minutes = /^(ч|час)/i.test(dm[2]) ? Math.round(v * 60) : Math.round(v); rest = rest.slice(0, dm.index); }
     else { const d3 = /\s+[—–-]\s+(\d{1,3})\s*$/.exec(rest); if (d3 && /\d[\d\s ]*(?:₸|тг|тенге|т\.?)?\s*$/i.test(rest.slice(0, d3.index)) && /[—–-]\s*(?:от\s*)?\d/.test(rest.slice(0, d3.index))) { minutes = +d3[1]; rest = rest.slice(0, d3.index); } }
+    if (!minutes) { const g = /^(.*\S\s+\d{3,}(?:\s*(?:₸|тг|тенге))?)\s+(\d{2,3})\s*$/i.exec(rest); if (g && !/\d[\s\u00a0]\d{3}\s*$/.test(g[1].slice(-8)) && +g[2] >= 10 && +g[2] <= 360) { minutes = +g[2]; rest = g[1]; } }
     rest = rest.replace(/[\s,;—–-]+$/, "");
     // цена в конце: «6000», «от 6 000 ₸», «6000–8000 тг», «6к», «бесплатно»
     let min = null, max = null, from = false, name = rest, unit = "";
@@ -4097,7 +4100,7 @@ function parseServices(src) {
     const um = /\d\s*(?:₸|тг\.?|тенге|kzt)?\s+((?:за|в)\s+[\p{L}\d ]{2,24}|\/\s*[\p{L}]{2,12})\s*$/iu.exec(rest); // «от 300 000 ₸ за зуб», «5000 в месяц», «3000/час»
     if (um && !/^(?:за|в)\s+\d+\s*(?:мин|час|ч)/i.test(um[1])) { unit = um[1].replace(/\s+/g, " ").trim(); rest = rest.slice(0, rest.length - um[1].length).trim(); name = rest; }
     const free = /[\s—–:-]+(бесплатно|free|0\s*(?:₸|тг|тенге)?)\s*$/i.exec(rest);
-    const pm = /(?:^|[\s—–:=-]+)(от\s*)?(\d[\d\s .,]*(?:к|k|тыс\.?)?)\s*(?:₸|тг\.?|тенге|kzt|т\.?)?(?:\s*(?:[–—-]|до)\s*(\d[\d\s .,]*(?:к|k|тыс\.?)?)\s*(?:₸|тг\.?|тенге|kzt|т\.?)?)?\s*$/i.exec(rest);
+    const pm = /(?:^|[\s—–:=-]+)(от\s*)?(\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:к|k|тыс\.?)?|\d{1,3}(?:[\s\u00a0]\d{3})+\s*(?:к|k|тыс\.?))\s*(?:₸|тг\.?|тенге|kzt|т\.?)?(?:\s*(?:[–—-]|до)\s*(\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:к|k|тыс\.?)?|\d{1,3}(?:[\s\u00a0]\d{3})+\s*(?:к|k|тыс\.?))\s*(?:₸|тг\.?|тенге|kzt|т\.?)?)?\s*$/i.exec(rest);
     if (free) { min = 0; max = 0; name = rest.slice(0, free.index); }
     else if (pm && pm.index > 0) {
       min = numOf(pm[2]); max = pm[3] ? numOf(pm[3]) : min; from = !!pm[1];
@@ -4107,6 +4110,7 @@ function parseServices(src) {
     }
     name = altText(name.replace(/[\s—–:=-]+$/, ""), 80);
     if (!name || !/\p{L}/u.test(name)) { errors.push(`услуги, строка ${no}: не вижу названия услуги в «${line}»`); return; }
+    if (min === null && !noPrice && /\d{3,}/.test(name)) { errors.push(`услуги, строка ${no}: не понял цену в «${line}» — напишите «Название — цена» (например «Уборка — от 300 ₸»)`); return; }
     if (min !== null && min > 0 && min < 100) { errors.push(`услуги, строка ${no}: цена ${min} ₸ выглядит ошибкой — «${line}»`); return; }
     if (minutes && (minutes < 5 || minutes > 720)) { errors.push(`услуги, строка ${no}: длительность ${minutes} мин выглядит ошибкой`); return; }
     const key = lowE(name);
@@ -4219,7 +4223,7 @@ async function syncClients(env, force) {
   for (const id of DYN.ids) if (!next.includes(id)) delete CLIENTS[id];
   DYN.ids = next; DYN.raw = raw;
 }
-async function loadCfgs(env) { try { return JSON.parse((await env.KV.get("cfg:all")) || "{}") || {}; } catch (e) { return {}; } }
+async function loadCfgs(env) { return JSON.parse((await env.KV.get("cfg:all")) || "{}") || {}; } // при сбое чтения бросает ошибку: нельзя сохранять поверх «пустого» списка
 
 // ================= ВХОД: владелец сервиса и сотрудники клиентов =================
 // Вход по ключу один раз, дальше — cookie (30 дней). Ключ в адресе страницы оставлять не нужно.
