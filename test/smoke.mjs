@@ -162,7 +162,8 @@ r = await call("/nothing");
 ok("чужой путь → 404", r.status === 404);
 
 // 2. доступы
-ok("/leads без ключа → 403", (await call("/leads")).status === 403);
+{ const r0 = await call("/leads", { redirect: "manual" }); ok("/leads без ключа и без входа → страница входа, заявок не видно", r0.status === 303 && /^\/login\?next=%2Fleads/.test(r0.headers.get("location") || "") && !(await r0.text()).includes("Заявки")); }
+ok("/leads с неверным ключом → 403", (await call("/leads?key=wrong-key-1")).status === 403);
 ok("/diag без ключа → 403", (await call("/diag")).status === 403);
 ok("/selftest без ключа → 403", (await call("/selftest")).status === 403);
 r = await call("/selftest?key=lk"); t = await r.text();

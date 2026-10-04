@@ -3188,6 +3188,12 @@ async function notify(env, text, clientId) { // → true, если хотя бы
 }
 // ================= лимит сессий на IP =================
 const burst = new Map();
+const hooks = new Map(); // вебхук без подписи: запросов в минуту с адреса
+const hookBurst = request => {
+  const ip = ipKey(request.headers.get("cf-connecting-ip") || "local"), now = Date.now(), b = (hooks.get(ip) || []).filter(t => now - t < 60e3);
+  b.push(now); hooks.set(ip, b); if (hooks.size > 2000) hooks.clear();
+  return b.length > 30;
+};
 async function tooMany(request, env, c, sid) {
   const ip = ipKey(request.headers.get("cf-connecting-ip") || "local");
   const now = Date.now(), b = (burst.get(ip) || []).filter(t => now - t < 60e3);
@@ -3340,7 +3346,13 @@ export default {
 };
 async function route(request, env, ctx) {
     const url = new URL(request.url), P = url.pathname, M = request.method === "HEAD" ? "GET" : request.method; // HEAD — так проверяют ссылки Meta и другие сервисы
-    const authed = () => leadsKey(env) && url.searchParams.get("key") === leadsKey(env);
+    // владелец: cookie после входа либо ключ в адресе (с ограничением числа неверных попыток) → true, false или готовый ответ «подождите»
+    const owner = async key => {
+      const s = await sessionRead(env, request);
+      if (s && s.role === "owner") return true;
+      const g = await keyGate(request, env, key === undefined ? url.searchParams.get("key") : key, [leadsKey(env)]);
+      return g === -2 ? tooManyKeys() : g === 0;
+    };
     try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } // боты клиентов из хранилища (паспорта) — раз в минуту
 
     if (M === "GET" && url.searchParams.get("hub.mode") === "subscribe") {
@@ -3348,12 +3360,14 @@ async function route(request, env, ctx) {
         ? new Response(url.searchParams.get("hub.challenge")) : new Response("Wrong verify token", { status: 403 });
     }
     if (M === "GET" && P === "/leads") {
-      if (authed()) return html(await leadsPage(env, hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : null));
-      const c = url.searchParams.get("c"), ck = hasClient(c) && env["KEY_" + c.toUpperCase()];
-      if (ck && url.searchParams.get("key") === ck) return html(await leadsPage(env, c));
+      const c = url.searchParams.get("c"), key = url.searchParams.get("key");
       const s = await sessionRead(env, request); // вход по cookie: владелец видит всех (или одного — ?c=), сотрудник — только своего клиента
-      if (s) return page(await leadsPage(env, s.role === "staff" ? s.cid : hasClient(c) ? c : null));
-      return forbid();
+      if (s) return page(await leadsPage(env, s.role === "staff" ? s.cid : hasClient(c) ? c : null, s));
+      if (!key) return new Response(null, { status: 303, headers: { location: "/login?next=" + encodeURIComponent(P + url.search), "cache-control": "no-store" } }); // без входа — на страницу входа, а не «Forbidden»
+      const g = await keyGate(request, env, key, [leadsKey(env), hasClient(c) && env["KEY_" + c.toUpperCase()]]);
+      if (g === -2) return tooManyKeys();
+      if (g < 0) return forbid();
+      return html(await leadsPage(env, g === 0 ? (hasClient(c) ? c : null) : c));
     }
     // ---- вход и страница владельца
     if (P === "/login" && (M === "GET" || M === "POST")) return handleLogin(request, env, url);
@@ -3408,21 +3422,25 @@ async function route(request, env, ctx) {
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
-    if (M === "GET" && P === "/diag") return authed() ? text(await diag(env)) : forbid();
+    if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? text(await diag(env)) : a || forbid(); }
     if (P === "/altegio" && (M === "GET" || M === "POST")) { // проверка расписания; POST — пробная запись с удалением
       let q = { key: url.searchParams.get("key"), c: url.searchParams.get("c") || "", loc: url.searchParams.get("loc") || "", phone: "" };
       if (M === "POST") { try { const f = await request.formData(); q = { key: f.get("key"), c: String(f.get("c") || ""), loc: String(f.get("loc") || ""), phone: String(f.get("phone") || "") }; } catch (e) { q.key = null; } }
-      if (!leadsKey(env) || q.key !== leadsKey(env)) return forbid();
-      return html(altPage(await altDiag(env, q.c, q.loc, q.phone), q.key, q.c, q.loc));
+      if (M === "POST" && !sameOrigin(request, url)) return forbid(); // пробную запись запускает только своя страница
+      const a = await owner(q.key);
+      if (a !== true) return a || forbid();
+      return html(altPage(await altDiag(env, q.c, q.loc, q.phone), q.key || "", q.c, q.loc));
     }
-    if (M === "GET" && P === "/selftest") return authed() ? html(selftestPage(url.searchParams.get("key"))) : forbid();
+    if (M === "GET" && P === "/selftest") { const a = await owner(); return a === true ? html(selftestPage(url.searchParams.get("key") || "")) : a || forbid(); }
     if (M === "POST" && P === "/api/selftest") {
       let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
-      if (!leadsKey(env) || b.key !== leadsKey(env)) return forbid();
+      const a = await owner(b.key);
+      if (a !== true) return a || forbid();
       return json(await runCase(env, b.i === undefined || b.i === null || b.i === "" ? -1 : +b.i));
     }
     if (request.method === "GET" && P === "/api/selftest") { // один сценарий автотеста по ссылке: ?key=…&i=номер (HEAD — так ссылки проверяют мессенджеры — сценарий не запускает)
-      if (!authed()) return forbid();
+      const a = await owner();
+      if (a !== true) return a || forbid();
       const i = url.searchParams.get("i");
       return json(await runCase(env, i === null || i === "" ? -1 : +i)); // без номера сценарий не запускаем
     }
@@ -3441,15 +3459,16 @@ async function route(request, env, ctx) {
       if (body) ctx.waitUntil(handleGreen(body, env, url.origin).catch(err => console.log("ga error", String(err))));
       return new Response("OK");
     }
-    if (M === "POST") { // WhatsApp Cloud API (Meta)
+    if (M === "POST" && (P === "/" || P === "/webhook")) { // WhatsApp Cloud API (Meta), общий номер воркера. Вебхуки клиентов со своим номером — /wa/<id>
+      if (!env.WA_TOKEN) return new Response("Not found", { status: 404 }); // общий номер не настроен — принимать нечего (иначе посторонний мог бы засорять хранилище поддельными «сообщениями»)
       const raw = await request.text();
-      if (env.APP_SECRET && !(await metaSigOk(env.APP_SECRET, raw, request.headers.get("x-hub-signature-256")))) {
-        return new Response("Bad signature", { status: 403 });
-      }
+      if (env.APP_SECRET) { if (!(await metaSigOk(env.APP_SECRET, raw, request.headers.get("x-hub-signature-256")))) return new Response("Bad signature", { status: 403 }); }
+      else if (hookBurst(request)) return new Response("Too many requests", { status: 429 }); // без подписи Meta: не больше 30 запросов в минуту с одного адреса
       let body = null; try { body = JSON.parse(raw); } catch (e) {}
-      if (body) ctx.waitUntil(handleWhatsApp(body, env, { origin: url.origin }).catch(err => console.log("wa error", err)));
+      if (body) ctx.waitUntil(handleWhatsApp(body, env, { origin: url.origin, signed: !!env.APP_SECRET }).catch(err => console.log("wa error", err)));
       return new Response("OK");
     }
+    if (M === "POST") return new Response("Not found", { status: 404 });
     if (M === "GET" && P === "/privacy") return html(privacyPage(env));
     if (M === "GET" && (P === "/" || P === "/chat")) {
       const id = url.searchParams.get("c");
@@ -3620,14 +3639,14 @@ async function handleWhatsApp(body, env, wx = {}) {
   for (const entry of (body && body.entry) || []) for (const ch of (entry && entry.changes) || []) {
     const val = (ch && ch.value) || {};
     if (ch && ch.field && ch.field !== "messages") { // не сообщение, а сигнал Meta: шаблон приостановлен, аккаунт ограничен, человек запретил рекламу
-      try { await waSignal(env, wx, String(ch.field), val); } catch (e) { console.log("wa signal", String((e && e.stack) || e)); }
+      if (wx.signed) { try { await waSignal(env, wx, String(ch.field), val); } catch (e) { console.log("wa signal", String((e && e.stack) || e)); } } // без подписи Meta сигналам не верим: иначе посторонний мог бы «отписать» всю базу или остановить рассылки
       continue;
     }
     const fails = (val.statuses || []).filter(st => st && st.status === "failed").map(st => { const e = (st.errors || [])[0] || {}; return { code: +e.code || 0, to: String(st.recipient_id || "").replace(/\D/g, ""), e }; });
     if (fails.length) {
       const e = fails[0].e;
       await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details);
-      try { await waFailed(env, wx, fails); } catch (x) { console.log("wa failed", String((x && x.stack) || x)); }
+      if (wx.signed) { try { await waFailed(env, wx, fails); } catch (x) { console.log("wa failed", String((x && x.stack) || x)); } }
     }
     const names = new Map((val.contacts || []).map(k => [k && k.wa_id, (k && k.profile && k.profile.name) || ""]));
     const pnid = (val.metadata && val.metadata.phone_number_id) || "";
@@ -3836,7 +3855,7 @@ const BASE_CSS = `:root{--bg:#e6eeef;--panel:#fff;--ink:#12303a;--muted:#5e7780;
 @media (prefers-color-scheme:dark){:root{--bg:#0b1a1f;--panel:#12252b;--ink:#e4f0ee;--muted:#8fa9ae;--line:#23393f;--head:#0e2f39;--bot:#15463c;--acc:#2bbf98;--lead:#2e2811;--leadl:#9c8436;--bad:#ff8a80;--good:#6fd39c}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}`;
 
-async function leadsPage(env, only) {
+async function leadsPage(env, only, s) { // s — вошедший человек (cookie): ему показываем переходы в пульт и рассылки
   const ids = only ? [only] : Object.keys(CLIENTS);
   let total = 0, blocks = "", blind = false, part = false;
   for (const id of ids) {
@@ -3844,15 +3863,15 @@ async function leadsPage(env, only) {
     if (leads.unread === "all") blind = true; else if (leads.unread) part = true;
     total += leads.length;
     if (!leads.length && !only) continue;
-    blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map(l => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small></div>`).join("");
+    blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map(l => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small>${s && l.phone ? `<br><a href="tel:${esc(l.phone)}">Позвонить</a>${/^WhatsApp/.test(l.source || "") ? ` · <a href="/inbox?c=${id}#wa:${esc(String(l.phone).replace(/\D/g, ""))}">Открыть чат</a>` : ""}` : ""}</div>`).join("");
   }
   // хранилище не читается — так и пишем: пустая страница выглядела бы как «заявок нет»
   const warn = !env.KV ? "Хранилище KV не подключено к воркеру — заявки негде хранить. Проверьте настройку на странице /diag."
     : blind ? `Хранилище не отвечает — ${blocks ? "часть заявок сейчас не видна" : "заявки сейчас не видны"}, попробуйте обновить страницу. Заявки не потеряны.`
     : part ? "Общий список заявок сейчас не читается — показаны последние заявки из запасных копий. Попробуйте обновить страницу." : "";
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Заявки</title>
-<style>${BASE_CSS}body{padding:16px;max-width:640px;margin:0 auto}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}</style>
-<h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}`;
+<style>${BASE_CSS}body{padding:16px;max-width:640px;margin:0 auto}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}a{color:var(--acc)}</style>
+${s ? `<p style="display:flex;gap:14px;flex-wrap:wrap;margin:0 0 6px"><a href="/inbox${only ? "?c=" + only : ""}">← Чаты</a>${only ? `<a href="/broadcast?c=${only}">Рассылки</a>` : ""}${s.role === "owner" ? `<a href="/studio">Боты</a>` : ""}<a href="/logout">Выйти</a></p>` : ""}<h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}`;
 }
 
 // политика конфиденциальности — нужна Meta, чтобы опубликовать приложение (App settings → Basic → Privacy Policy URL)
@@ -4259,12 +4278,25 @@ async function loginBlocked(env, request, failed) {
   try { await env.KV.put(k, String(n), { expirationTtl: 1200 }); } catch (e) {}
   return n >= 8;
 }
+// ключ в адресе (?key=…) на страницах заявок, диагностики и автотеста: неверные попытки считаются так же, как на странице входа, — иначе ключ можно подбирать без ограничений
+// wants — подходящие ключи; → номер подошедшего ключа, -1 (не подошёл) или -2 (слишком много попыток)
+async function keyGate(request, env, key, wants) {
+  key = String(key ?? "");
+  wants = wants.filter(Boolean);
+  if (!key || !wants.length) return -1;
+  if (await loginBlocked(env, request, false)) return -2;
+  const i = wants.findIndex(w => safeEq(key, String(w)));
+  if (i < 0) await loginBlocked(env, request, true);
+  return i;
+}
+const tooManyKeys = () => new Response("Слишком много неверных ключей с вашего адреса. Подождите 10 минут.", { status: 429, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 // доступ к данным клиента cid: владелец — к любому, сотрудник — к своему
 const canSee = (s, cid) => !!s && (s.role === "owner" || (s.role === "staff" && s.cid === cid));
 // запросы, которые что-то меняют, принимаем только со своей страницы (cookie сама по себе — не доказательство намерения)
 const sameOrigin = (request, url) => { const o = request.headers.get("origin"); return !o || o === url.origin; };
 function page(body, status = 200, extra = {}) { // страницы с личными данными: не кэшировать, не встраивать в чужие сайты, скрипты — только свои
-  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "same-origin", "x-content-type-options": "nosniff", ...extra } }); // referrer-policy: адрес страницы не уходит на чужие сайты, а своя форма входа по-прежнему присылает заголовок Origin
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "same-origin", "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'", ...extra } }); // второй забор: даже если в страницу попадёт чужой текст, данные на чужой сайт не уйдут // referrer-policy: адрес страницы не уходит на чужие сайты, а своя форма входа по-прежнему присылает заголовок Origin
 }
 const safeNext = n => { n = String(n || ""); return /^\/[a-z]/.test(n) && !/[\\\s]/.test(n) && !n.startsWith("//") ? n.slice(0, 200) : "/studio"; };
 function loginPage(next, msg) {
@@ -4887,7 +4919,7 @@ const bcClientOf = (env, wx) => (wx && wx.client) || (hasClient(env.WA_CLIENT) ?
 const bcRoute = (env, cid) => { // с какого номера и каким токеном уходят шаблоны
   const up = cid.toUpperCase();
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID» — без него рассылку не отправить (страница «Мои боты» → Изменить)." }; }
-  if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return { quiet: true };
+  if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
   return { error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${up}.` };
 };
 const bcParam = (t, name, fallback) => clean(String(t).replace(/\{\s*(имя|name)\s*\}/gi, name || fallback || "клиент").replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   "), 300) || "—"; // Meta не принимает пустые подстановки, переводы строк, табуляцию и больше четырёх пробелов подряд

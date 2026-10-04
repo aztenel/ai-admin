@@ -184,7 +184,7 @@ const PASS = { id: "kairat", isNew: true, name: "Barber House", niche: "barber",
   // новый ключ — прежние сессии сотрудников гаснут
   d = await (await own.post("/api/studio/key", { id: "kairat" })).json();
   r = await staff.go("/leads");
-  ok("после смены ключа прежняя сессия сотрудника не действует", r.status === 403 && d.key !== staffKey);
+  ok("после смены ключа прежняя сессия сотрудника не действует: вместо заявок — страница входа", r.status === 303 && /^\/login/.test(r.headers.get("location") || "") && d.key !== staffKey);
   // подделка cookie
   const fake = S.browser(); fake.cookie = "aia=owner.*." + (Date.now() + 1e9) + ".o.AAAA";
   r = await fake.go("/api/studio/list");
@@ -763,6 +763,53 @@ section("рассылки");
   const body = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "w", changes: [{ field: "user_preferences", value: { user_preferences: [{ wa_id: "77059990001", category: "marketing_messages", value: "stop" }] } }] }] });
   await S2.waPost("/", [], { secret: "sec", raw: body });
   ok("общий вебхук: отказ от рекламы записан за клиентом номера", S2.kv.mem.has("optout:barber:77059990001"));
+}
+
+// ====== 8. Исправления после независимой проверки: безопасность
+section("после проверки: безопасность");
+{
+  // подбор ключа через ?key=: неверные попытки считаются на всех страницах с ключом
+  const S3 = mk({ LEADS_KEY: "secret123", KEY_DENT: "dent-staff-key" });
+  const H = { "cf-connecting-ip": "203.0.113.50" };
+  const seen = {};
+  for (const path of ["/diag", "/leads", "/selftest", "/api/selftest", "/altegio"]) for (let i = 0; i < 3; i++) { const r = await S3.call(`${path}?key=wrong${i}`, { headers: H }); seen[r.status] = (seen[r.status] || 0) + 1; }
+  ok("15 неверных ключей с одного адреса: после восьмой попытки — «подождите», а не новые попытки", seen[403] === 8 && seen[429] === 7, JSON.stringify(seen));
+  let r = await S3.call("/leads?key=secret123", { headers: H });
+  ok("пока идёт пауза, с этого адреса не проходит и верный ключ", r.status === 429);
+  r = await S3.call("/leads?key=secret123", { headers: { "cf-connecting-ip": "203.0.113.51" } });
+  ok("с другого адреса верный ключ работает как раньше", r.status === 200 && /Заявки/.test(await r.text()));
+  r = await S3.call("/leads?c=dent&key=dent-staff-key", { headers: { "cf-connecting-ip": "203.0.113.52" } });
+  ok("ключ сотрудника в адресе открывает заявки только его компании", r.status === 200 && /Заявки/.test(await r.text()));
+  r = await S3.call("/api/selftest", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.53" }, body: JSON.stringify({ key: "nope", i: 0 }) });
+  ok("автотест с неверным ключом в теле запроса не запускается", r.status === 403 && net.gemini.length === 0 || r.status === 403);
+  const b = S3.browser(); await b.go("/studio?key=secret123");
+  r = await b.go("/diag");
+  ok("вошедшему владельцу /diag открывается без ключа в адресе", r.status === 200 && /LEADS_KEY|Ключ|ключ/i.test(await r.text()));
+  r = await b.go("/leads"); const lp = await r.text();
+  ok("на странице заявок у вошедшего есть переходы в пульт и выход", r.status === 200 && /href="\/inbox"/.test(lp) && /href="\/logout"/.test(lp) && /href="\/studio"/.test(lp));
+
+  // вебхук без подписи
+  const S4 = mk({ WA_TOKEN_KAIRAT: "tok", APP_SECRET_KAIRAT: "sec" }); // клиенты только со своими номерами: общего номера нет
+  const fake = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "w", changes: [{ field: "messages", value: { messaging_product: "whatsapp", metadata: { phone_number_id: "1" }, messages: [{ id: "wamid.fake.1", from: "77050001122", type: "text", text: { body: "1" } }] } }] }] });
+  const w0 = S4.kv.ops.put;
+  r = await S4.call("/", { method: "POST", headers: { "content-type": "application/json" }, body: fake });
+  const r2 = await S4.call("/any/other/path", { method: "POST", headers: { "content-type": "application/json" }, body: fake });
+  ok("общий номер не настроен → поддельный «вебхук» на любой адрес не принимается и в хранилище ничего не пишет", r.status === 404 && r2.status === 404 && S4.kv.ops.put === w0, [r.status, r2.status, S4.kv.ops.put - w0].join());
+  const S5 = mk({ WA_TOKEN: "real-token", PHONE_NUMBER_ID: "111222", WA_CLIENT: "barber" }); // общий номер без APP_SECRET
+  net.reset();
+  const sig = v => S5.call("/", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "w", changes: [v] }] }) });
+  await sig({ field: "user_preferences", value: { user_preferences: [{ wa_id: "77019998877", value: "stop", category: "marketing_messages" }] } });
+  await sig({ field: "account_update", value: { event: "ACCOUNT_RESTRICTION" } });
+  await sig({ field: "messages", value: { statuses: [{ id: "x", status: "failed", recipient_id: "77019998877", errors: [{ code: 131048 }] }] } });
+  ok("общий номер без подписи Meta: «сигналам» (отказ от рекламы, ограничение аккаунта, жалобы) бот не верит", !S5.kv.mem.has("optout:barber:77019998877") && !S5.kv.mem.has("bchold:barber") && net.tg.length === 0, JSON.stringify([...S5.kv.mem.keys()]));
+  r = await S5.call("/somewhere", { method: "POST", headers: { "content-type": "application/json" }, body: fake });
+  ok("вебхук общего номера принимается только по своему адресу", r.status === 404);
+  const own5 = S5.browser(); await own5.go("/studio?key=owner-key-123456");
+  let d = await (await own5.go("/api/bc/list?c=barber")).json();
+  ok("рассылки с общего номера без подписи Meta недоступны — с объяснением", d.ready === false && /APP_SECRET/.test(d.why), JSON.stringify(d.why));
+  let codes = {};
+  for (let i = 0; i < 40; i++) { const x = await S5.call("/", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "198.51.100.7" }, body: "{}" }); codes[x.status] = (codes[x.status] || 0) + 1; }
+  ok("без подписи: с одного адреса — не больше 30 запросов в минуту", codes[200] === 30 && codes[429] === 10, JSON.stringify(codes));
 }
 
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
