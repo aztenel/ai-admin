@@ -662,6 +662,18 @@ section("рассылки");
     await coex("history", { history: [{ threads: [{ id: C2, messages: [{ from: C2, id: "h1", timestamp: String(t0), type: "text", text: { body: "Хочу записаться на пятницу" } }] }] }] });
     ok("повторная подгрузка не дублирует реплики", S.hist("wa", "kairat", C2).turns.length === 2);
   }
+  // --- резервная копия заявок в Telegram
+  {
+    await S.env.KV.put("lead:kairat:2026-10-03:x1abc", JSON.stringify({ id: "x1abc", ts: Date.now(), name: "Айгерим", phone: "+77015550123", kind: "callback" }));
+    net.tg.length = 0;
+    const W = (await import("../worker.js")).default;
+    const n = await W.backup(S.env);
+    const f = net.tg.find(x => x.doc);
+    ok("резервная копия заявок уходит файлом в Telegram администратора", n >= 1 && f && /^zayavki-kairat-\d{4}-\d\d-\d\d\.json$/.test(f.name) && /Айгерим/.test(f.text) && /Резервная копия/.test(f.caption), JSON.stringify(net.tg.map(x => x.name || x.text).slice(0, 3)));
+    net.tg.length = 0;
+    await S.cron();
+    ok("днём (не в 03:00) фоновая задача копию не шлёт", !net.tg.some(x => x.doc));
+  }
   id = await fresh("Сигнал", 30, 1100);
   await S.cron();
   ok("первая порция ушла", tpls().length === 20);

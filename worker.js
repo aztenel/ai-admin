@@ -3370,8 +3370,9 @@ export default {
     }
   },
   // раз в минуту (cron в wrangler.jsonc): фоновая отправка рассылок
+  backup: (env) => backupRun(env, true), // для проверок
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(cronRun(env).catch(e => console.log("cron", String((e && e.stack) || e))));
+    ctx.waitUntil(Promise.all([cronRun(env), backupRun(env)]).catch(e => console.log("cron", String((e && e.stack) || e))));
   }
 };
 async function route(request, env, ctx) {
@@ -5174,6 +5175,31 @@ async function bcTick(env, cid, id) {
   } finally { try { await env.KV.delete(lk); } catch (e) {} }
 }
 // фоновая отправка: раз в минуту — одна порция одной рассылки (у бесплатного тарифа Cloudflare 50 внешних запросов на запуск)
+
+// Ежедневная резервная копия заявок: в 03:00 по времени клиентов файл с заявками за 30 дней уходит в Telegram администратора (в тот же чат, что и заявки)
+async function tgFile(env, chat_id, name, text, caption) {
+  const fd = new FormData(); fd.append("chat_id", chat_id); fd.append("caption", caption); fd.append("document", new Blob([text], { type: "application/json" }), name);
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000);
+  try { const r = await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendDocument`, { method: "POST", body: fd, signal: ac.signal }); return !!(r && r.ok); }
+  catch (e) { return false; } finally { clearTimeout(timer); }
+}
+async function backupRun(env, force) {
+  const now = Date.now(), d = local(now);
+  if (!force && !(d.getUTCHours() === 3 && d.getUTCMinutes() < 10)) return 0;
+  if (!env.TG_TOKEN) return 0;
+  const day = isoDay(now), mk = "bkdone:" + day;
+  if (!force) { try { if (await env.KV.get(mk)) return 0; } catch (e) { return 0; } try { await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 }); } catch (e) { return 0; } } // отметка до отправки: копия не придёт дважды
+  let n = 0;
+  for (const cid of Object.keys(CLIENTS)) {
+    const chats = String(env["TG_CHAT_" + cid.toUpperCase()] || CLIENTS[cid].tg || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
+    if (!chats.length) continue;
+    let leads; try { leads = await allLeads(env, cid); } catch (e) { console.log("backup", String(e)); continue; }
+    if (!leads || !leads.length) continue;
+    const name = `zayavki-${cid}-${day}.json`, text = JSON.stringify({ client: cid, day, count: leads.length, leads }, null, 1);
+    for (const chat of chats) if (await tgFile(env, chat, name, text, `Резервная копия заявок: ${CLIENTS[cid].name}, ${leads.length} шт. Файл можно сохранить.`)) n++;
+  }
+  return n;
+}
 async function cronRun(env) {
   let run = [];
   try { run = JSON.parse((await env.KV.get("bcrun")) || "[]") || []; } catch (e) { console.log("cron", String(e)); return 0; }

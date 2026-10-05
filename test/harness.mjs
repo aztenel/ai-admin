@@ -93,6 +93,7 @@ globalThis.fetch = async (u, init = {}) => {
     return J({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }] });
   }
   if (url.includes("api.telegram.org")) {
+    if (init.body && typeof init.body !== "string") { const f = init.body, doc = f.get && f.get("document"); net.tg.push({ url: url.replace(/bot[^/]+/, "bot***"), doc: true, chat_id: f.get("chat_id"), caption: f.get("caption"), name: doc && doc.name, text: doc ? await doc.text() : "" }); return J({ ok: true, result: {} }); }
     const b = init.body ? JSON.parse(init.body) : {}; net.tg.push({ url: url.replace(/bot[^/]+/, "bot***"), ...b });
     return net.tgStatus === 200 ? J({ ok: true, result: {} }) : J({ ok: false, description: "err" }, net.tgStatus);
   }
