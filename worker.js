@@ -12,7 +12,9 @@
 //   APP_SECRET = App secret из App settings → Basic: бот принимает только запросы, подписанные Meta.
 //   Без APP_SECRET бот в WhatsApp сам в расписание Altegio не записывает — передаёт заявку администратору
 //   Text OWNER_NAME, OWNER_EMAIL — оператор и почта на странице /privacy (Privacy Policy URL для публикации приложения Meta)
-// WHATSAPP (демо, Green-API):   Text GA_URL (apiUrl из кабинета) · Text GA_ID · Secret GA_TOKEN · Secret GA_HOOK (любой пароль)
+// WHATSAPP (Green-API, обычный WhatsApp по QR-коду), номер клиента: Text GA_ID_<ID> · Secret GA_TOKEN_<ID> · Text GA_URL_<ID> (apiUrl из кабинета)
+//   Вебхук https://<воркер>/ga/<id>?t=<пароль> настраивает кнопка «Настроить Green-API» на странице /launch?c=<id>. Через этот номер идут и рассылки (обычным текстом).
+// WHATSAPP (Green-API, общий номер воркера — демо):   Text GA_URL · Text GA_ID · Secret GA_TOKEN · Secret GA_HOOK (любой пароль)
 //                               Text GA_CLIENT — ниша (dent/beauty/…); пусто = меню ниш
 //   Webhook URL в кабинете Green-API:  https://<воркер>/ga?t=<GA_HOOK>
 // КЛЮЧИ КЛИЕНТОВ: Text KEY_DENT, KEY_BEAUTY… — владелец видит только свои заявки: /leads?c=dent&key=…
@@ -3490,10 +3492,18 @@ async function route(request, env, ctx) {
       catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
       return json({ turns });
     }
-    if (M === "POST" && P === "/ga") { // Green-API
+    if (M === "POST" && P === "/ga") { // Green-API, общий номер воркера
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env, url.origin).catch(err => console.log("ga error", String(err))));
+      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, gaShared(env)).catch(err => console.log("ga error", String(err))));
+      return new Response("OK");
+    }
+    const gam = M === "POST" && /^\/ga\/([a-z][a-z0-9]{1,15})$/.exec(P);
+    if (gam) { // Green-API: свой номер клиента, вебхук /ga/<id>?t=<пароль>
+      const r = gaRoute(env, gam[1]);
+      if (!r || r.shared || !eqSafe(url.searchParams.get("t") || "", await gaHook(r))) return forbid();
+      let body = null; try { body = await request.json(); } catch (e) {}
+      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, r).catch(err => console.log("ga error", String(err))));
       return new Response("OK");
     }
     if (M === "POST" && (P === "/" || P === "/webhook")) { // WhatsApp Cloud API (Meta), общий номер воркера. Вебхуки клиентов со своим номером — /wa/<id>
@@ -3547,13 +3557,6 @@ async function nicheOf(env, channel, fromDigits, wx) {
   return hasClient(fixed) ? fixed : await env.KV.get(`wa:niche:${channel}:${fromDigits}`);
 }
 async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
-async function setPause(env, hk, until) {
-  await kvRetry(async () => {
-    const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
-    h.profile = h.profile || {}; h.profile.pausedUntil = until;
-    await putHist(env.KV, hk, h);
-  });
-}
 
 // Сбой хранилища или сети не должен оставить клиента WhatsApp без ответа, а администратора — без сигнала
 async function handleWAText(env, channel, fromDigits, text, send, wx) {
@@ -3775,38 +3778,137 @@ async function handleWAMessage(env, msg, wx) {
   // реакции и прочее — без ответа
 }
 
-// --- Green-API (обычный WhatsApp по QR — только для своей демо-SIM)
-async function handleGreen(body, env, origin) {
-  const type = body?.typeWebhook;
+// --- Green-API (обычный WhatsApp по QR-коду)
+// Свой номер у клиента: Text GA_ID_<ID>, Secret GA_TOKEN_<ID>, Text GA_URL_<ID> (apiUrl из кабинета, по умолчанию api.green-api.com).
+//   Вебхук: https://<воркер>/ga/<id>?t=<пароль>. Пароль бот выводит из токена инстанса; адрес показывает «Проверка запуска», там же кнопка «Настроить Green-API».
+// Общий номер воркера (прежний режим): GA_ID, GA_TOKEN, GA_URL, GA_HOOK, GA_CLIENT — вебхук /ga?t=<GA_HOOK>.
+const GA_BASE = "https://api.green-api.com";
+const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", shared: true } : null;
+// номер Green-API клиента: свой (GA_ID_<ID> и GA_TOKEN_<ID>) или общий номер воркера, закреплённый за ним (GA_CLIENT)
+function gaRoute(env, cid) {
+  if (!hasClient(cid)) return null;
+  const up = cid.toUpperCase();
+  if (env["GA_ID_" + up] && env["GA_TOKEN_" + up]) return { client: cid, id: String(env["GA_ID_" + up]).trim(), token: String(env["GA_TOKEN_" + up]), base: env["GA_URL_" + up] || "" };
+  const s = gaShared(env);
+  return s && s.client === cid ? s : null;
+}
+const gaSecret = (r, k) => r.shared ? k : k + "_" + r.client.toUpperCase(); // имя переменной в Cloudflare: GA_TOKEN или GA_TOKEN_<ID>
+// пароль вебхука клиента: из токена его инстанса (без лишнего секрета в панели; токен сменили — адрес вебхука настраивается заново)
+async function gaHook(r) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(r.token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`ga-hook:${r.client}:${r.id}`)));
+  return [...mac].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+const eqSafe = (a, b) => { a = String(a); b = String(b); if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+// запрос к Green-API → { ok, status, j, text }; status 0 — Green-API не ответил
+async function gaCall(r, op, body, ms = 15000) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+  try {
+    const res = await fetch(`${String(r.base || GA_BASE).replace(/\/+$/, "")}/waInstance${r.id}/${op}/${r.token}`, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ac.signal } : { signal: ac.signal });
+    const text = await res.text().catch(() => "");
+    let j = {}; try { j = JSON.parse(text) || {}; } catch (e) {}
+    return { ok: res.ok, status: res.status, j: typeof j === "object" ? j : {}, text };
+  } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
+  finally { clearTimeout(timer); }
+}
+// ответ Green-API → код причины (подсказки — в GA_HINT)
+function gaCode(x) {
+  const s = x.status, t = String((x.j && x.j.message) || x.text || "");
+  if (!s || s === 499) return "ga:net";
+  if (s === 400) return /expired/i.test(t) ? "ga:expired" : /starting process/i.test(t) ? "ga:starting" : /not authorized/i.test(t) ? "ga:auth" : /deleted/i.test(t) ? "ga:deleted" : "ga:400";
+  if ([401, 403, 429, 466].includes(s)) return "ga:" + s;
+  return s >= 500 ? "ga:5xx" : "ga:" + s;
+}
+const GA_HINT = {
+  "ga:net": "Green-API не ответил — дошло ли сообщение, неизвестно", "ga:401": "неверный токен Green-API", "ga:403": "неверный номер инстанса Green-API", "ga:429": "слишком частые запросы к Green-API",
+  "ga:466": "закончился лимит тарифа Green-API (бесплатный тариф пишет только нескольким номерам) — оплатите тариф в кабинете Green-API",
+  "ga:expired": "оплаченный срок инстанса Green-API закончился — оплатите его в кабинете Green-API", "ga:auth": "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API",
+  "ga:starting": "Green-API перезапускает инстанс", "ga:deleted": "инстанс Green-API удалён", "ga:400": "Green-API не принял номер или текст (неверные данные)", "ga:5xx": "временный сбой Green-API",
+  "ga:noAccount": "у номера нет WhatsApp", "ga:failed": "WhatsApp не доставил сообщение"
+};
+// причина отказа человеческим языком, с именем переменной, которую нужно проверить
+const gaWhy = (res, r) => (GA_HINT[res.code] || `Green-API ответил ${res.status}${res.error ? ": " + res.error : ""}`) + (res.code === "ga:401" ? ` — проверьте секрет ${gaSecret(r, "GA_TOKEN")} в Cloudflare` : res.code === "ga:403" ? ` — проверьте ${gaSecret(r, "GA_ID")} и ${gaSecret(r, "GA_URL")} в Cloudflare` : "");
+// → { ok, id } или { ok: false, status, code, error }. quiet — без сигнала администратору (рассылка и пульт сообщают о сбое сами)
+async function sendGreen(env, chatId, message, r, quiet) {
+  r = r || gaShared(env);
+  if (!r) return { ok: false, status: 0, code: "ga:off", error: "Green-API не настроен" };
+  const x = await gaCall(r, "sendMessage", { chatId, message: String(message).slice(0, 4000), typingTime: 1500 });
+  if (x.ok) return { ok: true, id: String(x.j.idMessage || "") };
+  console.log("GA send", x.status, x.text.slice(0, 300));
+  const res = { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
+  if (!quiet) { try { await notifyOnce(env, "gasend:" + r.client, `⚠️ Ответы бота не доходят до клиентов WhatsApp (Green-API: ${gaWhy(res, r)})\nКлиент +${String(chatId).replace(/\D/g, "")} ответа не получил — напишите ему сами.`, r.client); } catch (e) {} }
+  return res;
+}
+// сведения о номере: состояние, номер, настроен ли вебхук на этот бот (и на какой сайт) → { state, phone, hook, host, error }
+async function gaInfo(env, r) {
+  const [s, g] = await Promise.all([gaCall(r, "getStateInstance", null, 10000), gaCall(r, "getSettings", null, 10000)]);
+  if (!s.ok) return { error: s.status === 401 || s.status === 403 ? `Green-API не пускает: ${gaWhy({ code: "ga:" + s.status }, r)}.` : "Green-API не отвечает — попробуйте через минуту." };
+  const st = (g.ok && g.j) || {}, wid = String(st.wid || "").replace(/\D/g, "");
+  let hook = false, host = "";
+  try {
+    const u = new URL(String(st.webhookUrl || "")), want = r.shared ? ["/ga", env.GA_HOOK || ""] : ["/ga/" + r.client, await gaHook(r)];
+    hook = /^https?:$/.test(u.protocol) && u.pathname === want[0] && !!want[1] && u.searchParams.get("t") === want[1] && st.incomingWebhook === "yes"; host = hook ? u.host : "";
+  } catch (e) {}
+  return { state: String(s.j.stateInstance || ""), phone: wid ? fmtPhone(wid) : "", hook, host };
+}
+const GA_STATE_TEXT = { notAuthorized: "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API телефоном с этим номером", blocked: "WhatsApp заблокировал этот номер",
+  suspended: "WhatsApp временно ограничил этот номер (жалобы на спам)", yellowCard: "WhatsApp временно ограничил этот номер (жалобы на спам)", sleepMode: "WhatsApp на телефоне не на связи: телефон выключен или без интернета", starting: "Green-API перезапускает инстанс — это до 5 минут" };
+// WhatsApp заблокировал или ограничил номер: тревога администратору, рассылки через Green-API встают до подтверждения
+const GA_STATE_BAD = { blocked: "WhatsApp заблокировал номер", suspended: "WhatsApp временно ограничил номер (жалобы на спам)", yellowCard: "WhatsApp временно ограничил номер (жалобы на спам)" };
+async function gaStateSignal(env, r, state) {
+  const cid = r.client;
+  if (!hasClient(cid)) { console.log("ga state", state); return; }
+  const who = CLIENTS[cid].name;
+  if (GA_STATE_BAD[state]) {
+    const why = GA_STATE_BAD[state];
+    try { await bcHoldEdit(env, cid, h => { h.ga = { at: Date.now(), why }; }); } catch (e) { console.log("bchold", String(e)); } // тревога важнее пометки: сбой хранилища её не отменяет (перед отправкой состояние номера проверяется заново)
+    await notifyOnce(env, "gastate:" + cid + ":" + state, `🚨 WhatsApp (Green-API) — ${who}\n${why}.\nРассылки остановлены.${state === "blocked" ? " Бот на этом номере не отвечает клиентам." : " Пару дней не делайте рассылок и пишите только тем, кто пишет вам сам."}`, cid);
+  } else if (state === "notAuthorized") await notifyOnce(env, "gastate:" + cid + ":" + state, `⚠️ WhatsApp (Green-API) — ${who}\nWhatsApp отвязан от Green-API: бот не получает и не отправляет сообщения. Отсканируйте QR-код в кабинете Green-API телефоном с этим номером.`, cid);
+}
+const gaText = md => { md = md || {}; const t = md.textMessageData?.textMessage || md.extendedTextMessageData?.text || md.fileMessageData?.caption || ""; return clean(t, 1000) || `[${({ imageMessage: "фото", videoMessage: "видео", audioMessage: "голосовое", documentMessage: "файл", locationMessage: "геолокация", contactMessage: "контакт" })[md.typeMessage] || "сообщение"}]`; };
+async function handleGreen(body, env, origin, r) {
+  r = r || gaShared(env);
+  if (!r) return;
+  const type = body?.typeWebhook, iid = body?.instanceData?.idInstance;
+  if (iid !== undefined && iid !== null && String(iid) !== r.id) { console.log("ga: сообщение другого инстанса", String(iid).slice(0, 20)); return; } // адрес вебхука вставлен в кабинет другого номера
+  if (type === "stateInstanceChanged") return gaStateSignal(env, r, String(body.stateInstance || ""));
+  if (type === "outgoingMessageStatus") { // отчёт о доставке: «у номера нет WhatsApp», «не доставлено», ограничение номера
+    const st = String(body.status || "");
+    if (GA_STATE_BAD[st]) return gaStateSignal(env, r, st);
+    if ((st === "noAccount" || st === "failed") && hasClient(r.client)) await waFailed(env, { client: r.client }, [{ code: "ga:" + st, to: String(body.chatId || "").replace(/\D/g, "") }]);
+    return;
+  }
   const chatId = body?.senderData?.chatId || "";
   if (!chatId.endsWith("@c.us")) return; // группы и каналы игнорируем
   const digitsId = chatId.replace(/\D/g, "");
-  // администратор сам написал клиенту с телефона — бот молчит в этом чате 2 часа
+  const gx = r.shared ? { origin, name: body?.senderData?.senderName || "" } : { client: r.client, origin, name: body?.senderData?.senderName || "" }; // общий номер — как раньше: клиент номера из GA_CLIENT
+  // администратор сам написал клиенту с телефона: его ответ виден в пульте, бот молчит в этом чате 2 часа
   if (type === "outgoingMessageReceived") {
-    const niche = await nicheOf(env, "ga", digitsId);
-    if (niche) await setPause(env, `h:ga:${niche}:${digitsId}`, Date.now() + PAUSE_MS);
+    const niche = await nicheOf(env, "ga", digitsId, gx);
+    if (!niche) return;
+    const hk = `h:ga:${niche}:${digitsId}`, now = Date.now(), mid = String(body.idMessage || "");
+    await kvRetry(async () => {
+      const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
+      h.profile = h.profile || {}; const seen = h.profile.echo || [];
+      if (mid && seen.includes(mid)) return; // Green-API повторил доставку
+      h.profile.echo = seen.concat(mid ? [mid] : []).slice(-20);
+      h.profile.pausedUntil = Math.max(h.profile.pausedUntil || 0, now + PAUSE_MS); delete h.profile.need;
+      h.turns = (h.turns || []).concat([{ role: "model", text: gaText(body.messageData), t: now, by: "admin", m: "phone" }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+      await putHist(env.KV, hk, h);
+    });
     return;
   }
   if (type !== "incomingMessageReceived") return;
   const id = body.idMessage;
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
-  const send = t => sendGreen(env, chatId, t), gx = { origin, name: body?.senderData?.senderName || "" };
+  const send = t => sendGreen(env, chatId, t, r);
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
   if (text) return handleWAText(env, "ga", digitsId, text, send, gx);
   const kinds = { audioMessage: "audio", imageMessage: "image", videoMessage: "video", documentMessage: "document", stickerMessage: "sticker", locationMessage: "location", contactMessage: "contact", contactsArrayMessage: "contact" };
   const kind = kinds[md.typeMessage];
   if (!kind) return; // реакции, опросы и прочее — без ответа
   return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, gx, { mime: md.fileMessageData?.mimeType || "" });
-}
-
-async function sendGreen(env, chatId, message) {
-  const base = (env.GA_URL || "https://api.green-api.com").replace(/\/$/, "");
-  const r = await fetch(`${base}/waInstance${env.GA_ID}/sendMessage/${env.GA_TOKEN}`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chatId, message: message.slice(0, 4000), typingTime: 1500 })
-  });
-  if (!r.ok) console.log("GA send", r.status, (await r.text()).slice(0, 300));
 }
 
 // токен и номер, с которого отвечаем: у клиента со своим вебхуком (/wa/<id>) — его секрет WA_TOKEN_<ID> и номер, на который написали; иначе общие WA_TOKEN и PHONE_NUMBER_ID
@@ -4611,7 +4713,7 @@ async function inboxApi(request, env, url, s) {
   const c = CLIENTS[cid], now = Date.now();
 
   if (M === "GET" && P === "/api/inbox/list") {
-    const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID ? ["wa", "ga"] : ["wa"], rows = [];
+    const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID || gaRoute(env, cid) ? ["wa", "ga"] : ["wa"], rows = [];
     let more = false;
     for (const ch of chans) {
       const prefix = `h:${ch}:${cid}:`;
@@ -4654,7 +4756,7 @@ async function inboxApi(request, env, url, s) {
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
       bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
       need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
-      canSend: ch !== "web" && (ch === "ga" ? !!(env.GA_ID && env.GA_TOKEN) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now
+      canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
@@ -4680,7 +4782,12 @@ async function inboxApi(request, env, url, s) {
   // ответ администратора клиенту
   const sendTo = async text => {
     if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя — позвоните клиенту." };
-    if (ch === "ga") { if (!(env.GA_ID && env.GA_TOKEN)) return { ok: false, error: "Green-API не настроен." }; try { await sendGreen(env, id + "@c.us", text); return { ok: true }; } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; } }
+    if (ch === "ga") { // номер Green-API клиента (или общий номер воркера, через который пришёл этот чат)
+      const gr = gaRoute(env, cid) || gaShared(env);
+      if (!gr) return { ok: false, error: "Green-API не настроен." };
+      const r = await sendGreen(env, id + "@c.us", text, gr, true);
+      return r.ok ? { ok: true } : { ok: false, error: `Green-API не принял сообщение: ${gaWhy(r, gr)}.` };
+    }
     const route = waRoute(env, cid, p);
     if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
     if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном — позвоните клиенту или дождитесь его сообщения." };
@@ -4742,7 +4849,7 @@ function pultIcon(n) { // иконка приложения для экрана 
   return new Response(PULT_BYTES[n], { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
 }
 function pultManifest(demo) { // чтобы пульт ставился на экран «Домой» как приложение (iPhone, Android, компьютер)
-  const m = { id: demo ? "/demo" : "/inbox", name: demo ? "Пульт чатов — демо" : "Пульт чатов", short_name: "Пульт", start_url: demo ? "/demo" : "/inbox", scope: demo ? "/demo" : "/", display: "standalone", orientation: "any", lang: "ru", background_color: "#0A0A0A", theme_color: "#0A0A0A",
+  const m = { id: demo ? "/demo" : "/inbox", name: demo ? "Пульт чатов — демо" : "Пульт чатов", short_name: demo ? "Пульт демо" : "Пульт", start_url: demo ? "/demo" : "/inbox", scope: demo ? "/demo" : "/", display: "standalone", orientation: "any", lang: "ru", background_color: "#0A0A0A", theme_color: "#0A0A0A",
     icons: [{ src: "/pult/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] };
   return new Response(JSON.stringify(m), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "public, max-age=3600" } });
 }
@@ -4822,9 +4929,16 @@ async function launchApi(request, env, url, s) {
       add("Расписание Altegio", ok, txt, "Проверьте номер филиала в паспорте и что в Altegio включена онлайн-запись для услуг и мастеров.");
       add("Отмена и перенос", null, altSelfCancel(env, c) ? "бот отменяет и переносит сам" : "бот передаёт просьбу администратору — он делает это в Altegio и нажимает «Сделано» в пульте чатов", "");
     } else add("Запись", (c.services || []).length || BUILTIN.has(cid) ? true : null, c.booking === "none" ? "бот не записывает — берёт телефон для звонка" : "бот собирает заявку, администратор подтверждает её в пульте чатов", "");
-    const tok = !!env["WA_TOKEN_" + up], sec = !!env["APP_SECRET_" + up];
-    add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
-    add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
+    const tok = !!env["WA_TOKEN_" + up], sec = !!env["APP_SECRET_" + up], gr = gaRoute(env, cid);
+    if (gr) { // WhatsApp через Green-API: номер привязан, вебхук ведёт в этот бот
+      const g = await gaInfo(env, gr), name = gr.shared ? "общий номер воркера (GA_ID)" : `GA_ID_${up}`;
+      add("WhatsApp (Green-API)", g.error ? false : g.state === "authorized", g.error || (g.state === "authorized" ? `номер ${g.phone || "?"} привязан (${name})` : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
+        g.error ? `Проверьте ${gaSecret(gr, "GA_ID")}, секрет ${gaSecret(gr, "GA_TOKEN")} и ${gaSecret(gr, "GA_URL")} (apiUrl из кабинета Green-API) в Cloudflare.` : "Кабинет Green-API → инстанс → QR-код: отсканируйте его в WhatsApp на телефоне с этим номером (Связанные устройства).");
+      if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
+        gr.shared && !env.GA_HOOK ? "Задайте в Cloudflare секрет GA_HOOK (любой пароль), потом нажмите «Настроить Green-API»." : "Нажмите «Настроить Green-API» — бот сам впишет адрес вебхука и включит нужные уведомления. Green-API перезапустит инстанс, это до 5 минут.");
+    }
+    if (!gr || tok || sec) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
+    if (!gr || tok || sec) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
     if (tok) {
       const pn = env["PHONE_NUMBER_ID_" + up] || c.waPhoneId;
       if (!pn) add("WhatsApp: номер", null, "«Phone number ID» в паспорте не указан — бот ответит с того номера, на который напишут. Чтобы проверить номер здесь, впишите его ID в паспорт.", "");
@@ -4843,9 +4957,18 @@ async function launchApi(request, env, url, s) {
     add("Контакты в политике конфиденциальности", !!(env.OWNER_NAME && env.OWNER_EMAIL), env.OWNER_NAME && env.OWNER_EMAIL ? "указаны" : "не указаны оператор и почта", "Cloudflare → переменные OWNER_NAME и OWNER_EMAIL: они показываются на странице /privacy, её адрес нужен приложению Meta.");
     let last = null; try { last = JSON.parse((await env.KV.get("launch:run:" + cid)) || "null"); } catch (e) {}
     let cases = []; try { cases = (await casesFor(env, c)).map((k, i) => ({ i, t: k.t })); } catch (e) { console.log("cases", String(e)); }
-    return jsonP({ client: { id: cid, name: c.name, dynamic: !!c.dynamic, off: !!c.off }, checks, cases, last });
+    return jsonP({ client: { id: cid, name: c.name, dynamic: !!c.dynamic, off: !!c.off }, checks, cases, last, ga: !!gr });
   }
   if (M === "POST" && P === "/api/launch/tg") return jsonP(await tgProbe(env, c));
+  if (M === "POST" && P === "/api/launch/ga") { // вебхук Green-API одной кнопкой: адрес этого бота и нужные уведомления
+    const gr = gaRoute(env, cid);
+    if (!gr) return jsonP({ error: `У этого клиента нет Green-API: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up}.` }, 409);
+    if (gr.shared && !env.GA_HOOK) return jsonP({ error: "Для общего номера задайте в Cloudflare секрет GA_HOOK (любой пароль)." }, 409);
+    const hookUrl = gr.shared ? `${url.origin}/ga?t=${encodeURIComponent(env.GA_HOOK)}` : `${url.origin}/ga/${cid}?t=${await gaHook(gr)}`;
+    const x = await gaCall(gr, "setSettings", { webhookUrl: hookUrl, webhookUrlToken: "", incomingWebhook: "yes", outgoingMessageWebhook: "yes", outgoingAPIMessageWebhook: "no", outgoingWebhook: "no", stateWebhook: "yes" });
+    if (!x.ok || x.j.saveSettings === false) return jsonP({ error: `Green-API не принял настройки (${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 120) }, gr)}).` }, 502);
+    return jsonP({ ok: true, text: `Готово: сообщения этого номера приходят на ${url.host}. Green-API перезапускает инстанс — это до 5 минут, потом нажмите «Проверить заново».` });
+  }
   if (M === "POST" && P === "/api/launch/case") { // один сценарий автопроверки на живой модели; в настоящие заявки и расписание ничего не попадает
     let list = []; try { list = await casesFor(env, c); } catch (e) { return jsonP({ error: "Не удалось собрать сценарии: " + String(e).slice(0, 120) }, 500); }
     return jsonP(await runCase(env, +b.i, list));
@@ -4862,7 +4985,7 @@ function launchPage() {
 .ck{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}.ck:last-child{border:0}.ck .i{flex:none;width:24px;font-size:18px}.ck b{font-size:15.5px}.ck .x{color:var(--muted);font-size:14px;white-space:pre-wrap;word-break:break-word;margin-top:2px;line-height:1.45}.ck .fx{font-size:14px;margin-top:4px;line-height:1.45}
 .tr{font-size:13.5px;line-height:1.45;margin:6px 0 0 34px;color:var(--muted)}.tr div{margin:3px 0}.tr .bt{color:var(--ink)}.bad{color:var(--bad)}.good{color:var(--good)}</style></head><body>
 <div class="top"><b id="ttl">Проверка запуска</b><a href="/studio">Боты</a><a href="/logout">Выйти</a></div><div class="w">
-<div class="card"><h3 style="margin-top:0">Что подключено</h3><div id="checks"><p class="mut">Проверяю…</p></div><div class="row"><button class="btn" id="b_tg">Отправить пробное в Telegram</button><button class="btn" id="b_re">Проверить заново</button></div><div id="tgout"></div></div>
+<div class="card"><h3 style="margin-top:0">Что подключено</h3><div id="checks"><p class="mut">Проверяю…</p></div><div class="row"><button class="btn" id="b_tg">Отправить пробное в Telegram</button><button class="btn" id="b_ga" hidden>Настроить Green-API</button><button class="btn" id="b_re">Проверить заново</button></div><div id="tgout"></div></div>
 <div class="card"><h3 style="margin-top:0">Экзамен бота</h3><p class="mut">Бот отвечает живой моделью на вопросы, собранные из его паспорта: цены, адрес, график, запись, отмена, попытки сбить с толку. Заявки и записи при этом не создаются. Один непрошедший сценарий сначала запустите ещё раз: ответы модели немного меняются.</p>
 <div id="last" class="mut"></div><div class="row"><button class="btn p" id="b_run">Запустить экзамен</button></div><div id="sum" style="font-weight:700;margin:10px 0"></div><div id="cases"></div></div></div>
 <script>
@@ -4871,12 +4994,13 @@ function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==und
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
 function dt(t){var d=new Date(t),p=function(x){return(x<10?'0':'')+x};return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
 function status(){$('checks').textContent='';$('checks').appendChild(el('p','mut','Проверяю…'));api('/api/launch/status?c='+C).then(function(d){var K=$('checks');K.textContent='';if(d.error){K.appendChild(el('div','msg e',d.error));return}
- $('ttl').textContent='Проверка запуска · '+d.client.name;document.title='Проверка запуска — '+d.client.name;
+ $('ttl').textContent='Проверка запуска · '+d.client.name;document.title='Проверка запуска — '+d.client.name;$('b_ga').hidden=!d.ga;
  d.checks.forEach(function(k){var r=el('div','ck');r.appendChild(el('div','i',k.ok===true?'✅':k.ok===false?'❌':'ℹ️'));var b=el('div');b.appendChild(el('b','',k.title));b.appendChild(el('div','x',k.text));if(k.fix)b.appendChild(el('div','fx','Что сделать: '+k.fix));r.appendChild(b);K.appendChild(r)});
  CASES=d.cases;var L=$('cases');if(!L.childNodes.length)CASES.forEach(function(k){var r=el('div','ck');r.id='case'+k.i;r.appendChild(el('div','i','▫️'));var b=el('div');b.appendChild(el('b','',k.t));r.appendChild(b);L.appendChild(r)});
  $('last').textContent=d.last?'Прошлый экзамен '+dt(d.last.at)+': '+d.last.pass+' из '+d.last.total+(d.last.fails.length?'. Не прошло: '+d.last.fails.join('; '):' — всё прошло'):'Экзамен ещё не запускали.'}).catch(function(){})}
 $('b_re').onclick=status;
 $('b_tg').onclick=function(){var o=$('tgout');o.textContent='';api('/api/launch/tg',{c:C}).then(function(d){o.appendChild(el('div','msg '+(d.ok?'g':'e'),d.text||d.error))}).catch(function(){})};
+$('b_ga').onclick=function(){if(!confirm('Вписать в Green-API адрес вебхука этого сайта ('+location.host+')? Сообщения этого номера WhatsApp будут приходить сюда. Green-API перезапустит инстанс — это до 5 минут.'))return;var o=$('tgout'),t=$('b_ga');o.textContent='';t.disabled=true;api('/api/launch/ga',{c:C}).then(function(d){t.disabled=false;o.appendChild(el('div','msg '+(d.ok?'g':'e'),d.text||d.error))}).catch(function(){t.disabled=false})};
 function sleep(ms){return new Promise(function(s){setTimeout(s,ms)})}
 $('b_run').onclick=async function(){var btn=$('b_run');btn.disabled=true;var ok=0,fails=[];
  for(var n=0;n<CASES.length;n++){var k=CASES[n],row=$('case'+k.i),ic=row.querySelector('.i'),body=row.lastChild;while(body.childNodes.length>1)body.removeChild(body.lastChild);ic.textContent='⏳';var r=null;
@@ -4893,14 +5017,18 @@ status();
 
 // ================= РАССЫЛКИ: шаблоны WhatsApp по списку клиентов =================
 // Написать клиенту первым официальный WhatsApp разрешает только шаблоном, который одобрила Meta. Рассылка = шаблон + список номеров.
+// Через Green-API (обычный WhatsApp клиента по QR-коду, b.ch = "ga") уходит обычный текст. Такой номер WhatsApp блокирует за массовые рассылки, поэтому:
+// по одному сообщению с паузой 30–150 секунд, не больше 300 в сутки (по умолчанию 50), в конце строка «ответьте СТОП»; перед каждым сообщением
+// проверяется, что номер привязан и не ограничен; запуск — только при настроенном вебхуке (иначе «стоп» клиентов не дойдёт до бота).
 // Отправляет фоновая задача (cron, раз в минуту — одна порция): страницу после запуска можно закрыть. Если фон не работает, страница предложит отправить порцию вручную.
 // Правила: тем, кто написал «стоп» или запретил рекламу в самом WhatsApp, не шлём; номер в списке — один раз; есть предел на 24 часа и часы отправки;
 // при ошибках Meta и при её сигналах (шаблон приостановлен, аккаунт ограничен) рассылка сама встаёт на паузу и сообщает в Telegram.
 // Порция сначала отмечается отправленной и только потом уходит: при сбое часть клиентов не получит сообщение, зато никто не получит его дважды.
 // Ключи: bc:<клиент>:<id> — рассылка; bcr:<клиент>:<id>:<k> — получатели, по 250; bcrun — что сейчас идёт; bcq:<клиент> — сколько отправлено за сутки;
-// bchold:<клиент> — сигнал Meta «остановиться»; bcf:<клиент>:<день> — недоставленные; bclast:<клиент> — текст последней рассылки (его видит ИИ и пульт)
+// bchold:<клиент> — сигнал Meta «остановиться» (ga — сигнал Green-API: номер заблокирован или ограничен); bcf:<клиент>:<день> — недоставленные; bclast:<клиент> — текст последней рассылки (его видит ИИ и пульт);
+// bcq:<клиент>:ga — сколько отправлено за сутки с номера Green-API
 const BC_CHUNK = 250, BC_MAX = 20000, BC_STALE = 150e3, BC_SLOT = 600e3, BC_DAY = 145; // получателей в ключе; предел списка; «фон молчит»; шаг учёта — 10 минут; сутки с запасом — 145 шагов
-const BC_HINT = { ...WA_HINT,
+const BC_HINT = { ...WA_HINT, ...GA_HINT,
   4: "слишком много запросов к Meta", 80007: "достигнут предел запросов аккаунта", 130429: "слишком быстрая отправка", 130472: "Meta не доставила сообщение этому человеку (её эксперимент)", 130497: "в эту страну аккаунту писать нельзя",
   131000: "временный сбой у Meta", 131016: "сервис Meta временно недоступен", 131026: "номер не в WhatsApp или не принимает сообщения", 131042: "проблема с оплатой в кабинете Meta",
   131048: "Meta ограничила отправку с этого номера: клиенты жаловались на сообщения", 131049: "Meta не доставила: этот человек уже получил много рекламных сообщений", 131050: "человек запретил рекламные сообщения в WhatsApp",
@@ -4910,9 +5038,10 @@ const BC_HINT = { ...WA_HINT,
 const BC_TEMP = new Set([1, 2, 4, 80007, 130429, 131000, 131016]);                                                                  // временное: подождать 10 минут и продолжить
 const BC_ACCOUNT = new Set([3, 10, 190, 200, 368, 130497, 131005, 131031, 131037, 131042, 131045, 131048, 131057, 132001, 132007, 132015, 132016, 133010]); // дело в аккаунте или шаблоне — пауза, получатель возвращается в очередь
 const BC_PARAM = new Set([100, 131008, 131009, 132000, 132005, 132012]);                                                              // дело в подстановках: первый раз — пауза; если после «Продолжить» тот же получатель снова не прошёл — пропускаем его
-const bcWhy = r => `код ${r.code}${BC_HINT[r.code] ? ": " + BC_HINT[r.code] : r.error ? ": " + r.error : ""}`;
+const bcWhy = r => String(r.code).startsWith("ga:") ? BC_HINT[r.code] || clean(r.error || "", 160) || "код " + r.code : `код ${r.code}${BC_HINT[r.code] ? ": " + BC_HINT[r.code] : r.error ? ": " + r.error : ""}`;
 const bcKey = (cid, id) => `bc:${cid}:${id}`, bcChunkKey = (cid, id, k) => `bcr:${cid}:${id}:${k}`;
-const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, created: b.created });
+const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, created: b.created, ...(b.ch ? { ch: b.ch } : {}) });
+const bcCode = c => /^\d+$/.test(c) ? +c : String(c); // коды Meta — числа, причины Green-API — «ga:…»
 const bcPut = (env, cid, b) => kvRetry(() => env.KV.put(bcKey(cid, b.id), JSON.stringify(b), { expirationTtl: 180 * 86400, metadata: bcMeta(b) }));
 const bcGet = async (env, cid, id) => JSON.parse((await env.KV.get(bcKey(cid, id))) || "null");
 const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
@@ -4979,8 +5108,9 @@ async function bcOptouts(env, cid) { // все, кому писать нельз
   return out;
 }
 const bcClientOf = (env, wx) => (wx && wx.client) || (hasClient(env.WA_CLIENT) ? env.WA_CLIENT : ""); // чей это номер WhatsApp
-const bcRoute = (env, cid) => { // с какого номера и каким токеном уходят шаблоны
+const bcRoute = (env, cid, ch) => { // с какого номера и каким токеном уходят шаблоны (ch = "ga" — номер Green-API клиента)
   const up = cid.toUpperCase();
+  if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Green-API у этого клиента не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} (номер и токен инстанса из кабинета Green-API).` }; }
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID» — без него рассылку не отправить (страница «Мои боты» → Изменить)." }; }
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
   return { error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${up}.` };
@@ -5000,6 +5130,24 @@ async function sendTemplate(env, to, b, name, route) {
   let e = {}; try { e = (await r.json()).error || {}; } catch (x) {}
   return { ok: false, status: r.status, code: +e.code || r.status, error: clean(e.message || "", 160) };
 }
+// рассылка через Green-API: обычный текст. Предел в сутки — до 300 (по умолчанию 50), между сообщениями 30–150 секунд
+const GA_CAP = [50, 300], GA_GAP = [30e3, 150e3], GA_MSG_MAX = 1500, GA_CAPTION_MAX = 1000;
+const GA_STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
+// как поступать с ошибкой Green-API: temp — подождать 10 минут (получатель в очереди), net — неизвестно, ушло ли (получатель не повторяется), one — дело в этом номере, stop — пауза
+const gaKind = code => code === "ga:net" ? "net" : ["ga:429", "ga:5xx", "ga:starting"].includes(code) ? "temp" : code === "ga:400" ? "one" : "stop";
+// текст как написал администратор (переводы строк сохраняются); в конце — строка «ответьте СТОП», если про «стоп» в тексте ничего нет
+function bcGaMsg(src) {
+  const t = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u2060\ufeff\u00ad]/g, "").replace(/\t/g, " ").replace(/[ ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return !t ? "" : /(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(t) ? t : t + "\n\n" + GA_STOP_LINE;
+}
+const bcGaText = (b, name) => String(b.msg || "").replace(/\{\s*(имя|name)\s*\}/gi, name || b.fallback || "уважаемый клиент");
+const bcFileName = u => { let n = ""; try { n = decodeURIComponent(new URL(u).pathname.split("/").pop() || ""); } catch (e) {} n = n.replace(/[^\p{L}\p{N}._-]/gu, "").slice(-60); return /\.[a-z0-9]{2,5}$/i.test(n) ? n : "image.jpg"; };
+async function bcSendGa(env, digits, b, name, r) {
+  const text = bcGaText(b, name), chatId = digits + "@c.us";
+  if (!b.img) return sendGreen(env, chatId, text, r, true);
+  const x = await gaCall(r, "sendFileByUrl", { chatId, urlFile: b.img, fileName: bcFileName(b.img), caption: text.slice(0, 1024) }); // картинка с подписью
+  return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
+}
 // сведения о номере из Meta: качество и предел получателей за 24 часа
 async function bcHealth(env, route) {
   const cr = waCreds(env, route);
@@ -5015,13 +5163,14 @@ async function bcHealth(env, route) {
 }
 // сигнал Meta «остановиться»: { all: { at, why }, tpl: { <шаблон>: { at, why } } }
 const bcHold = async (env, cid) => { try { return JSON.parse((await env.KV.get("bchold:" + cid)) || "null"); } catch (e) { return null; } };
-const bcHoldFor = (h, tpl) => (h && (h.all || (h.tpl && h.tpl[tpl]))) || null;
+const bcHoldFor = (h, b) => (h && (b.ch === "ga" ? h.ga : h.all || (h.tpl && h.tpl[b.tpl]))) || null; // сигналы Meta не касаются номера Green-API, и наоборот
+const bcFrom = b => b.ch === "ga" ? "Green-API" : "Meta";
 async function bcHoldEdit(env, cid, edit) {
   await kvRetry(async () => {
     const h = (await bcHold(env, cid)) || {};
     edit(h);
     if (h.tpl && !Object.keys(h.tpl).length) delete h.tpl;
-    if (!h.all && !h.tpl) await env.KV.delete("bchold:" + cid); else await env.KV.put("bchold:" + cid, JSON.stringify(h), { expirationTtl: 14 * 86400 });
+    if (!h.all && !h.tpl && !h.ga) await env.KV.delete("bchold:" + cid); else await env.KV.put("bchold:" + cid, JSON.stringify(h), { expirationTtl: 14 * 86400 });
   });
 }
 async function bcRun(env, cid, id, on) { // список рассылок, которые сейчас идут: по нему работает фоновая отправка
@@ -5035,35 +5184,56 @@ async function bcRun(env, cid, id, on) { // список рассылок, ко�
 }
 // когда отправлять нельзя: вне часов отправки или после временного отказа Meta → { note, till }
 function bcWait(b, now) {
-  if (b.retryAt > now) return { note: `Meta временно не принимает сообщения — повторю ${bcAt(b.retryAt, now)}.`, till: b.retryAt };
+  if (b.retryAt > now) return { note: `${b.retryWhy || bcFrom(b) + " временно не принимает сообщения"} — повторю ${bcAt(b.retryAt, now)}.`, till: b.retryAt };
   const n = local(now), hr = n.getUTCHours() + n.getUTCMinutes() / 60;
   if (hr >= b.from && hr < b.to) return null;
   const day0 = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) - TZ * 3600e3, till = day0 + b.from * 3600e3 + (hr >= b.to ? 86400e3 : 0);
   return { note: `Отправка идёт с ${hStr(b.from)} до ${hStr(b.to)} по Астане. Продолжу ${bcAt(till, now)}.`, till };
 }
-// одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки
-async function bcTick(env, cid, id) {
+// одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки.
+// gaBusy — с номера Green-API этого клиента в эту минуту уже ушло сообщение (другой рассылкой): ждём следующей минуты
+async function bcTick(env, cid, id, gaBusy) {
   const now = Date.now(), lk = `bcl:${cid}:${id}`, token = Math.random().toString(36).slice(2);
   let b = await bcGet(env, cid, id);
   if (!b) return { error: "Рассылка не найдена." };
   if (b.status !== "running") return { b, state: b.status };
+  const ga = b.ch === "ga";
+  if (ga && gaBusy) return { b, state: "busy" };
   const tell = async text => { try { await notify(env, text, cid); } catch (e) { console.log("bc tg", String(e)); } };
   const waitFor = async w => { if (b.waitNote !== w.note) { b.waitNote = w.note; b.waitTill = w.till; try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); } } return { b, state: "wait" }; };
   const stopFor = async note => {
-    b.status = "paused"; b.note = note; delete b.waitNote; delete b.waitTill; delete b.retryAt;
+    b.status = "paused"; b.note = note; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     await bcPut(env, cid, b); await bcRun(env, cid, id, false);
     await tell(`⚠️ Рассылка «${b.name}» остановлена — ${CLIENTS[cid].name}\n${note}\nОтправлено ${b.sent} из ${b.total}. Когда причина устранена, нажмите «Продолжить» на странице рассылок.`);
     return { b, state: "paused" };
   };
   const w = bcWait(b, now); if (w) return waitFor(w);
-  const route = bcRoute(env, cid);
+  if (ga && b.nextAt > now) return { b, state: "wait" }; // пауза между сообщениями Green-API: хранилище не пишем
+  const route = bcRoute(env, cid, b.ch);
   if (route.error) return stopFor(route.error);
-  const hold = bcHoldFor(await bcHold(env, cid), b.tpl);
-  if (hold) return stopFor(`Сигнал от Meta: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
-  // предел на 24 часа — общий для всех рассылок клиента: Meta считает получателей за скользящие сутки
-  let q = {}; try { q = JSON.parse((await env.KV.get("bcq:" + cid)) || "{}") || {}; } catch (e) {}
+  const hold = bcHoldFor(await bcHold(env, cid), b);
+  if (hold) return stopFor(`Сигнал от ${bcFrom(b)}: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
+  // предел на 24 часа — общий для всех рассылок клиента с этого номера: Meta считает получателей за скользящие сутки; у номера Green-API свой счётчик
+  const qk = "bcq:" + cid + (ga ? ":ga" : "");
+  let q = {}; try { q = JSON.parse((await env.KV.get(qk)) || "{}") || {}; } catch (e) {}
   const slot = Math.floor(now / BC_SLOT), live = Object.keys(q).filter(k => +k > slot - BC_DAY && +q[k] > 0), used = live.reduce((a, k) => a + +q[k], 0);
   if (used >= b.cap) { const till = (Math.min(...live.map(Number)) + BC_DAY) * BC_SLOT; return waitFor({ note: `За последние 24 часа отправлено ${used} — это предел (${b.cap}). Продолжу ${bcAt(till, now)}.`, till }); }
+  if (ga) { // перед каждым сообщением: номер привязан, WhatsApp его не ограничил
+    const s = await gaCall(route.ga, "getStateInstance", null, 10000), state = s.ok ? String(s.j.stateInstance || "") : "";
+    if (GA_STATE_BAD[state]) {
+      const why = GA_STATE_BAD[state];
+      try { await bcHoldEdit(env, cid, h => { h.ga = { at: now, why }; }); } catch (e) { console.log("bchold", String(e)); }
+      return stopFor(`Сигнал от Green-API: ${why}. Рассылка остановлена, чтобы не навредить номеру.`);
+    }
+    if (state === "notAuthorized") return stopFor(`${GA_STATE_TEXT.notAuthorized}, потом нажмите «Продолжить».`);
+    if (s.status === 401 || s.status === 403) return stopFor(`Green-API не пускает: ${gaWhy({ code: "ga:" + s.status }, route.ga)}.`);
+    if (state !== "authorized") { // телефон не на связи, инстанс перезапускается или Green-API не ответил — повторить через 10 минут
+      b.tmp = (b.tmp || 0) + 1;
+      if (b.tmp >= 6) return stopFor(`Больше часа не получается отправить: ${GA_STATE_TEXT[state] || "Green-API не отвечает"}.`);
+      b.retryAt = now + 600e3; b.retryWhy = GA_STATE_TEXT[state] || "Green-API не отвечает";
+      return waitFor(bcWait(b, now));
+    }
+  }
   // замок: две отправки одной рассылки одновременно идти не должны
   if (await env.KV.get(lk)) return { b, state: "busy" };
   try { await env.KV.put(lk, token, { expirationTtl: 60 }); } catch (e) { return { b, state: "busy" }; } // замок только что ставили или снимали — значит, отправка шла секунду назад
@@ -5073,7 +5243,8 @@ async function bcTick(env, cid, id) {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
     if (b.cur) { b.unsure = (b.unsure || 0) + b.cur[1]; delete b.cur; } // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
-    const batch = Math.max(1, Math.min(Math.round(+env.BC_BATCH) || 20, 200)), take = Math.min(batch, b.cap - used, b.total - b.pos);
+    // Green-API: одно сообщение за раз (смотрим до 25 человек вперёд, чтобы пропустить попросивших не писать); Meta — порция
+    const batch = ga ? 25 : Math.max(1, Math.min(Math.round(+env.BC_BATCH) || 20, 200)), take = Math.min(batch, ga ? b.total - b.pos : b.cap - used, b.total - b.pos);
     const from = b.pos, items = [];
     for (let k = Math.floor(from / BC_CHUNK); take > 0 && k <= Math.floor((from + take - 1) / BC_CHUNK); k++) {
       const ch = JSON.parse((await env.KV.get(bcChunkKey(cid, id, k))) || "[]");
@@ -5081,8 +5252,9 @@ async function bcTick(env, cid, id) {
     }
     if (take > 0 && !items.length) return await stopFor("Список получателей не читается из хранилища — попробуйте «Продолжить» через несколько минут.");
     const stop = take > 0 ? await bcOptouts(env, cid) : new Set();
+    if (ga) { const j = items.findIndex(x => !stop.has(x[0])); if (j >= 0) items.length = j + 1; }
     // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт
-    b.pos = from + items.length; b.last = now; delete b.waitNote; delete b.waitTill; delete b.retryAt;
+    b.pos = from + items.length; b.last = now; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     if (items.length) { b.cur = [from, items.length]; await bcPut(env, cid, b); }
     const t0 = Date.now();
     let done = 0, halt = null;
@@ -5090,28 +5262,30 @@ async function bcTick(env, cid, id) {
       if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
       if (stop.has(digits)) { b.skipped++; done++; continue; }
       did = true;
-      const r = await sendTemplate(env, digits, b, name, route);
+      const r = ga ? await bcSendGa(env, digits, b, name, route.ga) : await sendTemplate(env, digits, b, name, route);
       if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; continue; }
-      const temp = BC_TEMP.has(r.code) || r.status >= 500;
-      if (temp || BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done)) { // получатель ни при чём: он возвращается в очередь
-        if (BC_PARAM.has(r.code)) b.stuck = from + done;
-        halt = { kind: temp ? "temp" : "stop", r }; break;
+      const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
+      if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь
+        if (!ga && BC_PARAM.has(r.code)) b.stuck = from + done;
+        halt = { kind, r }; break;
       }
       b.failed++; done++;
       b.fails = b.fails || {}; b.fails[r.code] = (b.fails[r.code] || 0) + 1;
       if ((b.bad = b.bad || []).length < 300) b.bad.push([digits, r.code]);
       if (r.code === 131050) { try { await env.KV.put(`optout:${cid}:${digits}`, "meta:" + now); } catch (e) {} } // человек запретил рекламу в WhatsApp — больше ему не шлём
-      if (r.code === 0) { halt = { kind: "temp", r }; break; } // связь с Meta оборвалась — пауза на 10 минут
+      if (kind === "net") { halt = { kind: "temp", r }; break; } // связь оборвалась (сообщение могло уйти) — пауза на 10 минут
       b.streak = (b.streak || 0) + 1;
       if (b.streak >= 5) { halt = { kind: "streak", r }; break; }
     }
     b.pos = from + done; delete b.cur;
+    if (ga && did) b.nextAt = now + GA_GAP[0] + Math.floor(Math.random() * (GA_GAP[1] - GA_GAP[0])); // следующее сообщение — через 30–150 секунд
     if (halt && halt.kind === "temp") { b.tmp = (b.tmp || 0) + 1; if (b.tmp < 6) b.retryAt = now + 600e3; }
     if (sentNow) { // учёт отправленного за сутки
-      try { const nq = {}; for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put("bcq:" + cid, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
+      try { const nq = {}; for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put(qk, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
     }
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
-      return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${bcWhy(halt.r)}).` : halt.kind === "temp" ? `Meta больше часа не принимает сообщения (${bcWhy(halt.r)}).` : `Meta отклонила отправку (${bcWhy(halt.r)}).`);
+      const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);
+      return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${why}).` : halt.kind === "temp" ? `${bcFrom(b)} больше часа не принимает сообщения (${why}).` : `${ga ? "Green-API отклонил" : "Meta отклонила"} отправку (${why}).`);
     }
     if (b.pos >= b.total) {
       b.status = "done"; b.doneAt = now;
@@ -5154,14 +5328,14 @@ async function cronRun(env) {
   try { run = JSON.parse((await env.KV.get("bcrun")) || "[]") || []; } catch (e) { console.log("cron", String(e)); return 0; }
   if (!run.length) return 0;
   try { await syncClients(env, true); } catch (e) { console.log("cfg", String(e)); }
-  const k = Math.floor(Date.now() / 60e3) % run.length;
+  const k = Math.floor(Date.now() / 60e3) % run.length, gaSent = new Set();
   let n = 0;
   for (const x of run.slice(k).concat(run.slice(0, k)).slice(0, 5)) { // по очереди: у каждой рассылки своя минута
     if (!hasClient(x.c)) { await bcRun(env, x.c, x.id, false); continue; }
-    let r; try { r = await bcTick(env, x.c, x.id); } catch (e) { console.log("cron bc", String((e && e.stack) || e)); continue; }
+    let r; try { r = await bcTick(env, x.c, x.id, gaSent.has(x.c)); } catch (e) { console.log("cron bc", String((e && e.stack) || e)); continue; }
     n++;
     if (r.error || !["running", "wait", "busy"].includes(r.state)) await bcRun(env, x.c, x.id, false);
-    if (r.did) break;
+    if (r.did) { if (r.b && r.b.ch === "ga") gaSent.add(x.c); else break; } // Meta — одна порция за запуск (предел внешних запросов); Green-API — по одному сообщению с номера каждого клиента
   }
   return n;
 }
@@ -5229,6 +5403,9 @@ async function waFailed(env, wx, fails) {
     await notifyOnce(env, "wafail:" + cid + ":" + hard.code, `⚠️ WhatsApp — ${CLIENTS[cid].name}\nСообщения не доходят: ${why}.\nРассылки остановлены.`, cid);
   }
 }
+// вебхук не настроен — рассылку через Green-API не запускаем: бот не увидит, кто ответил «стоп»
+const GA_HOOK_WARN = "Вебхук Green-API не настроен: бот не увидит ответы клиентов, и тем, кто ответит «стоп», рассылка будет приходить дальше. Владелец сервиса настраивает его одной кнопкой: «Проверка запуска» → «Настроить Green-API».";
+const bcUsed = (q, now) => { const slot = Math.floor(now / BC_SLOT); return Object.keys(q || {}).filter(k => +k > slot - BC_DAY).reduce((a, k) => a + (+q[k] || 0), 0); };
 async function bcApi(request, env, url, s) {
   const P = url.pathname, M = request.method, q = url.searchParams;
   let body = {};
@@ -5236,7 +5413,7 @@ async function bcApi(request, env, url, s) {
   const cid = String((M === "POST" ? body.c : q.get("c")) || "");
   if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
   const c = CLIENTS[cid], now = Date.now(), route = bcRoute(env, cid);
-  const pub = b => { const { bad, ...rest } = b; return { ...rest, fails: Object.entries(b.fails || {}).map(([code, n]) => ({ code: +code, n, hint: BC_HINT[code] || "" })), stalled: b.status === "running" && now - Math.max(b.last || 0, b.startedAt || 0, b.waitTill || 0) > BC_STALE }; };
+  const pub = b => { const { bad, ...rest } = b; return { ...rest, fails: Object.entries(b.fails || {}).map(([code, n]) => ({ code: bcCode(code), n, hint: BC_HINT[code] || "" })), stalled: b.status === "running" && now - Math.max(b.last || 0, b.startedAt || 0, b.waitTill || 0, b.nextAt || 0) > BC_STALE }; }; // пауза между сообщениями Green-API — не молчание
   if (M === "GET" && P === "/api/bc/list") {
     const rows = [];
     try {
@@ -5244,13 +5421,21 @@ async function bcApi(request, env, url, s) {
       for (const k of (r && r.keys) || []) rows.push({ id: String(k.name).split(":").pop(), ...(k.metadata || {}) });
     } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте через минуту." }, 503); }
     rows.sort((a, b2) => (b2.created || 0) - (a.created || 0));
-    let stops = 0, hold = null, fail = null, used = 0;
+    let stops = 0, hold = null, holdGa = "", fail = null, used = 0, usedGa = 0;
     try { stops = (await bcOptouts(env, cid)).size; } catch (e) {}
-    try { const h = await bcHold(env, cid); hold = h ? [h.all && h.all.why].concat(Object.values(h.tpl || {}).map(x => x.why)).filter(Boolean) : null; } catch (e) {}
-    try { const f = JSON.parse((await env.KV.get(`bcf:${cid}:${isoDay(now)}`)) || "null"); if (f && f.n) fail = { n: f.n, codes: Object.entries(f.codes || {}).map(([code, n]) => ({ code: +code, n, hint: BC_HINT[code] || "" })) }; } catch (e) {}
-    try { const u = JSON.parse((await env.KV.get("bcq:" + cid)) || "{}") || {}, slot = Math.floor(now / BC_SLOT); used = Object.keys(u).filter(k => +k > slot - BC_DAY).reduce((a, k) => a + (+u[k] || 0), 0); } catch (e) {}
+    try { const h = await bcHold(env, cid); hold = h ? [h.all && h.all.why].concat(Object.values(h.tpl || {}).map(x => x.why)).filter(Boolean) : null; holdGa = (h && h.ga && h.ga.why) || ""; } catch (e) {}
+    try { const f = JSON.parse((await env.KV.get(`bcf:${cid}:${isoDay(now)}`)) || "null"); if (f && f.n) fail = { n: f.n, codes: Object.entries(f.codes || {}).map(([code, n]) => ({ code: bcCode(code), n, hint: BC_HINT[code] || "" })) }; } catch (e) {}
+    try { used = bcUsed(JSON.parse((await env.KV.get("bcq:" + cid)) || "{}"), now); } catch (e) {}
     const health = route.error ? null : await bcHealth(env, route);
-    return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, list: rows.slice(0, 60), now });
+    const gr = gaRoute(env, cid);
+    let ga = null; // номер Green-API клиента: привязан ли, настроен ли вебхук, сколько отправлено за сутки
+    if (gr) {
+      try { usedGa = bcUsed(JSON.parse((await env.KV.get("bcq:" + cid + ":ga")) || "{}"), now); } catch (e) {}
+      const g = await gaInfo(env, gr);
+      ga = { ready: !g.error && g.state === "authorized", state: g.state || "", phone: g.phone || "", hook: !!g.hook, why: g.error || (g.state === "authorized" ? "" : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
+        warn: g.error || g.hook ? "" : GA_HOOK_WARN, used: usedGa, cap: GA_CAP, hold: holdGa };
+    }
+    return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, ga, list: rows.slice(0, 60), now });
   }
   if (M === "GET" && P === "/api/bc/get") {
     const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));
@@ -5258,30 +5443,40 @@ async function bcApi(request, env, url, s) {
     return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map(([d, code]) => `+${d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
-  const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24);
+  const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
   const fields = () => {
-    const errors = [], tpl = String(body.tpl || "").trim(), lang = String(body.lang || "ru").trim(), img = String(body.img || "").trim();
+    const errors = [], img = String(body.img || "").trim(), fallback = clean(body.fallback || "", 30);
+    if (ga) { // Green-API: обычный текст как написан (переводы строк сохраняются), в конце — «ответьте СТОП»
+      const msg = bcGaMsg(body.text);
+      if (!msg) errors.push("напишите текст сообщения");
+      else if (img ? msg.replace(/\{\s*(имя|name)\s*\}/gi, "x".repeat(30)).length > 1024 : msg.length > GA_MSG_MAX) errors.push(img ? `текст с картинкой — не длиннее ${GA_CAPTION_MAX} знаков (это подпись к картинке, у WhatsApp она короче обычного сообщения)` : `текст сообщения — не длиннее ${GA_MSG_MAX} знаков`); // подпись к картинке — до 1024 знаков вместе с самым длинным именем
+      if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка — ссылка, которая начинается с https://");
+      return { errors, ch: "ga", img, msg, params: [], text: clean(msg.replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
+    }
+    const tpl = String(body.tpl || "").trim(), lang = String(body.lang || "ru").trim();
     if (!/^[a-z0-9_]{1,512}$/.test(tpl)) errors.push("название шаблона — как в кабинете Meta: строчные латинские буквы, цифры и «_» (например, promo_october)");
     if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(lang)) errors.push("язык шаблона — код из кабинета Meta: ru, kk, en или en_US");
     if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка — ссылка, которая начинается с https://");
     const params = (Array.isArray(body.params) ? body.params : String(body.params || "").split("\n")).map(x => clean(x, 300)).filter(Boolean).slice(0, 10);
-    return { errors, tpl, lang, img, params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback: clean(body.fallback || "", 30) };
+    return { errors, tpl, lang, img, params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
   };
   if (P === "/api/bc/check") { // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим
-    const r = bcParse(body.recipients), f = fields();
+    const r = bcParse(body.recipients), f = fields(), first = (r.list.find(x => x[1]) || [])[1] || "";
     let stop = new Set(); try { stop = await bcOptouts(env, cid); } catch (e) {}
     return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter(x => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter(x => stop.has(x[0])).length,
-      sample: r.list.slice(0, 5).map(x => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: f.params.map(t => bcParam(t, (r.list.find(x => x[1]) || [])[1] || "", f.fallback)) });
+      sample: r.list.slice(0, 5).map(x => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: ga ? (f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) });
   }
-  if (P === "/api/bc/test") { // пробная отправка шаблона на один номер (себе)
+  if (P === "/api/bc/test") { // пробная отправка на один номер (себе)
     const f = fields(), to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
     if (f.errors.length) return jsonP({ error: f.errors.join("; ") }, 400);
     if (!to) return jsonP({ error: "Укажите свой номер полностью, например +7 701 123 45 67." }, 400);
-    if (route.error) return jsonP({ error: route.error }, 409);
+    const rt = ga ? bcRoute(env, cid, "ga") : route;
+    if (rt.error) return jsonP({ error: rt.error }, 409);
     const tk = `bct:${cid}:${Math.floor(now / 3600e3)}`, tn = +((await env.KV.get(tk)) || 0);
     if (tn >= 20) return jsonP({ error: "Слишком много пробных отправок за час — подождите." }, 429);
     try { await env.KV.put(tk, String(tn + 1), { expirationTtl: 3700 }); } catch (e) {}
-    const r = await sendTemplate(env, to.slice(1), f, "Айгерим", route);
+    if (ga) { const r = await bcSendGa(env, to.slice(1), f, "Айгерим", rt.ga); return r.ok ? jsonP({ ok: true, text: `Сообщение отправлено на ${to} с номера Green-API — проверьте WhatsApp.` }) : jsonP({ error: `Green-API не принял сообщение (${gaWhy(r, rt.ga)}).` }, 409); }
+    const r = await sendTemplate(env, to.slice(1), f, "Айгерим", rt);
     return r.ok ? jsonP({ ok: true, text: `Шаблон отправлен на ${to} — проверьте WhatsApp. Если сообщение не пришло за минуту, этот номер не принимает сообщения от компаний.` }) : jsonP({ error: `Meta не приняла шаблон (${bcWhy(r)}).` }, 409);
   }
   if (P === "/api/bc/create") {
@@ -5289,13 +5484,15 @@ async function bcApi(request, env, url, s) {
     const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
     if (name.length < 2) errors.push("дайте рассылке название — для себя");
     if (!r.list.length) errors.push("в списке нет ни одного номера");
-    if (!(cap >= 1 && cap <= 100000)) errors.push("предел на 24 часа — число от 1 до 100 000");
+    if (ga && !(cap >= 1 && cap <= GA_CAP[1])) errors.push(`предел на 24 часа через Green-API — от 1 до ${GA_CAP[1]}: обычный WhatsApp блокируют за массовые рассылки`);
+    else if (!(cap >= 1 && cap <= 100000)) errors.push("предел на 24 часа — число от 1 до 100 000");
     if (!(from >= 0 && to <= 24 && to > from)) errors.push("часы отправки: «с» должно быть раньше, чем «до»");
     else if (from < 8 || to > 22) errors.push("часы отправки — не раньше 8:00 и не позже 22:00: ночные сообщения вызывают жалобы, а жалобы блокируют номер");
-    if (!f.text) errors.push("вставьте текст шаблона — его увидит администратор, а бот поймёт, на что отвечает клиент");
+    if (!ga && !f.text) errors.push("вставьте текст шаблона — его увидит администратор, а бот поймёт, на что отвечает клиент");
     if (body.consent !== true) errors.push("подтвердите, что эти люди — клиенты компании и не просили им не писать");
     if (errors.length) return jsonP({ ok: false, errors }, 400);
-    const b = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, tpl: f.tpl, lang: f.lang, params: f.params, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to };
+    const base = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to };
+    const b = ga ? { ...base, ch: "ga", msg: f.msg } : { ...base, tpl: f.tpl, lang: f.lang, params: f.params };
     try {
       for (let k = 0; k * BC_CHUNK < r.list.length; k++) await env.KV.put(bcChunkKey(cid, b.id, k), JSON.stringify(r.list.slice(k * BC_CHUNK, (k + 1) * BC_CHUNK)), { expirationTtl: 180 * 86400 });
       await bcPut(env, cid, b);
@@ -5307,13 +5504,20 @@ async function bcApi(request, env, url, s) {
   if (P === "/api/bc/act") {
     const act = String(body.act || "");
     if (act === "start") {
-      if (route.error) return jsonP({ error: route.error }, 409);
+      const rt = bcRoute(env, cid, cur.ch);
+      if (rt.error) return jsonP({ error: rt.error }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
-      const hold = bcHoldFor(await bcHold(env, cid), cur.tpl);
-      if (hold && body.force !== true) return jsonP({ confirm: `Сигнал от Meta: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
-      if (hold) await bcHoldEdit(env, cid, h => { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; });
+      if (cur.ch === "ga") { // номер на связи и вебхук ведёт в этот бот — иначе «стоп» клиентов до бота не дойдёт
+        const g = await gaInfo(env, rt.ga);
+        if (g.error) return jsonP({ error: g.error }, 409);
+        if (g.state !== "authorized") return jsonP({ error: `${GA_STATE_TEXT[g.state] || `Green-API: номер в состоянии «${clean(g.state, 30)}»`}. ${GA_STATE_BAD[g.state] ? "Пока ограничение не снято, рассылку запускать нельзя." : "Запустите рассылку, когда номер будет на связи."}` }, 409);
+        if (!g.hook) return jsonP({ error: GA_HOOK_WARN }, 409);
+      }
+      const hold = bcHoldFor(await bcHold(env, cid), cur);
+      if (hold && body.force !== true) return jsonP({ confirm: `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
+      if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
       cur.status = "running"; cur.startedAt = now; cur.streak = 0; cur.tmp = 0;
-      for (const k of ["note", "retryAt", "waitNote", "waitTill"]) delete cur[k];
+      for (const k of ["note", "retryAt", "retryWhy", "waitNote", "waitTill", "nextAt"]) delete cur[k];
       await bcPut(env, cid, cur); await bcRun(env, cid, id, true);
       try { await env.KV.put("bclast:" + cid, JSON.stringify({ at: now, name: cur.name, text: snip(cur.text, 600) }), { expirationTtl: 7 * 86400 }); } catch (e) { console.log("bclast", String(e)); } // текст рассылки увидят ИИ (клиент может ответить на неё) и администратор в пульте
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
@@ -5321,7 +5525,7 @@ async function bcApi(request, env, url, s) {
     else if (act === "delete") { // вместе с рассылкой удаляется и список номеров
       if (cur.status === "running") return jsonP({ error: "Сначала остановите рассылку." }, 409);
       for (let k = 0; k * BC_CHUNK < cur.total; k++) { try { await env.KV.delete(bcChunkKey(cid, id, k)); } catch (e) {} }
-      await env.KV.delete(bcKey(cid, id)); await bcRun(env, cid, id, false);
+      await kvRetry(() => env.KV.delete(bcKey(cid, id))); await bcRun(env, cid, id, false); // рассылку могли записать секунду назад — KV просит подождать
       return jsonP({ ok: true, gone: true });
     } else return jsonP({ error: "Неизвестное действие." }, 400);
     return jsonP({ ok: true, b: pub(cur) });
@@ -5343,25 +5547,33 @@ input[type=file]{font-size:14px;margin-top:6px}label.ck{font-weight:400;display:
 <div id="list"></div>
 <div class="row"><button class="btn p" id="b_new">+ Новая рассылка</button></div>
 <div id="form" class="card" hidden>
-<h3 style="margin-top:0">Новая рассылка</h3><p class="mut">Написать клиенту первым WhatsApp разрешает только шаблоном, который одобрила Meta (кабинет Meta → WhatsApp Manager → Шаблоны сообщений). В конце шаблона добавьте строку «Чтобы не получать сообщения, ответьте СТОП» — таким клиентам рассылка больше не уйдёт.</p>
+<h3 style="margin-top:0">Новая рассылка</h3>
+<div id="chbox" hidden><label>Через что отправлять</label><label class="ck"><input type="radio" name="ch" id="ch_ga"><span>Green-API — обычным текстом с номера WhatsApp компании</span></label><label class="ck"><input type="radio" name="ch" id="ch_meta"><span>Meta — шаблоном, который одобрила Meta</span></label></div>
+<p class="mut" id="p_meta">Написать клиенту первым WhatsApp разрешает только шаблоном, который одобрила Meta (кабинет Meta → WhatsApp Manager → Шаблоны сообщений). В конце шаблона добавьте строку «Чтобы не получать сообщения, ответьте СТОП» — таким клиентам рассылка больше не уйдёт.</p>
+<p class="mut" id="p_ga" hidden>Сообщение уйдёт обычным текстом с номера WhatsApp компании — по одному, с паузой 1–3 минуты. За массовые рассылки WhatsApp блокирует такие номера: пишите только своим клиентам и начинайте с 30–50 сообщений в сутки. В конце бот сам добавит строку «Чтобы не получать сообщения, ответьте СТОП» — таким клиентам рассылка больше не уйдёт.</p>
 <label>Название для себя</label><input type="text" id="f_name" maxlength="60" placeholder="Октябрь: скидка на стрижку">
-<div class="two"><div style="flex:3"><label>Название шаблона в Meta</label><input type="text" id="f_tpl" maxlength="100" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="promo_october"></div><div><label>Язык</label><input type="text" id="f_lang" maxlength="6" value="ru" autocapitalize="off"></div></div>
-<label>Текст шаблона<small>Скопируйте из кабинета Meta как есть. Клиенту уйдёт сам шаблон; этот текст нужен, чтобы администратор и бот знали, что было отправлено.</small></label><textarea id="f_text"></textarea>
-<label>Подстановки<small>Если в шаблоне есть {{1}}, {{2}} — по одной на строке, по порядку. {имя} заменится именем клиента из списка. Если подстановок нет — оставьте пустым.</small></label><textarea id="f_params" style="min-height:60px" placeholder="{имя}"></textarea>
+<div class="two" id="r_tpl"><div style="flex:3"><label>Название шаблона в Meta</label><input type="text" id="f_tpl" maxlength="100" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="promo_october"></div><div><label>Язык</label><input type="text" id="f_lang" maxlength="6" value="ru" autocapitalize="off"></div></div>
+<label><span id="l_text">Текст шаблона</span><small id="s_text">Скопируйте из кабинета Meta как есть. Клиенту уйдёт сам шаблон; этот текст нужен, чтобы администратор и бот знали, что было отправлено.</small></label><textarea id="f_text"></textarea>
+<div id="r_params"><label>Подстановки<small>Если в шаблоне есть {{1}}, {{2}} — по одной на строке, по порядку. {имя} заменится именем клиента из списка. Если подстановок нет — оставьте пустым.</small></label><textarea id="f_params" style="min-height:60px" placeholder="{имя}"></textarea></div>
 <label>Если имени в списке нет, подставить</label><input type="text" id="f_fb" maxlength="30" value="уважаемый клиент">
-<label>Картинка в шапке<small>Только если шаблон с картинкой: ссылка на неё, начинается с https://</small></label><input type="text" id="f_img" maxlength="500" autocapitalize="off" placeholder="не обязательно">
+<label><span id="l_img">Картинка в шапке</span><small id="s_img">Только если шаблон с картинкой: ссылка на неё, начинается с https://</small></label><input type="text" id="f_img" maxlength="500" autocapitalize="off" placeholder="не обязательно">
 <label>Кому<small>По клиенту на строке: номер и, если есть, имя — «8 701 123 45 67, Айгерим». Можно вставить столбцы прямо из Excel. Повторы уберутся сами.</small></label><textarea id="f_rec" style="min-height:140px"></textarea><input type="file" id="f_file" accept=".csv,.txt,text/plain,text/csv">
 <div class="two"><div><label>Не больше за 24 часа</label><input type="number" id="f_cap" value="240" min="1"></div><div><label>С, час</label><input type="number" id="f_from" value="10" min="8" max="21"></div><div><label>До, час</label><input type="number" id="f_to" value="20" min="9" max="22"></div></div>
 <p class="mut" id="caphint">У нового номера предел Meta — 250 получателей за 24 часа, после проверки компании — 2 000.</p>
-<p class="mut">Первую рассылку сделайте небольшой — 50–100 постоянных клиентов. По жалобам на первые сообщения Meta судит о номере: много жалоб — и она ограничит отправку.</p>
+<p class="mut" id="p_meta2">Первую рассылку сделайте небольшой — 50–100 постоянных клиентов. По жалобам на первые сообщения Meta судит о номере: много жалоб — и она ограничит отправку.</p>
 <label class="ck"><input type="checkbox" id="f_ok"><span>Это клиенты компании: они сами оставляли номер и не просили им не писать</span></label>
 <div id="fout"></div>
 <div class="row"><button class="btn" id="b_chk">Проверить список</button><button class="btn p" id="b_make">Создать рассылку</button><button class="btn" id="b_cancel">Отмена</button></div>
-<label>Пробная отправка себе<small>Перед рассылкой отправьте шаблон на свой номер и посмотрите, как он выглядит.</small></label>
+<label>Пробная отправка себе<small>Перед рассылкой отправьте сообщение на свой номер и посмотрите, как оно выглядит.</small></label>
 <div class="two"><div style="flex:3"><input type="text" id="f_to1" inputmode="tel" placeholder="+7 701 123 45 67"></div><div><button class="btn" id="b_test">Отправить</button></div></div><div id="tout"></div></div>
 </div>
 <script>
-var $=function(i){return document.getElementById(i)},C=new URLSearchParams(location.search).get('c')||'',poll=null,live={};
+var $=function(i){return document.getElementById(i)},C=new URLSearchParams(location.search).get('c')||'',poll=null,live={},CH='',CAP={'':240,ga:50},HINT={'':'',ga:'Через Green-API — не больше 300 в сутки. Начинайте с 30–50: так меньше риск, что WhatsApp заблокирует номер.'};
+function setCh(ch){var g=ch==='ga';CH=g?'ga':'';$('ch_ga').checked=g;$('ch_meta').checked=!g;$('p_meta').hidden=g;$('p_meta2').hidden=g;$('p_ga').hidden=!g;$('r_tpl').hidden=g;$('r_params').hidden=g;
+ $('l_text').textContent=g?'Текст сообщения':'Текст шаблона';$('s_text').textContent=g?'{имя} заменится именем клиента из списка. Переносы строк и эмодзи сохранятся.':'Скопируйте из кабинета Meta как есть. Клиенту уйдёт сам шаблон; этот текст нужен, чтобы администратор и бот знали, что было отправлено.';
+ $('l_img').textContent=g?'Картинка':'Картинка в шапке';$('s_img').textContent=g?'Не обязательно: ссылка на картинку (начинается с https://), текст уйдёт подписью к ней.':'Только если шаблон с картинкой: ссылка на неё, начинается с https://';
+ $('f_cap').value=CAP[CH];$('f_cap').max=g?300:100000;$('caphint').textContent=HINT[CH];$('caphint').hidden=!HINT[CH]}
+$('ch_ga').onchange=function(){setCh('ga')};$('ch_meta').onchange=function(){setCh('')};
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
 function tm(ms){var d=new Date(ms+5*3600e3);return ('0'+d.getUTCHours()).slice(-2)+':'+('0'+d.getUTCMinutes()).slice(-2)}
@@ -5370,18 +5582,22 @@ function msg(box,cls,lines){box.textContent='';var m=el('div','msg '+cls);lines.
 function fail(e,box){if(e===0)return;msg(box||$('info'),'e',['Нет связи с сервером или он не ответил. Проверьте интернет и попробуйте ещё раз — ничего не потеряно.'])}
 function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('info');L.textContent='';I.textContent='';if(d.error){msg(I,'e',[d.error]);return}
  $('ttl').textContent='Рассылки · '+d.client.name;$('l_in').href='/inbox?c='+C;$('l_st').hidden=!d.owner;
- if(!d.ready)I.appendChild(el('div','msg e',d.why));
+ var g=d.ga;if(!d.ready&&!g)I.appendChild(el('div','msg e',d.why));
+ HINT['']='У нового номера предел Meta — 250 получателей за 24 часа, после проверки компании — 2 000.';
  if(d.health){if(d.health.error)I.appendChild(el('div','msg w',d.health.error));else{var h=d.health,t='Номер '+(h.phone||'')+(h.name?' «'+h.name+'»':'')+(QL[h.quality]?' · качество: '+QL[h.quality]:'')+(h.limit>0?' · предел Meta: '+h.limit+' получателей за 24 часа':h.limit<0?' · предел Meta: без ограничений':'');
-  I.appendChild(el('div','msg '+(h.quality==='RED'?'e':h.quality==='YELLOW'?'w':'g'),t));if(h.limit>0){$('f_cap').value=Math.max(1,Math.floor(h.limit*0.95));$('caphint').textContent='Предел Meta для этого номера — '+h.limit+' получателей за 24 часа. Оставьте небольшой запас.'}else if(h.limit<0)$('caphint').textContent='У этого номера нет суточного предела Meta. Начинайте с небольших рассылок: жалобы клиентов снижают качество номера.'}}
+  I.appendChild(el('div','msg '+(h.quality==='RED'?'e':h.quality==='YELLOW'?'w':'g'),t));if(h.limit>0){CAP['']=Math.max(1,Math.floor(h.limit*0.95));HINT['']='Предел Meta для этого номера — '+h.limit+' получателей за 24 часа. Оставьте небольшой запас.'}else if(h.limit<0)HINT['']='У этого номера нет суточного предела Meta. Начинайте с небольших рассылок: жалобы клиентов снижают качество номера.'}}
  if(d.hold&&d.hold.length)I.appendChild(el('div','msg e','Сигнал от Meta: '+d.hold.join('; ')+'. Рассылки остановлены.'));
- var p=el('p','mut','Отправлено за последние 24 часа: '+d.used+'. Просили не писать: '+d.stops+' — им рассылки не уходят.');I.appendChild(p);
+ if(g){I.appendChild(el('div','msg '+(g.ready?'g':'e'),'WhatsApp через Green-API: '+(g.ready?'номер '+(g.phone||'')+' привязан':g.why)));if(g.warn){var wn=el('div','msg w',g.warn);if(d.owner){var la=el('a','',' Открыть проверку запуска');la.href='/launch?c='+C;wn.appendChild(la)}I.appendChild(wn)}
+  if(g.hold)I.appendChild(el('div','msg e','Сигнал от Green-API: '+g.hold+'. Рассылки через Green-API остановлены.'))}
+ $('chbox').hidden=!(g&&d.ready);if(!$('form').dataset.ch){$('form').dataset.ch=1;setCh(g&&!d.ready?'ga':'')}else $('caphint').textContent=HINT[CH];
+ var p=el('p','mut','Отправлено за последние 24 часа: '+(g?(d.ready?d.used+' (Meta), ':'')+g.used+(d.ready?' (Green-API)':''):d.used)+'. Просили не писать: '+d.stops+' — им рассылки не уходят.');I.appendChild(p);
  if(d.fail)I.appendChild(el('p','mut','Не доставлено сегодня: '+d.fail.n+' ('+d.fail.codes.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')+').'));
  if(!d.list.length)L.appendChild(el('p','mut','Рассылок пока нет.'));
  live={};d.list.forEach(function(b){var c=el('div','card');c.id='bc'+b.id;L.appendChild(c);fillCard(c,b);if(b.status!=='done'&&b.status!=='stopped')refresh(b.id)});watch()}).catch(function(e){fail(e,$('info'))})}
 function refresh(id){return api('/api/bc/get?c='+C+'&id='+id).then(function(d){var c=$('bc'+id);if(!c||d.error)return;var was=live[id];fillCard(c,d.b);if(was&&!live[id])load()}).catch(function(){})}
 function watch(){clearTimeout(poll);if(!Object.keys(live).length)return;poll=setTimeout(function(){if(document.hidden){watch();return}Promise.all(Object.keys(live).map(refresh)).then(watch)},5000)}
 function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;else delete live[b.id];
- c.appendChild(el('b','',b.name));c.appendChild(el('div','mut',(ST[b.status]||b.status)+' · отправлено '+b.sent+' из '+b.total+(b.skipped?' · просили не писать: '+b.skipped:'')+(b.failed?' · ошибок: '+b.failed:'')+(b.unsure?' · неизвестно (сбой): до '+b.unsure:'')));
+ c.appendChild(el('b','',b.name));c.appendChild(el('div','mut',(b.ch==='ga'?'Green-API · ':'')+(ST[b.status]||b.status)+' · отправлено '+b.sent+' из '+b.total+(b.skipped?' · просили не писать: '+b.skipped:'')+(b.failed?' · ошибок: '+b.failed:'')+(b.unsure?' · неизвестно (сбой): до '+b.unsure:'')));
  var bar=el('div','bar2'),i=el('i');i.style.width=Math.round(100*(b.pos||0)/Math.max(1,b.total))+'%';bar.appendChild(i);c.appendChild(bar);
  if(b.note&&b.status==='paused')c.appendChild(el('div','msg e',b.note));if(b.waitNote&&b.status==='running')c.appendChild(el('div','msg w',b.waitNote));
  if(b.fails&&b.fails.length)c.appendChild(el('div','mut','Ошибки: '+b.fails.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')));
@@ -5390,7 +5606,7 @@ function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;els
  if(b.status==='ready')btn('Запустить','start',1);if(b.status==='paused')btn('Продолжить','start',1);if(b.status==='running')btn('Пауза','pause');
  if(b.status==='running'&&b.stalled){c.appendChild(el('div','msg w','Фоновая отправка молчит больше двух минут. Можно отправить порцию вручную.'));btn('Отправить порцию сейчас','tick',1)}
  if(b.status!=='done'&&b.status!=='stopped')btn('Остановить совсем','stop');if(b.failed)btn('Номера с ошибками','bad');if(b.status!=='running')btn('Удалить','delete').className='btn d';
- c.appendChild(r);if(b.status==='running'&&!b.stalled&&!b.waitNote)c.appendChild(el('div','mut','Отправка идёт в фоне — по порции в минуту. Страницу можно закрыть: итог придёт в Telegram.'+(b.last?' Последняя порция: '+tm(b.last)+'.':'')))}
+ c.appendChild(r);if(b.status==='running'&&!b.stalled&&!b.waitNote)c.appendChild(el('div','mut',(b.ch==='ga'?'Отправка идёт в фоне — по одному сообщению раз в 1–3 минуты.':'Отправка идёт в фоне — по порции в минуту.')+' Страницу можно закрыть: итог придёт в Telegram.'+(b.last?' Последняя отправка: '+tm(b.last)+'.':'')))}
 function act(id,a,btn,force,b){var o=$('o'+id);
  if(a==='start'&&!force&&b&&!confirm((b.status==='paused'?'Продолжить':'Запустить')+' рассылку «'+b.name+'»? Сообщение получат до '+(b.total-(b.pos||0))+' человек. Остановить можно, но уже отправленное не вернуть.'))return;
  if(a==='stop'&&!confirm('Остановить рассылку совсем? Продолжить её будет нельзя.'))return;if(a==='delete'&&!confirm('Удалить рассылку вместе со списком номеров?'))return;
@@ -5398,12 +5614,13 @@ function act(id,a,btn,force,b){var o=$('o'+id);
  btn.disabled=true;
  var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',{c:C,id:id,act:a,force:!!force});
  call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(e){btn.disabled=false;fail(e,o)})}
-function body(){return{c:C,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
+function body(){return{c:C,ch:CH,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
 $('b_new').onclick=function(){$('form').hidden=false;$('b_new').hidden=true;$('form').scrollIntoView()};$('b_cancel').onclick=function(){$('form').hidden=true;$('b_new').hidden=false};
 $('f_file').onchange=function(){var f=this.files&&this.files[0];if(!f)return;if(f.size>3e6){msg($('fout'),'e',['Файл слишком большой. Нужен текстовый файл или CSV со списком номеров.']);return}var r=new FileReader();r.onload=function(){$('f_rec').value=String(r.result||'')};r.readAsText(f)};
 $('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.error){msg($('fout'),'e',[d.error]);return}var l=['Номеров: '+d.valid+(d.named?' · с именем: '+d.named:'')+(d.dup?' · повторов убрано: '+d.dup:'')+(d.stopped?' · просили не писать: '+d.stopped+' (им не уйдёт)':'')];if(d.sample&&d.sample.length)l.push('Первые строки: '+d.sample.join('; '));
- if(d.preview&&d.preview.length)l.push('Подстановки для первого клиента: '+d.preview.join(' | '));if(d.badN)l.push('Не понял строк: '+d.badN+' — например: '+d.bad.join(' | '));if(d.cut)l.push('Список слишком длинный: '+d.cut+' строк в конце не попадут в рассылку.');
- if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l)}).catch(function(e){fail(e,$('fout'))})};
+ if(d.preview&&d.preview.length&&CH!=='ga')l.push('Подстановки для первого клиента: '+d.preview.join(' | '));if(d.badN)l.push('Не понял строк: '+d.badN+' — например: '+d.bad.join(' | '));if(d.cut)l.push('Список слишком длинный: '+d.cut+' строк в конце не попадут в рассылку.');
+ if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l);
+ if(CH==='ga'&&d.preview&&d.preview[0]){var m=$('fout').firstChild;m.appendChild(el('div','','Так увидит сообщение первый клиент:'));var pv=el('div','',d.preview[0]);pv.style.cssText='white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:4px';m.appendChild(pv)}}).catch(function(e){fail(e,$('fout'))})};
 $('b_test').onclick=function(){var b=body();b.to=$('f_to1').value;var t=$('b_test');t.disabled=true;api('/api/bc/test',b).then(function(d){t.disabled=false;msg($('tout'),d.error?'e':'g',[d.error||d.text])}).catch(function(e){t.disabled=false;fail(e,$('tout'))})};
 $('b_make').onclick=function(){var t=$('b_make');t.disabled=true;api('/api/bc/create',body()).then(function(d){t.disabled=false;if(!d.ok){msg($('fout'),'e',(d.errors||[d.error||'Не получилось.']).map(function(x){return'• '+x}));return}$('form').hidden=true;$('b_new').hidden=false;$('f_rec').value='';$('fout').textContent='';load()}).catch(function(e){t.disabled=false;fail(e,$('fout'))})};
 document.addEventListener('visibilitychange',function(){if(!document.hidden)watch()});

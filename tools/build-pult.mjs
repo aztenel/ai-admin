@@ -17,6 +17,7 @@ const shell = read("shell.html");
 function build(demo) {
   const rep = {
     "@@TITLE@@": demo ? "Пульт — демо" : "Чаты — AI-администратор",
+    "@@APPTITLE@@": demo ? "Пульт демо" : "Пульт", // подпись под значком на экране «Домой»: демо и рабочий пульт не путаются
     "@@ROBOTS@@": demo ? '<meta name="robots" content="noindex,nofollow">' : '<meta name="robots" content="noindex,nofollow">',
     "@@MANIFEST@@": demo ? "/demo.webmanifest" : "/manifest.webmanifest",
     "@@CSS@@": css,

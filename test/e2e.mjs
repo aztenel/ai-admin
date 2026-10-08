@@ -261,6 +261,51 @@ try {
   await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await shot(p, "13-launch-exam");
 
+  // ---- Green-API: вебхук одной кнопкой на проверке запуска; рассылка обычным текстом по одному сообщению
+  S.env.GA_ID_KAIRAT = "7105000001"; S.env.GA_TOKEN_KAIRAT = "ga-tok-kairat";
+  await p.goto(url + "/launch?c=kairat");
+  await p.waitForSelector("#checks .ck");
+  ok("проверка запуска: пункты Green-API и кнопка «Настроить Green-API»", /WhatsApp \(Green-API\)/.test(await p.locator("#checks").innerText()) && await p.locator("#b_ga").isVisible());
+  await p.click("#b_ga");
+  await p.waitForSelector("#tgout .msg");
+  ok("«Настроить Green-API» вписывает адрес вебхука этого бота", /Готово/.test(await p.locator("#tgout").innerText()) && /\/ga\/kairat\?t=[a-f0-9]{32}$/.test((net.gaSettings["7105000001"] || {}).webhookUrl || ""), await p.locator("#tgout").innerText());
+  await p.click("#b_re");
+  await p.waitForFunction(() => [...document.querySelectorAll("#checks .ck")].some(r => /Green-API: вебхук/.test(r.textContent) && /✅/.test(r.textContent)), null, { timeout: 10000 }).catch(() => {});
+  ok("после настройки вебхук отмечен готовым — с адресом сайта", /✅/.test(await p.locator("#checks .ck", { hasText: "Green-API: вебхук" }).innerText()) && /настроен на 127\.0\.0\.1/.test(await p.locator("#checks").innerText()), await p.locator("#checks .ck", { hasText: "Green-API: вебхук" }).innerText());
+  await shot(p, "13b-launch-green-api");
+  await st.goto(url + "/broadcast?c=kairat");
+  await st.waitForSelector("#info .msg");
+  ok("страница рассылок: номер Green-API привязан", /WhatsApp через Green-API: номер \+7 700 000 00 77 привязан/.test(await st.locator("#info").innerText()), await st.locator("#info").innerText());
+  await st.click("#b_new");
+  ok("у клиента и Meta, и Green-API — выбор, через что отправлять", await st.locator("#chbox").isVisible());
+  await st.check("#ch_ga");
+  ok("Green-API: полей шаблона и подсказок про Meta нет, предел 50 в сутки", !(await st.locator("#f_tpl").isVisible()) && !(await st.locator("#f_params").isVisible()) && !(await st.locator("#p_meta2").isVisible()) && await st.locator("#p_ga").isVisible() && (await st.locator("#f_cap").inputValue()) === "50" && (await st.locator("#l_text").innerText()) === "Текст сообщения");
+  await st.fill("#f_name", "Green: октябрь");
+  await st.fill("#f_text", "Здравствуйте, {имя}!\nВ октябре стрижка 4 500 ₸.");
+  await st.fill("#f_rec", "8 705 222 00 01, Данияр\n8 705 222 00 02");
+  await st.click("#b_chk"); await st.waitForSelector("#fout .msg");
+  const gaChk = await st.locator("#fout").innerText();
+  ok("проверка: видно, как сообщение увидит первый клиент — с именем и строкой «СТОП»", /Так увидит сообщение первый клиент/.test(gaChk) && /Здравствуйте, Данияр!\nВ октябре стрижка 4 500 ₸\./.test(gaChk) && /ответьте СТОП/.test(gaChk) && !/Подстановки/.test(gaChk), gaChk);
+  await shot(st, "16b-broadcast-ga-check");
+  if (!(await st.locator("#f_ok").isChecked())) await st.check("#f_ok");
+  await st.click("#b_make");
+  await st.waitForSelector("#list .card >> text=Green: октябрь");
+  const gcard = st.locator("#list .card", { hasText: "Green: октябрь" });
+  ok("рассылка через Green-API создана", /Green-API · готова к запуску/.test(await gcard.innerText()), await gcard.innerText());
+  await gcard.locator("text=Запустить").click();
+  await st.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /идёт/.test(c.textContent)));
+  ok("идёт: на карточке — «по одному сообщению раз в 1–3 минуты»", /по одному сообщению раз в 1–3 минуты/.test(await gcard.innerText()), await gcard.innerText());
+  net.ga.length = 0;
+  await fetch(url + "/_cron", { method: "POST" });
+  const gk = [...S.kv.mem.keys()].find(k => k.startsWith("bc:kairat:") && (S.kv.json(k) || {}).name === "Green: октябрь");
+  { const b = S.kv.json(gk); b.nextAt = Date.now() - 1; S.kv.mem.set(gk, JSON.stringify(b)); } // «прошло две минуты»
+  await fetch(url + "/_cron", { method: "POST" });
+  await st.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /завершена/.test(c.textContent)), null, { timeout: 15000 });
+  const gaSent = net.ga.filter(x => x.op === "sendMessage").map(x => [x.body.chatId, x.body.message]);
+  ok("отправлено 2 из 2: обычным текстом с номера Green-API, каждому — со своим обращением", /отправлено 2 из 2/.test(await gcard.innerText()) && gaSent.length === 2 && gaSent[0][0] === "77052220001@c.us" && /^Здравствуйте, Данияр!/.test(gaSent[0][1]) && /^Здравствуйте, уважаемый клиент!/.test(gaSent[1][1]), JSON.stringify(gaSent));
+  await shot(st, "16c-broadcast-ga-done");
+  delete S.env.GA_ID_KAIRAT; delete S.env.GA_TOKEN_KAIRAT;
+
   // ---- /demo: открывается без входа и без единого обращения к серверу, данные вымышленные
   {
     const d = await newPage({ width: 390, height: 844 });

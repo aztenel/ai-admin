@@ -97,12 +97,12 @@ function tile(v, k) { return h("div", "tile", [h("span", "v", v), h("span", "k",
 /* ---------- Рассылки ---------- */
 function broadcast() {
   var v = mount("broadcast");
-  v.appendChild(P.headerEl(DEMO ? [P.ibtn("plus", "Новая рассылка", function () { P.notice("Новая рассылка", "В демо рассылки не отправляются. В рабочем режиме: выбираете одобренный Meta шаблон и список клиентов, бот отправляет небольшими порциями в рабочие часы."); }, true)] : []));
+  v.appendChild(P.headerEl(DEMO ? [P.ibtn("plus", "Новая рассылка", function () { P.notice("Новая рассылка", "В демо рассылки не отправляются. В рабочем режиме: пишете текст (через Green-API) или выбираете одобренный Meta шаблон, вставляете список клиентов — бот отправляет понемногу в рабочие часы."); }, true)] : []));
   v.appendChild(P.titleEl("Рассылки", DEMO ? "небольшими порциями" : ""));
   var sc = h("div", "scroll"); v.appendChild(sc);
   if (!DEMO) {
     sc.appendChild(stack([
-      h("div", "card", [h("span", "h3", "Рассылки клиентам"), h("span", "", "Только по шаблонам, одобренным Meta. Отправляет бот сам, небольшими порциями, в рабочие часы. Тем, кто написал «стоп», не пишем.", { style: "font-size:14px;line-height:1.45;color:var(--fg2)" }), h("a", "btn pri", "Открыть рассылки", { href: ext("/broadcast"), style: "margin-top:4px" })], { style: "padding:16px;display:flex;flex-direction:column;gap:10px" })
+      h("div", "card", [h("span", "h3", "Рассылки клиентам"), h("span", "", "Через Meta — по одобренным шаблонам, через Green-API — обычным текстом, по одному сообщению с паузой. Отправляет бот сам, в рабочие часы. Тем, кто написал «стоп», не пишем.", { style: "font-size:14px;line-height:1.45;color:var(--fg2)" }), h("a", "btn pri", "Открыть рассылки", { href: ext("/broadcast"), style: "margin-top:4px" })], { style: "padding:16px;display:flex;flex-direction:column;gap:10px" })
     ])); return;
   }
   api().broadcasts().then(function (d) {

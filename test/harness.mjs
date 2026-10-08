@@ -1,4 +1,4 @@
-// Обвязка для проверок на заглушках: хранилище KV в памяти (со списком ключей и метаданными), подменённые Gemini, Telegram, Meta и Altegio.
+// Обвязка для проверок на заглушках: хранилище KV в памяти (со списком ключей и метаданными), подменённые Gemini, Telegram, Meta, Green-API и Altegio.
 // Используется в test/platform.mjs и в локальном сервере для проверки страниц в браузере (test/devserver.mjs).
 import "./clock.mjs"; // до загрузки бота: проверки идут по одним и тем же часам
 import worker from "../worker.js";
@@ -44,7 +44,11 @@ export const net = {
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [],
-  reset() { this.ai = []; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; }
+  ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
+  gaState: "authorized",       // что отвечает getStateInstance
+  gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
+  gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
+  reset() { this.ai = []; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -104,6 +108,18 @@ globalThis.fetch = async (u, init = {}) => {
     return J({ messaging_product: "whatsapp", messages: [{ id: "wamid.out." + net.graph.length }] });
   }
   if (url.startsWith("https://api.alteg.io/")) return altStub(url, init);
+  const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
+  if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}
+    const rec = { url, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null }; net.ga.push(rec);
+    const own = net.gaReply && net.gaReply(rec);
+    if (own) return own;
+    if (rec.op === "getStateInstance") return J({ stateInstance: net.gaState });
+    const st = net.gaSettings[rec.inst] = net.gaSettings[rec.inst] || {};
+    if (rec.op === "getSettings") return J({ wid: "77000000077@c.us", webhookUrl: "", webhookUrlToken: "", delaySendMessagesMilliseconds: 5000, incomingWebhook: "no", outgoingWebhook: "no", outgoingMessageWebhook: "no", outgoingAPIMessageWebhook: "no", stateWebhook: "no", ...st });
+    if (rec.op === "setSettings") { Object.assign(st, rec.body); return J({ saveSettings: true }); }
+    if (rec.op === "sendMessage" || rec.op === "sendFileByUrl") return J({ idMessage: "GA" + net.ga.length });
+    return J({ message: "unknown method" }, 404);
+  }
   net.other.push(url);
   throw new Error("unexpected fetch " + url);
 };
