@@ -28,15 +28,18 @@ const KV = {
 const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_SELF_CANCEL: "1" };
 
 let geminiQueue = [], calls = { gemini: [], tg: [], wa: [], seq: [] }; // seq — порядок сообщений: «wa» клиенту, «tg» администратору
+const geminiModels = []; // какая модель была в адресе каждого запроса к Gemini (параллельно calls.gemini)
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, init = {}) => {
   const url = String(u);
   if (url.includes("generativelanguage.googleapis.com")) {
-    calls.gemini.push(JSON.parse(init.body));
+    calls.gemini.push(JSON.parse(init.body)); geminiModels.push((url.match(/models\/([^:?]+):/) || [])[1] || "");
     let next = geminiQueue.length > 1 ? geminiQueue.shift() : geminiQueue[0];
     if (typeof next === "function") next = next(JSON.parse(init.body)); // ответ зависит от того, что спросили
     if (next instanceof Error) throw next;
     if (typeof next === "number") return new Response("err", { status: next });
+    if (next && typeof next === "object" && next.status) return new Response(next.text || "err", { status: next.status }); // отказ с текстом: { status: 400, text: "…" }
+    if (next && typeof next === "object" && next.say !== undefined) return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: next.say }] }, finishReason: next.reason || "STOP" }], usageMetadata: next.usage || {} }), { status: 200, headers: { "content-type": "application/json" } });
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }] }), { status: 200, headers: { "content-type": "application/json" } });
   }
   if (url.includes("api.telegram.org")) { calls.tg.push(JSON.parse(init.body).text); calls.seq.push("tg"); return new Response("{}", { status: 200 }); }
@@ -2218,6 +2221,41 @@ ok("клиента зовут Арман (как мастера): запись �
 for (const w of ["Стоп, пожалуйста", "стоп 🙏", "Отпишите меня", "Не пишите мне больше", "unsubscribe"]) { d = await chat("barber", sid(), w); ok(`«${w}» — это «стоп»`, d.stopped === true, JSON.stringify(d)); }
 geminiQueue = ["Да, оплатить можно у администратора на месте."]; d = await chat("barber", sid(), "Можно оплатить через администратора?");
 ok("«Можно оплатить через администратора?» — вопрос, а не просьба позвать человека", !d.handoff, JSON.stringify(d));
+
+// --- ИИ: скорость и «связь прервалась». Модель, которая «думает» перед ответом, отвечает по 10–20 секунд, а её «мысли» съедают лимит токенов — ответ обрывается
+{ const m0 = env.MODEL, gc = () => calls.gemini.at(-1).generationConfig, hi = "Здравствуйте! На какой день вас записать?", n = () => calls.gemini.length;
+  geminiQueue = [hi]; await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Gemini 3.x: «раздумья» сведены к минимуму (thinkingLevel), а не оставлены по умолчанию", gc().thinkingConfig && gc().thinkingConfig.thinkingLevel === "minimal", JSON.stringify(gc()));
+  ok("запас на ответ — не меньше 2048 токенов: «мысли» модели не съедают ответ", gc().maxOutputTokens >= 2048, JSON.stringify(gc()));
+  env.MODEL = "gemini-2.5-flash"; geminiQueue = [hi]; await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Gemini 2.5: «раздумья» выключены бюджетом 0 (как раньше)", gc().thinkingConfig && gc().thinkingConfig.thinkingBudget === 0 && !("thinkingLevel" in gc().thinkingConfig), JSON.stringify(gc()));
+  env.MODEL = "gemini-flash-lite-latest"; geminiQueue = [hi]; await chat("barber", sid(), "Привет, хочу записаться");
+  ok("название-«псевдоним» (…-latest): тоже без «раздумий», а не по умолчанию модели", !!gc().thinkingConfig, JSON.stringify(gc()));
+  // модель не знает такой настройки (400 про thinking) → тот же запрос с другой настройкой на той же модели, а не уход в запасную
+  env.MODEL = "gemini-test-ladder"; let k = n(); const m = geminiModels.length;
+  geminiQueue = [{ status: 400, text: '{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \\"thinkingLevel\\" at \'generation_config.thinking_config\': Cannot find field."}}' }, hi];
+  d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("400 «thinkingLevel не знаю» → тот же запрос с thinkingBudget:0 на той же модели, клиент получает ответ", n() - k === 2 && geminiModels.slice(m).every(x => x === "gemini-test-ladder") && calls.gemini.at(-1).generationConfig.thinkingConfig.thinkingBudget === 0 && d.reply === hi, JSON.stringify([n() - k, geminiModels.slice(m), calls.gemini.at(-1).generationConfig, d.reply]));
+  k = n(); geminiQueue = [hi]; await chat("barber", sid(), "Привет, хочу записаться");
+  ok("принятая настройка запоминается: следующий запрос идёт сразу с ней, без лишнего круга", n() - k === 1 && gc().thinkingConfig.thinkingBudget === 0, JSON.stringify([n() - k, gc()]));
+  // 400 не про «раздумья» → запасная модель, как раньше
+  env.MODEL = "gemini-test-other"; k = n(); const m2 = geminiModels.length;
+  geminiQueue = [{ status: 400, text: '{"error":{"code":400,"message":"Request contains an invalid argument."}}' }, hi];
+  d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("400 не про «раздумья» → запасная модель, клиент получает ответ", n() - k === 2 && geminiModels.slice(m2).join() === "gemini-test-other,gemini-flash-latest" && d.reply === hi, JSON.stringify([geminiModels.slice(m2), d.reply]));
+  // ответ оборван по лимиту токенов → пробуем запасную модель, а не сразу «связь прервалась»
+  env.MODEL = "gemini-test-cut"; k = n(); const m3 = geminiModels.length;
+  geminiQueue = [{ say: "Мужская стрижка стоит от шести тысяч, а ещё мы", reason: "MAX_TOKENS" }, hi];
+  d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("ответ оборван по лимиту токенов → запрос к запасной модели, клиент получает целый ответ", geminiModels.slice(m3).join() === "gemini-test-cut,gemini-flash-latest" && d.reply === hi, JSON.stringify([geminiModels.slice(m3), d.reply]));
+  geminiQueue = [{ say: "Мужская стрижка стоит от шести тысяч, а ещё мы", reason: "MAX_TOKENS" }]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("обе модели оборвали ответ → обрезок клиенту не уходит: «связь прервалась»", /связь прервалась/.test(d.reply) && !/а ещё мы/.test(d.reply), d.reply);
+  env.MODEL = m0;
+  // /diag меряет каждую модель отдельно на настоящей подсказке: по этим строкам видно, кто тормозит и «думает» ли модель
+  geminiQueue = [{ say: "работает", usage: { thoughtsTokenCount: 0 } }]; const dg = await (await call("/diag?key=lk")).text();
+  ok("/diag: скорость каждой модели на настоящей подсказке (мс, настройка «раздумий», токены «мыслей»)", /Скорость на настоящей подсказке бота \(\d{3,} знаков\)/.test(dg) && /gemini-3\.5-flash-lite: ✅ \d+ мс · «раздумья»: \{"thinkingLevel":"minimal"\} · токены «мыслей»: 0 · конец ответа: STOP/.test(dg) && /gemini-flash-latest: ✅ \d+ мс/.test(dg), dg.slice(dg.indexOf("Скорость") - 80, dg.indexOf("Скорость") + 500));
+  geminiQueue = [{ status: 500, text: "boom" }]; const dg2 = await (await call("/diag?key=lk")).text();
+  ok("/diag: модель не ответила → строка с ❌ у этой модели, страница открывается", /gemini-3\.5-flash-lite: ❌ Gemini 500/.test(dg2) && /Модели: /.test(dg2), dg2.slice(dg2.indexOf("Скорость") - 80, dg2.indexOf("Скорость") + 500)); }
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 // новые части (история чата для пульта, паспорт бота, вход, пульт чатов) проверяются отдельным файлом и в отдельном процессе
