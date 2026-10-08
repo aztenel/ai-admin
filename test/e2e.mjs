@@ -319,7 +319,7 @@ try {
     ok("демо: ответ появляется в чате", true);
     await shot(d, "18-demo-chat");
     await d.click("#back");
-    for (const t of ["leads", "summary", "broadcast", "more"]) { await d.click(`#nav a[data-v=${t}]`); await d.waitForTimeout(200); ok(`демо: раздел «${t}» открывается и не пустой`, (await d.locator(`#v-${t}`).innerText()).trim().length > 20); }
+    ok("демо: только то, что работает — нижнего меню с «Лиды», «Сводка», «Рассылки» нет, счётчиков и этапов воронки нет", !(await d.locator("#nav").isVisible()) && (await d.locator("#rows .ub").count()) === 0 && !(await d.locator("body").innerText()).includes("Перевести в"));
     ok("демо не обращается к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
   }
 

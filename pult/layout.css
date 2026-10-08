@@ -166,3 +166,6 @@ a.row,button.row{color:inherit}
   .nav{left:8px;right:8px;padding:4px}
   .nav a{font-size:10px;margin:0}
 }
+
+/* Демо: одна вкладка «Чаты» — меню не нужно */
+.app.solo .nav,.app.solo .fade{display:none}
