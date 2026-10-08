@@ -2,3 +2,4 @@
 out/
 worker*.mjs
 worker*.js
+pult.gen.js

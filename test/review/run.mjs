@@ -7,6 +7,7 @@ const HERE = import.meta.dirname + "/", ROOT = new URL("../..", import.meta.url)
 const V73 = "e1a5fdc"; // версия 7.3: с ней сценарии сравнивают поведение для клиентов без Altegio
 const old = execFileSync("git", ["-C", ROOT, "show", V73 + ":worker.js"], { maxBuffer: 1 << 26 });
 for (const f of ["3a/worker_main.js", "3b/worker73.mjs", "4a/worker_main.mjs", "4b/worker.main.mjs"]) writeFileSync(HERE + f, old);
+for (const d of ["3a", "3b", "4a", "4b"]) writeFileSync(HERE + d + "/pult.gen.js", readFileSync(ROOT + "pult.gen.js")); // копии бота в папках сценариев подключают пульт рядом с собой
 spawnSync(process.execPath, ["mkx.mjs"], { cwd: HERE + "4b", stdio: "ignore" }); // копии бота с открытыми внутренними функциями
 mkdirSync(HERE + "out", { recursive: true });
 
