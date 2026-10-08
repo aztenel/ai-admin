@@ -129,8 +129,8 @@ function setBadge() {
 /* ---------- шапка: переключатель компании ---------- */
 function bizBtn() {
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? "#AF611C" : colorOf(S.C)) }), h("span", "n", nm), (S.owner && !DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
-  if (DEMO) b.style.pointerEvents = "none"; else b.onclick = bizSheet; return b;
+  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? "#AF611C" : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
+  b.onclick = bizSheet; return b;
 }
 function bizSheet() {
   if (!S.owner && !DEMO) return;
@@ -354,7 +354,7 @@ function init() {
   [["rfs", "refresh", 22], ["bell", "bell", 22], ["plus", "plus", 24], ["back", "back", 22], ["cback", "back", 22], ["infobtn", "info", 22], ["call", "phone", 22], ["menu", "dots", 22], ["quick", "bolt", 22], ["send", "send", 22], ["srchic", "search", 20]].forEach(function (x) { $(x[0]).appendChild(ic(x[1], x[2])); });
   fitViewport(); buildNav();
   $("bizslot").appendChild(bizBtn());
-  if (DEMO) { $("rfs").hidden = true; app.classList.add("solo"); } // демо показывает только то, что реально работает: чаты и переписку
+  if (DEMO) { $("bell").hidden = false; $("plus").hidden = false; $("rfs").hidden = true; }
   $("bell").onclick = function () { notice("Уведомления", "Здесь будут сообщения о том, что клиент просит человека, отменил запись или оставил заявку. В демо уведомления не приходят."); };
   $("plus").onclick = function () { window.__views.newLead(); };
   $("rfs").onclick = function () { loadList(); if (S.cur) loadChat(false); };

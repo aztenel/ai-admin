@@ -21,7 +21,7 @@ window.__QUICK = [
   function card(stage, sum, next, o) { o = o || {}; return { stage: stage, sum: sum, next: next || "", visits: o.visits || 0, last: o.last || "ещё не был", master: o.master || "не выбран", src: o.src || "WhatsApp", since: o.since || "", tags: o.tags || [], note: o.note || "" }; }
   var chats = [
     { ch: "wa", id: "demo-01", nm: "Айдос Акберов", ph: "+7 705 ••• •• 01", nd: "human", needAt: ago(4), un: 2, reply: "Тогда на 19:00 к Арману, пожалуйста.",
-      turns: [u(26, "Здравствуйте, сколько стоит стрижка с бородой?"), b(26, "Стрижка + борода — от 9 000 ₸, около 1,5 часа. У Армана на 20% дороже (10 800 ₸). Записать вас?"), u(22, "К Арману можно сегодня после 18:00?"), b(22, "Сегодня у Армана свободно 19:00 и 20:30. Какое время выбираете?"), u(4, "Мне нужен человек, это срочно"), s(4, "Бот передал чат администратору")],
+      turns: [u(26, "Здравствуйте, сколько стоит стрижка с бородой?"), b(26, "Стрижка + борода — от 9 000 ₸, около 1,5 часа. У Армана на 20% дороже (10 800 ₸). Записать вас?"), u(22, "К Арману можно сегодня после 18:00?"), b(22, "Сегодня у Армана свободно 19:00 и 20:30. Какое время выбираете?"), u(4, "Мне нужен человек, это срочно"), s(4, "Бот передал чат администратору · этап: Новый → В работе")],
       card: card("В работе", 10800, "ответить сейчас", { master: "Арман", tags: ["Вечер"], note: "Просит только вечер после 18:00. Новый клиент, пришёл по рекомендации.", since: "сегодня" }), what: "Стрижка + борода, сегодня после 18:00", flag: "Просит человека" },
     { ch: "wa", id: "demo-02", nm: "Мадина Темирова", ph: "+7 705 ••• •• 02", nd: "human", why: "Спор о цене", needAt: ago(18), un: 1, reply: "Хорошо, запишите на субботу к Даурену.",
       turns: [u(31, "Добрый день! Сколько стоит детская стрижка?"), b(31, "Детская стрижка (до 12 лет) — от 4 000 ₸, около 40 минут. Записать?"), u(18, "Почему так дорого? У других дешевле")],
@@ -68,12 +68,13 @@ window.__QUICK = [
   }
   function row(c) {
     var m = lastMsg(c);
-    return { ch: c.ch, id: c.id, t: m.t, li: m.t, s: m.x.replace(/\s+/g, " ").slice(0, 120), d: m.r, nm: c.nm, ph: c.ph, nd: c.nd || "", why: c.why || "", pu: c.pu > Date.now() ? c.pu : 0, st: 0, bk: (c.bookings || []).length ? 1 : 0 };
+    return { ch: c.ch, id: c.id, t: m.t, li: m.t, s: m.x.replace(/\s+/g, " ").slice(0, 120), d: m.r, nm: c.nm, ph: c.ph, nd: c.nd || "", why: c.why || "", pu: c.pu > Date.now() ? c.pu : 0, st: 0, bk: (c.bookings || []).length ? 1 : 0, un: c.un || 0 };
   }
   function view(c) {
     var open = c.ch !== "web", ps = c.pu > Date.now() ? c.pu : 0;
     return { ch: c.ch, id: c.id, phone: c.ph, name: c.nm, waName: "", turns: c.turns.map(function (t) { return { r: t.r, x: t.x, t: t.t, by: t.by, l1: t.l1, l2: t.l2 }; }), bookings: (c.bookings || []).slice(), pend: [], booked: "",
-      need: c.nd ? { why: c.nd, text: "", label: c.why || "", at: c.needAt || 0 } : null, paused: ps, stop: false, off: false, canSend: c.canSend !== false && open, open: open, li: lastMsg(c).t, reqs: (c.reqs || []).slice(), promo: null, now: Date.now() };
+      need: c.nd ? { why: c.nd, text: "", label: c.why || "", at: c.needAt || 0 } : null, paused: ps, stop: false, off: false, canSend: c.canSend !== false && open, open: open, li: lastMsg(c).t, reqs: (c.reqs || []).slice(), promo: null, now: Date.now(),
+      card: { facts: facts(c), tags: c.card.tags.slice(), note: c.card.note, since: c.card.since, next: nextStage(c) } };
   }
   function ok(v) { return Promise.resolve(v); }
   var broadcastRunning = true;
