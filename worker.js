@@ -32,6 +32,8 @@
 //   /altegio?key=<LEADS_KEY>  — проверка Altegio: услуги, мастера, свободное время (&loc=<номер> — любая локация) и пробная запись
 //
 // Новый клиент = новый блок в CLIENTS: факты, график (hours), слоты (slots), безопасные фразы.
+// Страница пульта (дизайн, телефон/планшет/ПК, демо) лежит в папке pult/ и собирается в pult.gen.js командой `node tools/build-pult.mjs`.
+import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
 
 const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинаково (индекс 0 = воскресенье)
 function week(sun, weekdays, sat) { const a = W5(weekdays); a[0] = sun; a[6] = sat; return a; }
@@ -3400,6 +3402,10 @@ async function route(request, env, ctx) {
       if (g < 0) return forbid();
       return html(await leadsPage(env, g === 0 ? (hasClient(c) ? c : null) : c));
     }
+    // ---- демо пульта (вымышленные данные, всё в браузере, к серверу и хранилищу не обращается) и установка на экран «Домой»
+    if (M === "GET" && (P === "/demo" || P === "/demo/")) return page(PULT_DEMO, 200, { "x-robots-tag": "noindex, nofollow" });
+    if (M === "GET" && (P === "/manifest.webmanifest" || P === "/demo.webmanifest")) return pultManifest(P === "/demo.webmanifest");
+    { const im = M === "GET" && /^\/pult\/icon-(180|192|512)\.png$/.exec(P); if (im) return pultIcon(im[1]); }
     // ---- вход и страница владельца
     if (P === "/login" && (M === "GET" || M === "POST")) return handleLogin(request, env, url);
     if (M === "GET" && P === "/logout") return new Response(null, { status: 303, headers: { location: "/login", "set-cookie": cookieSet("", 0), "cache-control": "no-store" } });
@@ -3419,7 +3425,7 @@ async function route(request, env, ctx) {
       const c = url.searchParams.get("c");
       if (a.s.role === "staff" && c !== a.s.cid) return new Response(null, { status: 303, headers: { location: "/inbox?c=" + a.s.cid } }); // сотрудник — только в свой пульт
       if (c && !hasClient(c)) return new Response(null, { status: 303, headers: { location: "/inbox" } });
-      return page(inboxPage());
+      return page(PULT_LIVE);
     }
     if (P.startsWith("/api/inbox/")) {
       const s = await sessionRead(env, request);
@@ -4625,6 +4631,11 @@ async function inboxApi(request, env, url, s) {
     return jsonP({ client: { id: cid, name: c.name, off: !!c.off }, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
 
+  if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)
+    let leads; try { leads = await allLeads(env, cid); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+    return jsonP({ leads: leads.slice(-60).reverse().map(l => ({ id: l.id, name: l.name || "", phone: l.phone || "", service: l.service || "", time: l.time || "", note: l.note || "", status: l.status || "", kind: l.kind || "lead", source: l.source || "", ts: leadTs(l) })), partial: !!leads.unread });
+  }
+
   const ch = String((M === "POST" ? b.ch : q.get("ch")) || ""), id = String((M === "POST" ? b.id : q.get("id")) || "");
   if (!CHAT_ID[ch] || !CHAT_ID[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
@@ -4642,7 +4653,7 @@ async function inboxApi(request, env, url, s) {
       promo,
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
       bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
-      need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "" } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
+      need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
       canSend: ch !== "web" && (ch === "ga" ? !!(env.GA_ID && env.GA_TOKEN) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now
     };
   };
@@ -4725,77 +4736,15 @@ async function inboxApi(request, env, url, s) {
   }
   return jsonP({ error: "Не найдено." }, 404);
 }
-function inboxPage() {
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Чаты — AI-администратор</title><style>${ADMIN_CSS}
-body{height:100dvh;display:flex;flex-direction:column}.app{flex:1;min-height:0;display:flex;max-width:1100px;width:100%;margin:0 auto}
-.pane{display:flex;flex-direction:column;min-height:0;min-width:0}#listp{flex:1;max-width:100%}#chatp{flex:1.6}
-@media (min-width:860px){#listp{max-width:380px;border-right:1px solid var(--line)}#chatp[hidden]{display:flex!important;visibility:hidden}#listp[hidden]{display:flex!important}#back{display:none}}
-.bar{display:flex;gap:6px;padding:10px 12px;flex-wrap:wrap;border-bottom:1px solid var(--line)}.chip{padding:7px 12px;border-radius:99px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;cursor:pointer}.chip.on{background:var(--head);color:#fff;border-color:var(--head)}
-#rows{flex:1;overflow:auto}.r{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;background:var(--panel)}.r.sel{background:var(--bot)}.r .h{display:flex;gap:8px;align-items:baseline}.r .h b{flex:1;font-size:15.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.r .h i{font-style:normal;color:var(--muted);font-size:12.5px}
-.r .s{color:var(--muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}.r .f{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}.bd{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--lead);border:1px solid var(--leadl)}.bd.n{background:#fdecea;border-color:#f0b4ae;color:#8c1d18}
-.chead{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel)}.chead>div{flex:1;min-width:0}.chead b{font-size:16px}#back{border:0;background:none;font-size:22px;color:var(--ink);padding:0 6px;cursor:pointer}
-#cards{padding:0 12px}.rq{background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 12px;margin:10px 0;font-size:14.5px;line-height:1.45}.rq b{display:block;margin-bottom:2px}.rq textarea{margin-top:8px;min-height:70px}
-#msgs{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:6px}.m{max-width:82%;padding:8px 11px;border-radius:14px;font-size:15px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-.m.u{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}.m.b{align-self:flex-end;background:var(--bot)}.m.a{align-self:flex-end;background:var(--acc);color:#fff}.m small{display:block;font-size:11.5px;opacity:.7;margin-top:3px}.m audio,.m img{display:block;max-width:100%;margin-top:6px;border-radius:8px}
-#acts{padding:6px 12px;margin:0}#comp{display:flex;gap:8px;padding:8px 12px 12px;align-items:flex-end}#comp textarea{flex:1;min-height:46px;max-height:140px}#warn{padding:0 12px 10px}
-.sys{align-self:center;max-width:92%;font-size:13px;line-height:1.4;color:var(--muted);border:1px dashed var(--line);border-radius:10px;padding:6px 10px;white-space:pre-wrap;word-break:break-word}
-.empty{padding:28px 16px;color:var(--muted);text-align:center;line-height:1.5}</style></head><body>
-<div class="top"><b id="ttl">Чаты</b><a id="l_leads" href="/leads">Заявки</a><a id="l_bc" href="/broadcast">Рассылки</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div>
-<div class="app"><div id="listp" class="pane"><div class="bar"><button class="chip on" id="t_need">Ждут ответа</button><button class="chip" id="t_all">Все</button><button class="chip" id="t_web">Сайт</button><button class="chip" id="t_r" title="Обновить">↻</button></div><div id="net" class="msg e" hidden>Нет связи с сервером — список может быть устаревшим. Проверьте интернет; страница попробует снова сама.</div><div id="rows"><div class="empty">Загрузка…</div></div></div>
-<div id="chatp" class="pane" hidden><div class="chead"><button id="back" aria-label="Назад">←</button><div><b id="cname"></b><div id="cstate" class="mut"></div></div><a id="call" class="btn">Позвонить</a></div>
-<div id="cards"></div><div id="msgs"></div><div id="acts" class="row"></div><div id="comp"><textarea id="txt" placeholder="Сообщение клиенту"></textarea><button class="btn p" id="send">Отправить</button></div><div id="warn" class="mut"></div></div></div>
-<script>
-var $=function(i){return document.getElementById(i)},Q=new URLSearchParams(location.search),C=Q.get('c')||'',F='need',CH='wa',cur=null,chat=null,busy=false,drafts={};
-function same(a,b){return !!a&&!!b&&a.ch===b.ch&&a.id===b.id}
-function keyOf(x){return x.ch+':'+x.id}
-function netErr(on){var n=$('net');n.hidden=!on}
-function oops(e){busy=false;if(e===0)return;alert('Нет связи с сервером — действие не выполнено, ничего не отправлено. Проверьте интернет и повторите.')}
-function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
-function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname+location.search);throw 0}return r.json()})}
-function tm(t){if(!t)return'';var d=new Date(t),n=new Date(),p=function(x){return(x<10?'0':'')+x};return d.toDateString()===n.toDateString()?p(d.getHours())+':'+p(d.getMinutes()):p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
-var NEED={human:'ждёт ответа',limit:'бот не ответил',media:'прислал файл',ai:'сбой бота',req:'просит отменить или перенести',lead:'новая заявка',call:'ждёт звонка',off:'бот выключен'};
-function pick(){api('/api/studio/list').then(function(d){var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}R.appendChild(el('div','empty','Выберите компанию'));
- d.clients.forEach(function(c){var r=el('div','r');var h=el('div','h');h.appendChild(el('b','',c.name));r.appendChild(h);r.appendChild(el('div','s',c.kind+' · '+c.id));r.onclick=function(){location.href='/inbox?c='+c.id};R.appendChild(r)})})}
-function list(){if(!C){pick();return}api('/api/inbox/list?c='+C+'&f='+(CH==='web'?'all':F)+'&ch='+CH).then(function(d){netErr(false);var R=$('rows');R.textContent='';if(d.error){R.appendChild(el('div','empty',d.error));return}
- $('ttl').textContent='Чаты · '+d.client.name+(d.client.off?' (бот выключен)':'');$('t_need').textContent='Ждут ответа'+(d.need&&CH!=='web'?' · '+d.need:'');document.title=(d.need?'('+d.need+') ':'')+'Чаты — '+d.client.name;
- if(!d.chats.length){R.appendChild(el('div','empty',CH==='web'?'Чатов с сайта пока нет.':F==='need'?'Никто не ждёт ответа. Все чаты — на вкладке «Все».':'Чатов пока нет. Они появятся, когда клиенты напишут в WhatsApp.'));return}
- d.chats.forEach(function(c){var r=el('div','r'+(cur&&cur.ch===c.ch&&cur.id===c.id?' sel':''));var h=el('div','h');h.appendChild(el('b','',c.nm||c.ph||'Гость сайта'));h.appendChild(el('i','',tm(c.li||c.t)));r.appendChild(h);
-  r.appendChild(el('div','s',(c.d==='u'?'':c.d==='a'?'Вы: ':'Бот: ')+c.s));var f=el('div','f');if(c.nd)f.appendChild(el('span','bd n',NEED[c.nd]||'нужен ответ'));if(c.pu)f.appendChild(el('span','bd','бот молчит до '+tm(c.pu)));if(c.st)f.appendChild(el('span','bd','просил не писать'));if(c.bk)f.appendChild(el('span','bd','есть запись'));if(c.nm&&c.ph)f.appendChild(el('span','bd',c.ph));
-  if(f.childNodes.length)r.appendChild(f);r.onclick=function(){open(c.ch,c.id)};R.appendChild(r)});
- if(d.more)R.appendChild(el('div','empty','Показаны последние чаты.'))}).catch(function(e){if(e!==0)netErr(true)})}
-function saveDraft(){if(cur){var v=$('txt').value;if(v)drafts[keyOf(cur)]=v;else delete drafts[keyOf(cur)]}}
-function open(ch,id){saveDraft();cur={ch:ch,id:id};$('txt').value=drafts[keyOf(cur)]||'';history.replaceState(null,'','#'+ch+':'+id);$('chatp').hidden=false;if(window.innerWidth<860)$('listp').hidden=true;$('msgs').textContent='';$('cards').textContent='';$('cname').textContent='…';load(true)}
-function load(scroll){if(!cur)return;var want=cur;api('/api/inbox/chat?c='+C+'&ch='+want.ch+'&id='+want.id).then(function(d){if(!same(cur,want))return;netErr(false);if(d.error){$('cname').textContent=d.error;return}render(d,scroll)}).catch(function(e){if(e!==0&&same(cur,want)){netErr(true);if($('cname').textContent==='…')$('cname').textContent='Не удалось открыть чат'}})}
-function render(d,scroll){var first=!chat||chat.id!==d.id||chat.ch!==d.ch,grew=!chat||first||d.turns.length!==chat.turns.length;chat=d;
- $('cname').textContent=d.name||d.waName||d.phone||'Гость сайта';var st=[];if(d.phone&&(d.name||d.waName))st.push(d.phone);
- st.push(d.off?'бот выключен — отвечаете вы':d.stop?'клиент просил не писать автоматически':d.paused?'бот молчит до '+tm(d.paused):'отвечает бот');if(d.bookings.length)st.push('запись: '+d.bookings.join('; '));else if(d.pend.length)st.push('заявка: '+d.pend.join('; '));else if(d.booked)st.push(d.booked);
- $('cstate').textContent=st.join(' · ');var cl=$('call');if(d.phone){cl.href='tel:'+d.phone;cl.hidden=false}else cl.hidden=true;
- var K=$('cards');if(!K.querySelector('textarea')){K.textContent='';d.reqs.forEach(function(q){K.appendChild(reqCard(q,d.canSend&&d.open&&d.ch!=='web'))})}
- if(grew){var M=$('msgs'),atEnd=M.scrollHeight-M.scrollTop-M.clientHeight<80;M.textContent='';var pr=d.promo;d.turns.forEach(function(t){if(pr&&t.t>=pr.at){M.appendChild(el('div','sys','Рассылка'+(pr.name?' «'+pr.name+'»':'')+' от '+tm(pr.at)+' (клиент мог ответить на неё): '+pr.text));pr=null}var m=el('div','m '+t.r,t.x);
-   if(t.m&&t.m.f){var u='/api/inbox/media?c='+C+'&ch='+d.ch+'&id='+d.id+'&mid='+encodeURIComponent(t.m.id);if(t.m.k==='audio'){var a=el('audio');a.controls=true;a.preload='none';a.src=u;m.appendChild(a)}else if(t.m.k==='image'){var im=el('img');im.loading='lazy';im.alt='фото';im.src=u;m.appendChild(im)}else{var l=el('a','','Открыть файл');l.href=u;l.target='_blank';l.rel='noopener';m.appendChild(el('br'));m.appendChild(l)}}
-   m.appendChild(el('small','',(t.r==='a'?'Вы · ':t.r==='b'?'бот · ':'')+tm(t.t)));M.appendChild(m)});if(scroll||first||atEnd)M.scrollTop=M.scrollHeight}
- var A=$('acts');A.textContent='';function b(x,a,p){var e=el('button','btn'+(p?' p':''),x);e.onclick=function(){act(a)};A.appendChild(e)}
- if(d.need&&!d.reqs.length)b('Готово — убрать из «Ждут ответа»','resolve');if(d.ch!=='web'&&!d.off){if(d.paused&&!d.stop)b('Вернуть бота','resume');else if(!d.paused)b('Остановить бота на 12 часов','pause')}
- $('comp').hidden=!d.canSend;$('warn').textContent=d.ch==='web'?'Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер.':!d.canSend?'Отправка не настроена: WhatsApp этой компании ещё не подключён.':!d.open?'Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения.':'После вашего ответа бот молчит в этом чате 2 часа.';
- $('send').disabled=!d.open;$('txt').disabled=!d.open}
-function reqCard(q,canMsg){var T={cancel:'Клиент просит отменить запись',change:'Клиент просит перенести запись',callback:'Нужно перезвонить клиенту',lead:'Заявка — подтвердите запись'},c=el('div','rq');c.appendChild(el('b','',T[q.kind]||'Просьба клиента'));
- c.appendChild(el('div','',[q.name,q.service,q.time].filter(Boolean).join(' · ')));if(q.note)c.appendChild(el('div','mut',q.note));var r=el('div','row'),d=el('button','btn p',q.kind==='callback'?'Перезвонил — закрыть':canMsg?'Сделано':q.kind==='lead'?'Позвонил и подтвердил — закрыть':'Сделано — закрыть (клиенту написать нельзя)');
- d.onclick=function(){if(q.kind==='callback'||!canMsg){act('done',{lead:q.id,text:''});return}r.hidden=true;var ta=el('textarea');var w=(q.service.split('→')[1]||'').trim();
-  ta.value=q.kind==='cancel'?'Здравствуйте! Вашу запись отменили. Будем рады видеть вас в другой раз.':q.kind==='change'?'Здравствуйте! Вашу запись перенесли'+(w?': '+w:'')+'. Ждём вас!':'Здравствуйте! Ваша запись подтверждена: '+[q.service,q.time].filter(Boolean).join(', ')+'. Ждём вас!';
-  c.appendChild(ta);var r2=el('div','row'),s1=el('button','btn p','Отправить клиенту и закрыть'),s2=el('button','btn','Закрыть без сообщения'),s3=el('button','btn','Отмена');
-  s1.onclick=function(){act('done',{lead:q.id,text:ta.value})};s2.onclick=function(){act('done',{lead:q.id,text:''})};s3.onclick=function(){$('cards').textContent='';load(false)};r2.appendChild(s1);r2.appendChild(s2);r2.appendChild(s3);c.appendChild(r2)};r.appendChild(d);c.appendChild(r);return c}
-function done(d,tgt){busy=false;if(d.error){alert(d.error);return}if(d.warn)alert(d.warn);if(tgt&&!same(cur,tgt)){list();return}$('cards').textContent='';render(d.chat,true);list()}
-function act(a,x){if(busy||!cur)return;busy=true;var tgt=cur,b={c:C,ch:tgt.ch,id:tgt.id,act:a};if(x){b.lead=x.lead;b.text=x.text}api('/api/inbox/act',b).then(function(d){done(d,tgt)}).catch(oops)}
-$('send').onclick=function(){var t=$('txt').value.trim();if(!t||busy||!cur)return;busy=true;var tgt=cur;api('/api/inbox/send',{c:C,ch:tgt.ch,id:tgt.id,text:t}).then(function(d){if(!d.error){delete drafts[keyOf(tgt)];if(same(cur,tgt))$('txt').value=''}done(d,tgt)}).catch(oops)};
-$('txt').onkeydown=function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))$('send').onclick()};
-$('back').onclick=function(){saveDraft();cur=null;chat=null;history.replaceState(null,'',location.pathname+location.search);$('chatp').hidden=true;$('listp').hidden=false;list()};
-function tab(f,ch){F=f;CH=ch;['t_need','t_all','t_web'].forEach(function(i){$(i).className='chip'});$(ch==='web'?'t_web':f==='need'?'t_need':'t_all').className='chip on';list()}
-$('t_need').onclick=function(){tab('need','wa')};$('t_all').onclick=function(){tab('all','wa')};$('t_web').onclick=function(){tab('all','web')};$('t_r').onclick=function(){list();load(false)};
-if(C){$('l_leads').href='/leads?c='+C;$('l_bc').href='/broadcast?c='+C}
-api('/api/inbox/me').then(function(d){if(d.owner)$('l_st').hidden=false}).catch(function(){});
-list();var hm=/^#(wa|ga|web):([\\w-]+)$/.exec(location.hash);if(hm&&C){if(hm[1]==='web')tab('all','web');else tab('all','wa');open(hm[1],hm[2])}
-setInterval(function(){if(!document.hidden)list()},60000);setInterval(function(){if(!document.hidden&&cur&&!busy&&!$('cards').querySelector('textarea'))load(false)},15000);
-</script></body></html>`;
+const PULT_BYTES = {};
+function pultIcon(n) { // иконка приложения для экрана «Домой»: байты разбираем один раз и держим в памяти
+  if (!PULT_BYTES[n]) { const bin = atob(PULT_ICONS[n]), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); PULT_BYTES[n] = u; }
+  return new Response(PULT_BYTES[n], { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
+}
+function pultManifest(demo) { // чтобы пульт ставился на экран «Домой» как приложение (iPhone, Android, компьютер)
+  const m = { id: demo ? "/demo" : "/inbox", name: demo ? "Пульт чатов — демо" : "Пульт чатов", short_name: "Пульт", start_url: demo ? "/demo" : "/inbox", scope: demo ? "/demo" : "/", display: "standalone", orientation: "any", lang: "ru", background_color: "#0A0A0A", theme_color: "#0A0A0A",
+    icons: [{ src: "/pult/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] };
+  return new Response(JSON.stringify(m), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "public, max-age=3600" } });
 }
 
 // ================= ПРОВЕРКА ЗАПУСКА: автопроверка бота по его паспорту и чек-лист подключений =================

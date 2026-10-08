@@ -92,26 +92,26 @@ try {
   await wa({ c: "kairat", from: "77051110001", name: "Данияр", text: "Позовите администратора" });
   await wa({ c: "kairat", from: "77051110002", name: "Айгерим", text: "Добрый день" });
   await wa({ c: "kairat", from: "77051110001", name: "Данияр", media: "MEDIA1" });
-  const st = await newPage();
+  const st = await newPage({ width: 390, height: 844 });
   await st.goto(url + "/inbox?c=kairat#wa:77051110001");
   await st.fill("input[name=key]", staffKey); await st.click("button");
   await st.waitForSelector("#msgs .m");
   ok("сотрудник после входа попадает сразу в чат из ссылки", /#wa:77051110001$/.test(st.url()) && /Данияр/.test(await st.locator("#cname").innerText()));
-  const stateText = await st.locator("#cstate").innerText();
-  ok("в шапке чата — номер и состояние бота", /\+77051110001/.test(stateText) && /бот молчит до/.test(stateText), stateText);
-  ok("в чате видны сообщения клиента, ответ бота и голосовое с проигрывателем", await st.locator("#msgs .m.u").count() >= 3 && await st.locator("#msgs .m.b").count() >= 1 && await st.locator("#msgs audio").count() === 1);
+  const stateText = await st.locator("#cst").innerText();
+  ok("в шапке чата — состояние бота, а кнопка «Позвонить» ведёт на номер клиента", /Пауза до/.test(stateText) && (await st.locator("#call").getAttribute("href")) === "tel:+77051110001", stateText + " " + await st.locator("#call").getAttribute("href"));
+  ok("в чате видны сообщения клиента, ответ бота и голосовое с проигрывателем", await st.locator("#msgs .m.in").count() >= 3 && await st.locator("#msgs .m.bot").count() >= 1 && await st.locator("#msgs audio").count() === 1);
   await shot(st, "07-inbox-chat");
   await st.fill("#txt", "Здравствуйте, Данияр! Это администратор, чем помочь?"); await st.click("#send");
-  await st.waitForSelector("#msgs .m.a");
-  ok("ответ администратора появился в чате и ушёл клиенту", /Это администратор/.test(await st.locator("#msgs .m.a").last().innerText()) && S.sentTo("77051110001").some(x => /Это администратор/.test(x)));
+  await st.waitForSelector("#msgs .m.adm:not(.pend)");
+  ok("ответ администратора появился в чате и ушёл клиенту", /Это администратор/.test(await st.locator("#msgs .m.adm").last().innerText()) && S.sentTo("77051110001").some(x => /Это администратор/.test(x)));
   await shot(st, "08-inbox-replied");
-  await st.click("text=Вернуть бота");
-  await st.waitForFunction(() => /отвечает бот/.test(document.getElementById("cstate").textContent));
-  ok("«Вернуть бота» — состояние сменилось на «отвечает бот»", true);
+  await st.click(".strip >> text=Вернуть бота");
+  await st.waitForFunction(() => /Ведёт бот/.test(document.getElementById("cst").textContent));
+  ok("«Вернуть бота» — состояние сменилось на «Ведёт бот»", true);
   await st.click("#back");
-  await st.waitForSelector("#rows .r, #rows .empty");
-  await st.click("#t_all");
-  await st.waitForFunction(() => document.querySelectorAll("#rows .r").length >= 2);
+  await st.waitForSelector("#rows a.row, #rows .empty");
+  await st.click(".chip:text-is('Все')");
+  await st.waitForFunction(() => document.querySelectorAll("#rows a.row").length >= 2);
   const listText = await st.locator("#rows").innerText();
   ok("список чатов: оба клиента, имена из WhatsApp, начало последнего сообщения", /Данияр/.test(listText) && /Айгерим/.test(listText) && /Добрый день|Здравствуйте/.test(listText), listText.slice(0, 300));
   await shot(st, "09-inbox-list");
@@ -125,9 +125,9 @@ try {
   ok("запись в Altegio создана, отмена не выполнена ботом", net.altRecords.length === 1 && net.altDeleted.length === 0);
   const w = await newPage({ width: 1200, height: 800 });
   await w.goto(url + "/inbox?c=salon&key=" + OWNER);
-  await w.waitForSelector("#rows .r");
+  await w.waitForSelector("#rows a.row");
   ok("вход по ссылке с ключом: ключ из адреса убран", !w.url().includes("key="));
-  await w.click("#rows .r");
+  await w.click("#rows a.row");
   await w.waitForSelector(".rq");
   const rqText = await w.locator(".rq").first().innerText();
   ok("карточка просьбы: что просит клиент, номер записи, его слова", /Клиент просит отменить запись/.test(rqText) && /№ 777001/.test(rqText) && /Не смогу прийти/.test(rqText), rqText);
@@ -139,7 +139,8 @@ try {
   await w.waitForFunction(() => !document.querySelector(".rq"));
   ok("«Сделано»: клиенту ушло сообщение, карточка закрыта, заявка помечена", S.sentTo("77071110001").some(x => /Вашу запись отменили/.test(x)) && S.leads("salon").some(l => l.kind === "cancel" && l.status === "выполнена"));
   await shot(w, "11-inbox-done-wide");
-  ok("владелец видит ссылку «Боты» в пульте", await w.locator("#l_st").isVisible());
+  await w.click("#nav a[data-v=more]");
+  ok("владелец видит в разделе «Ещё» ссылку «Боты и сотрудники»", await w.locator("#v-more >> text=Боты и сотрудники").isVisible());
 
   // ---- рассылка глазами сотрудника: список, проверка, пробная отправка, запуск, итог
   S.env.WA_TOKEN_KAIRAT = S.env.WA_TOKEN_KAIRAT || "tok-kairat"; S.env.PHONE_NUMBER_ID_KAIRAT = "900111";
@@ -195,13 +196,15 @@ try {
   // ---- пульт: ответ уходит тому, чей чат открыт; черновик не переезжает; запоздавший ответ сервера не перерисовывает чужой чат
   const v = await newPage({ width: 1200, height: 800 });
   await v.goto(url + "/inbox?c=kairat&key=" + OWNER);
-  await v.click("#t_all"); await v.waitForSelector("#rows .r");
-  const rowOf = n => v.locator(`#rows .r:has(.h b:text-is("${n}"))`);
-  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  await v.click(".chip:text-is('Все')"); await v.waitForSelector("#rows a.row");
+  const rowOf = n => v.locator(`#rows a.row:has(.nm:text-is("${n}"))`);
+  const nameIs = n => v.waitForFunction(x => document.getElementById("cname").textContent === x, n);
+  const sheetText = async () => { await v.click("#menu"); await v.waitForSelector("#sheet"); const t = await v.locator("#sheet").innerText(); await v.keyboard.press("Escape"); return t; };
+  await rowOf("Данияр").click(); await nameIs("Данияр");
   await v.fill("#txt", "черновик для Данияра");
-  await rowOf("Айгерим").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Айгерим");
+  await rowOf("Айгерим").click(); await nameIs("Айгерим");
   ok("черновик ответа не переезжает в другой чат", (await v.inputValue("#txt")) === "");
-  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  await rowOf("Данияр").click(); await nameIs("Данияр");
   ok("…а при возвращении в чат черновик на месте", (await v.inputValue("#txt")) === "черновик для Данияра");
   let slow = true;
   await v.route(u => u.pathname === "/api/inbox/chat" && u.searchParams.get("id") === "77051110001", async r => { if (slow) { slow = false; await new Promise(x => setTimeout(x, 1500)); } await r.continue(); });
@@ -210,10 +213,10 @@ try {
   ok("запоздавший ответ сервера не перерисовывает чужой чат", (await v.locator("#cname").innerText()) === "Айгерим");
   await v.unroute(u => u.pathname === "/api/inbox/chat" && u.searchParams.get("id") === "77051110001");
   const toD0 = S.sentTo("77051110001").length, toA0 = S.sentTo("77051110002").length;
-  await v.fill("#txt", "Ответ Айгерим про запись"); await v.click("#send"); await v.waitForSelector("#msgs .m.a >> text=Ответ Айгерим про запись");
+  await v.fill("#txt", "Ответ Айгерим про запись"); await v.click("#send"); await v.waitForSelector("#msgs .m.adm:not(.pend) >> text=Ответ Айгерим про запись");
   ok("ответ ушёл тому, чей чат на экране", S.sentTo("77051110002").length === toA0 + 1 && S.sentTo("77051110001").length === toD0 && /Ответ Айгерим/.test(S.sentTo("77051110002").at(-1)));
   // отправка уходит адресату на момент нажатия, даже если чат успели сменить до ответа сервера
-  await rowOf("Данияр").click(); await v.waitForFunction(() => document.getElementById("cname").textContent === "Данияр");
+  await rowOf("Данияр").click(); await nameIs("Данияр");
   await v.fill("#txt", "Данияр, ждём вас");
   await v.route("**/api/inbox/send", async r => { await new Promise(x => setTimeout(x, 800)); await r.continue(); });
   await v.click("#send"); await rowOf("Айгерим").click();
@@ -223,18 +226,21 @@ try {
   // чат с заявкой: «Готово» не прячет чат, а «отправить клиенту» не предлагается там, где писать нельзя
   const webSid = [...S.kv.mem.keys()].find(k => k.startsWith("h:web:kairat:")).split(":").pop();
   await v.goto("about:blank"); await v.goto(url + "/inbox?c=kairat#web:" + webSid); await v.waitForSelector(".rq");
-  ok("чат с сайта: заявка видна, кнопки «Готово — убрать» нет", !(await v.locator("#acts").innerText()).includes("Готово — убрать"));
+  ok("чат с сайта: заявка видна, пункта «Готово — убрать» в меню нет", !(await sheetText()).includes("Готово — убрать"));
+  ok("чат с сайта: поля ответа нет, сказано почему", await v.locator("#comp").isHidden() && /ответить в него нельзя/.test(await v.locator("#warn").innerText()));
   await v.click(".rq >> text=Позвонил и подтвердил");
   await v.waitForFunction(() => !document.querySelector(".rq"));
   ok("чат с сайта: «Отправить клиенту и закрыть» не предлагается, заявка закрывается без сообщения", !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть") && S.leads("kairat").some(l => l.status === "выполнена"));
   await wa({ c: "kairat", from: "77051110009", name: "Тимур", text: "Тимур, +7 705 111 22 77, завтра в 12:00" });
   { const k = "h:wa:kairat:77051110009", h = S.kv.json(k), old = Date.now() - 26 * 3600e3; h.profile.li = old; await S.kv.api.put(k, JSON.stringify(h), { metadata: { ...(S.kv.meta.get(k) || {}), li: old } }); }
   await v.goto("about:blank"); await v.goto(url + "/inbox?c=kairat#wa:77051110009"); await v.waitForSelector(".rq");
-  ok("чат старше 24 часов с заявкой: «Готово — убрать» скрыта", !(await v.locator("#acts").innerText()).includes("Готово — убрать"));
-  await v.click(".rq .btn.p");
-  ok("чат старше 24 часов: сразу закрытие без «Отправить клиенту»", !(await v.locator(".rq textarea").count()) && !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть"));
+  ok("чат старше 24 часов с заявкой: «Готово — убрать» скрыта", !(await sheetText()).includes("Готово — убрать"));
+  ok("чат старше 24 часов: поле ответа заблокировано, сказано почему", await v.locator("#txt").isDisabled() && /больше 24 часов/.test(await v.locator("#warn").innerText()));
+  await v.click(".rq .btn.pri");
+  await v.waitForFunction(() => !document.querySelector(".rq"));
+  ok("чат старше 24 часов: сразу закрытие без «Отправить клиенту»", !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть"));
   await v.route("**/api/inbox/list*", r => r.abort());
-  await v.evaluate(() => list());
+  await v.evaluate(() => window.__pult.loadList());
   await v.waitForFunction(() => !document.getElementById("net").hidden, null, { timeout: 5000 }).catch(() => {});
   ok("пульт при сбое запроса пишет об этом", await v.locator("#net").isVisible());
   await v.unroute("**/api/inbox/list*");
@@ -254,6 +260,23 @@ try {
   ok("экзамен бота проходит все сценарии по очереди и показывает итог", /Итог: прошло \d+ из \d+/.test(sumText) && marks.length >= 12 && marks.every(m => m === "✅" || m === "❌") && marks.filter(m => m === "✅").length >= 6, sumText + " " + marks.join(""));
   await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await shot(p, "13-launch-exam");
+
+  // ---- /demo: открывается без входа и без единого обращения к серверу, данные вымышленные
+  {
+    const d = await newPage({ width: 390, height: 844 });
+    const api = []; d.on("request", r => { if (new URL(r.url()).pathname.startsWith("/api/")) api.push(r.url()); });
+    await d.goto(url + "/demo");
+    await d.waitForSelector("#rows a.row");
+    ok("/demo открывается без входа, в списке вымышленные чаты", /Айдос/.test(await d.locator("#rows").innerText()) && !/\/login/.test(d.url()));
+    await d.click("#rows a.row"); await d.waitForSelector("#msgs .m");
+    await d.fill("#txt", "Проверка из теста"); await d.click("#send");
+    await d.waitForSelector("#msgs .m.adm:not(.pend) >> text=Проверка из теста");
+    ok("демо: ответ появляется в чате", true);
+    await shot(d, "18-demo-chat");
+    await d.click("#back");
+    for (const t of ["leads", "summary", "broadcast", "more"]) { await d.click(`#nav a[data-v=${t}]`); await d.waitForTimeout(200); ok(`демо: раздел «${t}» открывается и не пустой`, (await d.locator(`#v-${t}`).innerText()).trim().length > 20); }
+    ok("демо не обращается к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
+  }
 
   // ---- страницы заявок и выхода
   await st.goto(url + "/leads");

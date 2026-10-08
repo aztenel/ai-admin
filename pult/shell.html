@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>@@TITLE@@</title>
+<meta name="theme-color" content="#0A0A0A">
+<meta name="color-scheme" content="dark light">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Пульт">
+<meta name="format-detection" content="telephone=no">
+@@ROBOTS@@
+<link rel="manifest" href="@@MANIFEST@@">
+<link rel="apple-touch-icon" href="/pult/icon-180.png">
+<link rel="icon" type="image/png" href="/pult/icon-192.png">
+<style>
+@@CSS@@
+</style>
+</head>
+<body>
+<div id="root">
+<div class="app" id="app" data-theme="auto">
+  <nav class="nav" id="nav" aria-label="Разделы"></nav>
+  <div class="fade"></div>
+  <div class="views">
+    <div class="ban" id="net" hidden role="status"><span>Нет связи с сервером — данные могут быть устаревшими. Страница попробует снова сама.</span></div>
+    <div class="vwrap">
+      <section class="view on" id="v-chats" aria-label="Чаты">
+        <div class="lst" id="listp">
+          <div class="hdr"><span id="bizslot" style="display:contents"></span><span class="sp"></span>
+            <button type="button" class="ibtn" id="rfs" aria-label="Обновить"></button>
+            <button type="button" class="ibtn" id="bell" aria-label="Уведомления" hidden></button>
+            <button type="button" class="ibtn pri" id="plus" aria-label="Новый лид" hidden></button>
+          </div>
+          <div class="ttl"><h1>Чаты</h1><span class="meta" id="meta"></span></div>
+          <label class="srch"><span id="srchic" style="display:flex"></span><input type="search" id="q" placeholder="Поиск по чатам" aria-label="Поиск по чатам" autocomplete="off" enterkeyhint="search"></label>
+          <div class="chips more" id="chips"></div>
+          <div class="scroll" id="rows"></div>
+          <noscript><div class="empty"><b>Нужен JavaScript</b><span>Откройте пульт в обычном браузере.</span></div></noscript>
+        </div>
+        <section class="cnv" id="chatp" aria-label="Переписка">
+          <div class="none"><b style="font-size:17px;color:var(--fg)">Выберите чат</b><span>Список слева — нажмите на любой чат, и здесь откроется переписка.</span></div>
+          <div class="cin">
+            <div class="chdr">
+              <button type="button" class="ibtn back" id="back" aria-label="Назад к списку"></button>
+              <button type="button" class="who" id="who" aria-label="Карточка клиента"><span class="av sm" id="cav"></span><span class="wt"><span class="nm" id="cname"></span><span class="st2" id="cst"></span></span></button>
+              <button type="button" class="ibtn info" id="infobtn" aria-label="Карточка клиента"></button>
+              <a class="ibtn" id="call" aria-label="Позвонить" hidden></a>
+              <button type="button" class="ibtn" id="menu" aria-label="Действия с чатом"></button>
+            </div>
+            <div class="strip" id="strip" hidden></div>
+            <div id="cards"></div>
+            <div class="msgs" id="msgs" role="log" aria-live="polite"></div>
+            <div class="warnl" id="warn"></div>
+            <div class="comp" id="comp">
+              <div class="inp"><textarea id="txt" rows="1" placeholder="Сообщение клиенту" aria-label="Сообщение клиенту"></textarea><button type="button" class="ibtn flat" id="quick" aria-label="Быстрые ответы"></button></div>
+              <button type="button" class="ibtn pri" id="send" aria-label="Отправить"></button>
+            </div>
+          </div>
+        </section>
+        <aside class="inf" id="infp" aria-label="Карточка клиента">
+          <div class="ih"><button type="button" class="ibtn" id="cback" aria-label="Закрыть карточку"></button><span class="h3">Клиент</span></div>
+          <div class="ib" id="cardbody"></div>
+          <div class="if" id="cardfoot" hidden></div>
+        </aside>
+      </section>
+      <section class="view" id="v-leads" aria-label="Лиды"></section>
+      <section class="view" id="v-summary" aria-label="Сводка"></section>
+      <section class="view" id="v-broadcast" aria-label="Рассылки"></section>
+      <section class="view" id="v-more" aria-label="Ещё"></section>
+    </div>
+  </div>
+  <div class="scrim cs" id="cs"></div>
+  <div class="toast" id="toast" hidden role="status"></div>
+</div>
+</div>
+<script>@@DEMOJS@@</script>
+<script>@@APPJS@@</script>
+<script>@@VIEWSJS@@</script>
+<script>window.__pultBoot()</script>
+</body>
+</html>

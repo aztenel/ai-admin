@@ -351,6 +351,60 @@ section("пульт чатов");
   ok("закрыть чужую заявку из другого чата нельзя", r.status === 404);
 }
 
+// ====== 4а. Страница пульта в новом виде: установка на айфон, демо без входа, лиды для вкладки «Лиды»
+section("пульт: установка на телефон, демо, лиды");
+{
+  const own = S.browser(); await own.go("/studio?key=" + OWNER);
+  const kk = await (await own.post("/api/studio/key", { id: "kairat" })).json();
+  const staff = S.browser(); await staff.go("/inbox?c=kairat&key=" + kk.key);
+  const dent = S.browser(); await dent.go("/inbox?c=dent&key=dent-staff-key");
+  const anon = S.browser();
+  const J = async r => r.json();
+
+  // сама страница: всё нужное для «На экран Домой» и для выреза iPhone
+  let r = await staff.go("/inbox?c=kairat"); const live = await r.text();
+  ok("страница пульта: манифест, значок для iPhone, режим приложения, вырез экрана", r.status === 200 && /<link rel="manifest" href="\/manifest\.webmanifest">/.test(live) && /rel="apple-touch-icon" href="\/pult\/icon-180\.png"/.test(live) && /apple-mobile-web-app-capable" content="yes"/.test(live) && /viewport-fit=cover/.test(live));
+  ok("страница пульта: настоящий режим (не демо), вымышленных клиентов в ней нет", /window\.__DEMO=false;/.test(live) && !live.includes("Айдос Акберов"));
+  ok("страница пульта: без кэша, не встраивается в чужие страницы, с политикой безопасности", /no-store/.test(r.headers.get("cache-control") || "") && r.headers.get("x-frame-options") === "DENY" && /default-src 'self'/.test(r.headers.get("content-security-policy") || ""));
+  ok("страница пульта: ни внешних скриптов, ни внешних шрифтов", !/<script[^>]+src=/i.test(live) && !/https?:\/\/(fonts|cdn|unpkg|cdnjs)/i.test(live));
+
+  // демо: без входа, на вымышленных данных
+  r = await anon.go("/demo"); const demo = await r.text();
+  ok("/demo открывается без входа", r.status === 200 && !r.headers.get("set-cookie"));
+  ok("/demo: вымышленные чаты, режим демо, свой манифест", /window\.__DEMO\s*=\s*true/.test(demo) && demo.includes("Айдос Акберов") && /<link rel="manifest" href="\/demo\.webmanifest">/.test(demo));
+  ok("/demo: поисковикам не показывается, без кэша, не встраивается", /noindex/.test(r.headers.get("x-robots-tag") || "") && /no-store/.test(r.headers.get("cache-control") || "") && r.headers.get("x-frame-options") === "DENY");
+  ok("/demo не содержит настоящих данных: ни клиентов, ни ключей", !/kairat|owner-key|tok-kairat|sec-kairat|partner-key/i.test(demo) && !demo.includes("77051110001"));
+  ok("/demo со слэшем в конце тоже открывается", (await anon.go("/demo/")).status === 200);
+
+  // манифесты и значки
+  r = await anon.go("/manifest.webmanifest"); let mf = await J(r);
+  ok("манифест: открывается без входа, запуск с пульта, на весь экран", r.status === 200 && /manifest\+json/.test(r.headers.get("content-type") || "") && mf.start_url === "/inbox" && mf.scope === "/" && mf.display === "standalone");
+  ok("манифест: значки 192 и 512, один годится для круглой маски", ["192x192", "512x512"].every(s => (mf.icons || []).some(i => i.sizes === s && i.type === "image/png")) && (mf.icons || []).some(i => /maskable/.test(i.purpose || "")));
+  mf = await J(await anon.go("/demo.webmanifest"));
+  ok("манифест демо: запуск и область — только /demo (рабочий пульт не затрагивается)", mf.start_url === "/demo" && mf.scope === "/demo");
+  for (const n of [180, 192, 512]) {
+    r = await anon.go(`/pult/icon-${n}.png`); const b = Buffer.from(await r.arrayBuffer());
+    ok(`значок ${n}: настоящий PNG, кэшируется`, r.status === 200 && r.headers.get("content-type") === "image/png" && b.subarray(0, 4).toString("hex") === "89504e47" && /max-age/.test(r.headers.get("cache-control") || "") && b.length > 1000, `${r.status} ${b.length}`);
+  }
+  ok("значка другого размера нет", (await anon.go("/pult/icon-999.png")).status === 404);
+
+  // лиды для вкладки «Лиды»: только для своего клиента
+  ok("лиды пульта без входа → 401", (await anon.go("/api/inbox/leads?c=kairat")).status === 401);
+  ok("лиды чужого клиента → 403", (await dent.go("/api/inbox/leads?c=kairat")).status === 403);
+  const ld = await J(await staff.go("/api/inbox/leads?c=kairat"));
+  ok("лиды своего клиента: список с нужными полями, свежие сверху", Array.isArray(ld.leads) && ld.leads.length > 0 && ld.leads.every(l => l.id && "name" in l && "phone" in l && "status" in l && l.ts > 0) && ld.leads.every((l, k, a) => !k || a[k - 1].ts >= l.ts), JSON.stringify(ld).slice(0, 300));
+  ok("лиды: служебных полей (токены, ключи) в ответе нет", !/token|secret|key/i.test(JSON.stringify(ld)));
+
+  // в карточке просьбы отмены/переноса и в шапке — время, когда чат стал ждать ответа
+  const dd = await J(await staff.go("/api/inbox/chat?c=kairat&ch=wa&id=77051110001"));
+  ok("чат: в «нужен человек» есть время, с которого он ждёт", !dd.need || (dd.need.at > 0 && dd.need.why), JSON.stringify(dd.need));
+
+  // собранная страница свежая (правят папку pult/, а worker.js читает pult.gen.js)
+  const { execFileSync } = await import("node:child_process");
+  let fresh = true, why = ""; try { execFileSync(process.execPath, ["tools/build-pult.mjs", "--check"], { stdio: "pipe" }); } catch (e) { fresh = false; why = String(e.stderr || e.message); }
+  ok("pult.gen.js собран из текущей папки pult/ (иначе: node tools/build-pult.mjs)", fresh, why);
+}
+
 // ====== 5. Клиент с Altegio из паспорта: запись, просьба об отмене, «сделано» в пульте
 section("Altegio из паспорта + пульт");
 {
