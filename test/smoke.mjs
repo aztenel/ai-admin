@@ -27,7 +27,7 @@ const KV = {
 // ALTEGIO_SELF_CANCEL: большинство сценариев ниже проверяют режим, где бот сам отменяет и переносит записи. Режим по умолчанию (это делает администратор) — в конце файла
 const env = { KV, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "lk", TG_TOKEN: "tg", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ALTEGIO_SELF_CANCEL: "1" };
 
-let geminiQueue = [], calls = { gemini: [], tg: [], wa: [], seq: [] }; // seq — порядок сообщений: «wa» клиенту, «tg» администратору
+let geminiQueue = [], claudeQueue = [], calls = { gemini: [], claude: [], tg: [], wa: [], seq: [] }; // seq — порядок сообщений: «wa» клиенту, «tg» администратору
 const geminiModels = []; // какая модель была в адресе каждого запроса к Gemini (параллельно calls.gemini)
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, init = {}) => {
@@ -41,6 +41,16 @@ globalThis.fetch = async (u, init = {}) => {
     if (next && typeof next === "object" && next.status) return new Response(next.text || "err", { status: next.status }); // отказ с текстом: { status: 400, text: "…" }
     if (next && typeof next === "object" && next.say !== undefined) return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: next.say }] }, finishReason: next.reason || "STOP" }], usageMetadata: next.usage || {} }), { status: 200, headers: { "content-type": "application/json" } });
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  if (url.includes("api.anthropic.com")) { // Claude: заглушка Messages API
+    calls.claude.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+    let next = claudeQueue.length > 1 ? claudeQueue.shift() : claudeQueue[0];
+    if (typeof next === "function") next = next(JSON.parse(init.body));
+    if (next instanceof Error) throw next;
+    if (typeof next === "number") return new Response("err", { status: next });
+    if (next && typeof next === "object" && next.status) return new Response(next.text || "err", { status: next.status });
+    const o = typeof next === "object" ? next : { say: next };
+    return new Response(JSON.stringify({ content: [{ type: "text", text: o.say }], stop_reason: o.reason || "end_turn", usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200, headers: { "content-type": "application/json" } });
   }
   if (url.includes("api.telegram.org")) { calls.tg.push(JSON.parse(init.body).text); calls.seq.push("tg"); return new Response("{}", { status: 200 }); }
   if (url.includes("graph.facebook.com")) { calls.wa.push(JSON.parse(init.body)); calls.seq.push("wa"); return new Response("{}", { status: 200 }); }
@@ -2256,6 +2266,46 @@ ok("«Можно оплатить через администратора?» —
   ok("/diag: скорость каждой модели на настоящей подсказке (мс, настройка «раздумий», токены «мыслей»)", /Скорость на настоящей подсказке бота \(\d{3,} знаков\)/.test(dg) && /gemini-3\.5-flash-lite: ✅ \d+ мс · «раздумья»: \{"thinkingLevel":"minimal"\} · токены «мыслей»: 0 · конец ответа: STOP/.test(dg) && /gemini-flash-latest: ✅ \d+ мс/.test(dg), dg.slice(dg.indexOf("Скорость") - 80, dg.indexOf("Скорость") + 500));
   geminiQueue = [{ status: 500, text: "boom" }]; const dg2 = await (await call("/diag?key=lk")).text();
   ok("/diag: модель не ответила → строка с ❌ у этой модели, страница открывается", /gemini-3\.5-flash-lite: ❌ Gemini 500/.test(dg2) && /Модели: /.test(dg2), dg2.slice(dg2.indexOf("Скорость") - 80, dg2.indexOf("Скорость") + 500)); }
+
+// --- ИИ: Claude как второй поставщик (MODEL=claude-…, секрет ANTHROPIC_KEY). Запасная модель остаётся Gemini
+{ const m0 = env.MODEL, mf0 = env.MODEL_FALLBACK, hi = "Здравствуйте! На какой день вас записать?", cl = () => calls.claude.at(-1), cc = () => calls.claude.length, gn = () => calls.gemini.length;
+  env.MODEL = "claude-haiku-5-5"; env.ANTHROPIC_KEY = "ak-stub"; claudeQueue = [hi];
+  const sx = sid(); let c0 = cc(), g0 = gn(); d = await chat("barber", sx, "Привет, хочу записаться");
+  ok("MODEL=claude-…: запрос идёт в Anthropic, а не в Gemini, клиент получает ответ", cc() - c0 === 1 && gn() === g0 && d.reply === hi, JSON.stringify([cc() - c0, gn() - g0, d.reply]));
+  ok("запрос к Claude: адрес /v1/messages, ключ в x-api-key, версия API, модель, подсказка в system, лимит токенов", /api\.anthropic\.com\/v1\/messages/.test(cl().url) && cl().headers["x-api-key"] === "ak-stub" && !!cl().headers["anthropic-version"] && cl().body.model === "claude-haiku-5-5" && typeof cl().body.system === "string" && cl().body.system.length > 500 && cl().body.max_tokens >= 1024, JSON.stringify([cl().url, Object.keys(cl().headers), cl().body.model, cl().body.max_tokens]));
+  ok("сообщения для Claude начинаются с клиента и чередуются (user → assistant → user)", cl().body.messages[0].role === "user" && cl().body.messages.every((m, i, a) => !i || m.role !== a[i - 1].role) && cl().body.messages.at(-1).content === "Привет, хочу записаться", JSON.stringify(cl().body.messages));
+  claudeQueue = ["Мужская стрижка стоит 6 000 ₸."]; d = await chat("barber", sx, "Сколько стоит стрижка?");
+  const ms = cl().body.messages;
+  ok("второе сообщение: история уходит в Claude (user, assistant, user), роли переименованы model → assistant", ms.length >= 3 && ms.at(-1).role === "user" && ms.at(-2).role === "assistant" && d.reply === "Мужская стрижка стоит 6 000 ₸.", JSON.stringify(ms));
+  // 529/5xx → одна повторная попытка к той же модели
+  c0 = cc(); claudeQueue = [{ status: 529, text: '{"type":"error","error":{"type":"overloaded_error"}}' }, hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Claude перегружен (529) → вторая попытка к Claude, клиент получает ответ", cc() - c0 === 2 && d.reply === hi, JSON.stringify([cc() - c0, d.reply]));
+  // Claude не ответил совсем (ошибка, неверный ключ) → запасная модель Gemini
+  c0 = cc(); g0 = gn(); claudeQueue = [{ status: 401, text: '{"type":"error","error":{"type":"authentication_error"}}' }]; geminiQueue = [hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Claude отказал (401) → запасная модель Gemini отвечает клиенту", gn() - g0 === 1 && d.reply === hi && !/связь прервалась/.test(d.reply), JSON.stringify([cc() - c0, gn() - g0, d.reply]));
+  c0 = cc(); g0 = gn(); claudeQueue = [new Error("network")]; geminiQueue = [hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Claude не отвечает (обрыв связи) → запасная модель Gemini", gn() - g0 === 1 && d.reply === hi, JSON.stringify([cc() - c0, gn() - g0, d.reply]));
+  // ответ оборван по лимиту → запасная
+  g0 = gn(); claudeQueue = [{ say: "Мужская стрижка стоит от шести тысяч, а ещё мы", reason: "max_tokens" }]; geminiQueue = [hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("ответ Claude оборван по лимиту токенов → клиенту не уходит, отвечает запасная модель", gn() - g0 === 1 && d.reply === hi && !/а ещё мы/.test(d.reply), d.reply);
+  // модель не принимает temperature → тот же запрос без неё
+  c0 = cc(); claudeQueue = [{ status: 400, text: '{"type":"error","error":{"type":"invalid_request_error","message":"`temperature` is deprecated for this model."}}' }, hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("400 про temperature → повтор к Claude без temperature, клиент получает ответ", cc() - c0 === 2 && !("temperature" in cl().body) && d.reply === hi, JSON.stringify([cc() - c0, Object.keys(cl().body), d.reply]));
+  // ключа Claude нет → в Anthropic не ходим, отвечает запасная
+  delete env.ANTHROPIC_KEY; c0 = cc(); g0 = gn(); geminiQueue = [hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("нет ANTHROPIC_KEY → запрос в Anthropic не уходит, отвечает запасная модель", cc() === c0 && gn() - g0 === 1 && d.reply === hi, JSON.stringify([cc() - c0, gn() - g0, d.reply]));
+  // Claude и как запасная: MODEL=gemini, MODEL_FALLBACK=claude
+  env.ANTHROPIC_KEY = "ak-stub"; env.MODEL = "gemini-test-fb"; env.MODEL_FALLBACK = "claude-haiku-5-5"; c0 = cc(); geminiQueue = [{ status: 500, text: "boom" }]; claudeQueue = [hi]; d = await chat("barber", sid(), "Привет, хочу записаться");
+  ok("Claude как запасная модель: Gemini упал → отвечает Claude", cc() - c0 === 1 && d.reply === hi, JSON.stringify([cc() - c0, d.reply]));
+  env.MODEL_FALLBACK = mf0; if (mf0 === undefined) delete env.MODEL_FALLBACK;
+  // /diag: ключ Claude и скорость
+  env.MODEL = "claude-haiku-5-5"; claudeQueue = [{ say: "работает" }]; geminiQueue = ["работает"]; const dgc = await (await call("/diag?key=lk")).text();
+  ok("/diag с моделью Claude: показывает ANTHROPIC_KEY и скорость Claude", /ANTHROPIC_KEY: есть ✅/.test(dgc) && /claude-haiku-5-5: ✅ \d+ мс/.test(dgc), dgc.slice(0, 1400));
+  const gk = env.GEMINI_KEY; delete env.GEMINI_KEY; claudeQueue = [{ say: "работает" }]; const dgc2 = await (await call("/diag?key=lk")).text();
+  ok("/diag: только Claude, без ключа Gemini — проверка скорости всё равно идёт", /claude-haiku-5-5: ✅ \d+ мс/.test(dgc2), dgc2.slice(0, 900));
+  env.GEMINI_KEY = gk; delete env.ANTHROPIC_KEY; const dgc3 = await (await call("/diag?key=lk")).text();
+  ok("/diag с моделью Claude без ключа: «ANTHROPIC_KEY: НЕТ ❌»", /ANTHROPIC_KEY: НЕТ ❌/.test(dgc3), dgc3.slice(0, 600));
+  env.MODEL = m0; }
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 // новые части (история чата для пульта, паспорт бота, вход, пульт чатов) проверяются отдельным файлом и в отдельном процессе

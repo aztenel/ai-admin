@@ -455,6 +455,13 @@ section("проверка запуска");
   const ck = t => d.checks.find(x => x.title.startsWith(t)) || {};
   ok("чек-лист: ИИ, хранилище, Telegram клиента, секреты WhatsApp, ключ сотрудника — готово; контакты политики — нет, с подсказкой", ck("Ключ ИИ").ok === true && ck("Хранилище").ok === true && ck("Telegram").ok === true && ck("WhatsApp: секреты").ok === true && ck("Ключ для сотрудников").ok === true
     && ck("Контакты").ok === false && /OWNER_NAME/.test(ck("Контакты").fix) && /https:\/\/bot\.test\/wa\/kairat/.test(ck("WhatsApp: адрес").text), JSON.stringify(d.checks).slice(0, 900));
+  { // модель Claude: чек-лист смотрит на ANTHROPIC_KEY, а не на GEMINI_KEY
+    const S5 = mk({ MODEL: "claude-haiku-5-5", GEMINI_KEY: "" }), b5 = S5.browser(); await b5.go("/studio?key=" + OWNER);
+    let dd = await (await b5.go("/api/launch/status?c=dent")).json(); let c5 = dd.checks.find(x => x.title.startsWith("Ключ ИИ")) || {};
+    ok("модель Claude, ключа нет: в чек-листе «Ключ ИИ (Claude)» не готов, подсказка про ANTHROPIC_KEY", /Claude/.test(c5.title) && c5.ok === false && /ANTHROPIC_KEY/.test(c5.fix), JSON.stringify(c5));
+    const S6 = mk({ MODEL: "claude-haiku-5-5", ANTHROPIC_KEY: "ak-x", GEMINI_KEY: "" }), b6 = S6.browser(); await b6.go("/studio?key=" + OWNER);
+    dd = await (await b6.go("/api/launch/status?c=dent")).json(); c5 = dd.checks.find(x => x.title.startsWith("Ключ ИИ")) || {};
+    ok("модель Claude, ключ задан: «Ключ ИИ (Claude)» готов, самого ключа в ответе нет", c5.ok === true && !JSON.stringify(dd).includes("ak-x"), JSON.stringify(c5)); }
   ok("в чек-листе нет самих секретов", !JSON.stringify(d).includes("tok-kairat") && !JSON.stringify(d).includes("sec-kairat") && !JSON.stringify(d).includes(OWNER));
   const titles = d.cases.map(k => k.t);
   ok("экзамен собран из паспорта: цены трёх услуг, адрес, телефон, график, несуществующая услуга, торг, атака, казахский, заявка", titles.includes("Цена: Мужская стрижка") && titles.includes("Цена: Детская стрижка") && titles.includes("Адрес") && titles.includes("Телефон") && titles.includes("График сегодня")

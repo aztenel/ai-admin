@@ -3182,6 +3182,7 @@ async function askGemini(env, system, turns, info, only) {
   };
   let lastErr;
   for (const [mi, model] of models.entries()) {
+    if (isClaude(model)) { try { return await askClaude(env, system, turns, model, info); } catch (e) { lastErr = e; continue; } } // Claude отказал — следующая модель из списка (запасная)
     const ladder = THINK_LADDER(model);
     let step = Math.min(THINK_STEP.get(model) || 0, ladder.length - 1);
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -3214,6 +3215,40 @@ async function askGemini(env, system, turns, info, only) {
     }
   }
   throw lastErr || new Error("Gemini failed");
+}
+
+// Claude (Anthropic) как поставщик ИИ: модель с именем claude-… (MODEL или MODEL_FALLBACK), ключ — секрет ANTHROPIC_KEY.
+// Отвечает так же, как askGemini: строка текста или ошибка (тогда askGemini пробует следующую модель списка).
+const isClaude = model => /^claude-/i.test(String(model || ""));
+async function askClaude(env, system, turns, model, info) {
+  if (!env.ANTHROPIC_KEY) throw new Error("ANTHROPIC_KEY не задан");
+  const messages = turns.reduce((a, t) => { const role = t.role === "model" ? "assistant" : "user", l = a[a.length - 1]; if (l && l.role === role) l.content += "\n" + t.text; else a.push({ role, content: t.text }); return a; }, []);
+  if (!messages.length || messages[0].role !== "user") messages.unshift({ role: "user", content: "(клиент открыл чат)" }); // Claude требует, чтобы диалог начинался с клиента
+  const body = { model, max_tokens: 2048, temperature: 0.3, system, messages };
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 9000), t0 = Date.now();
+    let r, tx = "", data = null;
+    try {
+      r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_KEY, "anthropic-version": "2023-06-01" }, body: JSON.stringify(body), signal: ac.signal });
+      if (r.ok) data = await r.json(); else tx = (await r.text()).slice(0, 300);
+    } catch (e) { throw new Error("timeout " + model); }
+    finally { clearTimeout(timer); }
+    const ms = Date.now() - t0;
+    if (info) Object.assign(info, { model, ms, think: "у Claude нет", status: r.status });
+    if (!r.ok) {
+      if (r.status === 400 && "temperature" in body && /temperature/i.test(tx)) { delete body.temperature; attempt--; continue; } // эта модель не принимает temperature
+      if ((r.status === 429 || r.status >= 500) && attempt === 0) { await new Promise(s => setTimeout(s, 1200)); lastErr = new Error("Claude " + r.status); continue; }
+      throw new Error("Claude " + r.status + " " + tx.slice(0, 200));
+    }
+    const out = (data?.content || []).filter(p => p.type === "text").map(p => p.text || "").join("").trim(), reason = data?.stop_reason || "";
+    if (info) Object.assign(info, { reason, thoughts: undefined });
+    if (ms > 8000) console.log("claude slow", model, ms, reason);
+    if (!out) throw new Error("Claude empty " + reason);
+    if (reason === "max_tokens" && !/[.!?…)»]\s*$/.test(out.replace(/\n?\[\s*(ЗАЯВКА|ОТМЕНА)\s*\][^\n]*/gi, "").trim())) throw new Error("Claude cut off");
+    return out;
+  }
+  throw lastErr || new Error("Claude failed");
 }
 
 async function notify(env, text, clientId) { // → true, если хотя бы один чат получил сообщение
@@ -4004,6 +4039,8 @@ async function diag(env) {
     : "KV: подключено ✅");
   const key = env.GEMINI_KEY || "";
   out.push("GEMINI_KEY: " + (key ? `есть ✅ (${key.length} симв., ${key.slice(0, 4)}…)` : "НЕТ ❌"));
+  const useClaude = isClaude(env.MODEL) || isClaude(env.MODEL_FALLBACK);
+  if (useClaude) out.push("ANTHROPIC_KEY: " + (env.ANTHROPIC_KEY ? `есть ✅ (${env.ANTHROPIC_KEY.length} симв.)` : "НЕТ ❌ — секрет из console.anthropic.com"));
   out.push("LEADS_KEY: " + (env.LEADS_KEY ? "задан ✅" : "не задан — используется VERIFY_TOKEN (лучше задать отдельный)"));
   const tgChats = String(env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean).length;
   out.push("Telegram: " + (env.TG_TOKEN && tgChats ? `настроен ✅ (чатов: ${tgChats})` : "не настроен (заявки только на /leads)"));
@@ -4037,12 +4074,12 @@ async function diag(env) {
   }
   out.push("Altegio: " + (env.ALTEGIO_PARTNER ? "ключ разработчика задан ✅ — проверка расписания: /altegio?key=…" : "не настроен (нужен Secret ALTEGIO_PARTNER)"));
   out.push("Модели: " + (env.MODEL || "gemini-flash-lite-latest") + " → запасная " + (env.MODEL_FALLBACK || "gemini-flash-latest"));
-  if (!key) return out.join("\n");
-  const t0 = Date.now();
-  try { const r = await askGemini(env, "Ответь одним словом.", [{ role: "user", text: "Скажи: работает" }]); out.push(`Тест Gemini: ✅ «${r.slice(0, 40)}» за ${Date.now() - t0} мс`); }
+  if (!key && !(useClaude && env.ANTHROPIC_KEY)) return out.join("\n");
+  const t0 = Date.now(), lbl = isClaude(env.MODEL) ? "Тест Claude" : "Тест Gemini";
+  try { const r = await askGemini(env, "Ответь одним словом.", [{ role: "user", text: "Скажи: работает" }]); out.push(`${lbl}: ✅ «${r.slice(0, 40)}» за ${Date.now() - t0} мс`); }
   catch (e) {
-    const s = String(e); out.push("Тест Gemini: ❌ " + s.slice(0, 400));
-    out.push(/API_KEY_INVALID|not valid/i.test(s) ? "ПРИЧИНА: неверный ключ — создайте новый в aistudio.google.com" :
+    const s = String(e); out.push(lbl + ": ❌ " + s.slice(0, 400));
+    out.push(/Claude 401|authentication/i.test(s) ? "ПРИЧИНА: неверный ключ Claude — создайте новый в console.anthropic.com" : /API_KEY_INVALID|not valid/i.test(s) ? "ПРИЧИНА: неверный ключ — создайте новый в aistudio.google.com" :
       /leaked/i.test(s) ? "ПРИЧИНА: ключ заблокирован как засвеченный — создайте новый" :
       /404|no longer available|not found/i.test(s) ? "ПРИЧИНА: модель устарела — поставьте MODEL из списка ниже" :
       /429/.test(s) ? "ПРИЧИНА: исчерпан бесплатный лимит — подождите или новый ключ" : "Пришлите этот текст в чат.");
@@ -4059,7 +4096,7 @@ async function diag(env) {
       } catch (e) { out.push(`  ${mdl}: ❌ ${String(e).replace(/^Error: /, "").slice(0, 200)}${info.ms ? ` (${info.ms} мс)` : ""}`); }
     }
   } catch (e) { out.push("Скорость моделей: не проверена — " + String(e).slice(0, 120)); }
-  try {
+  if (key) try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=200`);
     if (r.ok) out.push("Доступные flash-модели: " + ((await r.json()).models || []).map(m => m.name.replace("models/", "")).filter(n => /flash/i.test(n) && !/tts|image|audio|live|embed/i.test(n)).join(", "));
   } catch (e) {}
@@ -4947,7 +4984,8 @@ async function launchApi(request, env, url, s) {
   const c = CLIENTS[cid], up = cid.toUpperCase(), isAlt = !!altLoc(env, c);
   if (M === "GET" && P === "/api/launch/status") {
     const checks = [], add = (title, ok, text, fix) => checks.push({ title, ok, text, fix: ok === true ? "" : fix || "" });
-    add("Ключ ИИ (Gemini)", !!env.GEMINI_KEY, env.GEMINI_KEY ? "задан" : "не задан", "Cloudflare → ai-admin → Settings → Variables and Secrets → секрет GEMINI_KEY.");
+    if (isClaude(env.MODEL)) add("Ключ ИИ (Claude)", !!env.ANTHROPIC_KEY, env.ANTHROPIC_KEY ? "задан" : "не задан", "Cloudflare → ai-admin → Settings → Variables and Secrets → секрет ANTHROPIC_KEY (ключ из console.anthropic.com).");
+    else add("Ключ ИИ (Gemini)", !!env.GEMINI_KEY, env.GEMINI_KEY ? "задан" : "не задан", "Cloudflare → ai-admin → Settings → Variables and Secrets → секрет GEMINI_KEY.");
     let kvOk = false; try { await env.KV.put("launch:probe", String(Date.now()), { expirationTtl: 60 }); kvOk = !!(await env.KV.get("launch:probe")); } catch (e) {}
     add("Хранилище (KV)", kvOk, kvOk ? "читается и пишется" : "не работает", "Проверьте привязку KV в панели Cloudflare. На бесплатном тарифе записи кончаются после ~450 сообщений в сутки.");
     const tgChat = env["TG_CHAT_" + up] || c.tg, tgAny = !!(env.TG_TOKEN && (tgChat || env.TG_CHAT));
