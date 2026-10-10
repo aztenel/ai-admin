@@ -1555,6 +1555,26 @@ section("рассылки: сегменты");
   ok("на странице рассылок есть выбор сегмента", /id="f_seg"/.test(pg) && /id="f_segd"/.test(pg) && /день рождения/i.test(pg));
 }
 
+// ====== Живая проверка 10 октября: после просьбы об отмене вопрос «как оплатить?» получал ответ про отмену, а не про оплату
+section("после просьбы об отмене — вопрос об оплате");
+{
+  const SB = mk({ WA_TOKEN_SALON: "tok-salon", APP_SECRET_SALON: "sec-salon", ALTEGIO_PARTNER: "partner-key" }), own = SB.browser(); await own.go("/studio?key=" + OWNER);
+  const PAY = "Kaspi Gold: +7 701 555 44 33 (Кайрат К.)";
+  await own.post("/api/studio/save", { id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5001", tg: "777000", pay: PAY });
+  const o = { secret: "sec-salon", pnid: "900222" }, C = "77071110021";
+  const say = async (text, ai) => { net.reset(); net.ai = Array.isArray(ai) ? ai : [ai]; await SB.waText("/wa/salon", C, text, o); const r = SB.sentTo(C); return r[r.length - 1] || ""; };
+  await say("Азамат, мужская стрижка к Ерлану завтра в 10:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D1}; Время: 10:00`);
+  ok("запись создана", net.altRecords.length === 1, JSON.stringify(net.altRecords));
+  let r = await say("я передумал, отмените запись", `Передала администратору вашу просьбу об отмене.\n[ОТМЕНА] Имя: Азамат; Дата: ${D1}; Время: 10:00`);
+  ok("просьба об отмене ушла администратору", /[Пп]ередала администратору/.test(r), r);
+  // ИИ в ответе на вопрос об оплате снова пишет про отмену (неправду), но и отвечает на вопрос
+  r = await say("как оплатить?", "Ваша запись отменена. Оплатить можно наличными или Kaspi на месте.");
+  ok("вопрос об оплате: ответ про оплату сохранён, ложное «отменена» убрано, нет «напишите, что сделать»", /наличными/.test(r) && !/отменена/.test(r) && !/Напишите, что сделать/.test(r), r);
+  ok("…и реквизиты из паспорта пришли", r.includes(PAY), r);
+  r = await say("оставьте запись, как оплатить?", "Хорошо, запись оставляем. Оплатить можно наличными или Kaspi.");
+  ok("«оставьте запись, как оплатить?»: администратор узнал, клиент получил и ответ про запись, и реквизиты", /администратор/i.test(r) && r.includes(PAY), r);
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);

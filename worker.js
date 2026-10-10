@@ -2647,8 +2647,11 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
           outs.push(one ? cancelPend(one) : say("whichPend", { list: (ps.length ? ps : pend).map(pendLabel).join("; ") }));
         } else outs.push(reqAdmin(move));
       } else if ((reqCx || mvLines.length) && !outs.length) {
-        // вопрос «отменили?» либо ИИ поставил [ОТМЕНА] или написал «отменила», «передала администратору», хотя клиент об этом не просил: в расписании ничего не менялось
-        outs.push(statusQ && req0 ? say("reqStatus", { list: listOf(old) }) : old.length ? say("noop", { list: listOf(old) }) : pend.length ? say("pending", { what: pendText(pend[pend.length - 1], lang) }) : say("noChange"));
+        // вопрос «отменили?» либо ИИ поставил [ОТМЕНА] или написал «отменила», «передала администратору», хотя клиент об этом не просил: в расписании ничего не менялось.
+        // Клиент спрашивал о другом («как оплатить?») — ответ ИИ на вопрос оставляем, убираем только слова об отмене
+        const rest = join([altClaims(reply).keep]);
+        if (!statusQ && !wishNow && !keepNow && !undoNow && rest.replace(/[^\p{L}]/gu, "").length >= 15 && !CX_TOPIC.test(rest) && !ADMIN_CX.test(rest)) outs.push(rest);
+        else outs.push(statusQ && req0 ? say("reqStatus", { list: listOf(old) }) : old.length ? say("noop", { list: listOf(old) }) : pend.length ? say("pending", { what: pendText(pend[pend.length - 1], lang) }) : say("noChange"));
       }
     } else {
     const cxRec = cxAsk && nowMs - cxAsk.at < 30 * 60e3 ? books.find(x => x.leadId === cxAsk.id) || pend.find(p => p.leadId === cxAsk.id) || null : null;
@@ -2748,7 +2751,10 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     } else if (!draftOnly && !bookLines.length && !cancelLines.length && !confirmed) {
       // ИИ написал «записала», «отменила» или «перенесла» без служебной строки — в расписании при этом ничего не изменилось
       const cl = altClaims(reply);
-      if (cl.change) reply = books.length ? say("noop", { list: listOf(books) }) : goneLike({}) ? goneSay(goneLike({})) : wishNow || wish ? noSuch() : join([cl.keep]) || say("noChange");
+      // клиент спрашивал о другом («как оплатить?»), а ИИ мимоходом написал «отменена»: неправду убираем, ответ на вопрос оставляем
+      const other = !wishNow && !wish && !statusQ && !keepNow && !undoNow && cl.keep.replace(/[^\p{L}]/gu, "").length >= 15 && !CX_TOPIC.test(cl.keep);
+      if (cl.change && other) reply = join([cl.keep]);
+      else if (cl.change) reply = books.length ? say("noop", { list: listOf(books) }) : goneLike({}) ? goneSay(goneLike({})) : wishNow || wish ? noSuch() : join([cl.keep]) || say("noChange");
       else if (cl.book) {
         const bt = new Set(books.map(b => b.time));
         if (books.length) { if (!(cl.soft && cl.times.length && cl.times.every(t => bt.has(t)))) reply = join([cl.keep, say("yours", { list: listOf(books) })]); } // «ждём вас завтра в 10:00» о существующей записи — правда; остальное заменяем тем, что есть на самом деле
