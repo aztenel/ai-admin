@@ -1575,6 +1575,17 @@ section("после просьбы об отмене — вопрос об оп�
   ok("«оставьте запись, как оплатить?»: администратор узнал, клиент получил и ответ про запись, и реквизиты", /администратор/i.test(r) && r.includes(PAY), r);
 }
 
+// ====== Живая проверка 10 октября (2): ИИ назвал реквизиты из переписки «ошибочными»; «Папа + Сын» записал как две услуги
+section("подсказка: реквизиты в переписке и услуга на двоих");
+{
+  const SC = mk({ ALTEGIO_PARTNER: "partner-key" }), own = SC.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", { id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5001", tg: "777000", pay: "Kaspi Gold: +7 701 555 44 33" });
+  await SC.chat("salon", "pp1", "Как оплатить?", "Реквизиты ниже.\n[РЕКВИЗИТЫ]");
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("правило оплаты: реквизиты в переписке верные, не называть их ошибочными и не отсылать к администратору", /верн/.test(sys) && /ошибочн/.test(sys) && /администратор/.test(sys.slice(sys.indexOf("Оплата"))), sys.slice(sys.indexOf("Оплата")));
+  ok("правило записи: услуга на несколько человек («Папа + Сын») — одна запись, второго отдельно не записывать", /нескольких человек/.test(sys) && /одна запись/i.test(sys), sys.slice(sys.indexOf("Г. "), sys.indexOf("Д. ")));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
