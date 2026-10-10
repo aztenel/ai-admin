@@ -1347,6 +1347,31 @@ section("оплата: реквизиты Kaspi");
   ok("пульт без реквизитов: поля нет — кнопка скрыта", !d.pay, JSON.stringify(d).slice(0, 200));
 }
 
+// ====== Допродажи: «к стрижке — бороду», один раз и без давления
+section("допродажи");
+{
+  const S6 = mk(), own = S6.browser(); await own.go("/studio?key=" + OWNER);
+  let d = await (await own.post("/api/studio/check", { ...PASS, upsell: "Мужская стрижка → Педикюр" })).json();
+  ok("допродажа с услугой, которой нет в списке → ошибка с названием", d.ok === false && d.errors.some(e => /допродаж/i.test(e) && /Педикюр/.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/check", { ...PASS, upsell: Array.from({ length: 11 }, () => "Мужская стрижка → Оформление бороды").join("\n") })).json();
+  ok("больше 10 допродаж → ошибка", d.ok === false && d.errors.some(e => /допродаж/i.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/check", { ...PASS, upsell: "Мужская стрижка ничего" })).json();
+  ok("строка без стрелки → ошибка с подсказкой формата", d.ok === false && d.errors.some(e => /допродаж/i.test(e) && /→/.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/save", { ...PASS, upsell: "мужская стрижка -> оформление бороды\nДетская стрижка - Мужская стрижка" })).json();
+  ok("паспорт с допродажами сохраняется (стрелка «->» и «-», регистр не важен)", d.ok === true, JSON.stringify(d));
+  await S6.chat("kairat", "up1", "Хочу на мужскую стрижку", "Хорошо! На какой день вас записать?");
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("в подсказке правило допродаж с парами из паспорта и названиями из списка услуг", /Допродажа/.test(sys) && sys.includes("Мужская стрижка → Оформление бороды") && sys.includes("Детская стрижка → Мужская стрижка") && /один раз/.test(sys) && /отказал/.test(sys), sys.slice(-700));
+  const pg = await (await own.go("/studio")).text();
+  ok("в форме паспорта есть поле допродаж", /id="f_upsell"/.test(pg) && /'upsell'/.test(pg));
+  await own.post("/api/studio/save", { ...PASS, isNew: false, upsell: "" });
+  await S6.chat("kairat", "up2", "Хочу на мужскую стрижку", "Хорошо! На какой день вас записать?");
+  ok("без допродаж в паспорте правила в подсказке нет", !/Допродажа/.test(net.gemini.at(-1).systemInstruction.parts[0].text));
+  // запись через Altegio: услуги не в паспорте — проверить названия нельзя, строки принимаются
+  d = await (await own.post("/api/studio/check", { id: "salon2", isNew: true, name: "Салон", niche: "beauty", address: "Алматы", phone: "+7 727 000 00 02", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5002", upsell: "Маникюр → Покрытие гель-лаком" })).json();
+  ok("Altegio: допродажи принимаются без сверки со списком услуг", d.ok === true, JSON.stringify(d.errors));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
