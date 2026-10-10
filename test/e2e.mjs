@@ -323,6 +323,27 @@ try {
     ok("демо не обращается к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
   }
 
+  // ---- уведомления: новый чат, который ждёт ответа, — уведомление браузера (в программе для Windows — уведомление Windows)
+  {
+    const n = await newPage({ width: 1200, height: 800 });
+    await n.addInitScript(() => { window.__notes = []; window.Notification = class { constructor(t, o) { window.__notes.push([t, (o || {}).body || ""]); } static get permission() { return "granted"; } static requestPermission() { return Promise.resolve("granted"); } close() {} }; });
+    await n.goto(url + "/inbox?c=kairat&key=" + OWNER);
+    await n.waitForSelector("#rows a.row, #rows .empty");
+    await n.waitForTimeout(300);
+    const before = await n.evaluate(() => window.__notes.length);
+    ok("уведомления: при открытии пульта старые ждущие чаты не «звенят»", before === 0, String(before));
+    await wa({ c: "kairat", from: "77051119911", text: "Позовите администратора, пожалуйста", name: "Ерасыл" });
+    await n.evaluate(() => window.__pult.loadList());
+    await n.waitForFunction(() => window.__notes.length > 0, null, { timeout: 5000 }).catch(() => {});
+    const notes = await n.evaluate(() => window.__notes);
+    ok("уведомления: клиент позвал администратора → уведомление «Клиент ждёт ответа» с именем", notes.length === 1 && /ждёт ответа/.test(notes[0][0]) && /Ерасыл/.test(notes[0][1]), JSON.stringify(notes));
+    await n.evaluate(() => window.__pult.loadList()); await n.waitForTimeout(300);
+    ok("уведомления: тот же чат второй раз не «звенит»", (await n.evaluate(() => window.__notes.length)) === 1);
+    ok("ждущий чат отмечен «лентой внимания»", await n.locator("#rows a.row.wait").count() > 0);
+    await shot(n, "18b-notify-wide");
+    await n.close();
+  }
+
   // ---- страницы заявок и выхода
   await st.goto(url + "/leads");
   ok("сотрудник видит заявки своего клиента", /Barber House/.test(await st.locator("body").innerText()) && !/Демо Дент/.test(await st.locator("body").innerText()));

@@ -33,6 +33,27 @@ jobs:
       - name: Сборка
         working-directory: desktop
         run: npx tauri build
+      - name: Пробный запуск на Windows (снимок экрана)
+        shell: pwsh
+        env:
+          PULT_URL: https://dev-ai-admin.azikonps4.workers.dev/demo
+          PULT_SELFTEST: "1"
+        run: |
+          $p = Start-Process -FilePath desktop/src-tauri/target/release/pult.exe -PassThru
+          Start-Sleep -Seconds 30
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:GITHUB_WORKSPACE/pult-windows.png")
+          "process alive: $(-not $p.HasExited)"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+      - name: Снимок в артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: pult-windows-screenshot
+          path: pult-windows.png
       - name: Установщики в артефакты
         uses: actions/upload-artifact@v4
         with:

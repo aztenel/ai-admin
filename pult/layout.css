@@ -1,7 +1,7 @@
 /* ===== оболочка приложения: один код для телефона, планшета и компьютера ===== */
-html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#0A0A0A;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
-html[data-theme="light"],html[data-theme="light"] body{background:#fff}
-@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#fff}}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#0F1419;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+html[data-theme="light"],html[data-theme="light"] body{background:#F7F8FA}
+@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#F7F8FA}}
 [hidden]{display:none!important}
 #root{position:fixed;left:0;top:0;right:0;height:var(--appH,100%);container-type:inline-size}
 .app.kb{--sab:0px;--navb:8px}

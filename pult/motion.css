@@ -1,0 +1,115 @@
+/* ===== оформление «ресепшн»: спокойный графит + шафран для всего, что ждёт администратора =====
+   Шафран (--acbg) — только «ваш ход»: кто ждёт ответа, главная кнопка, непрочитанное. Красный — только ошибки.
+   Анимации отвечают на действие (открыть чат, отправить, новое сообщение) и не мешают читать;
+   постоянно движется одно — «лента внимания» у чатов, где клиент ждёт ответа. */
+
+/* шрифт заголовков и цифры */
+.ttl h1{font-family:'Segoe UI Variable Display','Segoe UI Variable','Segoe UI',-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-weight:700;letter-spacing:-.035em}
+.nm,.h3,.biz .n{letter-spacing:-.015em}
+.tm2,.ts,.ub,.bdg,.cnt,.big,.tile .v,.stg .v{font-variant-numeric:tabular-nums}
+.app :is(a,button):focus-visible{outline:2px solid var(--ac);outline-offset:2px;box-shadow:0 0 0 5px var(--ring)}
+
+/* шапка и поиск */
+.biz{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+.srch{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+.srch:focus-within{box-shadow:inset 0 0 0 1px var(--ac),0 0 0 4px var(--ring)}
+.chip{border-color:var(--line);color:var(--fg2)}
+.chip.on{background:var(--chipbg);color:var(--chipfg);border-color:transparent;font-weight:600}
+
+/* список чатов: ждущие — с «лентой внимания» слева */
+.row{position:relative}
+.row.wait::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:4px;border-radius:0 3px 3px 0;
+  background:linear-gradient(135deg,var(--acbg) 25%,transparent 25% 50%,var(--acbg) 50% 75%,transparent 75%) 0 0/8px 8px,color-mix(in srgb,var(--acbg) 35%,transparent)}
+.row.sel{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+.row.sel .rb{border-bottom-color:transparent}
+.tag{color:var(--ac)}
+.tag.ok{color:var(--ok)}
+.tag.mut{color:var(--fg2)}
+.tm2.hot{color:var(--ac);font-weight:600}
+.ub{background:var(--acbg);color:var(--acfg)}
+
+/* нижнее меню и боковая полоса */
+.nav{background:color-mix(in srgb,var(--s1) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:var(--shadow)}
+.nav a[aria-current="page"]{background:var(--chipbg);color:var(--chipfg)}
+.nav .bdg{background:var(--acbg);color:var(--acfg);box-shadow:0 0 0 2px var(--s1)}
+
+/* переписка */
+.chdr{background:var(--bg)}
+.strip{background:var(--chipbg)}
+.strip .tag{color:var(--chipfg);font-weight:600}
+.strip.ok{background:var(--s1)}
+.strip.ok .tag{color:var(--ok)}
+.msgs{background:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--fg) 5%,transparent) 1px,transparent 0) 0 0/22px 22px}
+.m{border-radius:18px;padding:8px 12px 6px;box-shadow:0 1px 0 color-mix(in srgb,#000 12%,transparent)}
+.m.in{background:var(--s1);border:1px solid var(--line);border-bottom-left-radius:6px}
+.m.bot{background:var(--s2);border-bottom-right-radius:6px}
+.m.bot .by{color:var(--fg2)}
+.m.adm{background:var(--adm);border-bottom-right-radius:6px}
+.m.adm .by{color:var(--ac)}
+.dpill{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+.bk{border-color:var(--line)}
+.bk .ic{background:var(--chipbg);color:var(--chipfg)}
+.inp{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+.inp:focus-within{box-shadow:inset 0 0 0 1px var(--ac),0 0 0 4px var(--ring)}
+.ibtn.pri,.btn.pri{background:var(--acbg);color:var(--acfg)}
+.ibtn.pay{color:var(--ac)}
+.rq{background:var(--amb);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acbg) 30%,transparent)}
+
+/* окна-листы: на телефоне — снизу, на компьютере — по центру */
+.scrim{background:rgba(6,9,12,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.sheet{box-shadow:var(--shadow)}
+.sheet .opt.sel{background:var(--chipbg);color:var(--chipfg)}
+@container (min-width:720px){
+  .sheet{left:50%;right:auto;top:50%;bottom:auto;width:min(460px,calc(100% - 48px));max-height:min(78%,640px);border-radius:22px;padding:10px 0 14px;transform:translate(-50%,-50%)}
+  .sheet .grab{display:none}
+}
+.toast{background:var(--fg);color:var(--bg);border-radius:14px}
+
+/* заготовки строк, пока список грузится, — с отблеском */
+.sk,.sk-row .sk-av{background:linear-gradient(90deg,var(--s2) 0,var(--s1) 45%,var(--s2) 90%) 0 0/250% 100%}
+
+/* ===== движение ===== */
+@keyframes p-tape{to{background-position:0 8px,0 0}}
+@keyframes p-row{from{opacity:0;transform:translateY(8px)}}
+@keyframes p-pop{from{opacity:0;transform:translateY(8px) scale(.96)}}
+@keyframes p-chat-ph{from{opacity:0;transform:translateX(28px)}}
+@keyframes p-chat-pc{from{opacity:0;transform:translateY(6px)}}
+@keyframes p-back{from{opacity:.4;transform:translateX(-18px)}}
+@keyframes p-fade{from{opacity:0}}
+@keyframes p-sheet-ph{from{transform:translateY(40px);opacity:.4}}
+@keyframes p-sheet-pc{from{opacity:0;transform:translate(-50%,-48%) scale(.96)}}
+@keyframes p-toast{from{opacity:0;transform:translate(-50%,10px) scale(.97)}}
+@keyframes p-bump{40%{transform:scale(1.35)}}
+@keyframes p-shine{to{background-position:-150% 0}}
+@keyframes p-side{from{transform:translateX(24px);opacity:0}}
+@media (prefers-reduced-motion:no-preference){
+  .app,.chdr,.nav,.srch,.inp{transition:background-color .25s ease,color .25s ease,box-shadow .2s ease}
+  .btn,.ibtn,.chip,.nav a,.opt,.biz,.row{transition:transform .14s cubic-bezier(.3,.7,.4,1),background-color .18s ease,color .18s ease,box-shadow .18s ease}
+  .btn:active,.ibtn:active,.chip:active,.biz:active,.sheet .opt:active{transform:scale(.95)}
+  .nav a:active{transform:scale(.92)}
+  .row:active{transform:scale(.99)}
+  .row.wait::before{animation:p-tape .9s linear infinite}
+  #rows.in>.row{animation:p-row .38s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 40ms)}
+  .m.new,.bk.new,.sys.new{animation:p-pop .26s cubic-bezier(.2,.9,.3,1.2) both}
+  .m.in.new{transform-origin:0 100%}
+  .m.bot.new,.m.adm.new,.bk.new{transform-origin:100% 100%}
+  .cnv.enter .cin{animation:p-chat-ph .26s cubic-bezier(.2,.8,.2,1)}
+  .lst.enter{animation:p-back .24s cubic-bezier(.2,.8,.2,1)}
+  .scrim{animation:p-fade .2s ease}
+  .sheet{animation:p-sheet-ph .3s cubic-bezier(.2,.9,.25,1)}
+  .toast{animation:p-toast .26s cubic-bezier(.2,.9,.3,1.15)}
+  .bump{animation:p-bump .42s cubic-bezier(.3,.7,.4,1)}
+  .sk,.sk-row .sk-av{animation:p-shine 1.4s ease-in-out infinite}
+  .app.card #v-chats .inf{animation:p-side .26s cubic-bezier(.2,.8,.2,1)}
+  @container (min-width:720px){
+    .cnv.enter .cin{animation:p-chat-pc .22s cubic-bezier(.2,.8,.2,1)}
+    .lst.enter{animation:none}
+    .sheet{animation:p-sheet-pc .24s cubic-bezier(.2,.9,.3,1.1)}
+  }
+}
+#bell.on{color:var(--ac)}
+/* пузырь клиента в светлой теме — белый, чтобы отличался от фона */
+.app{--bub:var(--s1)}
+.app[data-theme="light"]{--bub:#FFFFFF}
+@media (prefers-color-scheme:light){.app[data-theme="auto"]{--bub:#FFFFFF}}
+.m.in{background:var(--bub)}

@@ -3,6 +3,7 @@
 (function () {
 "use strict";
 var DEMO = !!window.__DEMO;
+var TAURI = window.__TAURI__ || null; // открыт в программе «Пульт» для Windows
 var Q = new URLSearchParams(location.search);
 var $ = function (id) { return document.getElementById(id); };
 var S = { v: "chats", C: DEMO ? "demo" : (Q.get("c") || ""), f: "need", q: "", rows: [], need: 0, total: 0, client: { name: "", off: false }, cur: null, chat: null, drafts: {}, owner: false, busy: false, ready: false, theme: "auto", per: "week", stage: "", card: false, ext: null };
@@ -33,7 +34,7 @@ function dk(t) { var d = new Date(t); return d.getFullYear() + "-" + d.getMonth(
 var MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 function dayLabel(t) { var n = Date.now(); if (dk(t) === dk(n)) return "Сегодня"; if (dk(t) === dk(n - 864e5)) return "Вчера"; var d = new Date(t); return d.getDate() + " " + MON[d.getMonth()]; }
 function rowTime(t) { if (!t) return ""; var d = new Date(t); if (dk(t) === dk(Date.now())) return hm(t); if (dk(t) === dk(Date.now() - 864e5)) return "вчера"; return p2(d.getDate()) + "." + p2(d.getMonth() + 1); }
-var COLORS = ["#AF611C", "#2F6FD6", "#1E8549", "#5B6670", "#167A76"];
+var COLORS = ["#B5652A", "#3D6DB3", "#2E7A57", "#6A5AA6", "#1F7A80"];
 function hashOf(s) { var x = 0; s = String(s); for (var i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x; }
 function colorOf(id) { return COLORS[hashOf(id) % COLORS.length]; }
 function initials(name, ph) { var w = String(name || "").trim().split(/\s+/).filter(Boolean); if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase(); if (w.length === 1) return w[0].slice(0, 2).toUpperCase(); var d = String(ph || "").replace(/\D/g, ""); return d ? d.slice(-2) : "··"; }
@@ -66,7 +67,7 @@ function setTheme(t, keep) {
   S.theme = t; app.setAttribute("data-theme", t); document.documentElement.setAttribute("data-theme", t);
   if (!keep) { try { localStorage.setItem("pult.theme", t); } catch (e) {} }
   var dark = t === "dark" || (t === "auto" && !(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches));
-  var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", dark ? "#0A0A0A" : "#FFFFFF");
+  var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", dark ? "#0F1419" : "#F7F8FA");
 }
 function fitViewport() {
   var vv = window.visualViewport; if (!vv) return;
@@ -95,12 +96,69 @@ function notice(title, text) {
   var b = h("button", "btn pri", "Понятно", { type: "button", style: "width:calc(100% - 32px);margin:8px 16px 0" }); b.onclick = closeSheet;
   sheet(title, h("div", "note", text), b);
 }
+// подтверждение своим окном, а не системным confirm(): одинаково в браузере, на телефоне и в программе для Windows
+function ask(title, text, yes, fn) {
+  var b1 = h("button", "btn pri", yes, { type: "button", style: "flex:1" }), b2 = h("button", "btn sec", "Отмена", { type: "button", style: "flex:1" });
+  b1.onclick = function () { closeSheet(); fn(); }; b2.onclick = closeSheet;
+  sheet(title, h("div", "note", text), h("div", "", [b2, b1], { style: "display:flex;gap:10px;padding:8px 16px 0" }));
+}
 function oops(e) { S.busy = false; if (e === 0) return; netErr(true); notice("Нет связи", "Действие не выполнено, ничего не отправлено. Проверьте интернет и повторите."); }
 function telHref(p) { return DEMO ? "#demo-call" : "tel:" + p; } // в демо номера вымышленные: звонок не набираем, чтобы не позвонить чужому человеку
 document.addEventListener("click", function (e) { var l = e.target && e.target.closest && e.target.closest('a[href="#demo-call"]'); if (l) { e.preventDefault(); toast("В демо звонок не набирается"); } });
 function netErr(on) { $("net").hidden = !on; }
 window.addEventListener("online", function () { netErr(false); refresh(); });
 window.addEventListener("offline", function () { if (!DEMO) netErr(true); });
+
+/* ---------- уведомления: клиент ждёт ответа ----------
+   В программе для Windows — уведомления Windows; в браузере — уведомления браузера (после разрешения кнопкой-колокольчиком).
+   Новый ждущий чат = чат с пометкой «ждёт ответа», которого не было при прошлой проверке (или с новым сообщением). */
+var NOTE = { seen: null };
+function noteState() { // on — показываем; ask — можно спросить разрешение; off — запрещено в браузере; no — не умеем
+  if (DEMO) return "no";
+  if (TAURI && TAURI.notification) return "on";
+  if (!("Notification" in window)) return "no";
+  return Notification.permission === "granted" ? "on" : Notification.permission === "denied" ? "off" : "ask";
+}
+function bellUpdate() {
+  if (DEMO) return; var st = noteState(), b = $("bell");
+  b.hidden = st === "no" || !!(TAURI && TAURI.notification); b.classList.toggle("on", st === "on");
+  b.setAttribute("aria-label", st === "on" ? "Уведомления включены" : "Включить уведомления");
+  var dot = b.querySelector(".dot"); if (st === "ask" && !dot) b.appendChild(h("span", "dot")); else if (st !== "ask" && dot) dot.remove();
+}
+function bellClick() {
+  var st = noteState();
+  if (DEMO) { notice("Уведомления", "Здесь будут сообщения о том, что клиент просит человека, отменил запись или оставил заявку. В демо уведомления не приходят."); return; }
+  if (st === "ask") { Notification.requestPermission().then(function (p) { bellUpdate(); toast(p === "granted" ? "Уведомления включены" : "Уведомления не включены"); }); return; }
+  if (st === "on") notice("Уведомления включены", "Когда клиент ждёт ответа, придёт уведомление. Пульт должен быть открыт — можно в свёрнутой вкладке. В программе «Пульт» для Windows уведомления приходят, даже когда окно закрыто (программа остаётся у часов).");
+  else notice("Уведомления запрещены", "Браузер запретил уведомления для этого сайта. Разрешите их в настройках сайта (значок слева от адреса) и обновите страницу.");
+}
+function noteCheck(rows) {
+  var cur = {}; rows.forEach(function (r) { if (r.nd) cur[keyOf(r)] = String(r.li || r.t || "") + "|" + r.nd; });
+  if (NOTE.seen && noteState() === "on") {
+    var looking = function (r) { return !document.hidden && document.hasFocus && document.hasFocus() && S.cur && same(S.cur, r); }; // этот чат и так открыт перед глазами
+    var fresh = rows.filter(function (r) { return r.nd && NOTE.seen[keyOf(r)] !== cur[keyOf(r)] && !looking(r); });
+    if (fresh.length) notify(fresh);
+  }
+  NOTE.seen = cur;
+}
+function notify(list) {
+  var r = list[0], nm = function (x) { return x.nm || x.ph || "Гость сайта"; };
+  var title = list.length > 1 ? "Ждут ответа: " + list.length : "Клиент ждёт ответа";
+  var body = list.length > 1 ? list.slice(0, 4).map(nm).join(", ") : nm(r) + " — " + (r.why || NEED[r.nd] || "нужен ответ") + (r.d === "u" && r.s ? ": «" + String(r.s).slice(0, 90) + "»" : "");
+  if (TAURI && TAURI.notification) {
+    try { TAURI.notification.sendNotification({ title: title, body: body }); } catch (e) {}
+    try { TAURI.window.getCurrentWindow().requestUserAttention(2); } catch (e) {} // значок на панели задач мигает
+    return;
+  }
+  try { var n = new Notification(title, { body: body, tag: "pult-need", icon: "/pult/icon-192.png" }); n.onclick = function () { try { window.focus(); } catch (e) {} if (list.length === 1) openChat(r.ch, r.id); n.close(); }; } catch (e) {}
+}
+// программа для Windows: чужие ссылки — в браузере, свои «в новой вкладке» — в этом же окне
+if (TAURI) document.addEventListener("click", function (e) {
+  var a = e.target && e.target.closest && e.target.closest("a[href]"); if (!a || a.getAttribute("href").charAt(0) === "#") return;
+  var u; try { u = new URL(a.getAttribute("href"), location.href); } catch (x) { return; }
+  if (u.origin === location.origin) { if (a.target === "_blank") { e.preventDefault(); location.href = u.href; } return; }
+  e.preventDefault(); try { TAURI.opener.openUrl(u.href); } catch (x) {}
+}, true);
 
 /* ---------- навигация ---------- */
 var TABS = [["chats", "Чаты", "chats"], ["leads", "Лиды", "leads"], ["summary", "Сводка", "sum"], ["broadcast", "Рассылки", "bc"], ["more", "Ещё", "more"]];
@@ -123,7 +181,10 @@ function go(v) {
 }
 function setBadge() {
   var b = $("bdg"); if (!b) return; b.hidden = !S.need; b.textContent = S.need > 99 ? "99+" : S.need;
+  if (S.need > (S.needWas || 0) && S.needWas != null) replay(b, "bump"); // ждущих стало больше — значок «подпрыгивает»
+  S.needWas = S.need;
   document.title = (S.need ? "(" + S.need + ") " : "") + (DEMO ? "Пульт · демо" : "Чаты") + (S.client.name ? " — " + S.client.name : "");
+  if (TAURI) { try { TAURI.window.getCurrentWindow().setTitle(document.title); } catch (e) {} } // в программе для Windows — заголовок окна
 }
 
 /* ---------- шапка: переключатель компании ---------- */
@@ -157,16 +218,16 @@ function chipsEl() {
   defs.forEach(function (d) { var b = h("button", "chip" + (S.f === d[0] ? " on" : ""), d[1], { type: "button" }); b.onclick = function () { S.f = d[0]; S.rows = []; S.ready = false; renderList(); chipsEl(); loadList(); }; c.appendChild(b); });
 }
 function skeleton() { var r = clear($("rows")); for (var i = 0; i < 6; i++) r.appendChild(h("div", "sk-row", [h("div", "sk-av"), h("div", "sk-t", [h("div", "sk", "", { style: "width:" + (45 + (i * 13) % 35) + "%" }), h("div", "sk", "", { style: "width:" + (60 + (i * 9) % 30) + "%" })])])); }
-function rowEl(r) {
+function rowEl(r, i) {
   var nm = r.nm || r.ph || "Гость сайта", sel = S.cur && S.cur.ch === r.ch && S.cur.id === r.id;
   var hot = !!r.nd;
   var prev = (r.d === "u" ? "" : r.d === "a" ? "Вы: " : "Бот: ") + (r.s || "");
   var tag = r.nd ? h("span", "tag", r.why || NEED[r.nd] || "Нужен ответ") : r.pu ? h("span", "tag ok", "Бот молчит до " + hm(r.pu)) : r.st ? h("span", "tag mut", "Просил не писать") : null;
-  var a = h("a", "row" + (sel ? " sel" : ""), [
+  var a = h("a", "row" + (sel ? " sel" : "") + (hot ? " wait" : ""), [
     h("span", "av", initials(r.nm, r.ph), { style: "--c:" + colorOf(r.id) }),
     h("div", "rb", [h("div", "r1", [h("span", "nm", nm), h("span", "tm2" + (hot || r.un ? " hot" : ""), rowTime(r.li || r.t))]),
       h("div", "r2", [h("span", "pv", prev), r.un ? h("span", "ub", r.un) : null]), tag])
-  ], { href: "#" + r.ch + ":" + r.id });
+  ], { href: "#" + r.ch + ":" + r.id, style: "--i:" + Math.min(i || 0, 12) });
   a.onclick = function (e) { e.preventDefault(); openChat(r.ch, r.id); };
   return a;
 }
@@ -180,8 +241,11 @@ function renderList() {
     var msg = q ? ["Ничего не найдено", "Попробуйте другое имя или номер."] : S.f === "web" ? ["Чатов с сайта пока нет", "Они появятся, когда клиенты напишут боту на сайте."] : S.f === "need" ? ["Никто не ждёт ответа", "Все чаты — на вкладке «Все»."] : S.f === "pause" ? ["Бот не молчит ни в одном чате", "Здесь появятся чаты, где вы взяли разговор на себя."] : ["Чатов пока нет", "Они появятся, когда клиенты напишут в WhatsApp."];
     R.appendChild(h("div", "empty", [h("span", "ic", ic("inbox", 26)), h("b", "", msg[0]), h("span", "", msg[1])])); return;
   }
-  rows.forEach(function (r) { R.appendChild(rowEl(r)); });
+  rows.forEach(function (r, i) { R.appendChild(rowEl(r, i)); });
+  if (!S.shown) { S.shown = true; replay(R, "in"); setTimeout(function () { R.classList.remove("in"); }, 1000); } // один раз: строки появляются по очереди
 }
+// перезапуск анимации: снять класс, дать браузеру заметить, вернуть
+function replay(e, c) { if (!e) return; e.classList.remove(c); void e.offsetWidth; e.classList.add(c); }
 function loadList() {
   if (!S.C) { pickCompany(); return Promise.resolve(); }
   var want = S.f;
@@ -189,7 +253,7 @@ function loadList() {
     netErr(false); if (want !== S.f) return;
     if (d.error) { clear($("rows")).appendChild(h("div", "empty", [h("b", "", "Не получилось загрузить"), h("span", "", d.error)])); return; }
     S.ready = true; S.rows = d.chats || []; S.client = d.client || S.client; S.total = d.total || S.rows.length;
-    if (want !== "web") { S.need = d.need || 0; }
+    if (want !== "web") { S.need = d.need || 0; noteCheck(S.rows); }
     $("bizslot").replaceChildren(bizBtn());
     $("meta").textContent = S.need ? S.need + " ждут ответа · " + S.total + " чатов" : "ждущих нет · " + S.total + " чатов";
     setBadge(); chipsEl(); renderList();
@@ -208,11 +272,11 @@ function openChat(ch, id) {
   saveDraft(); S.cur = { ch: ch, id: id }; S.chat = null; S.card = false; app.classList.remove("card");
   $("txt").value = S.drafts[keyOf(S.cur)] || ""; fit();
   try { history.replaceState(null, "", location.pathname + location.search + "#" + ch + ":" + id); } catch (e) {}
-  app.classList.add("chat"); clear($("msgs")); clear($("cards")); $("strip").hidden = true; $("cname").textContent = "…"; $("cst").textContent = "";
+  app.classList.add("chat"); replay($("chatp"), "enter"); clear($("msgs")); clear($("cards")); $("strip").hidden = true; $("cname").textContent = "…"; $("cst").textContent = "";
   renderList(); loadChat(true);
 }
 function closeChat() {
-  saveDraft(); S.cur = null; S.chat = null; S.card = false; app.classList.remove("chat", "card");
+  saveDraft(); S.cur = null; S.chat = null; S.card = false; app.classList.remove("chat", "card"); replay($("listp"), "enter");
   try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
   renderList(); loadList();
 }
@@ -228,6 +292,7 @@ function loadChat(scroll) {
 function stateText(d) { return d.off ? "Бот выключен" : d.stop ? "Просил не писать" : d.paused ? "Бот на паузе до " + hm(d.paused) : "Ведёт бот"; }
 function bookCard(title, l1, l2) { return h("div", "bk", [h("span", "ic", ic("cal", 20)), h("span", "tx", [h("b", "", title), l1 ? h("span", "", l1) : null, l2 ? h("span", "", l2) : null])]); }
 function renderChat(d, scroll) {
+  var prevN = S.chat && S.chat.id === d.id && S.chat.ch === d.ch ? S.chat.turns.length : -1; // реплики с этим номером и дальше — новые: им анимация появления
   var first = !S.chat || S.chat.id !== d.id || S.chat.ch !== d.ch, grew = first || !S.chat || d.turns.length !== S.chat.turns.length || JSON.stringify(d.bookings) !== JSON.stringify(S.chat.bookings), toEnd = false;
   S.chat = d;
   var nm = d.name || d.waName || d.phone || "Гость сайта";
@@ -239,12 +304,13 @@ function renderChat(d, scroll) {
   if (grew) {
     var M = $("msgs"), atEnd = M.scrollHeight - M.scrollTop - M.clientHeight < 80; clear(M);
     var pr = d.promo, lastDay = "";
-    d.turns.forEach(function (t) {
+    d.turns.forEach(function (t, ti) {
+      var fresh = prevN >= 0 && ti >= prevN && !(t.r === "a" && S.justSent && t.x === S.justSent); // своё сообщение уже «влетело» при отправке
       var day = t.t ? dk(t.t) : ""; if (day && day !== lastDay) { M.appendChild(h("div", "dpill", dayLabel(t.t))); lastDay = day; }
       if (pr && t.t >= pr.at) { M.appendChild(h("div", "sys", "Рассылка" + (pr.name ? " «" + pr.name + "»" : "") + " от " + hm(pr.at) + " (клиент мог ответить на неё): " + pr.text)); pr = null; }
-      if (t.r === "s") { M.appendChild(h("div", "sys", t.x)); return; }
-      if (t.r === "k") { M.appendChild(bookCard(t.x, t.l1, t.l2)); return; }
-      var m = h("div", "m " + (t.r === "u" ? "in" : t.r === "a" ? "adm" : "bot"));
+      if (t.r === "s") { M.appendChild(h("div", "sys" + (fresh ? " new" : ""), t.x)); return; }
+      if (t.r === "k") { var bc = bookCard(t.x, t.l1, t.l2); if (fresh) bc.classList.add("new"); M.appendChild(bc); return; }
+      var m = h("div", "m " + (t.r === "u" ? "in" : t.r === "a" ? "adm" : "bot") + (fresh ? " new" : ""));
       if (t.r === "a") m.appendChild(h("span", "by", t.by || "Вы")); else if (t.r === "b") m.appendChild(h("span", "by", "Бот"));
       m.appendChild(h("span", "tx", t.x));
       if (t.m && t.m.f) { var u = "/api/inbox/media?c=" + enc(S.C) + "&ch=" + d.ch + "&id=" + enc(d.id) + "&mid=" + enc(t.m.id); if (t.m.k === "audio") { var au = h("audio"); au.controls = true; au.preload = "none"; au.src = u; m.appendChild(au); } else if (t.m.k === "image") { var im = h("img"); im.loading = "lazy"; im.alt = "фото"; im.src = u; m.appendChild(im); } else { m.appendChild(h("br")); m.appendChild(h("a", "", "Открыть файл", { href: u, target: "_blank", rel: "noopener" })); } }
@@ -252,6 +318,7 @@ function renderChat(d, scroll) {
     });
     if (pr) M.appendChild(h("div", "sys", "Рассылка" + (pr.name ? " «" + pr.name + "»" : "") + " от " + hm(pr.at) + ": " + pr.text));
     if (!d.turns.some(function (t) { return t.r === "k"; })) (d.bookings || []).forEach(function (b) { M.appendChild(bookCard("Запись", b)); });
+    S.justSent = "";
     toEnd = !!(scroll || first || atEnd); // прокрутим в самом конце: ниже ещё меняется высота (подсказка под перепиской, поле ввода)
   }
   var comp = $("comp"), wl = $("warn");
@@ -299,7 +366,8 @@ function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.
 function sendMsg() {
   var ta = $("txt"), t = ta.value.trim(); if (!t || S.busy || !S.cur) return;
   S.busy = true; var tgt = S.cur, M = $("msgs");
-  var pend = h("div", "m adm pend", [h("span", "by", "Вы"), h("span", "tx", t), h("span", "ts", hm(Date.now()))]); M.appendChild(pend); M.scrollTop = M.scrollHeight;
+  S.justSent = t;
+  var pend = h("div", "m adm pend new", [h("span", "by", "Вы"), h("span", "tx", t), h("span", "ts", hm(Date.now()))]); M.appendChild(pend); M.scrollTop = M.scrollHeight;
   ta.value = ""; fit();
   API.send(tgt.ch, tgt.id, t).then(function (d) {
     if (d.error) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
@@ -321,7 +389,7 @@ function menuSheet() {
   if (d.need && !(d.reqs || []).length) body.appendChild(opt("check", "Готово — убрать из «Ждут ответа»", "", function () { doAct("resolve"); }));
   if (d.ch !== "web" && !d.off) { if (d.paused && !d.stop) body.appendChild(opt("refresh", "Вернуть бота", "", function () { doAct("resume"); })); else if (!d.paused) body.appendChild(opt("clock", "Остановить бота на 12 часов", "", function () { doAct("pause"); })); }
   body.appendChild(opt("info", "Карточка клиента", "", openCard));
-  body.appendChild(opt("refresh", "Очистить память бота", "бот забудет эту переписку и записи — если всё уже сделано в Altegio", function () { if (confirm("Бот забудет эту переписку, записи и просьбы клиента. Продолжить?")) doAct("forget"); }));
+  body.appendChild(opt("refresh", "Очистить память бота", "бот забудет эту переписку и записи — если всё уже сделано в Altegio", function () { ask("Очистить память бота?", "Бот забудет эту переписку, записи и просьбы клиента. Окно WhatsApp и «стоп» останутся.", "Очистить", function () { doAct("forget"); }); }));
   body.appendChild(opt("refresh", "Обновить переписку", "", function () { loadChat(false); }));
   sheet(d.name || d.waName || d.phone || "Гость сайта", body);
 }
@@ -353,14 +421,17 @@ function tagSheet(id, c) {
 }
 
 /* ---------- запуск ---------- */
-function refresh() { if (document.hidden) return; loadList(); if (S.cur && !S.busy && !$("cards").querySelector("textarea")) loadChat(false); }
+function refresh() {
+  if (document.hidden) { if (noteState() === "on") loadList(); return; } // свёрнуто: только список — ради уведомлений
+  loadList(); if (S.cur && !S.busy && !$("cards").querySelector("textarea")) loadChat(false); }
 function init() {
   var th = "auto"; try { th = localStorage.getItem("pult.theme") || "auto"; } catch (e) {} setTheme(/^(auto|light|dark)$/.test(th) ? th : "auto", true);
   [["rfs", "refresh", 22], ["bell", "bell", 22], ["plus", "plus", 24], ["back", "back", 22], ["cback", "back", 22], ["infobtn", "info", 22], ["call", "phone", 22], ["menu", "dots", 22], ["quick", "bolt", 22], ["send", "send", 22], ["srchic", "search", 20]].forEach(function (x) { $(x[0]).appendChild(ic(x[1], x[2])); });
   fitViewport(); buildNav();
   $("bizslot").appendChild(bizBtn());
   if (DEMO) { $("bell").hidden = false; $("plus").hidden = false; $("rfs").hidden = true; }
-  $("bell").onclick = function () { notice("Уведомления", "Здесь будут сообщения о том, что клиент просит человека, отменил запись или оставил заявку. В демо уведомления не приходят."); };
+  $("bell").onclick = bellClick; bellUpdate();
+  if (TAURI && TAURI.notification) { var tn = TAURI.notification; Promise.resolve(tn.isPermissionGranted()).then(function (g) { return g || tn.requestPermission(); }).catch(function () {}); }
   $("plus").onclick = function () { window.__views.newLead(); };
   $("rfs").onclick = function () { loadList(); if (S.cur) loadChat(false); };
   $("q").oninput = function () { S.q = this.value; renderList(); };

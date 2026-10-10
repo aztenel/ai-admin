@@ -15,6 +15,27 @@ const PROD: &str = "https://ai-admin.azikonps4.workers.dev";
 const DEV: &str = "https://dev-ai-admin.azikonps4.workers.dev";
 const MAIN: &str = "main";
 
+// на страницах сайта вне пульта (рассылки, заявки, проверка запуска) — кнопка «← Пульт»: у программы нет адресной строки и «назад»
+const BACK_JS: &str = r#"(function () {
+  var p = location.pathname;
+  if (!/(^|\.)azikonps4\.workers\.dev$/.test(location.hostname) || p.indexOf("/inbox") === 0 || p === "/login") return;
+  addEventListener("DOMContentLoaded", function () {
+    var c = new URLSearchParams(location.search).get("c"), a = document.createElement("a");
+    a.href = "/inbox" + (c ? "?c=" + encodeURIComponent(c) : ""); a.textContent = "← Пульт";
+    a.style.cssText = "position:fixed;left:14px;bottom:14px;z-index:2147483647;padding:10px 18px;border-radius:22px;background:#F4B740;color:#1E1500;font:600 15px 'Segoe UI',system-ui,sans-serif;text-decoration:none;box-shadow:0 8px 24px rgba(0,0,0,.3)";
+    document.body.appendChild(a);
+  });
+})();"#;
+
+// проверка сборки: на странице видно, дошли ли до неё возможности программы (уведомления, ссылки)
+const SELFTEST_JS: &str = r#"addEventListener("load", function () {
+  var t = window.__TAURI__, d = document.createElement("div");
+  d.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483647;padding:10px 14px;border-radius:12px;background:#111;color:#7CFC9A;font:14px Consolas,monospace";
+  d.textContent = "TAURI " + (t ? "OK" : "НЕТ") + " · notification " + (t && t.notification ? "OK" : "НЕТ") + " · opener " + (t && t.opener ? "OK" : "НЕТ");
+  document.body.appendChild(d);
+  if (t && t.notification) Promise.resolve(t.notification.isPermissionGranted()).then(function (g) { d.textContent += " · разрешение " + g; t.notification.sendNotification({ title: "Пульт", body: "Проверка уведомления" }); d.textContent += " · отправлено"; }).catch(function (e) { d.textContent += " · ошибка " + e; });
+});"#;
+
 // какой сайт открывать: боевой (по умолчанию) или черновик — выбор хранится в файле настроек программы
 fn site(app: &AppHandle) -> &'static str {
     let path = app.path().app_config_dir().map(|d| d.join("site.txt"));
@@ -64,7 +85,9 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            let start = format!("{}/inbox", site(&handle));
+            // PULT_URL — для проверки сборки: открыть другую страницу наших сайтов (например, /demo без входа)
+            let start = std::env::var("PULT_URL").ok().filter(|u| u.starts_with("https://")).unwrap_or_else(|| format!("{}/inbox", site(&handle)));
+            let selftest = std::env::var("PULT_SELFTEST").map(|v| v == "1").unwrap_or(false);
             // запуск вместе с Windows — окно не показываем, пульт работает в трее и присылает уведомления
             let hidden = std::env::args().any(|a| a == "--hidden");
             let nav = handle.clone();
@@ -74,6 +97,8 @@ fn main() {
                 .min_inner_size(380.0, 560.0)
                 .center()
                 .visible(!hidden)
+                .initialization_script(BACK_JS)
+                .initialization_script(if selftest { SELFTEST_JS } else { "" })
                 .on_navigation(move |url| {
                     if ours(url) {
                         return true;

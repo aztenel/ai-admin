@@ -11,7 +11,7 @@ for (const [k, code] of Object.entries(js)) {
   new vm.Script(code, { filename: k + ".js" }); // синтаксис
   if (/<\/script/i.test(code)) throw new Error(k + ".js содержит </script");
 }
-const css = read("design.base.css") + "\n" + read("layout.css");
+const css = read("design.base.css") + "\n" + read("layout.css") + "\n" + read("motion.css"); // motion.css — оформление и анимации поверх основы
 const shell = read("shell.html");
 
 function build(demo) {
