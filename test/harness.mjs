@@ -43,7 +43,7 @@ export const net = {
   tgStatus: 200,               // что отвечает Telegram
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
-  altRecords: [], altDeleted: [],
+  altRecords: [], altDeleted: [], altGone: [], // altGone — записи, удалённые администратором прямо в Altegio
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
@@ -83,6 +83,7 @@ function altStub(url, init) {
     return J({ success: true, data: [{ id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
   }
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") { net.altDeleted.push(m[1]); return new Response(null, { status: 204 }); }
+  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET") return net.altDeleted.includes(m[1]) || (net.altGone || []).includes(m[1]) ? J({ success: false, data: null, meta: { message: "Запись не найдена" } }, 404) : J({ success: true, data: { id: +m[1], deleted: false }, meta: [] });
   return J({ success: false, data: null, meta: {} }, 404);
 }
 globalThis.fetch = async (u, init = {}) => {

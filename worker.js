@@ -1353,6 +1353,25 @@ async function altCall(env, method, path, body) {
   }
 }
 
+// Записи этого чата, которые администратор удалил прямо в Altegio (или клиента там отменили): бот о них забывает.
+// Запись считается удалённой, только если Altegio прямо так ответил («не найдена» или deleted); сбой связи — запись остаётся
+async function altPrune(env, prof, nowMs) {
+  const list = (prof.bookings || []).filter(b => b && b.record_id && b.record_hash && b.date >= isoDay(nowMs));
+  if (!list.length) return 0;
+  const gone = [];
+  for (const b of list.slice(0, 4)) { // обычно одна-две записи: один запрос на запись
+    let g;
+    try { const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`); g = !!(d && (d.deleted === true || d.deleted === 1)); }
+    catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else { console.log("alt check", b.record_id, String(e)); continue; } }
+    if (g) gone.push(b);
+  }
+  if (!gone.length) return 0;
+  prof.bookings = (prof.bookings || []).filter(b => !gone.includes(b));
+  if (!prof.bookings.length) delete prof.bookings;
+  if (prof.req && !(prof.bookings || []).some(b => b.rq)) delete prof.req; // просьба об отмене выполнена — записи больше нет
+  prof.booked = bookedText((prof.bookings || []).filter(x => x.date >= isoDay(nowMs)), prof.pend || [], prof.cbAt);
+  return gone.length;
+}
 // одинаковые названия различаем подписью (категория, специализация), а если и она совпала — номером: иначе бот запишет не туда
 function altUniq(list, key, hint, norm) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
   const k = x => norm(x[key]);
@@ -2184,6 +2203,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (altLoc(env, c)) {
     try {
       alt = await altSnapshot(env, c, nowMs, userAll);
+      try { await altPrune(env, saved.profile, nowMs); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
       Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt });
     } catch (e) {
@@ -4979,6 +4999,9 @@ async function inboxApi(request, env, url, s) {
       h = await logTurns(env.KV, hk, [], pr => { delete pr.need; });
     }
     else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
+    else if (act === "forget") { // бот забывает переписку, записи и просьбы этого чата (например, всё уже сделано в Altegio); окно WhatsApp и «стоп» остаются
+      h = await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (!["li", "waName", "stop", "pn"].includes(k)) delete pr[k]; });
+    }
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
       h = await logTurns(env.KV, hk, [], pr => { delete pr.pausedUntil; delete pr.fw; delete pr.need; });

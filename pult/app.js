@@ -321,6 +321,7 @@ function menuSheet() {
   if (d.need && !(d.reqs || []).length) body.appendChild(opt("check", "Готово — убрать из «Ждут ответа»", "", function () { doAct("resolve"); }));
   if (d.ch !== "web" && !d.off) { if (d.paused && !d.stop) body.appendChild(opt("refresh", "Вернуть бота", "", function () { doAct("resume"); })); else if (!d.paused) body.appendChild(opt("clock", "Остановить бота на 12 часов", "", function () { doAct("pause"); })); }
   body.appendChild(opt("info", "Карточка клиента", "", openCard));
+  body.appendChild(opt("refresh", "Очистить память бота", "бот забудет эту переписку и записи — если всё уже сделано в Altegio", function () { if (confirm("Бот забудет эту переписку, записи и просьбы клиента. Продолжить?")) doAct("forget"); }));
   body.appendChild(opt("refresh", "Обновить переписку", "", function () { loadChat(false); }));
   sheet(d.name || d.waName || d.phone || "Гость сайта", body);
 }

@@ -1586,6 +1586,38 @@ section("подсказка: реквизиты в переписке и усл�
   ok("правило записи: услуга на несколько человек («Папа + Сын») — одна запись, второго отдельно не записывать", /нескольких человек/.test(sys) && /одна запись/i.test(sys), sys.slice(sys.indexOf("Г. "), sys.indexOf("Д. ")));
 }
 
+// ====== Живая проверка 10 октября (3): записи удалили в Altegio, чат на телефоне очистили — бот всё равно «помнил» их
+section("записи, удалённые в Altegio; очистка памяти бота");
+{
+  const SD = mk({ WA_TOKEN_SALON: "tok-salon", APP_SECRET_SALON: "sec-salon", ALTEGIO_PARTNER: "partner-key" }), own = SD.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", { id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5001", tg: "777000" });
+  const o = { secret: "sec-salon", pnid: "900222" }, C = "77071110031";
+  const say = async (text, ai) => { net.ai = Array.isArray(ai) ? ai : [ai]; await SD.waText("/wa/salon", C, text, o); };
+  net.reset(); net.altGone = [];
+  await say("Азамат, мужская стрижка к Ерлану завтра в 10:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D1}; Время: 10:00`);
+  const rec = String((SD.hist("wa", "salon", C).profile.bookings || [])[0]?.record_id || "");
+  ok("запись создана и запомнена в чате", !!rec, JSON.stringify(SD.hist("wa", "salon", C).profile));
+  await say("Сколько стоит борода?", "Оформление бороды — от 4 000 ₸.");
+  ok("запись в Altegio на месте — бот её помнит", (SD.hist("wa", "salon", C).profile.bookings || []).length === 1 && /Мужская стрижка/.test(net.gemini.at(-1).systemInstruction.parts[0].text.split("Уже известно о клиенте")[1] || ""));
+  net.altGone = [rec]; // администратор удалил запись прямо в Altegio
+  await new Promise(s => setTimeout(s, 5));
+  await say("Хочу комплекс завтра в 11:00", "На какое имя записать?");
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("запись удалена в Altegio → бот её забыл: в подсказке её нет, в чате тоже", !(SD.hist("wa", "salon", C).profile.bookings || []).length && !/уже есть бронь: Мужская стрижка/.test(sys), JSON.stringify([SD.hist("wa", "salon", C).profile.bookings, (sys.split("Уже известно о клиенте")[1] || "").slice(0, 200)]));
+  ok("проверка шла запросом чтения записи в Altegio", net.alt.some(x => x.startsWith("GET /user/records/" + rec + "/")), JSON.stringify(net.alt.slice(-6)));
+  // Altegio не ответил (сбой) — запись не теряем
+  net.altGone = []; net.reset();
+  await say("Азамат, мужская стрижка к Ерлану послезавтра в 10:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D2}; Время: 10:00`);
+  ok("новая запись создана", (SD.hist("wa", "salon", C).profile.bookings || []).length === 1);
+
+  // пульт: «Очистить память бота» — история и записи чата забыты, окно WhatsApp сохраняется
+  let d = await (await own.post("/api/inbox/act", { c: "salon", ch: "wa", id: C, act: "forget" })).json();
+  const h = SD.hist("wa", "salon", C);
+  ok("пульт: «Очистить память бота» — переписка и записи бота забыты, окно WhatsApp сохранено", d.ok !== false && !d.error && h && !(h.turns || []).length && !(h.profile.bookings || []).length && !!h.profile.li, JSON.stringify([d.error, h]));
+  const pult = await (await own.go("/inbox?c=salon")).text();
+  ok("в меню чата есть «Очистить память бота»", /Очистить память бота/.test(pult));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
