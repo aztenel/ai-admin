@@ -342,7 +342,7 @@ ok("на /leads запись помечена как отменённая и у�
 ALT.records.length = 0;
 geminiQueue = [`Записала вас: детская стрижка, завтра в 9:30.\n[ЗАЯВКА] Имя: Данияр; Телефон: указан; Услуга: Детская стрижка; Мастер: любой; Дата: ${D1}; Время: 09:30`];
 d = await chat("alt", "a106", "Запишите Данияра на детскую стрижку завтра в 9:30, мастер любой, телефон +7 701 111 22 33");
-ok("«любой мастер» и время 09:30 записываются верно", !!d.lead && ((ALT.records[0] || {}).appointments || [{}])[0].staff_id === 0 && ALT.records[0].appointments[0].datetime === `${D1}T09:30:00+05:00` && ALT.records[0].appointments[0].services[0] === 103, JSON.stringify(ALT.records));
+ok("«любой мастер» и время 09:30 записываются верно; мастера с этим временем выбирает бот и называет клиенту", !!d.lead && ((ALT.records[0] || {}).appointments || [{}])[0].staff_id > 0 && /мастер \S+/.test(d.reply) && ALT.records[0].appointments[0].datetime === `${D1}T09:30:00+05:00` && ALT.records[0].appointments[0].services[0] === 103, JSON.stringify(ALT.records));
 
 env.ALTEGIO_LOC_ALT = "2004"; ALT.taken = true;
 geminiQueue = [`Записала вас: мужская стрижка, завтра в 10:00.\n[ЗАЯВКА] Имя: Тимур; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${D1}; Время: 10:00`];
@@ -644,7 +644,7 @@ env.ALTEGIO_LOC_ALT = "2041"; ALT.records.length = 0;
 geminiQueue = ["Записала.\n" + tagM("Дана", "Арманбек", "11:00")]; d = await chat("alt", sid(), "Дана, +7 771 000 02 03, стрижка к Арманбеку завтра в 11:00");
 ok("мастера «Арманбек» нет, есть «Арман» → бот уточняет, а не записывает к похожему", ALT.records.length === 0 && /к какому мастеру/.test(d.reply), d.reply);
 geminiQueue = ["Записала.\n" + tagM("Дана", "к любому свободному", "11:00")]; d = await chat("alt", sid(), "Дана, +7 771 000 02 04, стрижка завтра в 11:00, мастер не важен");
-ok("«к любому свободному» — это любой мастер", ALT.records.length === 1 && ALT.records[0].appointments[0].staff_id === 0, d.reply);
+ok("«к любому свободному» — это любой мастер: бот сам выбрал свободного и назвал его", ALT.records.length === 1 && ALT.records[0].appointments[0].staff_id > 0 && /мастер \S+/.test(d.reply), d.reply);
 
 // защита: время, которого нет
 env.ALTEGIO_LOC_ALT = "2042";

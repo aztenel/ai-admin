@@ -1360,14 +1360,21 @@ async function altPrune(env, prof, nowMs, loc) {
   const list = (prof.bookings || []).filter(b => b && b.record_id && b.date >= today && !(b.date === today && b.time <= nowT));
   if (!list.length) return 0;
   const gone = [];
+  let filled = 0;
   for (const b of list.slice(0, 4)) { // обычно одна-две записи
-    let g = null; // true — удалена, false — на месте, null — Altegio не сказал
+    let g = null; // true — удалена, false — на месте, null — Altegio прямо не сказал
     // 1) спрашиваем саму запись
     if (b.record_hash) {
-      try { const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`); g = !!(d && (d.deleted === true || d.deleted === 1)); }
-      catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
+      try {
+        const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`);
+        if (d && (d.deleted === true || d.deleted === 1)) g = true;
+        else if (d && typeof d === "object" && "deleted" in d) g = false; // Altegio прямо сказал: запись на месте
+        const sn = d && !Array.isArray(d) && d.staff && typeof d.staff === "object" ? altText(d.staff.name, 60) : "";
+        if (!b.staffName && sn) { b.staffName = sn; filled++; } // запись к «любому» мастеру: узнаём, к кому её поставили
+      } catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
     }
-    // 2) не ответил — смотрим время мастера: запись занимает его время, а если оно снова свободно — записи нет (удалили или перенесли)
+    // 2) прямого ответа нет (ошибка или ответ без поля deleted) — смотрим время мастера: запись занимает его время,
+    // а если оно снова свободно — записи нет (удалили или перенесли)
     if (g === null && b.record_hash && b.staffName && (b.loc || loc)) {
       try {
         const L = b.loc || loc, base = await altBase(env, L, nowMs), st = base.staff.find(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName));
@@ -1376,12 +1383,11 @@ async function altPrune(env, prof, nowMs, loc) {
     }
     if (g) gone.push(b);
   }
-  if (!gone.length) return 0;
+  if (!gone.length) return filled;
   prof.bookings = (prof.bookings || []).filter(b => !gone.includes(b));
   if (!prof.bookings.length) delete prof.bookings;
   if (prof.req && !(prof.bookings || []).some(b => b.rq)) delete prof.req; // просьба об отмене выполнена — записи больше нет
-  prof.booked = bookedText((prof.bookings || []).filter(x => x.date >= isoDay(nowMs)), prof.pend || [], prof.cbAt);
-  return gone.length;
+  return gone.length; // текст «Уже известно о клиенте» (profile.booked) пересчитывает think() — сразу после bookedText
 }
 // одинаковые названия различаем подписью (категория, специализация), а если и она совпала — номером: иначе бот запишет не туда
 function altUniq(list, key, hint, norm) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
@@ -1563,7 +1569,8 @@ async function altSnapshot(env, c, nowMs, userText) {
 И. Время окончания услуги не называй: говори, во сколько начало и сколько минут занимает услуга.`;
   if (named) prompt += `\n\nЕсли клиент хочет именно к мастеру ${named.name} — вот его свободное время (к нему записывай только на это время):\n` +
     (own.days.map(fmt).join("\n") || "- в ближайшие дни свободного времени нет — предложи другого мастера или время из «Свободных окон».") + unread(own.failed);
-  else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если имени нет — предложи любого свободного мастера или спроси, к кому записать.";
+  else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови мастеров из списка или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
+  if (base.staff.length > 1) prompt += "\nЛ. Если клиент выбрал «любого» мастера, мастера назначает система и сама называет его клиенту. Мастер записи указан в «Уже известно о клиенте» — называй его. Не говори, что мастер «не прикреплён» или «будет любой свободный», если запись уже создана.";
 
   // время окончания услуги («с 11:00 до 12:00») — не выдумка: защита пропускает его только как конец такого промежутка
   const all = new Set([...any.days, ...(own ? own.days : [])].flatMap(d => d.times)), ends = new Set();
@@ -1723,10 +1730,17 @@ async function altBook(env, A, q, nowMs, test) {
   let times;
   try { times = await altTimes(env, A.loc, staffId, date, ids, nowMs, true); }
   catch (e) { return { ok: false, reason: "api", error: e.message, ...info }; }
-  const slot = times.find(t => t.time === time);
+  let slot = times.find(t => t.time === time), staffId2 = staffId;
   const others = () => thin(times.filter(t => t.time !== time).map(t => t.time), 6);
   if (!slot) { altDropTimes(A.loc); return { ok: false, soft: true, reason: "taken", free: others(), ...info }; }
-  const appointments = [{ id: 1, services: ids, staff_id: staffId, datetime: slot.datetime || `${date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
+  // «любой мастер»: мастера выбираем сами (у кого это время свободно, из них — у кого день свободнее). Иначе Altegio назначит кого-то,
+  // а бот не будет знать кого: клиенту не сможет сказать, и удалённую администратором запись не заметит (проверка по времени мастера)
+  if (!staff && A.staff.length > 1 && A.staff.length <= 12) {
+    const got = await Promise.all(A.staff.map(m => altTimes(env, A.loc, m.id, date, ids, nowMs, true).then(t => ({ m, t, s: t.find(x => x.time === time) })).catch(() => null)));
+    const fit = got.filter(x => x && x.s).sort((a, b) => b.t.length - a.t.length);
+    if (fit.length) { slot = fit[0].s.datetime ? fit[0].s : slot; staffId2 = fit[0].m.id; info.staffName = fit[0].m.name; info.anyStaff = true; }
+  } else if (!staff && A.staff.length === 1) { info.staffName = A.staff[0].name; info.anyStaff = true; }
+  const appointments = [{ id: 1, services: ids, staff_id: staffId2, datetime: slot.datetime || `${date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
   try {
     if (test) { await altCall(env, "POST", `/book_check/${A.loc}`, { appointments }); return { ok: true, dry: true, record_id: 0, record_hash: "", ...info }; }
     const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: "Запись через AI-администратора", appointments })).data;
@@ -1940,6 +1954,13 @@ async function altDiag(env, cid, locArg, bookPhone) {
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
           e => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
+        // как Altegio отвечает на чтение удалённой записи — по этому бот замечает записи, удалённые администратором
+        if (rec.record_hash) {
+          let seen;
+          try { const d = await altCall(env, "GET", `/user/records/${rec.record_id}/${rec.record_hash}`); seen = !d ? "пустой ответ" : "deleted: " + (d && typeof d === "object" && "deleted" in d ? JSON.stringify(d.deleted) : "поля нет") + (d.staff && d.staff.name ? ", мастер: " + altText(d.staff.name, 40) : ""); }
+          catch (e) { seen = `ошибка ${e.status || ""} ${e.message || ""}`.trim(); }
+          out.push(`Чтение удалённой записи: ${clean(seen, 160)}`);
+        }
       } else if (rec) out.push(`Пробная запись: ⚠️ Altegio ответил без номера записи — запись могла создаться. Проверьте журнал Altegio: ${where}`);
       else if (lastErr && (!lastErr.status || lastErr.status >= 500 || (lastErr.status >= 200 && lastErr.status < 300))) out.push(`  → понятного ответа нет: запись могла создаться. Проверьте журнал Altegio: ${where}`);
       else if (lastErr && lastErr.code === 432) out.push("  → локация требует код из SMS: отключите подтверждение номера в настройках онлайн-записи Altegio, иначе бот будет передавать заявки администратору");
@@ -2209,12 +2230,24 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   while (turns.length && turns[0].role !== "user") turns.shift();
   const userAll = turns.filter(t => t.role === "user").map(t => t.text).join(" \n ");
 
+  // что бот знает о записях клиента — строка «Уже известно о клиенте» (profile.booked)
+  const isoOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
+  const pendText = (p, lg) => [p.service, isoOk(p.date) ? altWhen(p.date, p.time, lg, nowMs) : p.raw].filter(Boolean).join(", ");
+  const bookedText = (books, pend, cbAt = saved.profile.cbAt) => [
+    books.length ? books.map(x => altLabel(x, "ru", nowMs, true)).join("; ") : "",
+    pend.length ? "запись ещё НЕ создана, заявка у администратора: " + pend.map(p => pendText(p, "ru")).join("; ") : "",
+    !books.length && !pend.length && cbAt && nowMs - cbAt < 12 * 3600e3 ? "запись ещё НЕ создана: администратор перезвонит клиенту" : "",
+    saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? "клиент просил отменить или перенести запись — это делает администратор, он подтвердит клиенту; сама запись пока прежняя" : "",
+    saved.profile.adminDid && nowMs - saved.profile.adminDid.at < 48 * 3600e3 ? `администратор ${saved.profile.adminDid.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"} и написал ему: «${saved.profile.adminDid.text}»` : ""
+  ].filter(Boolean).join(". ") || null;
   // расписание Altegio вместо демо-графика: услуги, мастера и свободное время
-  let cc = c, alt = null, altDown = false;
+  let cc = c, alt = null, altDown = false, pruned = 0;
   if (altLoc(env, c)) {
     try {
       alt = await altSnapshot(env, c, nowMs, userAll);
-      try { await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
+      try { pruned = await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
+      // и ИИ не должен видеть их в «Уже известно о клиенте» — иначе скажет клиенту, что запись на месте
+      if (pruned) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
       Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt });
     } catch (e) {
@@ -2324,8 +2357,6 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   const added = [], removed = [], droppedPend = [];               // изменения этого сообщения — нужны при слиянии истории
   const say = (reason, extra) => altSay(lang, { reason, ...(extra || {}) });
   const today = isoDay(nowMs), nowMin = mins(hhmm(local(nowMs)));
-  const isoOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
-  const pendText = (p, lg) => [p.service, isoOk(p.date) ? altWhen(p.date, p.time, lg, nowMs) : p.raw].filter(Boolean).join(", ");
   const pendLive = p => (!isoOk(p.date) || p.date >= today) && (!p.at || nowMs - p.at < 7 * 86400e3);
   const adminCap = () => { const a = saved.profile.adminLeads; return a && a.d === today ? a.n : 0; }; // заявок администратору из этого чата за сегодня
   const adminInc = () => { saved.profile.adminLeads = { d: today, n: adminCap() + 1 }; };
@@ -2341,13 +2372,6 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     saved.profile.cbAt = nowMs;
     return true;
   };
-  const bookedText = (books, pend, cbAt = saved.profile.cbAt) => [
-    books.length ? books.map(x => altLabel(x, "ru", nowMs, true)).join("; ") : "",
-    pend.length ? "запись ещё НЕ создана, заявка у администратора: " + pend.map(p => pendText(p, "ru")).join("; ") : "",
-    !books.length && !pend.length && cbAt && nowMs - cbAt < 12 * 3600e3 ? "запись ещё НЕ создана: администратор перезвонит клиенту" : "",
-    saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? "клиент просил отменить или перенести запись — это делает администратор, он подтвердит клиенту; сама запись пока прежняя" : "",
-    saved.profile.adminDid && nowMs - saved.profile.adminDid.at < 48 * 3600e3 ? `администратор ${saved.profile.adminDid.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"} и написал ему: «${saved.profile.adminDid.text}»` : ""
-  ].filter(Boolean).join(". ") || null;
   const join = arr => [...new Set(arr.filter(Boolean))].join(" ");
   // клиент просит отменить или перенести запись, о которой этот чат ничего не знает; одно и то же сообщение дважды администратору не шлём
   const unknownRec = (verb, books) => {

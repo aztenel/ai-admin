@@ -43,7 +43,7 @@ export const net = {
   tgStatus: 200,               // что отвечает Telegram
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
-  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, // altGone — записи, удалённые администратором прямо в Altegio
+  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
@@ -88,6 +88,10 @@ function altStub(url, init) {
   }
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") { net.altDeleted.push(m[1]); return new Response(null, { status: 204 }); }
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET" && net.altGetFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altGetFail); // как будто чтение записи этим ключом недоступно
+  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET" && net.altGetPlain) { // ответ без deleted, даже если запись удалена; мастер записи — из запроса
+    const r = net.altRecords[+m[1] - 777001], sid = r && (r.appointments || [])[0] ? r.appointments[0].staff_id : 0, st = D.staff.find(x => x.id === sid);
+    return J({ success: true, data: { id: +m[1], staff_id: sid, staff: st ? { id: st.id, name: st.name } : null }, meta: [] });
+  }
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET") return net.altDeleted.includes(m[1]) || (net.altGone || []).includes(m[1]) ? J({ success: false, data: null, meta: { message: "Запись не найдена" } }, 404) : J({ success: true, data: { id: +m[1], deleted: false }, meta: [] });
   return J({ success: false, data: null, meta: {} }, 404);
 }
