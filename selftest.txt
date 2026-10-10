@@ -1,0 +1,4 @@
+installed: C:\Users\runneradmin\AppData\Local\AI-admin Pult\pult.exe
+alive after start: True
+alive after close (tray): True
+pult processes after second start: 1
