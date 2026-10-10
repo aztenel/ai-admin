@@ -840,6 +840,12 @@ const ADMIN_CX = new RegExp([
 const CX_TOPIC = /отмен|перенос|перенес|перен[её]с|перезапи|cancel|resched|болдырма|ауыстыр/i;
 const ALT_ASKS_DO = /перенесите|перенести|отмените|отменить|уберите|убрать|удалите|можете|можно|нужно|надо|хочу|пожалуйста|could\s+you|can\s+you|please/i;
 // «Did you cancel it?», «Болдырдыңыз ба?» — тоже вопрос о сделанном, а не просьба
+// вопрос клиента о своих записях («я записан?», «какие у меня записи?», «точно?»): на такой вопрос бот никого не записывает,
+// даже если ИИ поставил строку [ЗАЯВКА] (вживую 10 октября: «какие у меня записи?» → «Записала вас…» без просьбы клиента)
+const ALT_MY_Q = /(я\s+(уже\s+|точно\s+|вообще\s+)?записан|меня\s+(уже\s+|точно\s+)?записал|записал[аи]?\s+(ли\s+)?меня|запис(ь|и)\s+(у\s+меня\s+)?(есть|ест|остал)|как(ие|ая)\s+(у\s+меня\s+)?запис|мо[ия]\s+запис|есть\s+(ли\s+)?(у\s+меня\s+)?запис|(на\s+)?когда\s+(я\s+)?записан|когда\s+(у\s+меня\s+)?запись|жазылдым\s+ба|жазылғанмын\s+ба|жазып\s+қойдыңыз\s+ба|менің\s+жазыл|am\s+i\s+booked|my\s+(booking|appointment))/i;
+const ALT_SURE_Q = /^\s*(точно|правда|серьезно|серьёзно|уверен[аы]?|да\s*\?|так\s*\?|рас\s+ма|шынымен\s+бе|sure|really)\s*[?!.]*\s*$/i;
+const ALT_BOOK_ASK = /(запиш|записать|записаться|запиши|оформ|хочу|можно|давайте|давай|ещё\s+одн|еще\s+одн|book\s+me|жазыңыз|жазып\s+бер|жазайын|жазылғым)/i;
+const myRecQ = text => (ALT_MY_Q.test(text) || ALT_SURE_Q.test(text)) && !ALT_BOOK_ASK.test(text);
 const ALT_STATUS_Q = /(отменил[аи]?|отмен[её]н[аоы]?|отменилась|удалил[аи]?|удал[её]н[аоы]?|перенесл[аи]|перен[её]с|перенес[её]н[аоы]?|cancel+ed|moved|rescheduled|болдырылды|жойылды|ауыстырылды|болдырдыңыз|жойдыңыз|ауыстырдыңыз|өшірдіңіз)(?![а-яёa-zәғқңөұүһі])[^.!]*\?|(^|[^a-z])(did|have|has)\s+(you|it|they)\s+(\S+\s+){0,2}?(cancel|move|resched|delete|remove)[a-z]*(?![a-z])[^.!]*\?/i;
 const altCache = new Map(); // память изолята: у Altegio лимит 5 запросов в секунду
 // Кто отменяет и переносит записи. По умолчанию — администратор: бот в расписании ничего не удаляет, а передаёт ему просьбу клиента.
@@ -1376,8 +1382,9 @@ async function altIsGone(env, b, loc, nowMs) {
   // а если оно снова свободно — записи нет. Мастер записи неизвестен (старая запись к «любому») — время должно быть свободно у всех мастеров
   // Вживую 10 октября (/altegio, пробная запись к мастеру): пока запись есть, время мастера «занято» и проверка записи (book_check) не проходит (422);
   // после удаления — «свободно» и проходит. Удалённой считаем запись, только если сходятся оба признака и запись создана больше 5 минут назад
-  // (demo7: через минуту после записи бот ошибочно решил, что её удалили — причина не выяснена). Выключить — Text ALTEGIO_SLOT_CHECK = 0
-  if (g === null && b.record_hash && (b.loc || loc) && env.ALTEGIO_SLOT_CHECK !== "0" && !(b.at && nowMs - b.at < ALT_GONE_AGE)) {
+  // (demo7 и demo10: в настоящем чате проверка ошибалась — причина не выяснена). Поэтому выключена; включает Text ALTEGIO_SLOT_CHECK = 1.
+  // Надёжный путь — журнал Altegio (ALTEGIO_USER_<ID>, altJournal): с ним эта проверка не нужна
+  if (g === null && b.record_hash && (b.loc || loc) && env.ALTEGIO_SLOT_CHECK === "1" && !(b.at && nowMs - b.at < ALT_GONE_AGE)) {
     try {
       const L = b.loc || loc, base = await altBase(env, L, nowMs), t0 = hm(b.time);
       const st = b.staffName ? base.staff.filter(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName)).slice(0, 1) : base.staff.length <= 12 ? base.staff : [];
@@ -1416,6 +1423,43 @@ async function altPrune(env, prof, nowMs, loc) {
   if (prof.req && !(prof.bookings || []).some(b => b.rq)) delete prof.req; // просьба об отмене выполнена — записи больше нет
   prof.altGone = gone.filter(b => b.leadId != null).map(b => b.leadId).slice(0, 8); // заявки этих записей think() пометит «удалена в Altegio»
   return gone.length; // текст «Уже известно о клиенте» (profile.booked) пересчитывает think() — сразу после bookedText
+}
+// ---- журнал Altegio (ключ пользователя салона ALTEGIO_USER_<ID>): записи клиента бот берёт из CRM, а не из своей памяти.
+// Вживую 10 октября (пробная локация): вход логином и паролем → user_token, GET /records/<локация> отдаёт записи с полями
+// id, datetime, staff, client (с телефоном), services, deleted, attendance. Без ключа пользователя — прежний режим (память чата)
+const altUserKey = (env, c) => String(env["ALTEGIO_USER_" + String(c.id).toUpperCase()] || "").trim();
+const ALT_JOURNAL_DAYS = 30;
+async function altJournal(env, user, loc, phone, nowMs) { // → [{ name, date, time, services, staffName, loc, record_id, j: 1 }]
+  const want = normPhone(phone);
+  if (!want || !loc || loc < 0) return null;
+  const from = isoDay(nowMs), to = isoDay(nowMs + ALT_JOURNAL_DAYS * 86400e3), nowT = hhmm(local(nowMs)), out = [];
+  for (let pg = 1; pg <= 3; pg++) { // 200 записей на страницу; у салона больше 600 записей на месяц вперёд — бывает редко
+    const d = await altCall(env, "GET", `/records/${loc}?start_date=${from}&end_date=${to}&count=200&page=${pg}`, null, user);
+    const arr = Array.isArray(d) ? d : [];
+    for (const r of arr) {
+      if (!r || typeof r !== "object" || r.deleted === true || r.deleted === 1 || +r.attendance === -1) continue; // удалена или клиент не пришёл
+      if (normPhone(String((r.client && r.client.phone) || "")) !== want) continue;
+      const dt = String(r.datetime || ""), date = dt.slice(0, 10), time = hm(dt.slice(11, 16));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !time || (date === from && mins(time) <= mins(nowT))) continue;
+      out.push({ name: altText((r.client && r.client.name) || "", 60), date, time, services: (Array.isArray(r.services) ? r.services : []).map(x => altText(x && x.title, 90)).filter(Boolean).join(" + "),
+        staffName: altText((r.staff && r.staff.name) || "", 60), loc, record_id: r.id, j: 1 });
+    }
+    if (arr.length < 200) break;
+  }
+  return out.sort((a, b) => (a.date + String(mins(a.time)).padStart(4, "0")).localeCompare(b.date + String(mins(b.time)).padStart(4, "0")));
+}
+// записи чата = записи из журнала; пометки бота (просьба об отмене, заявка, код записи) переносим по номеру записи.
+// Записи, которых в журнале больше нет, — удалены в Altegio: их заявки помечаются «отменена»
+function altFromJournal(prof, list, nowMs) {
+  const today = isoDay(nowMs), old = (prof.bookings || []).filter(b => b && b.date >= today), byId = new Map(old.filter(b => b.record_id).map(b => [String(b.record_id), b]));
+  prof.bookings = list.map(j => { const o = byId.get(String(j.record_id)); return o ? { ...o, ...j, name: o.name || j.name } : j; });
+  const ids = new Set(list.map(j => String(j.record_id)));
+  const gone = old.filter(b => b.record_id && !ids.has(String(b.record_id)));
+  if (!prof.bookings.length) delete prof.bookings;
+  if (prof.req && !(prof.bookings || []).some(b => b.rq)) delete prof.req;
+  const lids = gone.filter(b => b.leadId != null).map(b => b.leadId);
+  if (lids.length) prof.altGone = [...new Set([...(prof.altGone || []), ...lids])].slice(-8);
+  return gone.length;
 }
 // одинаковые названия различаем подписью (категория, специализация), а если и она совпала — номером: иначе бот запишет не туда
 function altUniq(list, key, hint, norm) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
@@ -1930,6 +1974,12 @@ async function altDiag(env, cid, locArg, bookPhone) {
   out.push("Отмена и перенос: " + (altSelfCancel(env, c) ? "бот делает сам (включено ALTEGIO_SELF_CANCEL)" : "бот передаёт просьбу клиента администратору, сам в расписании ничего не удаляет"));
   const tgOn = !!env.TG_TOKEN && String(env["TG_CHAT_" + String(c.id).toUpperCase()] || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean).length > 0;
   out.push("Уведомления администратору (Telegram): " + (tgOn ? "настроены ✅" : "НЕ настроены ❌ — заявки и просьбы об отмене видны только на странице /leads; до запуска задайте TG_TOKEN и TG_CHAT"));
+  { // журнал записей (ключ пользователя): с ним бот берёт записи клиента из CRM
+    const ju = altUserKey(env, c), nm = "ALTEGIO_USER_" + String(c.id).toUpperCase();
+    if (!ju) out.push(`Журнал записей: ключ ${nm} не задан — бот помнит записи сам и не видит, что администратор их удалил или перенёс (получить ключ — /altegio/user?c=${c.id})`);
+    else if (loc > 0) { try { const d = await altCall(env, "GET", `/records/${loc}?start_date=${isoDay(now)}&end_date=${isoDay(now + ALT_JOURNAL_DAYS * 86400e3)}&count=200`, null, ju); out.push(`Журнал записей: читается ✅ (${Array.isArray(d) ? d.length : 0} записей на ${ALT_JOURNAL_DAYS} дней вперёд) — записи клиента бот берёт из CRM`); }
+      catch (e) { out.push(`Журнал записей: ❌ ключ ${nm} не подошёл (${e.status || ""} ${clean(e.message || "", 100)}) — получите новый на /altegio/user?c=${c.id}`); } }
+  }
   if (!env.ALTEGIO_PARTNER || !loc) return out.join("\n");
   const hint = e => e.status === 401 ? " → ключ разработчика неверный или отозван" : e.status === 403 ? " → у ключа нет доступа к этой локации или онлайн-запись выключена"
     : e.status === 404 ? " → локация с таким номером не найдена" : e.status === 429 ? " → слишком много запросов, повторите через минуту" : "";
@@ -2008,16 +2058,16 @@ async function altDiag(env, cid, locArg, bookPhone) {
 
 // Проверка ключа пользователя Altegio (вход логином и паролем салона): видит ли бот журнал записей.
 // Пароль никуда не сохраняется и не пишется в журнал; ключ пользователя на странице не показывается.
-async function altUserProbe(env, cid, login, password, phone) {
+async function altUserProbe(env, cid, login, password, phone) { // → { text, token }
   const out = [], c = (hasClient(cid) && CLIENTS[cid]) || CLIENTS.alt, loc = altLoc(env, c), now = Date.now();
-  if (!env.ALTEGIO_PARTNER) return "Altegio: не задан ключ разработчика ALTEGIO_PARTNER";
-  if (!loc) return `У бота «${c.name}» не задан номер локации Altegio`;
+  if (!env.ALTEGIO_PARTNER) return { text: "Altegio: не задан ключ разработчика ALTEGIO_PARTNER" };
+  if (!loc) return { text: `У бота «${c.name}» не задан номер локации Altegio` };
   out.push(`Локация: ${loc} (бот «${c.name}»)`);
   const err = e => `ошибка ${e.status || ""}${e.code ? " код " + e.code : ""} ${clean(e.message || "", 160)}`.trim();
   let token = "";
   try { const d = await altCall(env, "POST", "/auth", { login: clean(login, 120), password: String(password || "").slice(0, 200) }); token = (d && d.user_token) || ""; out.push(token ? `Вход в Altegio: ✅ ключ пользователя получен${d.name ? " (" + altText(d.name, 40) + ")" : ""}` : "Вход в Altegio: ⚠️ ответ без user_token, поля: " + Object.keys(d || {}).slice(0, 12).join(", ")); }
-  catch (e) { out.push("Вход в Altegio: ❌ " + err(e)); return out.join("\n"); }
-  if (!token) return out.join("\n");
+  catch (e) { out.push("Вход в Altegio: ❌ " + err(e)); return { text: out.join("\n"), token }; }
+  if (!token) return { text: out.join("\n"), token };
   const from = isoDay(now), to = isoDay(now + 14 * 86400e3), q = `start_date=${from}&end_date=${to}`;
   const ways = [["записи (records)", `/records/${loc}?${q}&count=200`], ["записи (appointments)", `/locations/${loc}/appointments?${q}`]];
   const mask = p => { const d = String(p || "").replace(/\D/g, ""); return d ? "…" + d.slice(-4) : "—"; };
@@ -2040,35 +2090,38 @@ async function altUserProbe(env, cid, login, password, phone) {
     return null;
   };
   const first = await list(true);
-  if (!first || !phone) return out.join("\n") + (first ? "" : "\n\nЖурнал записей этим ключом не читается.");
+  if (!first || !phone) return { text: out.join("\n") + (first ? "" : "\n\nЖурнал записей этим ключом не читается."), token };
   // пробная запись: видна ли она в журнале и что с ней после удаления
   const ph = normPhone(phone);
-  if (!ph) { out.push("", "Пробная запись: ❌ номер телефона не распознан"); return out.join("\n"); }
+  if (!ph) { out.push("", "Пробная запись: ❌ номер телефона не распознан"); return { text: out.join("\n"), token }; }
   try {
     const base = await altBase(env, loc, now), dates = altDates(await altCall(env, "GET", `/book_dates/${loc}`), now);
     let slot = null, day = "";
     for (const d of dates.slice(0, 3)) { const t = await altTimes(env, loc, 0, d, null, now, true); if (t[0]) { slot = t[0]; day = d; break; } }
-    if (!slot || !base.services[0]) { out.push("", "Пробная запись: ❌ нет свободного времени"); return out.join("\n"); }
+    if (!slot || !base.services[0]) { out.push("", "Пробная запись: ❌ нет свободного времени"); return { text: out.join("\n"), token }; }
     const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: slot.datetime || `${day}T${slot.time.padStart(5, "0")}:00+0${TZ}:00` }];
     const rec = (x => (Array.isArray(x) ? x[0] : x) || {})((await altRecord(env, loc, { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Проверка журнала: создаётся и сразу удаляется", appointments })).data);
-    if (!rec.record_id) { out.push("", "Пробная запись: ⚠️ Altegio не вернул номер записи — проверьте журнал"); return out.join("\n"); }
+    if (!rec.record_id) { out.push("", "Пробная запись: ⚠️ Altegio не вернул номер записи — проверьте журнал"); return { text: out.join("\n"), token }; }
     out.push("", `Пробная запись: создана № ${rec.record_id} — ${day} в ${slot.time}`);
     const find = async () => { const a = await list(false); if (!a) return "журнал не прочитан"; const r = a.find(x => String(x.id || x.record_id) === String(rec.record_id)); if (!r) return "в журнале её нет"; const v = recOf(r); return `в журнале есть: мастер ${v.staff || "?"}, телефон ${mask(v.phone)}, deleted: ${v.del}`; };
     const one = async () => { const res = []; for (const [n, p] of [["record", `/record/${loc}/${rec.record_id}`], ["appointments", `/locations/${loc}/appointments/${rec.record_id}`]]) { try { const d = await altCall(env, "GET", p, null, token); res.push(`${n}: ✅ deleted: ${d && "deleted" in d ? JSON.stringify(d.deleted) : "нет поля"}${d && d.staff && d.staff.name ? ", мастер " + altText(d.staff.name, 40) : ""}`); } catch (e) { res.push(`${n}: ${err(e)}`); } } return res.join("; "); };
     out.push(`  с записью — ${await find()}`, `  чтение одной записи — ${await one()}`);
     try { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); altDropTimes(loc); out.push("  удалена ✅"); }
-    catch (e) { out.push(`  ⚠️ не удалилась (${err(e)}) — удалите вручную в журнале: ${day} ${slot.time}`); return out.join("\n"); }
+    catch (e) { out.push(`  ⚠️ не удалилась (${err(e)}) — удалите вручную в журнале: ${day} ${slot.time}`); return { text: out.join("\n"), token }; }
     out.push(`  после удаления — ${await find()}`, `  чтение одной записи — ${await one()}`);
   } catch (e) { out.push("Пробная запись: ❌ " + err(e)); }
-  return out.join("\n");
+  return { text: out.join("\n"), token };
 }
-function altUserPage(body, cid, key) {
+function altUserPage(body, cid, key, token, slug) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
 pre{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
 form{display:grid;gap:8px}input{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:11px 12px;font-size:16px}
 button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font:600 15px system-ui}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
 <body><div class="w"><h1>Журнал Altegio: проверка ключа пользователя</h1>${body ? `<pre>${esc(body)}</pre>` : ""}
+${token ? `<details style="margin:0 0 14px"><summary style="cursor:pointer;font-weight:600">Ключ для Cloudflare — открыть, только чтобы скопировать (в чат не присылать)</summary>
+<p>Cloudflare → Workers → ai-admin → Settings → Variables and Secrets → Add: тип <b>Secret</b>, имя <b>${esc(slug)}</b>, значение — ключ ниже. Для черновиков — то же в разделе Previews. Ключ действует, пока не сменён пароль в Altegio.</p>
+<input readonly value="${esc(token)}" onfocus="this.select()" style="width:100%"></details>` : ""}
 <form method="post" action="/altegio/user"><input type="hidden" name="c" value="${esc(cid)}"><input type="hidden" name="key" value="${esc(key || "")}">
 <input name="login" autocomplete="username" placeholder="Логин Altegio (почта или телефон)" required>
 <input name="password" type="password" autocomplete="current-password" placeholder="Пароль Altegio" required>
@@ -2346,11 +2399,15 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     saved.profile.adminDid && nowMs - saved.profile.adminDid.at < 48 * 3600e3 ? `администратор ${saved.profile.adminDid.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"} и написал ему: «${saved.profile.adminDid.text}»` : ""
   ].filter(Boolean).join(". ") || null;
   // расписание Altegio вместо демо-графика: услуги, мастера и свободное время
-  let cc = c, alt = null, altDown = false, pruned = 0;
+  let cc = c, alt = null, altDown = false, pruned = 0, journal = false; // journal — записи клиента прочитаны из журнала Altegio
   if (altLoc(env, c)) {
     try {
       alt = await altSnapshot(env, c, nowMs, userAll);
-      try { pruned = await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
+      const ju = altUserKey(env, c), jph = opts.phone || saved.profile.phone;
+      if (ju && jph) { // записи клиента — из журнала Altegio (CRM — единственная правда о записях)
+        try { const j = await altJournal(env, ju, altLoc(env, c), jph, nowMs); if (j) { altFromJournal(saved.profile, j, nowMs); pruned = 1; journal = true; } }
+        catch (e) { console.log("alt journal", String(e)); if (!opts.test) await notifyOnce(env, "altj:" + c.id, `⚠️ Журнал Altegio не читается — ${c.name}\n${String(e.message || e).slice(0, 200)}\nБот отвечает о записях по своей памяти. Проверьте ключ ALTEGIO_USER_${String(c.id).toUpperCase()} (/altegio/user).`, c.id); }
+      } else try { pruned = await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
       // и ИИ не должен видеть их в «Уже известно о клиенте» — иначе скажет клиенту, что запись на месте
       if (pruned) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
@@ -2494,7 +2551,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   try {
   if (alt) {
     // ---- расписание Altegio: запись, отмена и перенос. Итог клиенту сообщает код по ответу Altegio, а не ИИ.
-    const allBook = leaked ? [] : tagsOf(draftOnly ? raw0 : raw, "ЗАЯВКА"), bookLines = allBook.slice(0, 3); // запись проверяет само расписание, поэтому строку берём и из первого ответа ИИ
+    const allBook = leaked || myRecQ(text) ? [] : tagsOf(draftOnly ? raw0 : raw, "ЗАЯВКА"), bookLines = allBook.slice(0, 3); // запись проверяет само расписание, поэтому строку берём и из первого ответа ИИ
     const allCancel = draftOnly ? [] : tagsOf(raw, "ОТМЕНА"), cancelLines = allCancel.slice(0, 3);          // отмену из отклонённого ответа не выполняем — переспросим
     const draftCancel = draftOnly && !leaked && tagsOf(raw0, "ОТМЕНА").length > 0;
     const active = x => x.date > today || (x.date === today && mins(x.time) + 30 > nowMin);
@@ -2590,7 +2647,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const pd = pend.find(p => p.key === key || (date && time && p.date === date && p.time === time && samePerson(p.name || "", l.name)));
       if (pd) return { out: say("pending", { what: pendText(pd, lang) }) }; // эта заявка уже у администратора
       // запись на это же время, имя и телефон уже есть в заявках (история чата не сохранилась или чат начат заново) — второй раз не записываем
-      if (date && time && !opts.test) {
+      if (date && time && !opts.test && !journal) { // журнал прочитан — записи клиента и так все в чате
         let old = (await viewLeads()).find(x => !(saved.profile.forgot && leadTs(x) < saved.profile.forgot) && x.altegio && x.altegio.record_id && x.altegio.loc === alt.loc && x.altegio.date === date && x.altegio.time === time && x.phone === l.phone && x.status !== "отменена" && samePerson(x.name || "", l.name));
         if (old) { // статус в общем списке мог устареть (два чата сохраняли заявки одновременно) — сверяемся с отдельным ключом заявки
           try { const v = JSON.parse((await store.get(leadKey(c.id, old.id))) || "null"); if (v && v.status === "отменена") old = null; } catch (e) { console.log("lead key", String(e)); }
@@ -2959,7 +3016,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     saved.profile.booked = bookedText(books, pend);
   } else if (altDown) {
     // ---- расписание Altegio недоступно: бот никого не записывает и ничего не отменяет сам — всё передаёт администратору
-    const bookLines = leaked ? [] : tagsOf(draftOnly ? raw0 : raw, "ЗАЯВКА").slice(0, 3);
+    const bookLines = leaked || myRecQ(text) ? [] : tagsOf(draftOnly ? raw0 : raw, "ЗАЯВКА").slice(0, 3);
     const books = (saved.profile.bookings || []).filter(x => x.date >= today);
     const pend = saved.profile.pend = (saved.profile.pend || []).filter(pendLive).slice(-5);
     const cl = draftOnly ? { book: false, change: false, keep: "" } : altClaims(reply);
@@ -3008,6 +3065,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       outs.push(say("admin", { what: pendText(p, lang) }));
     }
     if (outs.length) reply = join([cancel ? reply : "", ...outs]);
+    else if (!cancel && myRecQ(text) && (books.length || pend.length)) // «я записан?» — отвечаем тем, что бот знает, без заявки на звонок
+      reply = books.length ? say("noop", { list: books.map(x => altLabel(x, lang, nowMs)).join("; ") }) : say("pending", { what: pendText(pend[pend.length - 1], lang) });
     else if (!cancel && (cl.book || (draftOnly && !leaked))) { // ИИ пишет «записала» либо называл время и цены, которых сейчас не видит (такой ответ отклонила защита)
       if (ph0()) callback("бот не видит расписание Altegio");
       reply = say(ph0() ? "downBook" : "downPhone");
@@ -3727,7 +3786,8 @@ async function route(request, env, ctx) {
       if (a !== true) return a || new Response(`Forbidden: нет входа владельца — откройте /studio, войдите ключом владельца и повторите (cookie ${new RegExp(COOKIE + "=").test(request.headers.get("cookie") || "") ? "есть, но не подошла" : "не пришла"})`, { status: 403 });
       if (M === "GET") return page(altUserPage("", url.searchParams.get("c") || "", k0));
       const cid = String(f.get("c") || "");
-      return page(altUserPage(await altUserProbe(env, cid, String(f.get("login") || ""), String(f.get("password") || ""), String(f.get("phone") || "")), cid, k0));
+      const r = await altUserProbe(env, cid, String(f.get("login") || ""), String(f.get("password") || ""), String(f.get("phone") || ""));
+      return page(altUserPage(r.text, cid, k0, r.token, "ALTEGIO_USER_" + String(cid || "").toUpperCase()));
     }
     if (P === "/altegio" && (M === "GET" || M === "POST")) { // проверка расписания; POST — пробная запись с удалением
       let q = { key: url.searchParams.get("key"), c: url.searchParams.get("c") || "", loc: url.searchParams.get("loc") || "", phone: "" };

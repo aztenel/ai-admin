@@ -43,7 +43,7 @@ export const net = {
   tgStatus: 200,               // что отвечает Telegram
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
-  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
+  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
@@ -83,7 +83,12 @@ function altStub(url, init) {
   if (path === "/auth" && method === "POST") { const b = JSON.parse(init.body || "{}"); net.altAuth.push({ login: b.login, auth: init.headers && init.headers.authorization }); return b.password === "right-pass" ? J({ success: true, data: { user_token: "usr-tok", name: "Азамат" }, meta: [] }) : J({ success: false, data: null, meta: { message: "Неверный логин или пароль" } }, 401); }
   if ((m = path.match(/^\/records\/(\d+)/)) && method === "GET") {
     if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
-    return J({ success: true, data: net.altRecords.map((r, i) => ({ id: 777001 + i, datetime: ((r.appointments || [])[0] || {}).datetime, staff: { id: 11, name: "Арман" }, client: { phone: r.phone }, deleted: net.altDeleted.includes(String(777001 + i)), services: [{ title: "Мужская стрижка" }] })), meta: { count: net.altRecords.length } });
+    if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
+    // журнал как вживую: удалённая через API запись помечена deleted, удалённая администратором — пропадает из списка
+    const data = net.altRecords.map((r, i) => { const a = (r.appointments || [])[0] || {}, st = D.staff.find(x => x.id === a.staff_id) || D.staff[0], id = String(777001 + i);
+      return (net.altGone || []).includes(id) ? null : { id: +id, company_id: +m[1], staff_id: st.id, datetime: a.datetime, staff: { id: st.id, name: st.name }, client: { phone: r.phone, name: r.fullname },
+        services: (a.services || []).map(sid => ({ id: sid, title: (D.services.find(x => x.id === sid) || {}).title || "?" })), deleted: net.altDeleted.includes(id), attendance: 0 }; }).filter(Boolean);
+    return J({ success: true, data, meta: { count: data.length } });
   }
   if (/^\/book_check\/\d+/.test(path)) {
     if (net.altCheckBusy) return J({ success: false, data: null, meta: { message: "The service is not available at the selected time." } }, 422);

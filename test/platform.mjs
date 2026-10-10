@@ -1587,6 +1587,47 @@ section("подсказка: реквизиты в переписке и усл�
 }
 
 // ====== Живая проверка 10 октября (3): записи удалили в Altegio, чат на телефоне очистили — бот всё равно «помнил» их
+section("журнал Altegio: записи клиента — из CRM (ключ пользователя)");
+{
+  const SJ = mk({ WA_TOKEN_SALON: "tok-salon", APP_SECRET_SALON: "sec-salon", ALTEGIO_PARTNER: "partner-key", ALTEGIO_USER_SALON: "usr-tok" }), own = SJ.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", { id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5002", tg: "777000" });
+  const o = { secret: "sec-salon", pnid: "900222" }, C = "77071110041";
+  const say = async (text, ai) => { net.ai = [ai]; await SJ.waText("/wa/salon", C, text, o); };
+  const H = () => SJ.hist("wa", "salon", C), known = () => (net.gemini.at(-1).systemInstruction.parts[0].text.split("Уже известно о клиенте")[1] || "").split("\n")[0];
+  const tag = (t, st = "Арман") => `[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: ${st}; Дата: ${D1}; Время: ${t}`;
+  net.reset(); net.altGone = []; net.altJournalFail = 0;
+  await say("Азамат, мужская стрижка к Арману завтра в 11:00", "Записала.\n" + tag("11:00"));
+  ok("журнал: запись создана", net.altRecords.length === 1 && (H().profile.bookings || []).length === 1);
+  // вживую 10 октября: «я записан?» → ИИ повторил строку записи → бот записал второй раз
+  await say("я записан?", "Да, вы записаны.\n" + tag("11:00", "любой"));
+  ok("«я записан?» + строка [ЗАЯВКА] от ИИ → второй записи нет, ответ без «Записала»", net.altRecords.length === 1 && !/Записала/.test(H().turns.at(-1).text), H().turns.at(-1).text);
+  ok("журнал прочитан ключом пользователя; запись из журнала — с мастером и услугой, в подсказке ИИ", net.alt.some(x => x.startsWith("GET /records/5002?")) && /Мужская стрижка, мастер Арман/.test(known()) && H().profile.bookings[0].j === 1 && !!H().profile.bookings[0].leadId, known());
+  // администратор удалил запись в Altegio — в журнале её больше нет
+  const rid = String(H().profile.bookings[0].record_id), lid = H().profile.bookings[0].leadId;
+  net.altGone = [rid];
+  await say("какие у меня записи?", "Записала вас на воскресенье.\n" + tag("11:00"));
+  ok("запись удалена в Altegio → на «какие у меня записи?» бот её не называет и заново не записывает", net.altRecords.length === 1 && !(H().profile.bookings || []).length && !/Мужская стрижка/.test(known()) && !/Записала/.test(H().turns.at(-1).text), JSON.stringify([H().turns.at(-1).text, known()]));
+  ok("…её заявка помечена «отменена» (удалена в Altegio)", (SJ.leads("salon").find(l => l.id === lid) || {}).status === "отменена", JSON.stringify(SJ.leads("salon").find(l => l.id === lid)));
+  // клиент снова записывается на то же время — новая запись
+  await say("Запишите меня снова завтра на 11:00 к Арману", "Записала.\n" + tag("11:00"));
+  ok("после удаления клиент снова записывается на то же время → новая запись", net.altRecords.length === 2 && /Записала/.test(H().turns.at(-1).text) && (H().profile.bookings || []).length === 1, H().turns.at(-1).text);
+  // администратор сам записал клиента по телефону (в журнале есть, в чате не было)
+  net.altRecords.push({ phone: "+" + C, fullname: "Азамат", appointments: [{ id: 1, services: [103], staff_id: 12, datetime: `${D2}T10:00:00+05:00` }] });
+  await say("Сколько стоит борода?", "Оформление бороды — от 4 000 ₸.");
+  ok("запись, которую администратор сделал сам, бот видит", (H().profile.bookings || []).length === 2 && /Детская стрижка, мастер Ерлан/.test(known()), known());
+  // чужая запись (другой телефон) клиенту не видна
+  net.altRecords.push({ phone: "+77079998877", fullname: "Другой", appointments: [{ id: 1, services: [101], staff_id: 11, datetime: `${D2}T13:00:00+05:00` }] });
+  await say("Спасибо", "Пожалуйста!");
+  ok("чужие записи из журнала в чат не попадают", (H().profile.bookings || []).length === 2 && !/Другой/.test(known()));
+  // журнал не читается — бот отвечает по своей памяти и сообщает владельцу
+  net.altJournalFail = 401; net.tg.length = 0;
+  await say("Во сколько я записан?", "Завтра в 11:00.");
+  ok("журнал не читается → записи из памяти бота остаются, владельцу — сигнал", (H().profile.bookings || []).length === 2 && net.tg.some(t => /Журнал Altegio не читается/.test(t.text || JSON.stringify(t))), JSON.stringify(net.tg.slice(-2)));
+  net.altJournalFail = 0; net.altGone = [];
+  const dg = await (await own.go("/altegio?c=salon")).text();
+  ok("/altegio показывает, что журнал записей читается", /Журнал записей: читается ✅/.test(dg), dg.slice(0, 900));
+}
+
 section("записи, удалённые в Altegio; очистка памяти бота");
 {
   const SD = mk({ WA_TOKEN_SALON: "tok-salon", APP_SECRET_SALON: "sec-salon", ALTEGIO_PARTNER: "partner-key" }), own = SD.browser(); await own.go("/studio?key=" + OWNER);
@@ -1610,6 +1651,7 @@ section("записи, удалённые в Altegio; очистка памят�
   await say("Азамат, мужская стрижка к Ерлану послезавтра в 10:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D2}; Время: 10:00`);
   ok("новая запись создана", (SD.hist("wa", "salon", C).profile.bookings || []).length === 1);
 
+  SD.env.ALTEGIO_SLOT_CHECK = "1"; // проверка по времени мастера выключена по умолчанию (ошибалась вживую) — здесь её включаем
   // записи моложе 5 минут по времени мастера не проверяются — «состариваем» записи чата
   const age = (id = C) => { const k = "h:wa:salon:" + id, v = SD.kv.json(k); for (const x of v.profile.bookings || []) x.at = (x.at || Date.now()) - 10 * 60e3; SD.kv.mem.set(k, JSON.stringify(v)); };
 
@@ -1666,7 +1708,7 @@ section("записи, удалённые в Altegio; очистка памят�
   net.altGone = [String(r5.record_id)]; age(C5);
   await say5("А детская?", "Детская стрижка — от 4 000 ₸.");
   ok("мастер записи неизвестен, 12:00 свободно у всех мастеров → запись бот забыл", !(SD.hist("wa", "salon", C5).profile.bookings || []).length, JSON.stringify(SD.hist("wa", "salon", C5).profile.bookings));
-  net.altData = null;
+  net.altData = null; delete SD.env.ALTEGIO_SLOT_CHECK;
   // вживую 10 октября (demo7): запись к Арману на 12:00 есть, чтение записи ответило без deleted, а время мастера Altegio показал свободным —
   // бот решил, что запись удалили, и на «я записан или нет?» записывал заново (упёрся в предел — заявка администратору). Время мастера само по себе — не довод
   net.reset(); net.altBusy = false; net.altGetPlain = true; net.altGone = [];
@@ -1674,7 +1716,7 @@ section("записи, удалённые в Altegio; очистка памят�
   await say7("Азамат, мужская стрижка к Арману завтра в 11:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Арман; Дата: ${D1}; Время: 11:00`);
   await say7("я записан или нет?", `Да.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Арман; Дата: ${D1}; Время: 11:00`);
   const h7 = SD.hist("wa", "salon", C7);
-  ok("чтение записи без deleted, время мастера «свободно» → запись бот помнит, второй раз не записывает", (h7.profile.bookings || []).length === 1 && net.altRecords.length === 1 && /уже записаны/.test(h7.turns.at(-1).text) && !(h7.profile.pend || []).length, JSON.stringify([h7.turns.at(-1).text, h7.profile.bookings, h7.profile.pend, net.altRecords.length]));
+  ok("чтение записи без deleted, время мастера «свободно» → запись бот помнит, второй раз не записывает", (h7.profile.bookings || []).length === 1 && net.altRecords.length === 1 && !/Записала/.test(h7.turns.at(-1).text) && !(h7.profile.pend || []).length, JSON.stringify([h7.turns.at(-1).text, h7.profile.bookings, h7.profile.pend, net.altRecords.length]));
   // та же запись через 10 минут: время мастера «свободно», но пробная проверка записи не проходит — запись не забываем (нужны оба признака)
   { const k = "h:wa:salon:" + C7, v = SD.kv.json(k); for (const x of v.profile.bookings || []) x.at -= 10 * 60e3; SD.kv.mem.set(k, JSON.stringify(v)); }
   net.altCheckBusy = true;
@@ -1687,10 +1729,10 @@ section("записи, удалённые в Altegio; очистка памят�
   const lu = async (o) => (await own.go("/altegio/user", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ c: "salon", ...o }).toString() })).text();
   ok("журнал Altegio: страница только для владельца", (await SD.call("/altegio/user?c=salon")).status === 403 && (await own.go("/altegio/user?c=salon")).status === 200);
   let ut = await lu({ login: "me@x.kz", password: "wrong" });
-  ok("журнал Altegio: неверный пароль — понятная ошибка", /Вход в Altegio: ❌ ошибка 401/.test(ut), ut.slice(-600));
+  ok("журнал Altegio: неверный пароль — понятная ошибка, блока с ключом нет", /Вход в Altegio: ❌ ошибка 401/.test(ut) && !/<details/.test(ut), ut.slice(-600));
   ut = await lu({ login: "me@x.kz", password: "right-pass", phone: "+7 701 555 66 77" });
   ok("журнал Altegio: вход, журнал читается, пробная запись видна и после удаления помечена", /ключ пользователя получен/.test(ut) && /записи \(records\): ✅/.test(ut) && /с записью — в журнале есть: мастер Арман/.test(ut) && /после удаления — в журнале есть: .*deleted: true/.test(ut), ut.split("<pre>")[1]);
-  ok("журнал Altegio: пароль и ключ пользователя на страницу и в хранилище не попадают", !ut.includes("right-pass") && !ut.includes("usr-tok") && ![...SD.kv.mem.values()].some(v => v.includes("right-pass") || v.includes("usr-tok")));
+  ok("журнал Altegio: пароля на странице и в хранилище нет; ключ — только в свёрнутом блоке для Cloudflare с именем секрета", !ut.includes("right-pass") && ut.split("<details")[0].indexOf("usr-tok") < 0 && /<details[^]*ALTEGIO_USER_SALON[^]*usr-tok[^]*<\/details>/.test(ut) && ![...SD.kv.mem.values()].some(v => v.includes("right-pass") || v.includes("usr-tok")));
   ok("журнал Altegio: запрос журнала идёт с ключом разработчика и ключом пользователя", net.altAuth.length === 2);
   { // вживую 10 октября: страницу открыли с ключом в адресе (без входа) — форма отвечала «Forbidden»
     const g = await SD.call("/altegio/user?c=salon&key=" + OWNER), gt = await g.text();
