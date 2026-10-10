@@ -2,3 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 *.log
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/icons/
+desktop/package-lock.json

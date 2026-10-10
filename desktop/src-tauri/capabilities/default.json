@@ -1,0 +1,20 @@
+{
+  "identifier": "default",
+  "description": "Страницы пульта с нашего сайта могут показывать уведомления Windows и открывать ссылки в браузере",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://ai-admin.azikonps4.workers.dev/*",
+      "https://*.azikonps4.workers.dev/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-request-user-attention",
+    "core:window:allow-set-title",
+    "notification:default",
+    "opener:default"
+  ]
+}

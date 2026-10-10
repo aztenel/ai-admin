@@ -1,0 +1,11 @@
+{
+  "name": "pult-desktop",
+  "private": true,
+  "description": "Пульт чатов AI-администратора для Windows (Tauri): окно с пультом сайта, значок в трее, уведомления",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
