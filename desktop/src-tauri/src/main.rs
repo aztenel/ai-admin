@@ -33,6 +33,11 @@ const SELFTEST_JS: &str = r#"addEventListener("load", function () {
   d.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483647;padding:10px 14px;border-radius:12px;background:#111;color:#7CFC9A;font:14px Consolas,monospace";
   d.textContent = "TAURI " + (t ? "OK" : "НЕТ") + " · notification " + (t && t.notification ? "OK" : "НЕТ") + " · opener " + (t && t.opener ? "OK" : "НЕТ");
   document.body.appendChild(d);
+  // работают ли таймеры, пока окно спрятано в трей (от этого зависят уведомления о новых сообщениях)
+  var d2 = d.cloneNode(false); d2.style.top = "58px"; document.body.appendChild(d2);
+  var ticks = 0, hid = 0, last = Date.now(), gap = 0;
+  setInterval(function () { var n = Date.now(); gap = Math.max(gap, n - last); last = n; ticks++; if (document.visibilityState === "hidden") hid++;
+    d2.textContent = "таймер: " + ticks + " · в трее: " + hid + " · макс. пауза " + Math.round(gap / 1000) + " с"; }, 5000);
   if (t && t.notification) Promise.resolve(t.notification.isPermissionGranted()).then(function (g) { d.textContent += " · разрешение " + g; t.notification.sendNotification({ title: "Пульт", body: "Проверка уведомления" }); d.textContent += " · отправлено"; }).catch(function (e) { d.textContent += " · ошибка " + e; });
 });"#;
 

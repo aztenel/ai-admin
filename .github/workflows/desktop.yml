@@ -55,6 +55,7 @@ jobs:
           Log "alive after start: $(-not $p.HasExited)"
           # 3) крестик: окно прячется в трей, программа работает
           $null = $p.CloseMainWindow(); Start-Sleep -Seconds 3; Shot "after-close"
+          Start-Sleep -Seconds 90  # окно в трее полторы минуты: таймеры пульта должны идти (плашка покажет после второго запуска)
           Log "alive after close (tray): $(-not $p.HasExited)"
           # 4) второй запуск: открывается то же окно, второй копии нет
           Start-Process -FilePath $exe.FullName; Start-Sleep -Seconds 6; Shot "second-start"
