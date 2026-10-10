@@ -190,7 +190,7 @@ function setBadge() {
 /* ---------- шапка: переключатель компании ---------- */
 function bizBtn() {
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? "#AF611C" : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
+  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? "#B5652A" : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
   b.onclick = bizSheet; return b;
 }
 function bizSheet() {

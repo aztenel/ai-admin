@@ -126,7 +126,7 @@ function more() {
   v.appendChild(h("div", "ttl", h("h1", "", "Ещё"), { style: "padding-top:calc(var(--sat) + 14px)" }));
   var sc = h("div", "scroll"); v.appendChild(sc);
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? "#AF611C" : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
+  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? "#B5652A" : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
     h("div", "", [h("span", "nm", nm, { style: "font-size:19px" }), DEMO ? tag("WhatsApp подключён", "ok") : null, h("span", "nx", DEMO ? "Запись через Altegio" : S.C)], { style: "flex:1;min-width:0;display:flex;flex-direction:column;gap:2px" })], { style: "padding:14px 16px;display:flex;align-items:center;gap:14px" });
   if (S.owner || DEMO) { var cb = h("button", "ibtn", ic("chev"), { type: "button", style: "background:var(--s2)", "aria-label": "Сменить компанию" }); cb.onclick = P.bizSheet; biz.appendChild(cb); }
   var themes = h("div", "seg"); [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]].forEach(function (t) { var b = h("button", S.theme === t[0] ? "on" : "", t[1], { type: "button", style: "flex:1;height:40px;border-radius:20px;font-size:15px;font-weight:500;color:" + (S.theme === t[0] ? "var(--fg)" : "var(--fg2)") + ";background:" + (S.theme === t[0] ? "var(--bg)" : "transparent") }); b.onclick = function () { P.setTheme(t[0]); more(); }; themes.appendChild(b); });
@@ -148,6 +148,8 @@ function more() {
     if (S.owner) { g1.push(linkRow("shield", "Проверка запуска", "", ext("/launch"))); g1.push(linkRow("users", "Боты и сотрудники", "", "/studio")); }
     kids.push(h("div", "grp", g1)); kids.push(h("div", "grp", [linkRow("out", "Выйти", "", "/logout")]));
   }
+  // программа для Windows: свои уведомления и значок у часов. В самой программе этот пункт не нужен
+  if (!window.__TAURI__) kids.push(h("div", "grp", [linkRow("link", "Программа для Windows", "уведомления, даже когда окно закрыто", "https://github.com/aztenel/ai-admin/releases", true)]));
   sc.appendChild(stack(kids));
 }
 window.__views = { leads: leads, summary: summary, broadcast: broadcast, more: more, newLead: newLead };

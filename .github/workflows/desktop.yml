@@ -33,22 +33,34 @@ jobs:
       - name: Сборка
         working-directory: desktop
         run: npx tauri build
-      - name: Пробный запуск на Windows (снимок экрана)
+      - name: Пробный запуск на Windows (установка, снимки экрана, трей, второй запуск)
         shell: pwsh
         env:
           PULT_URL: https://dev-ai-admin.azikonps4.workers.dev/demo
           PULT_SELFTEST: "1"
         run: |
-          $p = Start-Process -FilePath desktop/src-tauri/target/release/pult.exe -PassThru
-          Start-Sleep -Seconds 30
+          $log = "$env:GITHUB_WORKSPACE/selftest.txt"; $shots = "$env:GITHUB_WORKSPACE/shots"; New-Item -ItemType Directory -Force $shots | Out-Null
+          function Log($t) { $t | Tee-Object -FilePath $log -Append }
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-          $bmp.Save("$env:GITHUB_WORKSPACE/pult-windows.png")
-          "process alive: $(-not $p.HasExited); screen: $($b.Width)x$($b.Height)" | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/selftest.txt"
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          function Shot($name) { $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $bmp.Save("$shots/$name.png") }
+          # 1) установка, как у пользователя: тихо, без вопросов
+          $setup = Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA" -Recurse -Filter pult.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch "target" } | Select-Object -First 1
+          Log "installed: $($exe.FullName)"
+          if (-not $exe) { $exe = Get-Item desktop/src-tauri/target/release/pult.exe; Log "fallback to build exe" }
+          # 2) запуск: снимки каждые 4 секунды (уведомление Windows видно несколько секунд)
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          foreach ($i in 1..7) { Start-Sleep -Seconds 4; Shot ("run-{0:d2}" -f ($i * 4)) }
+          Log "alive after start: $(-not $p.HasExited)"
+          # 3) крестик: окно прячется в трей, программа работает
+          $null = $p.CloseMainWindow(); Start-Sleep -Seconds 3; Shot "after-close"
+          Log "alive after close (tray): $(-not $p.HasExited)"
+          # 4) второй запуск: открывается то же окно, второй копии нет
+          Start-Process -FilePath $exe.FullName; Start-Sleep -Seconds 6; Shot "second-start"
+          Log "pult processes after second start: $((Get-Process pult -ErrorAction SilentlyContinue | Measure-Object).Count)"
+          Get-Process pult -ErrorAction SilentlyContinue | Stop-Process -Force
+          Copy-Item "$shots/run-28.png" "$env:GITHUB_WORKSPACE/pult-windows.png"
       - name: Снимок в артефакты
         uses: actions/upload-artifact@v4
         with:
@@ -57,7 +69,7 @@ jobs:
       - name: Снимок в ветку desktop-shots (чтобы его было видно без артефактов)
         shell: bash
         run: |
-          mkdir -p /tmp/shots && cp pult-windows.png /tmp/shots/ && cp "$GITHUB_WORKSPACE/selftest.txt" /tmp/shots/ 2>/dev/null || true
+          mkdir -p /tmp/shots && cp pult-windows.png shots/*.png /tmp/shots/ && cp "$GITHUB_WORKSPACE/selftest.txt" /tmp/shots/ 2>/dev/null || true
           cd /tmp/shots && git init -q && git checkout -q -b desktop-shots
           git -c user.name=ci -c user.email=ci@users.noreply.github.com add -A
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "снимок сборки ${{ github.run_number }}"
@@ -74,8 +86,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="pult-v0.1.${{ github.run_number }}"
+          tag="pult-v0.2.${{ github.run_number }}"
           pre=""; [ "${{ github.ref_name }}" = "main" ] || pre="--prerelease"
           gh release create "$tag" desktop/src-tauri/target/release/bundle/nsis/*.exe desktop/src-tauri/target/release/bundle/msi/*.msi \
             --target "${{ github.sha }}" --title "Пульт для Windows — сборка ${{ github.run_number }} (${{ github.ref_name }})" $pre \
             --notes "Установщик программы «Пульт» для Windows. Скачайте файл .exe и запустите. Если Windows покажет «Windows защитила ваш компьютер» — нажмите «Подробнее» → «Выполнить в любом случае» (у программы пока нет платной цифровой подписи)."
+          # пробные сборки из dev: оставляем три последние
+          if [ -n "$pre" ]; then
+            gh api "repos/${{ github.repository }}/releases?per_page=50" --jq '.[] | select(.prerelease and (.tag_name|startswith("pult-v"))) | .tag_name' | tail -n +4 | while read t; do gh release delete "$t" --yes --cleanup-tag || true; done
+          fi
