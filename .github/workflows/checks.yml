@@ -11,12 +11,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24] # правило проекта: перед выкладкой тесты на Node 20 и 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
       - name: Сценарии на заглушках
         run: node test/smoke.mjs
       - name: Пробная сборка без публикации
+        if: matrix.node == 24
         run: npx --yes wrangler@latest deploy --dry-run --outdir /tmp/out
