@@ -1320,14 +1320,14 @@ function confirmsCx(text, rec, o = {}, opt = {}) {
 }
 function altError(status, message, code) { return Object.assign(new Error(message || ("Altegio " + status)), { status, code: +code || 0 }); }
 
-async function altCall(env, method, path, body) {
+async function altCall(env, method, path, body, user) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
   if (!env.ALTEGIO_PARTNER) throw altError(0, "не задан ключ ALTEGIO_PARTNER");
   for (let attempt = 0; ; attempt++) {
     const ac = new AbortController();
     let timer, r, txt;
     const req = (async () => {
       r = await fetch(ALT_API + path, { method, signal: ac.signal,
-        headers: { authorization: "Bearer " + env.ALTEGIO_PARTNER, accept: "application/vnd.api.v2+json", "content-type": "application/json" },
+        headers: { authorization: "Bearer " + env.ALTEGIO_PARTNER + (user ? ", User " + user : ""), accept: "application/vnd.api.v2+json", "content-type": "application/json" },
         body: body ? JSON.stringify(body) : undefined });
       txt = await r.text();
     })();
@@ -2006,6 +2006,76 @@ async function altDiag(env, cid, locArg, bookPhone) {
   return out.join("\n");
 }
 
+// Проверка ключа пользователя Altegio (вход логином и паролем салона): видит ли бот журнал записей.
+// Пароль никуда не сохраняется и не пишется в журнал; ключ пользователя на странице не показывается.
+async function altUserProbe(env, cid, login, password, phone) {
+  const out = [], c = (hasClient(cid) && CLIENTS[cid]) || CLIENTS.alt, loc = altLoc(env, c), now = Date.now();
+  if (!env.ALTEGIO_PARTNER) return "Altegio: не задан ключ разработчика ALTEGIO_PARTNER";
+  if (!loc) return `У бота «${c.name}» не задан номер локации Altegio`;
+  out.push(`Локация: ${loc} (бот «${c.name}»)`);
+  const err = e => `ошибка ${e.status || ""}${e.code ? " код " + e.code : ""} ${clean(e.message || "", 160)}`.trim();
+  let token = "";
+  try { const d = await altCall(env, "POST", "/auth", { login: clean(login, 120), password: String(password || "").slice(0, 200) }); token = (d && d.user_token) || ""; out.push(token ? `Вход в Altegio: ✅ ключ пользователя получен${d.name ? " (" + altText(d.name, 40) + ")" : ""}` : "Вход в Altegio: ⚠️ ответ без user_token, поля: " + Object.keys(d || {}).slice(0, 12).join(", ")); }
+  catch (e) { out.push("Вход в Altegio: ❌ " + err(e)); return out.join("\n"); }
+  if (!token) return out.join("\n");
+  const from = isoDay(now), to = isoDay(now + 14 * 86400e3), q = `start_date=${from}&end_date=${to}`;
+  const ways = [["записи (records)", `/records/${loc}?${q}&count=200`], ["записи (appointments)", `/locations/${loc}/appointments?${q}`]];
+  const mask = p => { const d = String(p || "").replace(/\D/g, ""); return d ? "…" + d.slice(-4) : "—"; };
+  const recOf = r => ({ id: r.id || r.record_id, at: r.datetime || r.date || r.start_at || "", staff: altText((r.staff && r.staff.name) || r.staff_name || "", 40), phone: (r.client && r.client.phone) || r.phone || "", del: "deleted" in r ? JSON.stringify(r.deleted) : "нет поля", svc: altText(((r.services || [])[0] || {}).title || "", 40) });
+  let way = null;
+  const list = async (show) => {
+    for (const [name, path] of way ? [way] : ways) {
+      try {
+        const d = await altCall(env, "GET", path, null, token), arr = Array.isArray(d) ? d : (d && (d.data || d.records || d.appointments)) || [];
+        if (!Array.isArray(arr)) { if (show) out.push(`${name}: ⚠️ ответ не список, поля: ${Object.keys(d || {}).slice(0, 12).join(", ")}`); continue; }
+        if (!way) { way = [name, path]; }
+        if (show) {
+          out.push(`${name}: ✅ ${arr.length} на ${from} … ${to}`);
+          if (arr[0]) out.push("  поля записи: " + Object.keys(arr[0]).slice(0, 24).join(", "));
+          for (const r of arr.slice(0, 5).map(recOf)) out.push(`  № ${r.id} — ${r.at}, ${r.svc || "?"}, мастер ${r.staff || "?"}, телефон ${mask(r.phone)}, deleted: ${r.del}`);
+        }
+        return arr;
+      } catch (e) { if (show) out.push(`${name}: ❌ ${err(e)}`); }
+    }
+    return null;
+  };
+  const first = await list(true);
+  if (!first || !phone) return out.join("\n") + (first ? "" : "\n\nЖурнал записей этим ключом не читается.");
+  // пробная запись: видна ли она в журнале и что с ней после удаления
+  const ph = normPhone(phone);
+  if (!ph) { out.push("", "Пробная запись: ❌ номер телефона не распознан"); return out.join("\n"); }
+  try {
+    const base = await altBase(env, loc, now), dates = altDates(await altCall(env, "GET", `/book_dates/${loc}`), now);
+    let slot = null, day = "";
+    for (const d of dates.slice(0, 3)) { const t = await altTimes(env, loc, 0, d, null, now, true); if (t[0]) { slot = t[0]; day = d; break; } }
+    if (!slot || !base.services[0]) { out.push("", "Пробная запись: ❌ нет свободного времени"); return out.join("\n"); }
+    const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: slot.datetime || `${day}T${slot.time.padStart(5, "0")}:00+0${TZ}:00` }];
+    const rec = (x => (Array.isArray(x) ? x[0] : x) || {})((await altRecord(env, loc, { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Проверка журнала: создаётся и сразу удаляется", appointments })).data);
+    if (!rec.record_id) { out.push("", "Пробная запись: ⚠️ Altegio не вернул номер записи — проверьте журнал"); return out.join("\n"); }
+    out.push("", `Пробная запись: создана № ${rec.record_id} — ${day} в ${slot.time}`);
+    const find = async () => { const a = await list(false); if (!a) return "журнал не прочитан"; const r = a.find(x => String(x.id || x.record_id) === String(rec.record_id)); if (!r) return "в журнале её нет"; const v = recOf(r); return `в журнале есть: мастер ${v.staff || "?"}, телефон ${mask(v.phone)}, deleted: ${v.del}`; };
+    const one = async () => { const res = []; for (const [n, p] of [["record", `/record/${loc}/${rec.record_id}`], ["appointments", `/locations/${loc}/appointments/${rec.record_id}`]]) { try { const d = await altCall(env, "GET", p, null, token); res.push(`${n}: ✅ deleted: ${d && "deleted" in d ? JSON.stringify(d.deleted) : "нет поля"}${d && d.staff && d.staff.name ? ", мастер " + altText(d.staff.name, 40) : ""}`); } catch (e) { res.push(`${n}: ${err(e)}`); } } return res.join("; "); };
+    out.push(`  с записью — ${await find()}`, `  чтение одной записи — ${await one()}`);
+    try { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); altDropTimes(loc); out.push("  удалена ✅"); }
+    catch (e) { out.push(`  ⚠️ не удалилась (${err(e)}) — удалите вручную в журнале: ${day} ${slot.time}`); return out.join("\n"); }
+    out.push(`  после удаления — ${await find()}`, `  чтение одной записи — ${await one()}`);
+  } catch (e) { out.push("Пробная запись: ❌ " + err(e)); }
+  return out.join("\n");
+}
+function altUserPage(body, cid) {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
+<style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
+pre{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
+form{display:grid;gap:8px}input{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:11px 12px;font-size:16px}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font:600 15px system-ui}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
+<body><div class="w"><h1>Журнал Altegio: проверка ключа пользователя</h1>${body ? `<pre>${esc(body)}</pre>` : ""}
+<form method="post" action="/altegio/user"><input type="hidden" name="c" value="${esc(cid)}">
+<input name="login" autocomplete="username" placeholder="Логин Altegio (почта или телефон)" required>
+<input name="password" type="password" autocomplete="current-password" placeholder="Пароль Altegio" required>
+<input name="phone" type="tel" placeholder="Ваш телефон для пробной записи (можно не заполнять)">
+<button>Проверить</button></form>
+<p>Логин и пароль нужны один раз, чтобы Altegio выдал боту ключ пользователя. Бот их не сохраняет. Пробная запись создаётся и сразу удаляется: так видно, показывает ли журнал запись и её удаление.</p></div></body></html>`;
+}
 function altPage(body, key, cid, loc) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
@@ -3647,6 +3717,15 @@ async function route(request, env, ctx) {
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? text(await diag(env)) : a || forbid(); }
+    if (P === "/altegio/user" && (M === "GET" || M === "POST")) { // ключ пользователя Altegio: читается ли журнал записей
+      if (M === "POST" && !sameOrigin(request, url)) return forbid();
+      const a = await owner();
+      if (a !== true) return a || forbid();
+      if (M === "GET") return page(altUserPage("", url.searchParams.get("c") || ""));
+      let f; try { f = await request.formData(); } catch (e) { return forbid(); }
+      const cid = String(f.get("c") || "");
+      return page(altUserPage(await altUserProbe(env, cid, String(f.get("login") || ""), String(f.get("password") || ""), String(f.get("phone") || "")), cid));
+    }
     if (P === "/altegio" && (M === "GET" || M === "POST")) { // проверка расписания; POST — пробная запись с удалением
       let q = { key: url.searchParams.get("key"), c: url.searchParams.get("c") || "", loc: url.searchParams.get("loc") || "", phone: "" };
       if (M === "POST") { try { const f = await request.formData(); q = { key: f.get("key"), c: String(f.get("c") || ""), loc: String(f.get("loc") || ""), phone: String(f.get("phone") || "") }; } catch (e) { q.key = null; } }

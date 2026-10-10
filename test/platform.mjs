@@ -1682,6 +1682,17 @@ section("записи, удалённые в Altegio; очистка памят�
   ok("время мастера «свободно», а проверка записи не проходит → запись бот помнит", (SD.hist("wa", "salon", C7).profile.bookings || []).length === 1);
   net.altCheckBusy = false;
   net.altBusy = false; net.altGetFail = 0; net.altGone = []; net.altGetPlain = false;
+  // ключ пользователя Altegio: страница проверки журнала (вход логином и паролем салона; пароль не сохраняется)
+  net.reset(); net.altAuth = [];
+  const lu = async (o) => (await own.go("/altegio/user", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ c: "salon", ...o }).toString() })).text();
+  ok("журнал Altegio: страница только для владельца", (await SD.call("/altegio/user?c=salon")).status === 403 && (await own.go("/altegio/user?c=salon")).status === 200);
+  let ut = await lu({ login: "me@x.kz", password: "wrong" });
+  ok("журнал Altegio: неверный пароль — понятная ошибка", /Вход в Altegio: ❌ ошибка 401/.test(ut), ut.slice(-600));
+  ut = await lu({ login: "me@x.kz", password: "right-pass", phone: "+7 701 555 66 77" });
+  ok("журнал Altegio: вход, журнал читается, пробная запись видна и после удаления помечена", /ключ пользователя получен/.test(ut) && /записи \(records\): ✅/.test(ut) && /с записью — в журнале есть: мастер Арман/.test(ut) && /после удаления — в журнале есть: .*deleted: true/.test(ut), ut.split("<pre>")[1]);
+  ok("журнал Altegio: пароль и ключ пользователя на страницу и в хранилище не попадают", !ut.includes("right-pass") && !ut.includes("usr-tok") && ![...SD.kv.mem.values()].some(v => v.includes("right-pass") || v.includes("usr-tok")));
+  ok("журнал Altegio: запрос журнала идёт с ключом разработчика и ключом пользователя", net.altAuth.length === 2);
+
   // пульт: «Очистить память бота» — история и записи чата забыты, окно WhatsApp сохраняется
   let d = await (await own.post("/api/inbox/act", { c: "salon", ch: "wa", id: C, act: "forget" })).json();
   const h = SD.hist("wa", "salon", C);
