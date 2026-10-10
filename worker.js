@@ -1353,8 +1353,36 @@ async function altCall(env, method, path, body) {
   }
 }
 
-// Записи этого чата, которые администратор удалил прямо в Altegio (или клиента там отменили): бот о них забывает.
-// Запись считается удалённой, только если Altegio прямо так ответил («не найдена» или deleted); сбой связи — запись остаётся
+// Удалена ли запись в Altegio (администратор удалил её прямо в журнале или клиента там отменили).
+// true — удалена; false — на месте; null — не знаем (тогда запись считаем существующей). b — { record_id, record_hash, date, time, staffName, loc }
+async function altIsGone(env, b, loc, nowMs) {
+  let g = null;
+  // 1) спрашиваем саму запись
+  if (b.record_hash) {
+    try {
+      const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`);
+      if (d && (d.deleted === true || d.deleted === 1)) g = true;
+      else if (d && typeof d === "object" && "deleted" in d) g = false; // Altegio прямо сказал: запись на месте
+      const sn = d && !Array.isArray(d) && d.staff && typeof d.staff === "object" ? altText(d.staff.name, 60) : "";
+      if (!b.staffName && sn) b.staffName = sn; // запись к «любому» мастеру: узнаём, к кому её поставили
+    } catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
+  }
+  // 2) прямого ответа нет (ошибка или ответ без поля deleted) — смотрим время мастера: запись занимает его время,
+  // а если оно снова свободно — записи нет. Мастер записи неизвестен (старая запись к «любому») — время должно быть свободно у всех мастеров
+  if (g === null && b.record_hash && (b.loc || loc)) {
+    try {
+      const L = b.loc || loc, base = await altBase(env, L, nowMs);
+      const st = b.staffName ? base.staff.filter(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName)).slice(0, 1) : base.staff.length <= 12 ? base.staff : [];
+      if (st.length) {
+        const fr = await Promise.all(st.map(m => altTimes(env, L, m.id, b.date, [], nowMs, true)));
+        if (fr.every(list => list.some(t => t.time === hm(b.time)))) g = true;
+      }
+    } catch (e) { console.log("alt check times", b.record_id, String(e)); }
+  }
+  return g;
+}
+
+// Записи этого чата, которые удалили прямо в Altegio: бот о них забывает. Сбой связи — запись остаётся
 async function altPrune(env, prof, nowMs, loc) {
   const today = isoDay(nowMs), nowT = hhmm(local(nowMs));
   const list = (prof.bookings || []).filter(b => b && b.record_id && b.date >= today && !(b.date === today && b.time <= nowT));
@@ -1362,31 +1390,15 @@ async function altPrune(env, prof, nowMs, loc) {
   const gone = [];
   let filled = 0;
   for (const b of list.slice(0, 4)) { // обычно одна-две записи
-    let g = null; // true — удалена, false — на месте, null — Altegio прямо не сказал
-    // 1) спрашиваем саму запись
-    if (b.record_hash) {
-      try {
-        const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`);
-        if (d && (d.deleted === true || d.deleted === 1)) g = true;
-        else if (d && typeof d === "object" && "deleted" in d) g = false; // Altegio прямо сказал: запись на месте
-        const sn = d && !Array.isArray(d) && d.staff && typeof d.staff === "object" ? altText(d.staff.name, 60) : "";
-        if (!b.staffName && sn) { b.staffName = sn; filled++; } // запись к «любому» мастеру: узнаём, к кому её поставили
-      } catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
-    }
-    // 2) прямого ответа нет (ошибка или ответ без поля deleted) — смотрим время мастера: запись занимает его время,
-    // а если оно снова свободно — записи нет (удалили или перенесли)
-    if (g === null && b.record_hash && b.staffName && (b.loc || loc)) {
-      try {
-        const L = b.loc || loc, base = await altBase(env, L, nowMs), st = base.staff.find(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName));
-        if (st) { const fr = await altTimes(env, L, st.id, b.date, [], nowMs, true); if (fr.some(t => t.time === hm(b.time))) g = true; }
-      } catch (e) { console.log("alt check times", b.record_id, String(e)); }
-    }
-    if (g) gone.push(b);
+    const had = b.staffName;
+    if (await altIsGone(env, b, loc, nowMs)) gone.push(b);
+    if (!had && b.staffName) filled++;
   }
   if (!gone.length) return filled;
   prof.bookings = (prof.bookings || []).filter(b => !gone.includes(b));
   if (!prof.bookings.length) delete prof.bookings;
   if (prof.req && !(prof.bookings || []).some(b => b.rq)) delete prof.req; // просьба об отмене выполнена — записи больше нет
+  prof.altGone = gone.filter(b => b.leadId != null).map(b => b.leadId).slice(0, 8); // заявки этих записей think() пометит «удалена в Altegio»
   return gone.length; // текст «Уже известно о клиенте» (profile.booked) пересчитывает think() — сразу после bookedText
 }
 // одинаковые названия различаем подписью (категория, специализация), а если и она совпала — номером: иначе бот запишет не туда
@@ -2340,6 +2352,9 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     return lead;
   };
   const patchLead = (id, patch) => { if (id) leadOps.push({ id, patch }); };
+  // записи, которые удалили прямо в Altegio (altPrune): их заявки — «отменена», иначе бот вернёт запись в чат по старой заявке
+  for (const id of saved.profile.altGone || []) patchLead(id, { status: "отменена", note: "запись удалена в Altegio" });
+  delete saved.profile.altGone;
   const badName = n => !n || /^(имя|имя\s+не\s+указано|…|—|-|не\s*указан[оа]?|указан[оа]?|неизвестн[оа]?|клиент|гость|аноним|name|client|unknown)$/i.test(String(n).trim()) || isJoke(n);
   const quote = `Сообщение: «${text.slice(0, 200)}»`;
   // телефон берём у клиента; номер из строки ИИ годится, только если клиент сам написал эти цифры (ИИ настоящего номера не видит)
@@ -2486,6 +2501,13 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
         let old = (await viewLeads()).find(x => x.altegio && x.altegio.record_id && x.altegio.loc === alt.loc && x.altegio.date === date && x.altegio.time === time && x.phone === l.phone && x.status !== "отменена" && samePerson(x.name || "", l.name));
         if (old) { // статус в общем списке мог устареть (два чата сохраняли заявки одновременно) — сверяемся с отдельным ключом заявки
           try { const v = JSON.parse((await store.get(leadKey(c.id, old.id))) || "null"); if (v && v.status === "отменена") old = null; } catch (e) { console.log("lead key", String(e)); }
+        }
+        if (old) {
+          const rec = { name: old.name, date, time, services: old.altegio.services || old.service, staffName: old.altegio.staffName || "", loc: old.altegio.loc, record_id: old.altegio.record_id, record_hash: old.altegio.record_hash, leadId: old.id };
+          // вживую 10 октября: память чата очистили, запись удалили в Altegio, а бот по старой заявке ответил «Вы уже записаны» — сначала спрашиваем Altegio
+          let gone = null;
+          try { gone = await altIsGone(env, rec, alt.loc, nowMs); } catch (e) { console.log("ghost check", String(e)); }
+          if (gone) { patchLead(old.id, { status: "отменена", note: "запись удалена в Altegio" }); old = null; }
         }
         if (old) {
           const rec = { name: old.name, date, time, services: old.altegio.services || old.service, staffName: old.altegio.staffName || "", loc: old.altegio.loc, record_id: old.altegio.record_id, record_hash: old.altegio.record_hash, leadId: old.id };

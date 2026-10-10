@@ -53,7 +53,7 @@ export const net = {
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
 export const D0 = iso(Date.now()), D1 = iso(Date.now() + 86400e3), D2 = iso(Date.now() + 2 * 86400e3);
-const ALT_DEFAULT = () => ({
+export const ALT_DEFAULT = () => ({
   services: [
     { id: 101, title: "Мужская стрижка", category_id: 1, price_min: 6000, price_max: 6000, active: 1, seance_length: 3600 },
     { id: 102, title: "Оформление бороды", category_id: 1, price_min: 4000, price_max: 5000, active: 1, seance_length: 1800 },
