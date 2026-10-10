@@ -43,7 +43,7 @@ export const net = {
   tgStatus: 200,               // что отвечает Telegram
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
-  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
+  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
@@ -80,7 +80,15 @@ function altStub(url, init) {
     }
     return J({ success: true, data: t.map(x => ({ time: x, seance_length: 3600, sum_length: 3600, datetime: `${m[2]}T${x}:00+05:00` })), meta: [] });
   }
-  if (/^\/book_check\/\d+/.test(path)) return J({ success: true, data: null, meta: { message: "Created" } }, 201);
+  if (/^\/book_check\/\d+/.test(path)) {
+    if (net.altCheckBusy) return J({ success: false, data: null, meta: { message: "The service is not available at the selected time." } }, 422);
+    if (net.altBusy) { // как вживую: время мастера с записью проверку не проходит (422)
+      const a = (JSON.parse(init.body || "{}").appointments || [])[0] || {};
+      const taken = net.altRecords.some((r, i) => { const x = (r.appointments || [])[0] || {}, id = String(777001 + i); return !net.altDeleted.includes(id) && !(net.altGone || []).includes(id) && String(x.staff_id) === String(a.staff_id) && x.datetime === a.datetime; });
+      if (taken) return J({ success: false, data: null, meta: { message: "The service is not available at the selected time." } }, 422);
+    }
+    return J({ success: true, data: null, meta: { message: "Created" } }, 201);
+  }
   if (/^\/book_record\/\d+/.test(path) && method === "POST") {
     net.altRecords.push(JSON.parse(init.body));
     const id = 777000 + net.altRecords.length;

@@ -1610,13 +1610,17 @@ section("записи, удалённые в Altegio; очистка памят�
   await say("Азамат, мужская стрижка к Ерлану послезавтра в 10:00", `Записала.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D2}; Время: 10:00`);
   ok("новая запись создана", (SD.hist("wa", "salon", C).profile.bookings || []).length === 1);
 
-  SD.env.ALTEGIO_SLOT_CHECK = "1"; // проверка по времени мастера — только когда её включили
+  // записи моложе 5 минут по времени мастера не проверяются — «состариваем» записи чата
+  const age = (id = C) => { const k = "h:wa:salon:" + id, v = SD.kv.json(k); for (const x of v.profile.bookings || []) x.at = (x.at || Date.now()) - 10 * 60e3; SD.kv.mem.set(k, JSON.stringify(v)); };
 
   // чтение записи этим ключом Altegio недоступно (как может быть вживую) — удалённую запись видно по освободившемуся времени мастера
   net.altBusy = true; net.altGetFail = 401; net.altGone = [];
   await say("Сколько стоит детская стрижка?", "Детская стрижка — от 4 000 ₸.");
   const rec2 = String((SD.hist("wa", "salon", C).profile.bookings || [])[0]?.record_id || "");
   ok("чтение записи недоступно, время мастера занято → запись бот помнит", !!rec2 && (SD.hist("wa", "salon", C).profile.bookings || []).length === 1, JSON.stringify(SD.hist("wa", "salon", C).profile.bookings));
+  age();
+  await say("А бритьё?", "Королевское бритьё — от 7 000 ₸.");
+  ok("запись старше 5 минут, время мастера занято и проверка записи не проходит → запись бот помнит", (SD.hist("wa", "salon", C).profile.bookings || []).length === 1);
   net.altGone = [rec2]; // администратор удалил запись — время у Ерлана освободилось
   await say("А мужская?", "Мужская стрижка — от 6 000 ₸.");
   ok("время мастера освободилось → бот запись забыл", !(SD.hist("wa", "salon", C).profile.bookings || []).length, JSON.stringify([SD.hist("wa", "salon", C).profile.bookings, net.alt.slice(-5)]));
@@ -1628,7 +1632,7 @@ section("записи, удалённые в Altegio; очистка памят�
   ok("«любой мастер»: бот сам выбрал мастера, у которого время свободно, и назвал его клиенту", b3.staffName === "Арман" && /мастер Арман/.test(h3.turns.at(-1).text) && net.altRecords.at(-1).appointments[0].staff_id === 11, JSON.stringify([b3, h3.turns.at(-1).text, net.altRecords.at(-1)]));
   await say("А кто у меня мастер?", "Ваш мастер — Арман.");
   ok("в подсказке ИИ у записи указан мастер", /Арман/.test((net.gemini.at(-1).systemInstruction.parts[0].text.split("Уже известно о клиенте")[1] || "").split("\n")[0]) && (SD.hist("wa", "salon", C).profile.bookings || []).length === 1);
-  net.altGone = [String(b3.record_id)];
+  net.altGone = [String(b3.record_id)]; age();
   await say("Какие у меня записи на завтра?", "Записей нет.");
   const sys3 = net.gemini.at(-1).systemInstruction.parts[0].text;
   ok("чтение записи «успешно» без deleted, а время Армана освободилось → бот запись забыл, ИИ её не видит", !(SD.hist("wa", "salon", C).profile.bookings || []).length && !/Мужская стрижка/.test(sys3.split("Уже известно о клиенте")[1] || ""), JSON.stringify([SD.hist("wa", "salon", C).profile.bookings, (sys3.split("Уже известно о клиенте")[1] || "").slice(0, 200)]));
@@ -1659,10 +1663,10 @@ section("записи, удалённые в Altegio; очистка памят�
   r5.staffName = ""; SD.kv.mem.set(k5, JSON.stringify(v5)); // как запись, сделанная до 10 октября: мастер не известен
   await say5("Сколько стоит борода?", "Оформление бороды — от 4 000 ₸.");
   ok("мастер записи неизвестен, у одного мастера 12:00 занято → запись бот помнит", (SD.hist("wa", "salon", C5).profile.bookings || []).length === 1, JSON.stringify(SD.hist("wa", "salon", C5).profile.bookings));
-  net.altGone = [String(r5.record_id)];
+  net.altGone = [String(r5.record_id)]; age(C5);
   await say5("А детская?", "Детская стрижка — от 4 000 ₸.");
   ok("мастер записи неизвестен, 12:00 свободно у всех мастеров → запись бот забыл", !(SD.hist("wa", "salon", C5).profile.bookings || []).length, JSON.stringify(SD.hist("wa", "salon", C5).profile.bookings));
-  net.altData = null; delete SD.env.ALTEGIO_SLOT_CHECK;
+  net.altData = null;
   // вживую 10 октября (demo7): запись к Арману на 12:00 есть, чтение записи ответило без deleted, а время мастера Altegio показал свободным —
   // бот решил, что запись удалили, и на «я записан или нет?» записывал заново (упёрся в предел — заявка администратору). Время мастера само по себе — не довод
   net.reset(); net.altBusy = false; net.altGetPlain = true; net.altGone = [];
@@ -1671,6 +1675,12 @@ section("записи, удалённые в Altegio; очистка памят�
   await say7("я записан или нет?", `Да.\n[ЗАЯВКА] Имя: Азамат; Телефон: указан; Услуга: Мужская стрижка; Мастер: Арман; Дата: ${D1}; Время: 11:00`);
   const h7 = SD.hist("wa", "salon", C7);
   ok("чтение записи без deleted, время мастера «свободно» → запись бот помнит, второй раз не записывает", (h7.profile.bookings || []).length === 1 && net.altRecords.length === 1 && /уже записаны/.test(h7.turns.at(-1).text) && !(h7.profile.pend || []).length, JSON.stringify([h7.turns.at(-1).text, h7.profile.bookings, h7.profile.pend, net.altRecords.length]));
+  // та же запись через 10 минут: время мастера «свободно», но пробная проверка записи не проходит — запись не забываем (нужны оба признака)
+  { const k = "h:wa:salon:" + C7, v = SD.kv.json(k); for (const x of v.profile.bookings || []) x.at -= 10 * 60e3; SD.kv.mem.set(k, JSON.stringify(v)); }
+  net.altCheckBusy = true;
+  await say7("Спасибо", "Пожалуйста!");
+  ok("время мастера «свободно», а проверка записи не проходит → запись бот помнит", (SD.hist("wa", "salon", C7).profile.bookings || []).length === 1);
+  net.altCheckBusy = false;
   net.altBusy = false; net.altGetFail = 0; net.altGone = []; net.altGetPlain = false;
   // пульт: «Очистить память бота» — история и записи чата забыты, окно WhatsApp сохраняется
   let d = await (await own.post("/api/inbox/act", { c: "salon", ch: "wa", id: C, act: "forget" })).json();
