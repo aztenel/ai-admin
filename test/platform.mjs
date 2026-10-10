@@ -1291,6 +1291,62 @@ section("рассылки через Green-API");
   ok("общий вебхук: блокировка номера → тревога и пометка у клиента номера", net.tg.some(x => /заблокировал/.test(x.text)) && !!(S4.kv.json("bchold:barber") || {}).ga, JSON.stringify(net.tg));
 }
 
+// ====== Реквизиты для оплаты (Kaspi): текст из паспорта ставит код, а не ИИ
+section("оплата: реквизиты Kaspi");
+{
+  const S5 = mk(), own = S5.browser(); await own.go("/studio?key=" + OWNER);
+  const PAY = "Kaspi Gold: +7 701 555 44 33 (Кайрат К.)\nСсылка на оплату: https://pay.kaspi.kz/pay/abc123";
+  let d = await (await own.post("/api/studio/save", { ...PASS, pay: "x".repeat(501) })).json();
+  ok("реквизиты длиннее 500 знаков → ошибка паспорта", d.ok === false && d.errors.some(e => /реквизит/i.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/save", { ...PASS, pay: PAY })).json();
+  ok("паспорт с реквизитами сохраняется", d.ok === true, JSON.stringify(d));
+  d = await (await own.go("/api/studio/get?c=kairat")).json();
+  ok("реквизиты возвращаются в форму паспорта как есть", (d.cfg || {}).pay === PAY, JSON.stringify(d).slice(0, 300));
+  const pg = await (await own.go("/studio")).text();
+  ok("в форме паспорта есть поле реквизитов", /id="f_pay"/.test(pg) && /'pay'/.test(pg));
+
+  // ИИ ставит метку — клиент получает реквизиты дословно, метки не видит
+  let r = await S5.chat("kairat", "pay1", "Как можно оплатить?", "Оплатить можно переводом на Kaspi, реквизиты ниже.\n[РЕКВИЗИТЫ]");
+  ok("метка [РЕКВИЗИТЫ] → реквизиты из паспорта дословно, метки в ответе нет", r.reply.includes(PAY) && !/РЕКВИЗИТ/.test(r.reply) && /^Оплатить можно/.test(r.reply), r.reply);
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("в подсказке ИИ есть правило про [РЕКВИЗИТЫ], а самих номера и ссылки нет", /\[РЕКВИЗИТЫ\]/.test(sys) && !sys.includes("555 44 33") && !sys.includes("pay.kaspi.kz/pay/abc123"), sys.slice(-600));
+  // клиент спрашивает про Kaspi, а ИИ метку забыл — реквизиты всё равно приходят
+  r = await S5.chat("kairat", "pay2", "Куда скинуть предоплату на каспи?", "Предоплату можно перевести на Kaspi.");
+  ok("вопрос про оплату без метки от ИИ → реквизиты всё равно добавлены", r.reply.includes(PAY), r.reply);
+  r = await S5.chat("kairat", "pay3", "Kaspi реквизиттерін жіберіңізші", "Kaspi арқылы төлеуге болады.");
+  ok("по-казахски («Kaspi реквизиттерін») → реквизиты добавлены", r.reply.includes(PAY), r.reply);
+  // ИИ сам придумал номер — до клиента он не доходит, а настоящие реквизиты доходят
+  r = await S5.chat("kairat", "pay4", "Скиньте номер для перевода", ["Переводите на Kaspi +7 777 000 11 22.", "Реквизиты для перевода ниже.\n[РЕКВИЗИТЫ]"]);
+  ok("выдуманный ИИ номер не уходит клиенту, реквизиты из паспорта уходят", !/777 000 11 22/.test(r.reply) && r.reply.includes(PAY), r.reply);
+  // обычный вопрос — реквизитов нет
+  r = await S5.chat("kairat", "pay5", "Сколько стоит стрижка?", "Мужская стрижка — от 6000 ₸. Записать вас?");
+  ok("обычный вопрос → реквизиты не добавляются", !r.reply.includes("555 44 33"), r.reply);
+  // реквизиты уже в ответе (повтор) — второй раз не добавляются
+  r = await S5.chat("kairat", "pay6", "Как оплатить через каспи?", "Вот реквизиты.\n[РЕКВИЗИТЫ]\n[РЕКВИЗИТЫ]");
+  ok("две метки → реквизиты один раз", r.reply.split("555 44 33").length === 2, r.reply);
+  // в истории чата (и в пульте) — то, что ушло клиенту
+  const h = S5.hist("web", "kairat", "pay1");
+  ok("в истории чата ответ бота с реквизитами", h && h.turns.at(-1).text.includes(PAY), JSON.stringify(h && h.turns.at(-1)));
+
+  // пульт: реквизиты приходят в данных чата — кнопка «₸» вставляет их в ответ
+  d = await (await own.go("/api/inbox/chat?c=kairat&ch=web&id=pay1")).json();
+  ok("пульт: в данных чата есть реквизиты компании", d.pay === PAY, JSON.stringify(d).slice(0, 300));
+  const kk = await (await own.post("/api/studio/key", { id: "kairat" })).json(), staff = S5.browser(); await staff.go("/inbox?c=kairat&key=" + kk.key);
+  d = await (await staff.go("/api/inbox/chat?c=kairat&ch=web&id=pay1")).json();
+  ok("пульт сотрудника: реквизиты тоже есть", d.pay === PAY, JSON.stringify(d).slice(0, 200));
+  const pult = await (await own.go("/inbox?c=kairat")).text();
+  ok("в пульте есть кнопка реквизитов", /id="pay"/.test(pult) && /Реквизиты/.test(pult));
+
+  // без реквизитов в паспорте: метку ИИ клиенту не показываем, правила в подсказке нет
+  await own.post("/api/studio/save", { ...PASS, isNew: false, pay: "" });
+  S5.env.__force = 1; await S5.call("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  await new Promise(s => setTimeout(s, 5));
+  r = await S5.chat("kairat", "pay7", "Как оплатить?", "Оплата наличными или Kaspi на месте.\n[РЕКВИЗИТЫ]");
+  ok("реквизитов нет в паспорте → метка из ответа убрана, ничего не добавлено", !/РЕКВИЗИТ/.test(r.reply) && /Оплата наличными/.test(r.reply), r.reply);
+  d = await (await own.go("/api/inbox/chat?c=kairat&ch=web&id=pay7")).json();
+  ok("пульт без реквизитов: поля нет — кнопка скрыта", !d.pay, JSON.stringify(d).slice(0, 200));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);

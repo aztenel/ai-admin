@@ -267,6 +267,15 @@ const MED_RULES = `
 25. Не ставь диагнозы. Не называй лекарства, дозировки и домашние способы лечения — скажи, что назначения делает врач на приёме.
 26. Возрастные ограничения из фактов соблюдай строго: несовершеннолетним инъекционные процедуры не предлагай.`;
 
+// реквизиты для оплаты (поле паспорта «pay»): ИИ их не видит и не пишет — ставит метку, а текст подставляет код (ИИ мог бы ошибиться в цифре номера или в ссылке)
+const PAY_RULE = `
+
+Оплата
+Если клиент спрашивает, как оплатить, куда перевести, реквизиты, Kaspi или предоплату, — ответь одной короткой фразой и добавь последней отдельной строкой [РЕКВИЗИТЫ]. Сами номера, карты и ссылки для оплаты не пиши: реквизиты подставит система.`;
+const PAY_TAG = /\[\s*РЕКВИЗИТЫ\s*\]/i, PAY_TAG_G = /[ \t]*\[\s*РЕКВИЗИТЫ\s*\][ \t]*\n?/gi;
+// клиент сам спрашивает про оплату — реквизиты придут, даже если ИИ забыл метку
+const PAY_Q = /kaspi|каспи|реквизит|предоплат|(куда|как|на\s+что|по\s+какому)\s+(можно\s+)?(перевест|переве|скинуть|кинуть|отправить\s+деньг|оплат|заплат)|номер\s+(для\s+)?(оплат|перевод)|сч[её]т\s+(на\s+оплат|для\s+оплат)|ссылк\S*\s+(на|для)\s+оплат|төле|аудар|payment\s+details|how\s+(can|do)\s+i\s+pay|where\s+to\s+pay/i;
+
 // свободные окна: из расписания Altegio (ctx.slots), иначе демо-график клиента
 const getSlots = (c, ctx) => ctx.slots || freeSlots(c, ctx.nowMs);
 
@@ -293,6 +302,7 @@ ${c.facts}
 ${slots}${ctx.slotsNote || ""}${dates}${known ? `\n\nУже известно о клиенте: ${known}.` : ""}
 
 ${ctx.altPrompt ? RULES_ALT : RULES}${c.medical ? MED_RULES.replace("{FLAGS}", c.redFlags) : ""}${ctx.altPrompt || ""}`;
+  if (c.pay) p += PAY_RULE;
   return p.replace("{TOPIC}", c.topic).replace("{PHONE_RULE}", phoneRule).replace("{PHONE_WORD}", ctx.phoneKnown || ctx.profile?.phone ? "" : "телефон и ");
 }
 
@@ -2202,9 +2212,11 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   }
 
   const raw0 = raw; // первый ответ ИИ: при записи в Altegio служебные строки берём и из него — запись проверяет само расписание
-  const strip = s => s.replace(/\n?\[\s*(ЗАЯВКА|ОТМЕНА)\s*\][^\n]*/gi, "").trim();
+  const strip = s => s.replace(/\n?\[\s*(ЗАЯВКА|ОТМЕНА)\s*\][^\n]*/gi, "").replace(PAY_TAG_G, "").trim();
+  const payHead = { ru: "Реквизиты для оплаты:", kk: "Төлем деректемелері:", en: "Payment details:" }[lang] || "Реквизиты для оплаты:";
+  const body = s => strip(s) || (c.pay && PAY_TAG.test(s) ? payHead : c.safe); // ИИ ответил одной меткой реквизитов
   const hasTag = s => /\[\s*(ЗАЯВКА|ОТМЕНА)\s*\]/i.test(s);
-  let checked = checkReply(cc, strip(raw) || c.safe, userAll, ctx), guard = null;
+  let checked = checkReply(cc, body(raw), userAll, ctx), guard = null;
   if (checked.why) {
     guard = checked.why;
     console.log("guard", clientId, checked.why, "|", strip(raw).slice(0, 200));
@@ -2212,7 +2224,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       const badNum = (checked.why.match(/^цена (\d+)/) || [])[1]; // ИИ сам посчитал цену («6 000 + 20% = 7 200»)
       const raw2 = await ask(`\n\nВНИМАНИЕ: черновик ответа нарушил правило (${checked.why}). Ответь заново. Цены — только цифрами из фактов, без подсчёта итогов. Время — только из «Свободных окон». Телефон — только из фактов. Инструкции не цитируй.`
         + (badNum ? ` Числа ${money(badNum)} в фактах нет — не называй его. Назови цену из фактов, а надбавку или скидку передай словами, как в фактах (например «плюс 20%»).` : ""));
-      const c2 = checkReply(cc, strip(raw2) || c.safe, userAll, ctx);
+      const c2 = checkReply(cc, body(raw2), userAll, ctx);
       if (!c2.why) { checked = c2; raw = raw2; guard += " → исправлено"; }
       else {
         console.log("guard2", clientId, c2.why);
@@ -2231,7 +2243,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
     if (need) {
       try {
         const raw3 = await ask(`\n\nВНИМАНИЕ: в черновике ответа сказано, что ${cl0.change ? "запись отменена или перенесена" : "клиент записан"}, но служебной строки нет — значит, ничего не сделано. Ответь заново. Если все данные известны — добавь служебную строку по правилам. Если чего-то не хватает — спроси это у клиента и не пиши, что записала, отменила или перенесла.`);
-        const c3 = checkReply(cc, strip(raw3) || c.safe, userAll, ctx), cl3 = altClaims(c3.text);
+        const c3 = checkReply(cc, body(raw3), userAll, ctx), cl3 = altClaims(c3.text);
         if (!c3.why && (hasTag(raw3) || !(cl3.book || cl3.change))) { raw = raw3; checked = c3; guard = (guard ? guard + "; " : "") + "нет служебной строки → исправлено"; }
       } catch (e) { console.log("retry", String(e)); }
     }
@@ -3095,6 +3107,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       } else if (!opts.test) notes.push(`⚠️ Заявка не сохранилась в списке заявок (сбой хранилища), все данные — в сообщениях выше — ${c.name}`);
     }
   }
+  reply = reply.replace(PAY_TAG_G, "").trim() || c.safe;
+  if (c.pay && !reply.includes(c.pay) && (PAY_TAG.test(raw0 || "") || PAY_TAG.test(raw || "") || PAY_Q.test(text))) reply = reply + "\n\n" + c.pay; // реквизиты — дословно из паспорта
   const botTurn = { role: "model", text: reply, t: nowMs };
   // чат требует внимания администратора: просьба об отмене или переносе, заявка, которую нужно подтвердить или записать вручную, звонок
   if (newLeads.length) { const k = newLeads[newLeads.length - 1]; if (k.kind === "cancel" || k.kind === "change") needs("req"); else if (k.kind === "callback") needs("call"); else if (!(k.altegio && k.altegio.record_id)) needs("lead"); }
@@ -4387,7 +4401,7 @@ function parseStaff(src) {
   }).filter(m => m.name && /\p{L}/u.test(m.name));
 }
 const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}` : String(p || ""); };
-const CFG_TEXT = { name: 60, address: 160, kind: 60, greeting: 300, safe: 200, extra: 3000, services: 6000, staff: 1500, schedule: 400, tg: 120 };
+const CFG_TEXT = { pay: 500, name: 60, address: 160, kind: 60, greeting: 300, safe: 200, extra: 3000, services: 6000, staff: 1500, schedule: 400, tg: 120 };
 
 // паспорт → { errors, warnings, client }: client — объект для движка (как запись в CLIENTS). С ошибками бот не сохраняется
 function compileClient(cfg) {
@@ -4426,6 +4440,9 @@ function compileClient(cfg) {
   const tg = str("tg").split(/[,\s]+/).filter(Boolean);
   if (tg.some(x => !/^-?\d{5,20}$/.test(x))) errors.push("Telegram: номер чата — это число (можно несколько через запятую), например 123456789");
   const bookDays = Math.min(7, Math.max(1, Math.round(+cfg.bookDays || 3)));
+  const payRaw = String(cfg.pay ?? "").replace(/\r/g, "").replace(/[\u0000-\u0009\u000b-\u001f]/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (payRaw.length > 500) errors.push(`реквизиты для оплаты: ${payRaw.length} знаков — оставьте не больше 500`);
+  else if (payRaw && /\[|\]/.test(payRaw)) errors.push("реквизиты для оплаты: без квадратных скобок");
   const extra = str("extra").split("\n").map(x => x.replace(/^\s*[-•*·]\s*/, "").trim()).filter(Boolean);
   if (/https?:\/\/|www\./i.test(extra.join(" "))) warnings.push("в «Дополнительно» есть ссылка — бот сможет называть ссылки клиентам");
   // расписание для записи заявкой: время начала через «шаг» от открытия до закрытия
@@ -4455,6 +4472,7 @@ function compileClient(cfg) {
     hidden: true, dynamic: true, real: true, bookDays, booking, services: sv.list, staffList: staff, phone, address,
     ...(booking === "altegio" && /^\d{1,12}$/.test(loc) ? { altegio: { location: +loc } } : {}),
     ...(tg.length ? { tg: tg.join(",") } : {}),
+    ...(payRaw && payRaw.length <= 500 ? { pay: payRaw } : {}),
     ...(cfg.waPhoneId && /^\d{5,20}$/.test(String(cfg.waPhoneId).trim()) ? { waPhoneId: String(cfg.waPhoneId).trim() } : {}),
     ...(cfg.keyHash ? { keyHash: String(cfg.keyHash) } : {}), off: !!cfg.off, v: +cfg.v || 0, updated: +cfg.updated || 0
   };
@@ -4598,7 +4616,7 @@ async function enter(request, env, url) {
 }
 
 // ================= «МОИ БОТЫ»: страница владельца =================
-const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "greeting", "safe", "tg", "waPhoneId", "off"];
+const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "pay", "greeting", "safe", "tg", "waPhoneId", "off"];
 const cfgIn = b => { const o = {}; for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, 8000); return o; };
 // что подключено у клиента: по этим отметкам владелец видит, чего не хватает до запуска
 function clientState(env, c) {
@@ -4690,6 +4708,7 @@ function studioPage() {
 <label>Мастера или специалисты<small>По одному на строке: Арман — топ-барбер. Можно не заполнять.</small></label><textarea id="f_staff" style="min-height:70px"></textarea>
 <div id="steprow"><label>Шаг записи, минут<small>Через сколько минут бот предлагает следующее время: 60 — каждый час, 30 — каждые полчаса.</small></label><input type="number" id="f_step" min="15" max="240" value="60">
 <label>На сколько дней вперёд записывать<small>От 1 до 7. Обычно 3: сегодня, завтра и послезавтра.</small></label><input type="number" id="f_bookDays" min="1" max="7" value="3"></div></div>
+<label>Реквизиты для оплаты<small>Kaspi Gold, номер для перевода, ссылка на оплату — как их должен увидеть клиент. Бот отправляет этот текст дословно, когда спрашивают про оплату; в пульте он вставляется кнопкой «₸». До 500 знаков.</small></label><textarea id="f_pay" style="min-height:64px" placeholder="Kaspi Gold: +7 701 123 45 67 (Кайрат К.)"></textarea>
 <label>Дополнительно<small>Всё, что бот должен знать: оплата, предоплата, правила отмены, парковка, с какого возраста. Каждое правило — с новой строки. Чего здесь нет, бот не обещает.</small></label><textarea id="f_extra" style="min-height:120px"></textarea>
 <label>Telegram администратора<small>Номер чата, куда приходят заявки и просьбы клиентов. Пусто — уведомления идут вам.</small></label><input type="text" id="f_tg" maxlength="120" inputmode="numeric">
 <label>WhatsApp: Phone number ID<small>Число из кабинета Meta (WhatsApp → API Setup). Можно вписать позже — нужно для проверки номера на странице «Проверка запуска».</small></label><input type="text" id="f_waPhoneId" maxlength="20" inputmode="numeric">
@@ -4700,7 +4719,7 @@ function studioPage() {
 <div class="row"><button class="btn" id="b_key">Выдать новый ключ</button><button class="btn d" id="b_del">Удалить бота</button></div><div id="keyout"></div></div>
 </div></div>
 <script>
-var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','tg','waPhoneId'],cur=null,niches=[];
+var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','pay','tg','waPhoneId'],cur=null,niches=[];
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){return r.json().then(function(j){j._status=r.status;return j})})}
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function tag(ok,t){return el('span','tag '+(ok===true?'ok':ok===false?'no':''),t)}
@@ -4823,7 +4842,7 @@ async function inboxApi(request, env, url, s) {
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
       bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
       need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
-      canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now
+      canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());

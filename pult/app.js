@@ -259,6 +259,7 @@ function renderChat(d, scroll) {
   var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? "Отправка не настроена: WhatsApp этой компании ещё не подключён." : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения." : "После вашего ответа бот молчит в этом чате 2 часа.";
   wl.textContent = w; if (d.ch === "web" || !d.canSend || !d.open) wl.classList.add("amb");
   $("send").disabled = !d.open; $("txt").disabled = !d.open;
+  var pb = $("pay"); pb.hidden = !d.pay; pb.disabled = !d.open;
   renderCard(d);
   if (toEnd) { var E = $("msgs"); E.scrollTop = E.scrollHeight; if (window.requestAnimationFrame) requestAnimationFrame(function () { E.scrollTop = E.scrollHeight; }); }
 }
@@ -307,9 +308,12 @@ function sendMsg() {
 }
 function fit() { var t = $("txt"); t.style.height = "auto"; t.style.height = Math.min(Math.max(t.scrollHeight, 44), 120) + "px"; }
 var QUICK = (window.__QUICK || ["Здравствуйте! Чем могу помочь?", "Подскажите, пожалуйста, ваше имя и телефон.", "Ждём вас! Если планы изменятся — напишите заранее.", "Спасибо за обращение! Перезвоню вам в течение 10 минут."]);
+function addText(q) { var ta = $("txt"); if (ta.disabled) return; ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, "") + "\n\n" : "") + q; fit(); try { ta.focus(); } catch (e) {} }
+function insertPay() { if (S.chat && S.chat.pay) addText(S.chat.pay); } // реквизиты из паспорта — дословно; отправляет сам администратор
 function quickSheet() {
   if ($("txt").disabled) return;
-  var body = h("div", ""); QUICK.forEach(function (q) { var o = h("button", "opt", h("span", "", q), { type: "button" }); o.onclick = function () { closeSheet(); var ta = $("txt"); ta.value = (ta.value ? ta.value + " " : "") + q; fit(); ta.focus(); }; body.appendChild(o); });
+  var body = h("div", "");
+  if (S.chat && S.chat.pay) { var po = h("button", "opt", h("span", "", "₸ Реквизиты для оплаты"), { type: "button" }); po.onclick = function () { closeSheet(); insertPay(); }; body.appendChild(po); } QUICK.forEach(function (q) { var o = h("button", "opt", h("span", "", q), { type: "button" }); o.onclick = function () { closeSheet(); var ta = $("txt"); ta.value = (ta.value ? ta.value + " " : "") + q; fit(); ta.focus(); }; body.appendChild(o); });
   sheet("Быстрые ответы", body);
 }
 function menuSheet() {
@@ -360,7 +364,7 @@ function init() {
   $("rfs").onclick = function () { loadList(); if (S.cur) loadChat(false); };
   $("q").oninput = function () { S.q = this.value; renderList(); };
   $("txt").oninput = fit; $("txt").onkeydown = function (e) { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMsg(); };
-  $("send").onclick = sendMsg; $("quick").onclick = quickSheet; $("back").onclick = closeChat; $("menu").onclick = menuSheet; $("infobtn").onclick = openCard;
+  $("send").onclick = sendMsg; $("quick").onclick = quickSheet; $("pay").onclick = insertPay; $("back").onclick = closeChat; $("menu").onclick = menuSheet; $("infobtn").onclick = openCard;
   $("who").onclick = openCard; $("cback").onclick = closeCard; $("cs").onclick = closeCard;
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if ($("sheet")) closeSheet(); else if (S.card) closeCard(); } });
   window.addEventListener("hashchange", function () { var m = /^#(wa|ga|web):([\w-]+)$/.exec(location.hash); if (m && S.C && !same(S.cur, { ch: m[1], id: m[2] })) openChat(m[1], m[2]); });

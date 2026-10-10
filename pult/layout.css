@@ -166,3 +166,5 @@ a.row,button.row{color:inherit}
   .nav{left:8px;right:8px;padding:4px}
   .nav a{font-size:10px;margin:0}
 }
+.ibtn.pay{font-size:20px;font-weight:700;color:var(--ac)}
+.ibtn.pay[hidden]{display:none}
