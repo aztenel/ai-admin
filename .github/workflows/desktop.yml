@@ -47,13 +47,21 @@ jobs:
           $g = [System.Drawing.Graphics]::FromImage($bmp)
           $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("$env:GITHUB_WORKSPACE/pult-windows.png")
-          "process alive: $(-not $p.HasExited)"
+          "process alive: $(-not $p.HasExited); screen: $($b.Width)x$($b.Height)" | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/selftest.txt"
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
       - name: Снимок в артефакты
         uses: actions/upload-artifact@v4
         with:
           name: pult-windows-screenshot
           path: pult-windows.png
+      - name: Снимок в ветку desktop-shots (чтобы его было видно без артефактов)
+        shell: bash
+        run: |
+          mkdir -p /tmp/shots && cp pult-windows.png /tmp/shots/ && cp "$GITHUB_WORKSPACE/selftest.txt" /tmp/shots/ 2>/dev/null || true
+          cd /tmp/shots && git init -q && git checkout -q -b desktop-shots
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "снимок сборки ${{ github.run_number }}"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" desktop-shots
       - name: Установщики в артефакты
         uses: actions/upload-artifact@v4
         with:
