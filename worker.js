@@ -1369,7 +1369,9 @@ async function altIsGone(env, b, loc, nowMs) {
   }
   // 2) прямого ответа нет (ошибка или ответ без поля deleted) — смотрим время мастера: запись занимает его время,
   // а если оно снова свободно — записи нет. Мастер записи неизвестен (старая запись к «любому») — время должно быть свободно у всех мастеров
-  if (g === null && b.record_hash && (b.loc || loc)) {
+  // Вживую 10 октября (demo7) эта проверка ошиблась: запись к Арману на 12:00 была, а бот решил, что её удалили, и записывал клиента заново.
+  // Пока не выяснено, как Altegio показывает время мастера с записью, она выключена: включает Text ALTEGIO_SLOT_CHECK = 1
+  if (g === null && b.record_hash && (b.loc || loc) && env.ALTEGIO_SLOT_CHECK === "1") {
     try {
       const L = b.loc || loc, base = await altBase(env, L, nowMs);
       const st = b.staffName ? base.staff.filter(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName)).slice(0, 1) : base.staff.length <= 12 ? base.staff : [];
@@ -1963,15 +1965,25 @@ async function altDiag(env, cid, locArg, bookPhone) {
       if (rec && rec.record_id) {
         out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${first.date} в ${first.time}`);
         if (sent && !/^\+/.test(String(sent.phone))) out.push("  (номер телефона Altegio принял только цифрами, без «+» — бот это учитывает)");
+        // как Altegio отвечает на чтение записи и показывает время мастера — по этому бот замечает записи, удалённые администратором
+        const seeRec = async () => { try { const d = await altCall(env, "GET", `/user/records/${rec.record_id}/${rec.record_hash}`);
+            if (!d || typeof d !== "object") return { t: "пустой ответ" };
+            return { t: "deleted: " + ("deleted" in d ? JSON.stringify(d.deleted) : "поля нет") + (d.staff && d.staff.name ? ", мастер: " + altText(d.staff.name, 40) : "") + "; поля: " + Object.keys(d).slice(0, 14).join(", "), st: d.staff && d.staff.id ? d.staff : null };
+          } catch (e) { return { t: `ошибка ${e.status || ""} ${e.message || ""}`.trim() }; } };
+        const seeTime = async st => { try { const t = await altTimes(env, loc, st.id, first.date, [], now, true); return t.some(x => x.time === first.time) ? "показано свободным" : "занято"; } catch (e) { return "не прочитано: " + clean(e.message, 80); } };
+        let r0 = null;
+        if (rec.record_hash) {
+          r0 = await seeRec();
+          out.push(`Чтение записи: ${clean(r0.t, 300)}`);
+          if (r0.st) out.push(`Время ${first.time} у мастера ${altText(r0.st.name, 40)} с записью: ${await seeTime(r0.st)}`);
+        }
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
           e => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
-        // как Altegio отвечает на чтение удалённой записи — по этому бот замечает записи, удалённые администратором
-        if (rec.record_hash) {
-          let seen;
-          try { const d = await altCall(env, "GET", `/user/records/${rec.record_id}/${rec.record_hash}`); seen = !d ? "пустой ответ" : "deleted: " + (d && typeof d === "object" && "deleted" in d ? JSON.stringify(d.deleted) : "поля нет") + (d.staff && d.staff.name ? ", мастер: " + altText(d.staff.name, 40) : ""); }
-          catch (e) { seen = `ошибка ${e.status || ""} ${e.message || ""}`.trim(); }
-          out.push(`Чтение удалённой записи: ${clean(seen, 160)}`);
+        if (del) {
+          const r1 = await seeRec();
+          out.push(`Чтение удалённой записи: ${clean(r1.t, 300)}`);
+          if (r0 && r0.st) out.push(`Время ${first.time} у мастера ${altText(r0.st.name, 40)} после удаления: ${await seeTime(r0.st)}`);
         }
       } else if (rec) out.push(`Пробная запись: ⚠️ Altegio ответил без номера записи — запись могла создаться. Проверьте журнал Altegio: ${where}`);
       else if (lastErr && (!lastErr.status || lastErr.status >= 500 || (lastErr.status >= 200 && lastErr.status < 300))) out.push(`  → понятного ответа нет: запись могла создаться. Проверьте журнал Altegio: ${where}`);
@@ -2498,7 +2510,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       if (pd) return { out: say("pending", { what: pendText(pd, lang) }) }; // эта заявка уже у администратора
       // запись на это же время, имя и телефон уже есть в заявках (история чата не сохранилась или чат начат заново) — второй раз не записываем
       if (date && time && !opts.test) {
-        let old = (await viewLeads()).find(x => x.altegio && x.altegio.record_id && x.altegio.loc === alt.loc && x.altegio.date === date && x.altegio.time === time && x.phone === l.phone && x.status !== "отменена" && samePerson(x.name || "", l.name));
+        let old = (await viewLeads()).find(x => !(saved.profile.forgot && leadTs(x) < saved.profile.forgot) && x.altegio && x.altegio.record_id && x.altegio.loc === alt.loc && x.altegio.date === date && x.altegio.time === time && x.phone === l.phone && x.status !== "отменена" && samePerson(x.name || "", l.name));
         if (old) { // статус в общем списке мог устареть (два чата сохраняли заявки одновременно) — сверяемся с отдельным ключом заявки
           try { const v = JSON.parse((await store.get(leadKey(c.id, old.id))) || "null"); if (v && v.status === "отменена") old = null; } catch (e) { console.log("lead key", String(e)); }
         }
@@ -5057,7 +5069,9 @@ async function inboxApi(request, env, url, s) {
     }
     else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
     else if (act === "forget") { // бот забывает переписку, записи и просьбы этого чата (например, всё уже сделано в Altegio); окно WhatsApp и «стоп» остаются
-      h = await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (!["li", "waName", "stop", "pn"].includes(k)) delete pr[k]; });
+      const ph0 = normPhone(p.phone || "") || (ch !== "web" ? normPhone("+" + id) : ""), L0 = altLoc(env, c);
+      h = await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (!["li", "waName", "stop", "pn"].includes(k)) delete pr[k]; pr.forgot = Date.now(); }); // forgot: старые заявки этого чата бот в чат не возвращает
+      if (L0 && ph0) try { await env.KV.delete(`bk:${L0}:${ph0}:${isoDay(Date.now())}`); } catch (e) { console.log("forget limit", String(e)); } // дневной предел записей этого номера — заново
     }
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
