@@ -132,6 +132,7 @@ function altStub(url, init) {
     if (ALT.noId) return J({ success: true, data: [{ id: 1 }], meta: [] }, 201);
     return J({ success: true, data: [ALT.noHash ? { id: 1, record_id: id } : { id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
   }
+  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET") return J({ success: true, data: { id: +m[1], deleted: (ALT.gone || []).includes(m[1]) } /* номера записей в сценариях повторяются — удалённой считаем только явно указанную */, meta: [] });
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") {
     if (ALT.delFail) return J({ success: false, data: null, meta: ALT.delFail === 404 ? {} : { message: "Server error" } }, ALT.delFail);
     ALT.deleted.push(m[1] + "/" + m[2]); return new Response(null, { status: 204 });

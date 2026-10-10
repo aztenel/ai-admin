@@ -75,6 +75,7 @@ export async function mk(opts = {}) {
       }
       return J({ success: true, data: [{ id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
     }
+    if (/\/user\/records\/\d+\/\w+/.test(path || url || "") && (init && init.method || "GET") === "GET") return new Response(JSON.stringify({ success: true, data: { deleted: false }, meta: [] }), { status: 200, headers: { "content-type": "application/json" } }); // запись на месте
     if ((m = path.match(/^\/user\/records\/(\d+)\/(\w*)/)) && method === "DELETE") { h.ALT.deleted.push(m[1] + "/" + m[2]); return new Response(null, { status: 204 }); }
     return J({ success: false, data: null, meta: {} }, 404);
   }

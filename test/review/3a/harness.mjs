@@ -61,6 +61,7 @@ async function altStub(url, init) {
     if (ALT.emptyBody) return new Response("", { status: 201 });
     return J({ success: true, data: [ALT.noHash ? { id: 1, record_id: id } : { id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
   }
+  if (/\/user\/records\/\d+\/\w+/.test(path || url || "") && (init && init.method || "GET") === "GET") return new Response(JSON.stringify({ success: true, data: { deleted: false }, meta: [] }), { status: 200, headers: { "content-type": "application/json" } }); // запись на месте
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") {
     if (ALT.delDelay) await new Promise(s => setTimeout(s, ALT.delDelay));
     if (ALT.delThrow) throw new Error("network down");

@@ -1355,14 +1355,25 @@ async function altCall(env, method, path, body) {
 
 // Записи этого чата, которые администратор удалил прямо в Altegio (или клиента там отменили): бот о них забывает.
 // Запись считается удалённой, только если Altegio прямо так ответил («не найдена» или deleted); сбой связи — запись остаётся
-async function altPrune(env, prof, nowMs) {
-  const list = (prof.bookings || []).filter(b => b && b.record_id && b.record_hash && b.date >= isoDay(nowMs));
+async function altPrune(env, prof, nowMs, loc) {
+  const today = isoDay(nowMs), nowT = hhmm(local(nowMs));
+  const list = (prof.bookings || []).filter(b => b && b.record_id && b.date >= today && !(b.date === today && b.time <= nowT));
   if (!list.length) return 0;
   const gone = [];
-  for (const b of list.slice(0, 4)) { // обычно одна-две записи: один запрос на запись
-    let g;
-    try { const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`); g = !!(d && (d.deleted === true || d.deleted === 1)); }
-    catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else { console.log("alt check", b.record_id, String(e)); continue; } }
+  for (const b of list.slice(0, 4)) { // обычно одна-две записи
+    let g = null; // true — удалена, false — на месте, null — Altegio не сказал
+    // 1) спрашиваем саму запись
+    if (b.record_hash) {
+      try { const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`); g = !!(d && (d.deleted === true || d.deleted === 1)); }
+      catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
+    }
+    // 2) не ответил — смотрим время мастера: запись занимает его время, а если оно снова свободно — записи нет (удалили или перенесли)
+    if (g === null && b.record_hash && b.staffName && (b.loc || loc)) {
+      try {
+        const L = b.loc || loc, base = await altBase(env, L, nowMs), st = base.staff.find(m => lowE(m.base) === lowE(b.staffName) || lowE(m.name) === lowE(b.staffName));
+        if (st) { const fr = await altTimes(env, L, st.id, b.date, [], nowMs, true); if (fr.some(t => t.time === hm(b.time))) g = true; }
+      } catch (e) { console.log("alt check times", b.record_id, String(e)); }
+    }
     if (g) gone.push(b);
   }
   if (!gone.length) return 0;
@@ -2203,7 +2214,7 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   if (altLoc(env, c)) {
     try {
       alt = await altSnapshot(env, c, nowMs, userAll);
-      try { await altPrune(env, saved.profile, nowMs); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
+      try { await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
       Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt });
     } catch (e) {

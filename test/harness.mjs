@@ -43,7 +43,7 @@ export const net = {
   tgStatus: 200,               // что отвечает Telegram
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
-  altRecords: [], altDeleted: [], altGone: [], // altGone — записи, удалённые администратором прямо в Altegio
+  altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, // altGone — записи, удалённые администратором прямо в Altegio
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
@@ -73,7 +73,11 @@ function altStub(url, init) {
   if (/^\/book_staff\/\d+/.test(path)) return J({ success: true, data: D.staff, meta: [] });
   if (/^\/book_dates\/\d+/.test(path)) return J({ success: true, data: { booking_days: {}, booking_dates: D.dates || [D1, D2], working_days: {}, working_dates: D.dates || [D1, D2] }, meta: [] });
   if ((m = path.match(/^\/book_times\/\d+\/(\d+)\/(\d{4}-\d{2}-\d{2})/))) {
-    const t = (D.dates || [D1, D2]).includes(m[2]) ? D.times[m[1]] || [] : [];
+    let t = (D.dates || [D1, D2]).includes(m[2]) ? D.times[m[1]] || [] : [];
+    if (net.altBusy) { // занятое записями время у мастера не показываем (записи, удалённые администратором, время освобождают)
+      const busy = net.altRecords.map((r, i) => ({ id: String(777001 + i), a: (r.appointments || [])[0] || {} })).filter(x => !net.altDeleted.includes(x.id) && !(net.altGone || []).includes(x.id) && String(x.a.staff_id) === m[1] && String(x.a.datetime || "").startsWith(m[2])).map(x => String(x.a.datetime).slice(11, 16));
+      t = t.filter(x => !busy.includes(x));
+    }
     return J({ success: true, data: t.map(x => ({ time: x, seance_length: 3600, sum_length: 3600, datetime: `${m[2]}T${x}:00+05:00` })), meta: [] });
   }
   if (/^\/book_check\/\d+/.test(path)) return J({ success: true, data: null, meta: { message: "Created" } }, 201);
@@ -83,6 +87,7 @@ function altStub(url, init) {
     return J({ success: true, data: [{ id: 1, record_id: id, record_hash: "hash" + id }], meta: [] }, 201);
   }
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "DELETE") { net.altDeleted.push(m[1]); return new Response(null, { status: 204 }); }
+  if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET" && net.altGetFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altGetFail); // как будто чтение записи этим ключом недоступно
   if ((m = path.match(/^\/user\/records\/(\d+)\/(\w+)/)) && method === "GET") return net.altDeleted.includes(m[1]) || (net.altGone || []).includes(m[1]) ? J({ success: false, data: null, meta: { message: "Запись не найдена" } }, 404) : J({ success: true, data: { id: +m[1], deleted: false }, meta: [] });
   return J({ success: false, data: null, meta: {} }, 404);
 }
