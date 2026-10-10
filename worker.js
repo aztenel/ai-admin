@@ -3449,7 +3449,7 @@ export default {
   // раз в минуту (cron в wrangler.jsonc): фоновая отправка рассылок
   backup: (env) => backupRun(env, true), // для проверок
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(Promise.all([cronRun(env), backupRun(env)]).catch(e => console.log("cron", String((e && e.stack) || e))));
+    ctx.waitUntil(Promise.all([cronRun(env), backupRun(env), digestRun(env, (controller && controller.scheduledTime) || Date.now())]).catch(e => console.log("cron", String((e && e.stack) || e))));
   }
 };
 async function route(request, env, ctx) {
@@ -4458,6 +4458,8 @@ function compileClient(cfg) {
   const tg = str("tg").split(/[,\s]+/).filter(Boolean);
   if (tg.some(x => !/^-?\d{5,20}$/.test(x))) errors.push("Telegram: номер чата — это число (можно несколько через запятую), например 123456789");
   const bookDays = Math.min(7, Math.max(1, Math.round(+cfg.bookDays || 3)));
+  const digest = String(cfg.digest ?? "").trim();
+  if (digest && digest !== "off" && !(/^\d{1,2}$/.test(digest) && +digest >= 6 && +digest <= 23)) errors.push("дневная сводка: час от 6 до 23 или «не присылать»");
   const payRaw = String(cfg.pay ?? "").replace(/\r/g, "").replace(/[\u0000-\u0009\u000b-\u001f]/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   if (payRaw.length > 500) errors.push(`реквизиты для оплаты: ${payRaw.length} знаков — оставьте не больше 500`);
   else if (payRaw && /\[|\]/.test(payRaw)) errors.push("реквизиты для оплаты: без квадратных скобок");
@@ -4490,7 +4492,7 @@ function compileClient(cfg) {
     hidden: true, dynamic: true, real: true, bookDays, booking, services: sv.list, staffList: staff, phone, address,
     ...(booking === "altegio" && /^\d{1,12}$/.test(loc) ? { altegio: { location: +loc } } : {}),
     ...(tg.length ? { tg: tg.join(",") } : {}),
-    ...(payRaw && payRaw.length <= 500 ? { pay: payRaw } : {}), ...(upsell.length ? { upsell } : {}),
+    ...(payRaw && payRaw.length <= 500 ? { pay: payRaw } : {}), ...(upsell.length ? { upsell } : {}), ...(digest ? { digest } : {}),
     ...(cfg.waPhoneId && /^\d{5,20}$/.test(String(cfg.waPhoneId).trim()) ? { waPhoneId: String(cfg.waPhoneId).trim() } : {}),
     ...(cfg.keyHash ? { keyHash: String(cfg.keyHash) } : {}), off: !!cfg.off, v: +cfg.v || 0, updated: +cfg.updated || 0
   };
@@ -4634,7 +4636,7 @@ async function enter(request, env, url) {
 }
 
 // ================= «МОИ БОТЫ»: страница владельца =================
-const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "pay", "upsell", "greeting", "safe", "tg", "waPhoneId", "off"];
+const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "pay", "upsell", "digest", "greeting", "safe", "tg", "waPhoneId", "off"];
 const cfgIn = b => { const o = {}; for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, 8000); return o; };
 // что подключено у клиента: по этим отметкам владелец видит, чего не хватает до запуска
 function clientState(env, c) {
@@ -4730,6 +4732,7 @@ function studioPage() {
 <label>Реквизиты для оплаты<small>Kaspi Gold, номер для перевода, ссылка на оплату — как их должен увидеть клиент. Бот отправляет этот текст дословно, когда спрашивают про оплату; в пульте он вставляется кнопкой «₸». До 500 знаков.</small></label><textarea id="f_pay" style="min-height:64px" placeholder="Kaspi Gold: +7 701 123 45 67 (Кайрат К.)"></textarea>
 <label>Дополнительно<small>Всё, что бот должен знать: оплата, предоплата, правила отмены, парковка, с какого возраста. Каждое правило — с новой строки. Чего здесь нет, бот не обещает.</small></label><textarea id="f_extra" style="min-height:120px"></textarea>
 <label>Telegram администратора<small>Номер чата, куда приходят заявки и просьбы клиентов. Пусто — уведомления идут вам.</small></label><input type="text" id="f_tg" maxlength="120" inputmode="numeric">
+<label>Дневная сводка в Telegram<small>Раз в день: сколько было чатов, записей, заявок, просьб и кто ждёт ответа. Утренняя сводка — за вчерашний день.</small></label><select id="f_digest"><option value="">в 21:00 (по умолчанию)</option><option value="20">в 20:00</option><option value="22">в 22:00</option><option value="23">в 23:00</option><option value="9">в 9:00 утра — за вчера</option><option value="8">в 8:00 утра — за вчера</option><option value="off">не присылать</option></select>
 <label>WhatsApp: Phone number ID<small>Число из кабинета Meta (WhatsApp → API Setup). Можно вписать позже — нужно для проверки номера на странице «Проверка запуска».</small></label><input type="text" id="f_waPhoneId" maxlength="20" inputmode="numeric">
 <label><input type="checkbox" id="f_off"> Бот выключен<small>Клиентам в WhatsApp отвечает только администратор из пульта чатов.</small></label>
 <div id="out"></div>
@@ -4738,7 +4741,7 @@ function studioPage() {
 <div class="row"><button class="btn" id="b_key">Выдать новый ключ</button><button class="btn d" id="b_del">Удалить бота</button></div><div id="keyout"></div></div>
 </div></div>
 <script>
-var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','pay','upsell','tg','waPhoneId'],cur=null,niches=[];
+var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','pay','upsell','tg','digest','waPhoneId'],cur=null,niches=[];
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){return r.json().then(function(j){j._status=r.status;return j})})}
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function tag(ok,t){return el('span','tag '+(ok===true?'ok':ok===false?'no':''),t)}
@@ -5428,6 +5431,54 @@ async function backupRun(env, force) {
     for (const chat of chats) if (await tgFile(env, chat, name, text, `Резервная копия заявок: ${CLIENTS[cid].name}, ${leads.length} шт. Файл можно сохранить.`)) n++;
   }
   return n;
+}
+// Дневная сводка в Telegram компании: раз в день, в час из паспорта (по умолчанию 21:00 по Астане; утром — за вчерашний день).
+// Только боты из паспортов (демо — без сводки). Отметка «отправлено» ставится до отправки: сводка не придёт дважды
+const DIGEST_HOUR = 21;
+async function digestRun(env, now) {
+  const d = local(now), h = d.getUTCHours();
+  if (d.getUTCMinutes() >= 10 || !env.TG_TOKEN) return 0;
+  try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); }
+  let n = 0;
+  for (const c of Object.values(CLIENTS)) {
+    if (!c.dynamic || c.off || c.digest === "off" || (c.digest ? +c.digest : DIGEST_HOUR) !== h) continue;
+    const mk = `dg:${c.id}:${isoDay(now)}`;
+    try { if (await env.KV.get(mk)) continue; await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 }); } catch (e) { console.log("digest mark", String(e)); continue; }
+    try { if (await notify(env, await digestText(env, c, now, h < 12), c.id)) n++; } catch (e) { console.log("digest", String((e && e.stack) || e)); }
+  }
+  return n;
+}
+async function digestText(env, c, now, prevDay) {
+  const d = local(now), start = now - (((d.getUTCHours() * 60 + d.getUTCMinutes()) * 60 + d.getUTCSeconds()) * 1000 + d.getUTCMilliseconds());
+  const from = prevDay ? start - 86400e3 : start, to = prevDay ? start : now + 1;
+  let wa = 0, web = 0, need = 0, part = false;
+  for (const ch of ["wa", "ga", "web"]) { // чаты — по метаданным ключей истории (как список в пульте), без чтения самих чатов
+    const prefix = `h:${ch}:${c.id}:`;
+    for (let cursor, page = 0; page < 3; page++) {
+      const r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+      for (const k of (r && r.keys) || []) {
+        const m = k.metadata || {}, t = ch === "web" ? m.t || 0 : m.li || m.t || 0;
+        if (t >= from && t < to) { if (ch === "web") web++; else wa++; }
+        if (m.nd) need++;
+      }
+      if (!r || r.list_complete || !r.cursor) break;
+      cursor = r.cursor; if (page === 2) part = true;
+    }
+  }
+  let leads = []; try { leads = (await allLeads(env, c.id)).filter(l => { const t = leadTs(l); return t >= from && t < to; }); } catch (e) { console.log("digest leads", String(e)); }
+  const cnt = f => leads.filter(f).length;
+  const alt = cnt(l => !l.kind && l.altegio && l.altegio.record_id), req = cnt(l => !l.kind && !(l.altegio && l.altegio.record_id)), cb = cnt(l => l.kind === "callback"), cx = cnt(l => l.kind === "cancel" || l.kind === "change");
+  const when = (prevDay ? "вчера, " : "сегодня, ") + dayLabel(local(from)), site = String(env.SITE_URL || "").replace(/\/+$/, "");
+  const L = [`📊 Сводка за ${when} — ${c.name}`];
+  if (!wa && !web && !leads.length) L.push(`За ${prevDay ? "вчера" : "сегодня"} обращений не было.`);
+  else {
+    L.push(`Чатов в WhatsApp: ${wa} · на сайте: ${web}${part ? " (показаны не все)" : ""}`);
+    L.push((c.booking === "altegio" || alt ? `Записей в Altegio: ${alt} · ` : "") + `заявок на запись: ${req}`);
+    L.push(`Просят перезвонить: ${cb} · просьб об отмене и переносе: ${cx}`);
+  }
+  if (need) L.push(`Ждут ответа: ${need}`);
+  if (/^https:\/\//.test(site)) L.push(`Пульт: ${site}/inbox?c=${c.id}`);
+  return L.join("\n");
 }
 async function cronRun(env) {
   let run = [];

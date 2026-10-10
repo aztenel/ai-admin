@@ -167,7 +167,7 @@ export function mk(envExtra = {}) {
   const sentTo = to => net.graph.filter(g => g.body && g.body.to === to).map(g => (g.body.text && g.body.text.body) || (g.body.template && "[шаблон " + g.body.template.name + "]") || "");
   const hist = (ch, c, id) => kv.json(`h:${ch}:${c}:${id}`);
   const leads = c => kv.json("leads:" + c) || [];
-  const cron = async () => { await worker.scheduled({ cron: "* * * * *" }, env, ctx); await settle(); }; // фоновая задача (раз в минуту)
+  const cron = async at => { await worker.scheduled({ cron: "* * * * *", ...(at ? { scheduledTime: at } : {}) }, env, ctx); await settle(); }; // фоновая задача (раз в минуту); at — время запуска, мс
   return { env, kv, call, settle, browser, chat, waPost, waText, sentTo, hist, leads, cron };
 }
 

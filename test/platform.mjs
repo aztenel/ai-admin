@@ -1372,6 +1372,51 @@ section("допродажи");
   ok("Altegio: допродажи принимаются без сверки со списком услуг", d.ok === true, JSON.stringify(d.errors));
 }
 
+// ====== Дневная сводка в Telegram: раз в день, в час из паспорта (по умолчанию 21:00 по Астане)
+section("дневная сводка");
+{
+  const S7 = mk(), own = S7.browser(); await own.go("/studio?key=" + OWNER);
+  const at = (h, m, dayShift = 0) => Date.UTC(2026, 9, 3 + dayShift, h - 5, m); // местное время Астаны → мс
+  let d = await (await own.post("/api/studio/check", { ...PASS, digest: "25" })).json();
+  ok("час сводки вне 6–23 → ошибка паспорта", d.ok === false && d.errors.some(e => /сводк/i.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/save", PASS)).json();
+  ok("паспорт без часа сводки сохраняется (по умолчанию 21:00)", d.ok === true, JSON.stringify(d));
+  await own.post("/api/studio/save", { ...PASS, id: "shop", name: "Phone Shop", tg: "555000222", digest: "off" });
+  const pg = await (await own.go("/studio")).text();
+  ok("в форме паспорта есть выбор времени сводки", /id="f_digest"/.test(pg) && /'digest'/.test(pg) && /не присылать/.test(pg));
+  // события дня: чат на сайте, чат в WhatsApp, который ждёт ответа, заявки разных видов и одна вчерашняя
+  await S7.chat("kairat", "dg1", "Привет", "Здравствуйте! Чем помочь?");
+  const now = Date.now(), K = S7.env.KV;
+  await K.put("h:ga:kairat:77011234567", JSON.stringify({ n: 1, turns: [{ role: "user", text: "Алло", t: now }], profile: { li: now } }), { metadata: { t: now, li: now, nd: "human" } });
+  await K.put("h:ga:kairat:77019999999", JSON.stringify({ n: 1, turns: [], profile: {} }), { metadata: { t: now - 2 * 86400e3, li: now - 2 * 86400e3 } });
+  const L = (id, x) => ({ id, ts: x.ts || now, name: "Клиент", phone: "+77011234567", service: "Стрижка", time: "завтра 11:00", ...x });
+  await K.put("leads:kairat", JSON.stringify([L("a1", { altegio: { record_id: 5 } }), L("a2", {}), L("a3", { kind: "callback" }), L("a4", { kind: "cancel" }), L("a5", { kind: "change" }), L("a6", { ts: now - 86400e3 })]));
+  net.reset();
+  await S7.cron(at(12, 5));
+  ok("в 12:05 сводки нет", !net.tg.length, JSON.stringify(net.tg));
+  await S7.cron(at(21, 3));
+  const tg = net.tg.map(x => x.text || ""), dg = tg.filter(x => /Сводка/.test(x));
+  ok("в 21:03 — одна сводка, только по боту из паспорта (демо и выключенная сводка — без неё)", dg.length === 1 && /Barber House/.test(dg[0]) && net.tg.filter(x => /Сводка/.test(x.text || "")).every(x => String(x.chat_id) === "555000111"), JSON.stringify(net.tg));
+  const t = dg[0] || "";
+  ok("в сводке: чаты WhatsApp и сайта, записи Altegio, заявки, звонки, отмены и переносы, ждут ответа", /сегодня/.test(t) && /WhatsApp: 1/.test(t) && /сайт\S*: 1/.test(t) && /Altegio: 1/.test(t) && /[Зз]аявок[^:]*: 1/.test(t) && /перезвонить: 1/.test(t) && /отмен[^:]*: 2/.test(t) && /[Жж]дут ответа: 1/.test(t), t);
+  ok("без SITE_URL — ссылки на пульт нет", !/https?:/.test(t), t);
+  net.reset(); await S7.cron(at(21, 6));
+  ok("повторный запуск в тот же вечер — второй сводки нет", !net.tg.some(x => /Сводка/.test(x.text || "")), JSON.stringify(net.tg));
+  // утренняя сводка — за вчера, со ссылкой на пульт
+  await own.post("/api/studio/save", { ...PASS, isNew: false, digest: "9" });
+  S7.env.SITE_URL = "https://bot.example";
+  net.reset(); await S7.cron(at(9, 1, 1));
+  const m9 = (net.tg.find(x => /Сводка/.test(x.text || "")) || {}).text || "";
+  ok("сводка в 9:00 — за вчерашний день, со ссылкой на пульт", /вчера/.test(m9) && /Altegio: 1/.test(m9) && m9.includes("https://bot.example/inbox?c=kairat"), m9);
+  delete S7.env.TG_TOKEN; net.reset(); await S7.cron(at(9, 2, 2));
+  ok("без Telegram сводка не отправляется и не падает", !net.tg.length);
+  // пустой день — короткая сводка, что обращений не было
+  S7.env.TG_TOKEN = "tgtoken"; await K.put("leads:kairat", "[]"); await K.delete("h:ga:kairat:77011234567"); await K.delete("h:web:kairat:dg1");
+  net.reset(); await S7.cron(at(9, 3, 4));
+  const m0 = (net.tg.find(x => /Сводка/.test(x.text || "")) || {}).text || "";
+  ok("день без обращений → сводка «обращений не было»", /обращений не было/.test(m0), m0 || JSON.stringify(net.tg));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
