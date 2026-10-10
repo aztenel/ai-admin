@@ -5231,15 +5231,34 @@ function bcName(s) {
   return w === w.toUpperCase() || w === w.toLowerCase() ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w;
 }
 // список получателей из текста: по клиенту на строку — номер и (необязательно) имя, через запятую, точку с запятой или табуляцию (как при вставке из Excel)
+// даты в списке получателей: «01.08.2026», «2026-06-15», «12.10» (день рождения без года)
+const BC_DATE = /^\s*(?:(\d{1,2})[./](\d{1,2})(?:[./](\d{4}|\d{2}))?|(\d{4})-(\d{1,2})-(\d{1,2}))\s*$/;
+function bcDate(cell) {
+  const m = BC_DATE.exec(cell); if (!m) return null;
+  let d, mo, y; if (m[4]) { y = +m[4]; mo = +m[5]; d = +m[6]; } else { d = +m[1]; mo = +m[2]; y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : 0; }
+  if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+  return { y, mo, d };
+}
 function bcParse(src) {
-  const seen = new Set(), list = [], bad = [];
-  let dup = 0, badN = 0, cut = 0;
+  const seen = new Set(), list = [], bad = [], info = [];
+  let dup = 0, badN = 0, cut = 0, visitCol = -1, bdayCol = -1;
+  const yearNow = local(Date.now()).getUTCFullYear();
   for (const raw of String(src || "").split(/\r?\n/)) {
     const line = raw.trim(); if (!line) continue;
     if (list.length >= BC_MAX) { cut++; continue; }
-    let digits = "", nm = "";
+    if (!/\d{5}/.test(line.replace(/[\s()+\-.–—]/g, "")) && /телефон|номер|phone|тел\.?(\s|$|;|,)/i.test(line)) { // строка заголовка из Excel: запоминаем, где визит и где день рождения
+      line.split(/[\t;,|]/).forEach((cell, i) => { if (/визит|посещ|последн|был[аи]?|last/i.test(cell)) visitCol = i; else if (/рожд|birth|^\s*д\.?\s?р\.?\s*$/i.test(cell)) bdayCol = i; });
+      continue;
+    }
+    let digits = "", nm = "", visit = null, bday = null;
     const nums = [], texts = [];
-    for (const cell of line.split(/[\t;,|]/)) {
+    for (const [ci, cell] of line.split(/[\t;,|]/).entries()) {
+      const dt = bcDate(cell);
+      if (dt) { // какая это дата: по заголовку, иначе по году — недавняя дата — визит, давняя или без года — день рождения
+        const isB = bdayCol >= 0 || visitCol >= 0 ? ci === bdayCol || (ci !== visitCol && !dt.y) : !dt.y || dt.y < yearNow - 5;
+        if (isB) bday = [dt.mo, dt.d]; else if (dt.y) visit = Date.UTC(dt.y, dt.mo - 1, dt.d);
+        continue;
+      }
       if (/^[\s+\d()\-.–—]{10,24}$/.test(cell)) { // в ячейке только цифры: полный номер (8…, 7…, +…) надёжнее десяти цифр без кода страны — это может быть чужое число из соседнего столбца
         const d = cell.replace(/\D/g, ""), p = normPhone(cell), plus = /^\s*\+/.test(cell);
         const dg = p ? p.slice(1) : plus && /^[1-9]\d{9,14}$/.test(d) ? d : "";
@@ -5258,9 +5277,23 @@ function bcParse(src) {
     if (!digits) { badN++; if (bad.length < 8) bad.push(snip(line, 50)); continue; }
     if (seen.has(digits)) { dup++; continue; }
     seen.add(digits);
-    list.push([digits, nm]);
+    list.push([digits, nm]); info.push({ v: visit, b: bday });
   }
-  return { list, dup, bad, badN, cut };
+  return { list, info, dup, bad, badN, cut };
+}
+// сегмент списка: «idle» — последний визит дольше days дней назад, «bday» — день рождения в ближайшие days дней (сегодня — тоже)
+function bcSeg(r, seg, days, now) {
+  if (seg !== "idle" && seg !== "bday") return { list: r.list, out: 0, noDate: 0, label: "" };
+  const L = local(now), t0 = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate()), list = [];
+  let noDate = 0;
+  r.list.forEach((x, i) => {
+    const m = r.info[i] || {};
+    if (seg === "idle") { if (m.v == null) { noDate++; return; } if ((t0 - m.v) / 86400e3 > days) list.push(x); return; }
+    if (!m.b) { noDate++; return; }
+    let next = Date.UTC(L.getUTCFullYear(), m.b[0] - 1, m.b[1]); if (next < t0) next = Date.UTC(L.getUTCFullYear() + 1, m.b[0] - 1, m.b[1]);
+    if ((next - t0) / 86400e3 <= days) list.push(x);
+  });
+  return { list, out: r.list.length - list.length, noDate, label: seg === "idle" ? `не были больше ${days} дн.` : `день рождения в ближайшие ${days} дн.` };
 }
 async function bcOptouts(env, cid) { // все, кому писать нельзя: написали «стоп» боту или запретили рекламу в WhatsApp
   const out = new Set(), prefix = `optout:${cid}:`;
@@ -5755,10 +5788,13 @@ async function bcApi(request, env, url, s) {
     const params = (Array.isArray(body.params) ? body.params : String(body.params || "").split("\n")).map(x => clean(x, 300)).filter(Boolean).slice(0, 10);
     return { errors, tpl, lang, img, params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
   };
+  const seg = ["idle", "bday"].includes(body.seg) ? body.seg : "", segDays = Math.round(+body.segDays || 0), segBad = seg && !(segDays >= 1 && segDays <= 365);
   if (P === "/api/bc/check") { // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим
-    const r = bcParse(body.recipients), f = fields(), first = (r.list.find(x => x[1]) || [])[1] || "";
+    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), r = { ...r0, list: sg.list }, f = fields(), first = (r.list.find(x => x[1]) || [])[1] || "";
+    if (segBad) f.errors.push("сегмент: число дней — от 1 до 365");
     let stop = new Set(); try { stop = await bcOptouts(env, cid); } catch (e) {}
     return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter(x => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter(x => stop.has(x[0])).length,
+      ...(seg ? { segOut: sg.out, noDate: sg.noDate, seg: sg.label } : {}),
       sample: r.list.slice(0, 5).map(x => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: ga ? (f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) });
   }
   if (P === "/api/bc/test") { // пробная отправка на один номер (себе)
@@ -5775,10 +5811,12 @@ async function bcApi(request, env, url, s) {
     return r.ok ? jsonP({ ok: true, text: `Шаблон отправлен на ${to} — проверьте WhatsApp. Если сообщение не пришло за минуту, этот номер не принимает сообщения от компаний.` }) : jsonP({ error: `Meta не приняла шаблон (${bcWhy(r)}).` }, 409);
   }
   if (P === "/api/bc/create") {
-    const f = fields(), r = bcParse(body.recipients), errors = f.errors.slice();
+    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), f = fields(), r = { ...r0, list: sg.list }, errors = f.errors.slice();
+    if (segBad) errors.push("сегмент: число дней — от 1 до 365");
+    else if (seg && r0.list.length && !r.list.length) errors.push(`в сегменте «${sg.label}» никого нет${sg.noDate ? ` (без нужной даты в списке: ${sg.noDate})` : ""}`);
     const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
     if (name.length < 2) errors.push("дайте рассылке название — для себя");
-    if (!r.list.length) errors.push("в списке нет ни одного номера");
+    if (!r0.list.length) errors.push("в списке нет ни одного номера");
     if (ga && !(cap >= 1 && cap <= GA_CAP[1])) errors.push(`предел на 24 часа через Green-API — от 1 до ${GA_CAP[1]}: обычный WhatsApp блокируют за массовые рассылки`);
     else if (!(cap >= 1 && cap <= 100000)) errors.push("предел на 24 часа — число от 1 до 100 000");
     if (!(from >= 0 && to <= 24 && to > from)) errors.push("часы отправки: «с» должно быть раньше, чем «до»");
@@ -5786,7 +5824,7 @@ async function bcApi(request, env, url, s) {
     if (!ga && !f.text) errors.push("вставьте текст шаблона — его увидит администратор, а бот поймёт, на что отвечает клиент");
     if (body.consent !== true) errors.push("подтвердите, что эти люди — клиенты компании и не просили им не писать");
     if (errors.length) return jsonP({ ok: false, errors }, 400);
-    const base = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to };
+    const base = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to, ...(sg.label ? { seg: sg.label } : {}) };
     const b = ga ? { ...base, ch: "ga", msg: f.msg } : { ...base, tpl: f.tpl, lang: f.lang, params: f.params };
     try {
       for (let k = 0; k * BC_CHUNK < r.list.length; k++) await env.KV.put(bcChunkKey(cid, b.id, k), JSON.stringify(r.list.slice(k * BC_CHUNK, (k + 1) * BC_CHUNK)), { expirationTtl: 180 * 86400 });
@@ -5853,6 +5891,7 @@ input[type=file]{font-size:14px;margin-top:6px}label.ck{font-weight:400;display:
 <label>Если имени в списке нет, подставить</label><input type="text" id="f_fb" maxlength="30" value="уважаемый клиент">
 <label><span id="l_img">Картинка в шапке</span><small id="s_img">Только если шаблон с картинкой: ссылка на неё, начинается с https://</small></label><input type="text" id="f_img" maxlength="500" autocapitalize="off" placeholder="не обязательно">
 <label>Кому<small>По клиенту на строке: номер и, если есть, имя — «8 701 123 45 67, Айгерим». Можно вставить столбцы прямо из Excel. Повторы уберутся сами.</small></label><textarea id="f_rec" style="min-height:140px"></textarea><input type="file" id="f_file" accept=".csv,.txt,text/plain,text/csv">
+<label>Кому из списка<small>Для отбора нужны даты в списке: последний визит и день рождения (столбцы из Excel, «01.08.2026», «12.10.1995» или «12.10»). Строку заголовка («Телефон; Имя; Последний визит; День рождения») можно оставить.</small></label><div class="row"><select id="f_seg"><option value="">всем из списка</option><option value="idle">кто не был дольше N дней</option><option value="bday">у кого день рождения в ближайшие N дней</option></select><input type="number" id="f_segd" min="1" max="365" value="30" style="max-width:110px" aria-label="N дней"></div>
 <div class="two"><div><label>Не больше за 24 часа</label><input type="number" id="f_cap" value="240" min="1"></div><div><label>С, час</label><input type="number" id="f_from" value="10" min="8" max="21"></div><div><label>До, час</label><input type="number" id="f_to" value="20" min="9" max="22"></div></div>
 <p class="mut" id="caphint">У нового номера предел Meta — 250 получателей за 24 часа, после проверки компании — 2 000.</p>
 <p class="mut" id="p_meta2">Первую рассылку сделайте небольшой — 50–100 постоянных клиентов. По жалобам на первые сообщения Meta судит о номере: много жалоб — и она ограничит отправку.</p>
@@ -5909,10 +5948,10 @@ function act(id,a,btn,force,b){var o=$('o'+id);
  btn.disabled=true;
  var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',{c:C,id:id,act:a,force:!!force});
  call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(e){btn.disabled=false;fail(e,o)})}
-function body(){return{c:C,ch:CH,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
+function body(){return{c:C,ch:CH,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,seg:$('f_seg').value,segDays:$('f_segd').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
 $('b_new').onclick=function(){$('form').hidden=false;$('b_new').hidden=true;$('form').scrollIntoView()};$('b_cancel').onclick=function(){$('form').hidden=true;$('b_new').hidden=false};
 $('f_file').onchange=function(){var f=this.files&&this.files[0];if(!f)return;if(f.size>3e6){msg($('fout'),'e',['Файл слишком большой. Нужен текстовый файл или CSV со списком номеров.']);return}var r=new FileReader();r.onload=function(){$('f_rec').value=String(r.result||'')};r.readAsText(f)};
-$('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.error){msg($('fout'),'e',[d.error]);return}var l=['Номеров: '+d.valid+(d.named?' · с именем: '+d.named:'')+(d.dup?' · повторов убрано: '+d.dup:'')+(d.stopped?' · просили не писать: '+d.stopped+' (им не уйдёт)':'')];if(d.sample&&d.sample.length)l.push('Первые строки: '+d.sample.join('; '));
+$('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.error){msg($('fout'),'e',[d.error]);return}var l=['Номеров: '+d.valid+(d.named?' · с именем: '+d.named:'')+(d.dup?' · повторов убрано: '+d.dup:'')+(d.stopped?' · просили не писать: '+d.stopped+' (им не уйдёт)':'')+(d.seg?' · в сегменте «'+d.seg+'»; отсеяно: '+d.segOut+(d.noDate?' (без нужной даты: '+d.noDate+')':''):'')];if(d.sample&&d.sample.length)l.push('Первые строки: '+d.sample.join('; '));
  if(d.preview&&d.preview.length&&CH!=='ga')l.push('Подстановки для первого клиента: '+d.preview.join(' | '));if(d.badN)l.push('Не понял строк: '+d.badN+' — например: '+d.bad.join(' | '));if(d.cut)l.push('Список слишком длинный: '+d.cut+' строк в конце не попадут в рассылку.');
  if(d.errors&&d.errors.length)l=l.concat(d.errors.map(function(x){return'• '+x}));msg($('fout'),d.ok?'g':'w',l);
  if(CH==='ga'&&d.preview&&d.preview[0]){var m=$('fout').firstChild;m.appendChild(el('div','','Так увидит сообщение первый клиент:'));var pv=el('div','',d.preview[0]);pv.style.cssText='white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:4px';m.appendChild(pv)}}).catch(function(e){fail(e,$('fout'))})};

@@ -1529,6 +1529,32 @@ section("оценка ремонта по прайсу");
   ok("экзамен: есть сценарий «Оценка ремонта» по прайсу", (d.cases || []).some(k => /Оценка ремонта/.test(k.t)), JSON.stringify(d.cases));
 }
 
+// ====== Рассылки по сегментам: «давно не были» и «день рождения скоро» — по датам из списка
+section("рассылки: сегменты");
+{
+  const SA = mk({ GA_ID_KAIRAT: "7105000009", GA_TOKEN_KAIRAT: "ga-tok-k9" }), own = SA.browser(); await own.go("/studio?key=" + OWNER);
+  await own.post("/api/studio/save", PASS);
+  const J = async r => r.json();
+  const LIST = "Телефон; Имя; Последний визит; День рождения\n8 701 222 00 01; Айгерим; 01.08.2026; 12.10.1995\n8 701 222 00 02; Данияр; 25.09.2026; 05.03.1990\n8 701 222 00 03; Ерлан; ; \n+7 701 222 00 04, Мадина, 2026-06-15, 10.10";
+  const BASE = { c: "kairat", ch: "ga", name: "Сегмент", text: "Здравствуйте, {имя}! Скучаем по вам — скидка 10% до конца недели.", recipients: LIST, cap: 50, from: 10, to: 20, consent: true };
+  let d = await J(await own.post("/api/bc/check", BASE));
+  ok("строка заголовка не считается ошибкой, все 4 номера на месте", d.valid === 4 && d.badN === 0, JSON.stringify(d));
+  d = await J(await own.post("/api/bc/check", { ...BASE, seg: "idle", segDays: 30 }));
+  ok("«не были больше 30 дней»: двое (Айгерим, Мадина), без даты визита — отсеян и посчитан", d.valid === 2 && d.sample.some(x => /Айгерим/.test(x)) && d.sample.some(x => /Мадина/.test(x)) && d.noDate === 1 && d.segOut === 2, JSON.stringify(d));
+  d = await J(await own.post("/api/bc/check", { ...BASE, seg: "bday", segDays: 10 }));
+  ok("«день рождения в ближайшие 10 дней»: Айгерим (12.10) и Мадина (10.10)", d.valid === 2 && d.sample.some(x => /Айгерим/.test(x)) && d.sample.some(x => /Мадина/.test(x)), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/check", { ...BASE, recipients: "8 701 222 00 05, Асель, 15.07.2026, 20.10.2000\n8 701 222 00 06, Тимур, 20.09.2026, 02.02.1988", seg: "bday", segDays: 20 }));
+  ok("без заголовка: старая дата — день рождения, недавняя — визит", d.valid === 1 && /Асель/.test(d.sample[0] || ""), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/check", { ...BASE, recipients: "8 701 222 00 05, Асель, 15.07.2026, 20.10.2000\n8 701 222 00 06, Тимур, 20.09.2026, 02.02.1988", seg: "idle", segDays: 60 }));
+  ok("без заголовка: «не были больше 60 дней» — только Асель", d.valid === 1 && /Асель/.test(d.sample[0] || ""), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/create", { ...BASE, seg: "idle", segDays: 0 }));
+  ok("число дней сегмента вне 1–365 → ошибка", d.ok === false && d.errors.some(e => /дн/.test(e)), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/create", { ...BASE, seg: "idle", segDays: 30 }));
+  ok("рассылка по сегменту создана только на двоих, сегмент записан", d.ok === true && d.b.total === 2 && /не были/.test(d.b.seg || ""), JSON.stringify(d));
+  const pg = await (await own.go("/broadcast?c=kairat")).text();
+  ok("на странице рассылок есть выбор сегмента", /id="f_seg"/.test(pg) && /id="f_segd"/.test(pg) && /день рождения/i.test(pg));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
