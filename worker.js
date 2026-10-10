@@ -2062,14 +2062,14 @@ async function altUserProbe(env, cid, login, password, phone) {
   } catch (e) { out.push("Пробная запись: ❌ " + err(e)); }
   return out.join("\n");
 }
-function altUserPage(body, cid) {
+function altUserPage(body, cid, key) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
 pre{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
 form{display:grid;gap:8px}input{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:11px 12px;font-size:16px}
 button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font:600 15px system-ui}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
 <body><div class="w"><h1>Журнал Altegio: проверка ключа пользователя</h1>${body ? `<pre>${esc(body)}</pre>` : ""}
-<form method="post" action="/altegio/user"><input type="hidden" name="c" value="${esc(cid)}">
+<form method="post" action="/altegio/user"><input type="hidden" name="c" value="${esc(cid)}"><input type="hidden" name="key" value="${esc(key || "")}">
 <input name="login" autocomplete="username" placeholder="Логин Altegio (почта или телефон)" required>
 <input name="password" type="password" autocomplete="current-password" placeholder="Пароль Altegio" required>
 <input name="phone" type="tel" placeholder="Ваш телефон для пробной записи (можно не заполнять)">
@@ -3718,13 +3718,16 @@ async function route(request, env, ctx) {
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? text(await diag(env)) : a || forbid(); }
     if (P === "/altegio/user" && (M === "GET" || M === "POST")) { // ключ пользователя Altegio: читается ли журнал записей
-      if (M === "POST" && !sameOrigin(request, url)) return forbid();
-      const a = await owner();
-      if (a !== true) return a || forbid();
-      if (M === "GET") return page(altUserPage("", url.searchParams.get("c") || ""));
-      let f; try { f = await request.formData(); } catch (e) { return forbid(); }
+      // каждая причина отказа — своим текстом: вживую 10 октября форма ответила просто «Forbidden», и было непонятно почему
+      if (M === "POST" && !sameOrigin(request, url)) return new Response(`Forbidden: форма отправлена с другого адреса (${clean(request.headers.get("origin") || "", 80)} ≠ ${url.origin})`, { status: 403 });
+      let f = null;
+      if (M === "POST") { try { f = await request.formData(); } catch (e) { return new Response("Форма не прочитана: " + clean(String(e), 120), { status: 400 }); } }
+      const k0 = f ? String(f.get("key") || "") : url.searchParams.get("key") || "";
+      const a = await owner(k0 || undefined); // ключ из адреса страницы форма передаёт дальше (вживую 10 октября без него был отказ)
+      if (a !== true) return a || new Response(`Forbidden: нет входа владельца — откройте /studio, войдите ключом владельца и повторите (cookie ${new RegExp(COOKIE + "=").test(request.headers.get("cookie") || "") ? "есть, но не подошла" : "не пришла"})`, { status: 403 });
+      if (M === "GET") return page(altUserPage("", url.searchParams.get("c") || "", k0));
       const cid = String(f.get("c") || "");
-      return page(altUserPage(await altUserProbe(env, cid, String(f.get("login") || ""), String(f.get("password") || ""), String(f.get("phone") || "")), cid));
+      return page(altUserPage(await altUserProbe(env, cid, String(f.get("login") || ""), String(f.get("password") || ""), String(f.get("phone") || "")), cid, k0));
     }
     if (P === "/altegio" && (M === "GET" || M === "POST")) { // проверка расписания; POST — пробная запись с удалением
       let q = { key: url.searchParams.get("key"), c: url.searchParams.get("c") || "", loc: url.searchParams.get("loc") || "", phone: "" };

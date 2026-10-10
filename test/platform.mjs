@@ -1692,6 +1692,12 @@ section("записи, удалённые в Altegio; очистка памят�
   ok("журнал Altegio: вход, журнал читается, пробная запись видна и после удаления помечена", /ключ пользователя получен/.test(ut) && /записи \(records\): ✅/.test(ut) && /с записью — в журнале есть: мастер Арман/.test(ut) && /после удаления — в журнале есть: .*deleted: true/.test(ut), ut.split("<pre>")[1]);
   ok("журнал Altegio: пароль и ключ пользователя на страницу и в хранилище не попадают", !ut.includes("right-pass") && !ut.includes("usr-tok") && ![...SD.kv.mem.values()].some(v => v.includes("right-pass") || v.includes("usr-tok")));
   ok("журнал Altegio: запрос журнала идёт с ключом разработчика и ключом пользователя", net.altAuth.length === 2);
+  { // вживую 10 октября: страницу открыли с ключом в адресе (без входа) — форма отвечала «Forbidden»
+    const g = await SD.call("/altegio/user?c=salon&key=" + OWNER), gt = await g.text();
+    const r = await SD.call("/altegio/user", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://bot.test" }, body: new URLSearchParams({ c: "salon", key: OWNER, login: "me@x.kz", password: "right-pass" }).toString() });
+    const rt = await r.text();
+    ok("журнал Altegio: открыли с ключом в адресе, без входа — форма передаёт ключ и проверка идёт", g.status === 200 && gt.includes('name="key"') && r.status === 200 && /ключ пользователя получен/.test(rt), r.status + " " + rt.slice(0, 300));
+  }
 
   // пульт: «Очистить память бота» — история и записи чата забыты, окно WhatsApp сохраняется
   let d = await (await own.post("/api/inbox/act", { c: "salon", ch: "wa", id: C, act: "forget" })).json();
