@@ -5495,12 +5495,13 @@ function bcDate(cell) {
 }
 function bcParse(src) {
   const seen = new Set(), list = [], bad = [], info = [];
-  let dup = 0, badN = 0, cut = 0, visitCol = -1, bdayCol = -1;
+  let dup = 0, badN = 0, cut = 0, visitCol = -1, bdayCol = -1, seenAny = false;
   const yearNow = local(Date.now()).getUTCFullYear();
   for (const raw of String(src || "").split(/\r?\n/)) {
     const line = raw.trim(); if (!line) continue;
     if (list.length >= BC_MAX) { cut++; continue; }
-    if (!/\d{5}/.test(line.replace(/[\s()+\-.–—]/g, "")) && /телефон|номер|phone|тел\.?(\s|$|;|,)/i.test(line)) { // строка заголовка из Excel: запоминаем, где визит и где день рождения
+    const first = !seenAny; seenAny = true; // заголовок Excel — только первая строка («не номер» в середине списка — непонятная строка)
+    if (first && !/\d{5}/.test(line.replace(/[\s()+\-.–—]/g, "")) && /телефон|номер|phone|тел\.?(\s|$|;|,)/i.test(line)) { // строка заголовка из Excel: запоминаем, где визит и где день рождения
       line.split(/[\t;,|]/).forEach((cell, i) => { if (/визит|посещ|последн|был[аи]?|last/i.test(cell)) visitCol = i; else if (/рожд|birth|^\s*д\.?\s?р\.?\s*$/i.test(cell)) bdayCol = i; });
       continue;
     }

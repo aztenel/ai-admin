@@ -944,6 +944,10 @@ section("рассылки: имена и номера");
 {
   const own = S.browser(); await own.go("/studio?key=" + OWNER);
   const one = async line => { const d = await (await own.post("/api/bc/check", { c: "kairat", tpl: "promo_october", lang: "ru", params: "{имя}", text: "x", recipients: line })).json(); if (d.error) console.log("check:", d.error); const x = (d.sample || [])[0] || ""; return { phone: (x.match(/^\+(\d+)/) || [])[1] || "", name: x.includes(" — без имени") ? "" : x.replace(/^\+\d+ — /, "") }; };
+  { // «не номер» в середине списка — непонятная строка, а не заголовок Excel (заголовок — только первая строка)
+    const d = await (await own.post("/api/bc/check", { c: "kairat", tpl: "promo_october", lang: "ru", params: "{имя}", text: "x", recipients: "87051110001, Данияр\nне номер\n87051110003" })).json();
+    ok("рассылка: «не номер» в середине списка считается непонятной строкой", d.badN === 1 && d.valid === 2, JSON.stringify(d).slice(0, 300));
+  }
   const names = [
     ["87011110001, Неадекват Ержан", ""], ["87011110002, ЧС", ""], ["87011110003, Хамка", ""], ["87011110004, Скандалистка Алия", ""], ["87011110008, Сосед", ""],
     ["87011110022, Ресницы Дана", ""], ["87011110024, Барбер Арман", ""], ["87011110033, Скидка 20%", ""], ["87011110038, Мама Алии", ""], ["87011110041, Нов клиент", ""],
