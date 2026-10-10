@@ -1496,6 +1496,39 @@ section("напоминания и отзывы");
   ok("запись из чата на сайте: напоминаний нет (написать туда нельзя)", !(S8.kv.json("rmq:salon") || []).some(x => x.ch === "web"), JSON.stringify([wc.reply, S8.kv.json("rmq:salon")]));
 }
 
+// ====== Ремонт техники: предварительная оценка по прайсу «модель | работа | цена | срок»
+section("оценка ремонта по прайсу");
+{
+  const S9 = mk(), own = S9.browser(); await own.go("/studio?key=" + OWNER);
+  const REP = "iPhone 13 | замена экрана | 45000–60000 | 1 день\niPhone 13 | замена аккумулятора | 18000 | 2 часа\nSamsung A54 | замена экрана | от 30000 | 1–2 дня\nлюбая модель | диагностика | бесплатно | 30 минут\nRedmi Note 12 | замена разъёма зарядки | после диагностики |";
+  const SHOP = { id: "shop", isNew: true, name: "Phone Shop", niche: "repair", address: "Актау, 14 мкр, дом 5", phone: "+7 701 000 00 09", schedule: "ежедневно 10–20", booking: "none", services: "Чехол силиконовый — 3000\nЗащитное стекло — от 2500", repairs: REP };
+  let d = await (await own.go("/api/studio/list")).json();
+  ok("в списке ниш есть «Ремонт и магазин техники»", d.niches.some(n => n.id === "repair" && /[Рр]емонт/.test(n.title)), JSON.stringify(d.niches));
+  d = await (await own.post("/api/studio/check", { ...SHOP, repairs: "iPhone 13 замена экрана 45000" })).json();
+  ok("строка прайса без «|» → ошибка с номером строки и подсказкой формата", d.ok === false && d.errors.some(e => /прайс ремонта, строка 1/.test(e) && /\|/.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/check", { ...SHOP, repairs: "iPhone 13 | замена экрана |  | 1 день" })).json();
+  ok("строка прайса без цены → ошибка", d.ok === false && d.errors.some(e => /прайс ремонта, строка 1/.test(e) && /цен/.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/check", { ...SHOP, repairs: Array.from({ length: 301 }, (_, i) => `Модель ${i} | замена экрана | 20000 | 1 день`).join("\n") })).json();
+  ok("больше 300 строк прайса → ошибка", d.ok === false && d.errors.some(e => /прайс ремонта/.test(e) && /300/.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/check", { ...SHOP, repairs: Array.from({ length: 250 }, (_, i) => `Модель ${i} | замена экрана | 20000 | 1 день`).join("\n") })).json();
+  ok("250 строк прайса (больше, чем 80 услуг) принимаются", d.ok === true, JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/save", SHOP)).json();
+  ok("паспорт магазина с прайсом ремонта сохраняется", d.ok === true, JSON.stringify(d));
+  const pg = await (await own.go("/studio")).text();
+  ok("в форме паспорта есть поле прайса ремонта", /id="f_repairs"/.test(pg) && /'repairs'/.test(pg));
+
+  let r = await S9.chat("shop", "rp1", "Сколько стоит поменять экран на айфон 13?", "Замена экрана на iPhone 13 — от 45 000 до 60 000 ₸, около 1 дня. Это предварительная оценка: точную цену мастер скажет после бесплатной диагностики. Принесёте телефон?");
+  ok("цена из прайса проходит защиту без изменений", !r.guard && /45 000/.test(r.reply) && /60 000/.test(r.reply), JSON.stringify(r));
+  const sys = net.gemini.at(-1).systemInstruction.parts[0].text;
+  ok("в подсказке — прайс ремонта строками и правило предварительной оценки", sys.includes("iPhone 13 | замена экрана | от 45 000 до 60 000 ₸ | 1 день") && sys.includes("Redmi Note 12 | замена разъёма зарядки | цену назовёт мастер после диагностики") && /предварительн/.test(sys) && /диагностик/.test(sys) && /модел/.test(sys), sys.slice(sys.indexOf("Прайс ремонта") - 10, sys.indexOf("Прайс ремонта") + 700));
+  r = await S9.chat("shop", "rp2", "А экран на iPhone 14 сколько?", ["Замена экрана на iPhone 14 — 70 000 ₸.", "Цены на iPhone 14 в прайсе нет — мастер оценит его на бесплатной диагностике. Принесёте телефон?"]);
+  ok("выдуманная цена (70 000, нет в прайсе) до клиента не доходит", !/70 000/.test(r.reply) && /диагностик/.test(r.reply) && /исправлено/.test(r.guard || ""), JSON.stringify(r));
+  r = await S9.chat("shop", "rp3", "А экран на iPhone 15?", ["Замена экрана на iPhone 15 — 80 000 ₸.", "На iPhone 15 — 85 000 ₸."]);
+  ok("магазин без записи: запасной ответ не предлагает «подобрать время», а просит имя и телефон", !/[Пп]одобрать вам удобное время/.test(r.reply) && /телефон/.test(r.reply) && !/80 000|85 000/.test(r.reply), r.reply);
+  d = await (await own.go("/api/launch/status?c=shop")).json();
+  ok("экзамен: есть сценарий «Оценка ремонта» по прайсу", (d.cases || []).some(k => /Оценка ремонта/.test(k.t)), JSON.stringify(d.cases));
+}
+
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {
   console.log(`\nНовые части: прошло ${T.pass}, не прошло ${T.fail}`);
   process.exit(T.fail ? 1 : 0);
