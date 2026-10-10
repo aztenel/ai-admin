@@ -289,7 +289,7 @@ ok("/altegio без телефона записей не создаёт и по�
 const form = o => ({ method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(o).toString() });
 ok("пробная запись без ключа → 403", (await call("/altegio", form({ key: "bad", phone: "+7 701 123 45 67" }))).status === 403);
 r = await call("/altegio", form({ key: "lk", phone: "8 701 123 45 67" })); t = await r.text();
-ok("пробная запись: видно, как Altegio отвечает на чтение записи до и после удаления", /Чтение записи: deleted: false/.test(t) && /Чтение удалённой записи: /.test(t), t);
+ok("пробная запись к конкретному мастеру: видно, занято ли его время с записью и после удаления", /С записью \(мастер \S+, [\d:]+\) — время мастера: \S+; с услугой: \S+; проверка записи: /.test(t) && /После удаления — время мастера: /.test(t) && ALT.records[0].appointments[0].staff_id > 0, t.split("Пробная запись: создана")[1]);
 ok("пробная запись: создана и сразу удалена", t.includes("Пробная запись: создана ✅ № 555001") && t.includes("Удаление пробной записи: ✅") && ALT.records.length === 1 && ALT.records[0].phone === "+77011234567" && ALT.deleted.includes("555001/hash555001"), t.slice(t.indexOf("<pre>")));
 ALT.needCode = true;
 r = await call("/altegio", form({ key: "lk", phone: "+7 701 123 45 67" })); t = await r.text();

@@ -1355,17 +1355,21 @@ async function altCall(env, method, path, body) {
 
 // Удалена ли запись в Altegio (администратор удалил её прямо в журнале или клиента там отменили).
 // true — удалена; false — на месте; null — не знаем (тогда запись считаем существующей). b — { record_id, record_hash, date, time, staffName, loc }
+let altNoGet = false; // Altegio не даёт читать запись (405) — больше не спрашиваем
 async function altIsGone(env, b, loc, nowMs) {
   let g = null;
   // 1) спрашиваем саму запись
-  if (b.record_hash) {
+  if (b.record_hash && !altNoGet) {
     try {
       const d = await altCall(env, "GET", `/user/records/${b.record_id}/${b.record_hash}`);
       if (d && (d.deleted === true || d.deleted === 1)) g = true;
       else if (d && typeof d === "object" && "deleted" in d) g = false; // Altegio прямо сказал: запись на месте
       const sn = d && !Array.isArray(d) && d.staff && typeof d.staff === "object" ? altText(d.staff.name, 60) : "";
       if (!b.staffName && sn) b.staffName = sn; // запись к «любому» мастеру: узнаём, к кому её поставили
-    } catch (e) { if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e)); }
+    } catch (e) {
+      if (e && e.status === 405) altNoGet = true; // вживую 10 октября: чтение записи ключом разработчика — 405 MethodNotAllowed
+      else if (e && e.status === 404 && /не\s*найден|not\s*found|не\s*существ|удал/i.test(e.message || "")) g = true; else console.log("alt check", b.record_id, String(e));
+    }
   }
   // 2) прямого ответа нет (ошибка или ответ без поля deleted) — смотрим время мастера: запись занимает его время,
   // а если оно снова свободно — записи нет. Мастер записи неизвестен (старая запись к «любому») — время должно быть свободно у всех мастеров
@@ -1946,8 +1950,11 @@ async function altDiag(env, cid, locArg, bookPhone) {
     if (!ph) out.push("Пробная запись: ❌ номер телефона не распознан — нужен казахстанский мобильный, например +7 701 123 45 67");
     else if (!first || !base.services[0]) out.push("Пробная запись: ❌ нет свободного времени или услуг для записи");
     else {
-      const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: first.datetime }];
-      const where = `${first.date} в ${first.time}, клиент «Проверка бота (можно удалить)»`;
+      // мастер — конкретный, у которого это время свободно: так видно, как Altegio показывает время мастера с записью
+      let pick = null;
+      for (const m of base.staff.slice(0, 12)) { try { const t = await altTimes(env, loc, m.id, first.date, [base.services[0].id], now, true); if (t.some(x => x.time === first.time)) { pick = m; break; } } catch (e) {} }
+      const appointments = [{ id: 1, services: [base.services[0].id], staff_id: pick ? pick.id : 0, datetime: first.datetime }];
+      const where = `${first.date} в ${first.time}${pick ? ", мастер " + pick.name : ""}, клиент «Проверка бота (можно удалить)»`;
       const body = { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Пробная запись AI-администратора: создаётся и сразу удаляется", appointments };
       lastErr = null;
       let sent = null, needEmail = false;
@@ -1965,26 +1972,20 @@ async function altDiag(env, cid, locArg, bookPhone) {
       if (rec && rec.record_id) {
         out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${first.date} в ${first.time}`);
         if (sent && !/^\+/.test(String(sent.phone))) out.push("  (номер телефона Altegio принял только цифрами, без «+» — бот это учитывает)");
-        // как Altegio отвечает на чтение записи и показывает время мастера — по этому бот замечает записи, удалённые администратором
-        const seeRec = async () => { try { const d = await altCall(env, "GET", `/user/records/${rec.record_id}/${rec.record_hash}`);
-            if (!d || typeof d !== "object") return { t: "пустой ответ" };
-            return { t: "deleted: " + ("deleted" in d ? JSON.stringify(d.deleted) : "поля нет") + (d.staff && d.staff.name ? ", мастер: " + altText(d.staff.name, 40) : "") + "; поля: " + Object.keys(d).slice(0, 14).join(", "), st: d.staff && d.staff.id ? d.staff : null };
-          } catch (e) { return { t: `ошибка ${e.status || ""} ${e.message || ""}`.trim() }; } };
-        const seeTime = async st => { try { const t = await altTimes(env, loc, st.id, first.date, [], now, true); return t.some(x => x.time === first.time) ? "показано свободным" : "занято"; } catch (e) { return "не прочитано: " + clean(e.message, 80); } };
-        let r0 = null;
-        if (rec.record_hash) {
-          r0 = await seeRec();
-          out.push(`Чтение записи: ${clean(r0.t, 300)}`);
-          if (r0.st) out.push(`Время ${first.time} у мастера ${altText(r0.st.name, 40)} с записью: ${await seeTime(r0.st)}`);
-        }
+        // занято ли время мастера, пока запись есть, и свободно ли после удаления — по этому бот может замечать записи, удалённые администратором
+        const seeTime = async () => {
+          if (!pick) return "мастер не выбран";
+          let a1, a2, a3;
+          try { a1 = (await altTimes(env, loc, pick.id, first.date, [], now, true)).some(x => x.time === first.time) ? "свободно" : "занято"; } catch (e) { a1 = "ошибка " + (e.status || ""); }
+          try { a2 = (await altTimes(env, loc, pick.id, first.date, [base.services[0].id], now, true)).some(x => x.time === first.time) ? "свободно" : "занято"; } catch (e) { a2 = "ошибка " + (e.status || ""); }
+          try { await altCall(env, "POST", `/book_check/${loc}`, { appointments }); a3 = "проходит"; } catch (e) { a3 = `не проходит (${e.code || e.status || ""} ${clean(e.message, 60)})`; }
+          return `время мастера: ${a1}; с услугой: ${a2}; проверка записи: ${a3}`;
+        };
+        if (pick) out.push(`С записью (мастер ${pick.name}, ${first.time}) — ${await seeTime()}`);
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
           e => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
-        if (del) {
-          const r1 = await seeRec();
-          out.push(`Чтение удалённой записи: ${clean(r1.t, 300)}`);
-          if (r0 && r0.st) out.push(`Время ${first.time} у мастера ${altText(r0.st.name, 40)} после удаления: ${await seeTime(r0.st)}`);
-        }
+        if (del && pick) out.push(`После удаления — ${await seeTime()}`);
       } else if (rec) out.push(`Пробная запись: ⚠️ Altegio ответил без номера записи — запись могла создаться. Проверьте журнал Altegio: ${where}`);
       else if (lastErr && (!lastErr.status || lastErr.status >= 500 || (lastErr.status >= 200 && lastErr.status < 300))) out.push(`  → понятного ответа нет: запись могла создаться. Проверьте журнал Altegio: ${where}`);
       else if (lastErr && lastErr.code === 432) out.push("  → локация требует код из SMS: отключите подтверждение номера в настройках онлайн-записи Altegio, иначе бот будет передавать заявки администратору");
