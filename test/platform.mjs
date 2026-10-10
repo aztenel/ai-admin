@@ -1,6 +1,6 @@
 // Проверки новых частей на заглушках: история чата для пульта, WhatsApp на несколько клиентов, паспорт бота, вход, страница владельца, пульт чатов.
 // Запуск: node test/platform.mjs (его же запускает test/smoke.mjs в конце). SHOW=1 — показать все проверки.
-import { mk, net, ok, section, T, D1, D2, wait } from "./harness.mjs";
+import { mk, net, ok, section, T, D0, D1, D2, wait } from "./harness.mjs";
 
 const text = (from, body) => ({ from, type: "text", text: { body } });
 const echo = b => "Ответ на: " + b.contents.at(-1).parts[0].text;
@@ -841,8 +841,8 @@ section("рассылки");
   d = await J(await own.post("/api/bc/act", { c: "dent", id: idD, act: "start" }));
   ok("и запустить её нельзя", /не подключён/.test(d.error || ""));
   // пустая очередь: фоновая задача делает одно чтение и выходит
-  S.kv.mem.delete("bcrun"); const g0 = S.kv.ops.get, p0 = S.kv.ops.put; await S.cron();
-  ok("когда рассылок нет, фоновая задача только проверяет очередь (одно чтение)", S.kv.ops.get - g0 === 1 && S.kv.ops.put === p0);
+  S.kv.mem.delete("bcrun"); S.kv.mem.delete("rmidx"); const g0 = S.kv.ops.get, p0 = S.kv.ops.put; await S.cron(); // запись в Altegio выше поставила напоминания — здесь проверяем пустые очереди
+  ok("когда рассылок и напоминаний нет, фоновая задача только проверяет две очереди (два чтения, ни одной записи)", S.kv.ops.get - g0 === 2 && S.kv.ops.put === p0, S.kv.ops.get - g0);
   // удалённый клиент в очереди — убирается
   S.kv.mem.set("bcrun", JSON.stringify([{ c: "ghost", id: "x1" }, { c: "kairat", id: "nope" }])); await S.cron();
   ok("очередь чистится от удалённых клиентов и рассылок", run().length === 0, JSON.stringify(run()));
@@ -1415,6 +1415,85 @@ section("дневная сводка");
   net.reset(); await S7.cron(at(9, 3, 4));
   const m0 = (net.tg.find(x => /Сводка/.test(x.text || "")) || {}).text || "";
   ok("день без обращений → сводка «обращений не было»", /обращений не было/.test(m0), m0 || JSON.stringify(net.tg));
+}
+
+// ====== Напоминания о записи и просьба об отзыве: только о настоящих записях в Altegio, только в WhatsApp
+section("напоминания и отзывы");
+{
+  const S8 = mk({ WA_TOKEN_SALON: "tok-salon", APP_SECRET_SALON: "sec-salon", ALTEGIO_PARTNER: "partner-key" }), own = S8.browser(); await own.go("/studio?key=" + OWNER);
+  const at = (day, h, m) => { const [y, mo, d] = day.split("-").map(Number); return Date.UTC(y, mo - 1, d, h - 5, m); }; // местное время Астаны → мс
+  const SALON = { id: "salon", isNew: true, name: "Салон Айгерим", niche: "beauty", address: "Алматы, ул. Абая, 1", phone: "+7 727 000 00 01", schedule: "ежедневно 9–21", booking: "altegio", altegioLoc: "5001", tg: "777000", review: "https://2gis.kz/almaty/firm/123/tab/reviews" };
+  let d = await (await own.post("/api/studio/check", { ...SALON, review: "2gis.kz/almaty/firm/123" })).json();
+  ok("ссылка на отзывы без https:// → ошибка паспорта", d.ok === false && d.errors.some(e => /отзыв/i.test(e)), JSON.stringify(d.errors));
+  d = await (await own.post("/api/studio/save", SALON)).json();
+  ok("паспорт со ссылкой на отзывы сохраняется", d.ok === true, JSON.stringify(d));
+  const pg = await (await own.go("/studio")).text();
+  ok("в форме паспорта есть напоминания и ссылка на отзывы", /id="f_remind"/.test(pg) && /id="f_review"/.test(pg) && /'remind'/.test(pg) && /'review'/.test(pg));
+  const o = { secret: "sec-salon", pnid: "900222" }, book = async (who, name, day, time, text) => {
+    const m = time === "10:00" ? "Ерлан" : "Арман"; // в заглушке Altegio в 10:00 свободен только Ерлан
+    net.ai = [`Записала.\n[ЗАЯВКА] Имя: ${name}; Телефон: указан; Услуга: Мужская стрижка; Мастер: ${m}; Дата: ${day}; Время: ${time}`];
+    await S8.waText("/wa/salon", who, text || `${name}, мужская стрижка к мастеру ${m}, ${time}`, o);
+  };
+  const C1 = "77071110011", C2 = "77071110012", C3 = "77071110013", C4 = "77071110014";
+  net.reset(); await book(C1, "Айша", D1, "10:00");
+  ok("запись в Altegio создана", net.altRecords.length === 1 && S8.sentTo(C1).some(x => /Записала вас/.test(x)), JSON.stringify(S8.sentTo(C1)));
+  const q = S8.kv.json("rmq:salon") || [], kinds = q.map(x => x.k).sort().join();
+  ok("в очереди три сообщения: накануне в 18:00, за 2 часа и просьба об отзыве", kinds === "d1,h2,rv" && q.find(x => x.k === "d1").at === at(D0, 18, 0) && q.find(x => x.k === "h2").at === at(D1, 8, 0) && q.find(x => x.k === "rv").at === at(D1, 13, 0), JSON.stringify(q));
+  ok("клиент с очередью попал в общий список", (S8.kv.json("rmidx") || []).includes("salon"));
+
+  // вторая запись, потом клиент просит её отменить — напоминаний по ней не будет
+  await book(C2, "Ерлан", D1, "11:00");
+  net.ai = [`Передала администратору, он подтвердит отмену.\n[ОТМЕНА] Имя: Ерлан; Дата: ${D1}; Время: 11:00`];
+  await S8.waText("/wa/salon", C2, "Отмените, пожалуйста, мою запись на завтра", o);
+  // третья запись, потом клиент пишет «стоп»
+  await book(C3, "Данияр", D1, "13:00");
+  await S8.waText("/wa/salon", C3, "стоп", o);
+
+  net.reset(); await S8.cron(at(D0, 17, 30));
+  ok("в 17:30 напоминаний ещё нет", !net.graph.length, JSON.stringify(net.graph.map(g => g.body)));
+  net.reset(); await S8.cron(at(D0, 18, 1));
+  const r1 = S8.sentTo(C1);
+  ok("в 18:00 накануне — напоминание: «завтра», время, салон, услуга и мастер", r1.length === 1 && /завтра/.test(r1[0]) && /10:00/.test(r1[0]) && /Салон Айгерим/.test(r1[0]) && /Мужская стрижка/.test(r1[0]) && /Ерлан/.test(r1[0]), JSON.stringify(r1));
+  ok("клиенту с просьбой об отмене и клиенту, написавшему «стоп», напоминаний нет", !S8.sentTo(C2).length && !S8.sentTo(C3).length, JSON.stringify(net.graph.map(g => [g.body.to, g.body.text && g.body.text.body])));
+  const h1 = S8.hist("wa", "salon", C1);
+  ok("напоминание видно в переписке (и ИИ его видит)", h1.turns.at(-1).role === "model" && /завтра/.test(h1.turns.at(-1).text), JSON.stringify(h1.turns.at(-1)));
+  net.reset(); await S8.cron(at(D0, 18, 6));
+  ok("второй раз то же напоминание не приходит", !S8.sentTo(C1).length);
+  // клиент написал утром — окно WhatsApp открыто ещё сутки
+  net.reset(); await S8.cron(at(D1, 8, 1));
+  const r2 = S8.sentTo(C1);
+  ok("за 2 часа — «сегодня», время и адрес", r2.length === 1 && /сегодня/.test(r2[0]) && /10:00/.test(r2[0]) && /ул\. Абая, 1/.test(r2[0]), JSON.stringify(r2));
+  net.reset(); await S8.cron(at(D1, 13, 1));
+  ok("отзыв через официальный WhatsApp — только в 24-часовом окне: клиент молчал больше суток → не отправлено", !S8.sentTo(C1).length, JSON.stringify(net.graph.map(g => g.body)));
+
+  // обычный WhatsApp (Green-API): окна в 24 часа нет — просьба об отзыве уходит на следующий день
+  S8.env.GA_ID_SALON = "7105000002"; S8.env.GA_TOKEN_SALON = "ga-tok-salon";
+  await own.post("/api/launch/ga", { c: "salon" });
+  const hu = new URL((net.gaSettings["7105000002"] || {}).webhookUrl || "https://x.invalid/"), gpath = hu.pathname + hu.search, inst = { idInstance: 7105000002, wid: "77000000078@c.us", typeInstance: "whatsapp" };
+  let gm = 0; const gin = (from, text) => S8.call(gpath, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ typeWebhook: "incomingMessageReceived", instanceData: inst, timestamp: Math.floor(Date.now() / 1000), idMessage: "RIN" + (++gm), senderData: { chatId: from + "@c.us", sender: from + "@c.us", senderName: "Гость" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: text } } }) });
+  net.reset(); net.ai = [`Записала.\n[ЗАЯВКА] Имя: Мадина; Телефон: указан; Услуга: Мужская стрижка; Мастер: Ерлан; Дата: ${D1}; Время: 10:00`];
+  await gin(C4, "Мадина, мужская стрижка к мастеру Ерлан, завтра 10:00");
+  const q4 = (S8.kv.json("rmq:salon") || []).filter(x => x.id === C4);
+  ok("Green-API: запись создана, в очереди напоминания и отзыв", net.altRecords.length === 1 && q4.map(x => x.k).sort().join() === "d1,h2,rv" && q4.every(x => x.ch === "ga"), JSON.stringify([q4, net.ga.filter(x => x.op === "sendMessage").map(x => x.body.message)]));
+  net.reset(); await S8.cron(at(D1, 13, 1));
+  const r4 = net.ga.filter(x => x.op === "sendMessage" && String(x.body.chatId) === C4 + "@c.us").map(x => x.body.message);
+  ok("после визита — просьба об отзыве со ссылкой из паспорта (опоздавшие напоминания не ушли)", r4.length === 1 && r4[0].includes("https://2gis.kz/almaty/firm/123/tab/reviews") && /Спасибо/.test(r4[0]), JSON.stringify(r4));
+  // устаревшее (фоновая задача не работала больше 3 часов) — не отправляем, из очереди убираем
+  net.reset(); await S8.cron(at(D2, 12, 0));
+  ok("сообщения, опоздавшие больше чем на 3 часа, не уходят; очередь пустеет", !net.graph.length && !(S8.kv.json("rmq:salon") || []).length && !(S8.kv.json("rmidx") || []).includes("salon"), JSON.stringify([net.graph.map(g => g.body), S8.kv.json("rmq:salon"), S8.kv.json("rmidx")]));
+
+  // напоминания выключены в паспорте, ссылки на отзыв нет — очередь не создаётся
+  await own.post("/api/studio/save", { ...SALON, isNew: false, remind: "off", review: "" });
+  net.reset(); await book("77071110015", "Тимур", D1, "10:00");
+  ok("напоминания выключены и нет ссылки на отзыв → ничего не запланировано", !(S8.kv.json("rmq:salon") || []).some(x => x.id === "77071110015"), JSON.stringify(S8.kv.json("rmq:salon")));
+  // только накануне
+  await own.post("/api/studio/save", { ...SALON, isNew: false, remind: "day", review: "" });
+  net.reset(); await book("77071110016", "Асель", D1, "11:00");
+  const q6 = (S8.kv.json("rmq:salon") || []).filter(x => x.id === "77071110016").map(x => x.k).join();
+  ok("«только накануне» → одно напоминание", q6 === "d1", q6);
+  // веб-чат: писать некуда — ничего не планируем
+  const wc = await S8.chat("salon", "rmweb1", `Айгуль, +7 701 333 22 11, мужская стрижка ${D1} 10:00`, `Записала.\n[ЗАЯВКА] Имя: Айгуль; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${D1}; Время: 10:00`);
+  ok("запись из чата на сайте: напоминаний нет (написать туда нельзя)", !(S8.kv.json("rmq:salon") || []).some(x => x.ch === "web"), JSON.stringify([wc.reply, S8.kv.json("rmq:salon")]));
 }
 
 if (process.argv[1] && process.argv[1].endsWith("platform.mjs")) {

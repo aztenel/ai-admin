@@ -3141,6 +3141,8 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
       else if (!opts.test && noteDue("hist:" + c.id)) notes.push(`⚠️ Не сохраняется история чатов (сбой или суточный лимит хранилища) — ${c.name}\nБот отвечает, но не помнит разговор. Проверьте хранилище KV в панели Cloudflare.`);
     }
   }
+  // напоминания о новых записях в Altegio и просьба об отзыве (только WhatsApp: в чат на сайте написать нельзя)
+  if (added.length && !opts.test) { try { await remindPlan(env, c, histKey, added, nowMs); } catch (e) { console.log("remind plan", String(e)); } }
   // уведомления администратору: в веб-чате и WhatsApp — уже после ответа клиенту
   if (notes.length) { if (opts.defer) opts.defer(() => sendNotes(notes)); else await sendNotes(notes); }
   return { reply, lead, leads: newLeads.length > 1 ? newLeads.slice() : undefined, cancel, cancelDone, offer: lead ? [] : offers(cc, ctx, reply), guard, isNew };
@@ -3449,7 +3451,7 @@ export default {
   // раз в минуту (cron в wrangler.jsonc): фоновая отправка рассылок
   backup: (env) => backupRun(env, true), // для проверок
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(Promise.all([cronRun(env), backupRun(env), digestRun(env, (controller && controller.scheduledTime) || Date.now())]).catch(e => console.log("cron", String((e && e.stack) || e))));
+    ctx.waitUntil(Promise.all([cronRun(env), backupRun(env), digestRun(env, (controller && controller.scheduledTime) || Date.now()), remindRun(env, (controller && controller.scheduledTime) || Date.now())]).catch(e => console.log("cron", String((e && e.stack) || e))));
   }
 };
 async function route(request, env, ctx) {
@@ -4459,6 +4461,9 @@ function compileClient(cfg) {
   if (tg.some(x => !/^-?\d{5,20}$/.test(x))) errors.push("Telegram: номер чата — это число (можно несколько через запятую), например 123456789");
   const bookDays = Math.min(7, Math.max(1, Math.round(+cfg.bookDays || 3)));
   const digest = String(cfg.digest ?? "").trim();
+  const remind = ["", "day", "off"].includes(String(cfg.remind ?? "").trim()) ? String(cfg.remind ?? "").trim() : "";
+  const review = String(cfg.review ?? "").trim();
+  if (review && !/^https:\/\/[^\s<>"]{4,300}$/.test(review)) errors.push("ссылка на отзывы: целиком, начиная с https:// (например, ссылка на 2ГИС или Google Карты)");
   if (digest && digest !== "off" && !(/^\d{1,2}$/.test(digest) && +digest >= 6 && +digest <= 23)) errors.push("дневная сводка: час от 6 до 23 или «не присылать»");
   const payRaw = String(cfg.pay ?? "").replace(/\r/g, "").replace(/[\u0000-\u0009\u000b-\u001f]/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   if (payRaw.length > 500) errors.push(`реквизиты для оплаты: ${payRaw.length} знаков — оставьте не больше 500`);
@@ -4492,7 +4497,7 @@ function compileClient(cfg) {
     hidden: true, dynamic: true, real: true, bookDays, booking, services: sv.list, staffList: staff, phone, address,
     ...(booking === "altegio" && /^\d{1,12}$/.test(loc) ? { altegio: { location: +loc } } : {}),
     ...(tg.length ? { tg: tg.join(",") } : {}),
-    ...(payRaw && payRaw.length <= 500 ? { pay: payRaw } : {}), ...(upsell.length ? { upsell } : {}), ...(digest ? { digest } : {}),
+    ...(payRaw && payRaw.length <= 500 ? { pay: payRaw } : {}), ...(upsell.length ? { upsell } : {}), ...(digest ? { digest } : {}), ...(remind ? { remind } : {}), ...(review && /^https:\/\/[^\s<>"]{4,300}$/.test(review) ? { review } : {}),
     ...(cfg.waPhoneId && /^\d{5,20}$/.test(String(cfg.waPhoneId).trim()) ? { waPhoneId: String(cfg.waPhoneId).trim() } : {}),
     ...(cfg.keyHash ? { keyHash: String(cfg.keyHash) } : {}), off: !!cfg.off, v: +cfg.v || 0, updated: +cfg.updated || 0
   };
@@ -4636,7 +4641,7 @@ async function enter(request, env, url) {
 }
 
 // ================= «МОИ БОТЫ»: страница владельца =================
-const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "pay", "upsell", "digest", "greeting", "safe", "tg", "waPhoneId", "off"];
+const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "pay", "upsell", "digest", "remind", "review", "greeting", "safe", "tg", "waPhoneId", "off"];
 const cfgIn = b => { const o = {}; for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, 8000); return o; };
 // что подключено у клиента: по этим отметкам владелец видит, чего не хватает до запуска
 function clientState(env, c) {
@@ -4732,6 +4737,8 @@ function studioPage() {
 <label>Реквизиты для оплаты<small>Kaspi Gold, номер для перевода, ссылка на оплату — как их должен увидеть клиент. Бот отправляет этот текст дословно, когда спрашивают про оплату; в пульте он вставляется кнопкой «₸». До 500 знаков.</small></label><textarea id="f_pay" style="min-height:64px" placeholder="Kaspi Gold: +7 701 123 45 67 (Кайрат К.)"></textarea>
 <label>Дополнительно<small>Всё, что бот должен знать: оплата, предоплата, правила отмены, парковка, с какого возраста. Каждое правило — с новой строки. Чего здесь нет, бот не обещает.</small></label><textarea id="f_extra" style="min-height:120px"></textarea>
 <label>Telegram администратора<small>Номер чата, куда приходят заявки и просьбы клиентов. Пусто — уведомления идут вам.</small></label><input type="text" id="f_tg" maxlength="120" inputmode="numeric">
+<label>Напоминания клиентам о записи<small>Только о записях, которые бот сам сделал в Altegio, и только в WhatsApp. Через официальный WhatsApp (Meta) — если клиент писал за последние сутки.</small></label><select id="f_remind"><option value="">накануне в 18:00 и за 2 часа</option><option value="day">только накануне в 18:00</option><option value="off">не напоминать</option></select>
+<label>Ссылка на отзывы<small>2ГИС, Google Карты и т. п. Если указана — через 3 часа после начала записи бот попросит клиента оставить отзыв. Пусто — не просит.</small></label><input type="text" id="f_review" maxlength="300" placeholder="https://2gis.kz/...">
 <label>Дневная сводка в Telegram<small>Раз в день: сколько было чатов, записей, заявок, просьб и кто ждёт ответа. Утренняя сводка — за вчерашний день.</small></label><select id="f_digest"><option value="">в 21:00 (по умолчанию)</option><option value="20">в 20:00</option><option value="22">в 22:00</option><option value="23">в 23:00</option><option value="9">в 9:00 утра — за вчера</option><option value="8">в 8:00 утра — за вчера</option><option value="off">не присылать</option></select>
 <label>WhatsApp: Phone number ID<small>Число из кабинета Meta (WhatsApp → API Setup). Можно вписать позже — нужно для проверки номера на странице «Проверка запуска».</small></label><input type="text" id="f_waPhoneId" maxlength="20" inputmode="numeric">
 <label><input type="checkbox" id="f_off"> Бот выключен<small>Клиентам в WhatsApp отвечает только администратор из пульта чатов.</small></label>
@@ -4741,7 +4748,7 @@ function studioPage() {
 <div class="row"><button class="btn" id="b_key">Выдать новый ключ</button><button class="btn d" id="b_del">Удалить бота</button></div><div id="keyout"></div></div>
 </div></div>
 <script>
-var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','pay','upsell','tg','digest','waPhoneId'],cur=null,niches=[];
+var $=function(i){return document.getElementById(i)},FIELDS=['name','niche','kind','address','phone','schedule','booking','altegioLoc','step','bookDays','services','staff','extra','pay','upsell','tg','digest','remind','review','waPhoneId'],cur=null,niches=[];
 function api(p,b){return fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}:{}).then(function(r){return r.json().then(function(j){j._status=r.status;return j})})}
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function tag(ok,t){return el('span','tag '+(ok===true?'ok':ok===false?'no':''),t)}
@@ -5438,10 +5445,11 @@ const DIGEST_HOUR = 21;
 async function digestRun(env, now) {
   const d = local(now), h = d.getUTCHours();
   if (d.getUTCMinutes() >= 10 || !env.TG_TOKEN) return 0;
-  try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); }
+  const due = c => c.dynamic && !c.off && c.digest !== "off" && (c.digest ? +c.digest : DIGEST_HOUR) === h;
+  if (!DYN.at || Object.values(CLIENTS).some(due)) { try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } } // паспорта перечитываем, только если сейчас чей-то час сводки
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
-    if (!c.dynamic || c.off || c.digest === "off" || (c.digest ? +c.digest : DIGEST_HOUR) !== h) continue;
+    if (!due(c)) continue;
     const mk = `dg:${c.id}:${isoDay(now)}`;
     try { if (await env.KV.get(mk)) continue; await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 }); } catch (e) { console.log("digest mark", String(e)); continue; }
     try { if (await notify(env, await digestText(env, c, now, h < 12), c.id)) n++; } catch (e) { console.log("digest", String((e && e.stack) || e)); }
@@ -5479,6 +5487,87 @@ async function digestText(env, c, now, prevDay) {
   if (need) L.push(`Ждут ответа: ${need}`);
   if (/^https:\/\//.test(site)) L.push(`Пульт: ${site}/inbox?c=${c.id}`);
   return L.join("\n");
+}
+// ===== Напоминания о записи и просьба об отзыве =====
+// Только о записях, которые бот сам создал в Altegio (у записей, сделанных администратором напрямую в Altegio, бот не знает о клиенте).
+// Очередь клиента — ключ rmq:<клиент> (список { k, at, ch, id, rec, date, time }), список клиентов с очередью — rmidx.
+// Перед отправкой бот перечитывает чат: запись должна быть на месте, без просьбы об отмене или переносе, клиент не писал «стоп».
+// Через официальный WhatsApp (Meta) — только в 24-часовом окне (иначе нужен шаблон). Отметка «отправлено» ставится до отправки
+const REMIND_LATE = 3 * 3600e3; // опоздали больше чем на 3 часа (фоновая задача не работала) — уже не отправляем
+const atLocal = (date, time, dayShift = 0) => { const [y, mo, d] = date.split("-").map(Number), [hh, mm] = time.split(":").map(Number); return Date.UTC(y, mo - 1, d + dayShift, hh - TZ, mm); };
+async function remindPlan(env, c, hk, books, made) {
+  const m = /^h:(wa|ga):([^:]+):(\d+)$/.exec(hk); if (!m) return;
+  const items = [];
+  for (const b of books) {
+    if (!b || !b.record_id || !/^\d{4}-\d{2}-\d{2}$/.test(b.date || "") || !/^\d{1,2}:\d{2}$/.test(b.time || "")) continue;
+    const t = atLocal(b.date, b.time), base = { ch: m[1], id: m[3], rec: String(b.record_id), date: b.date, time: b.time };
+    if (c.remind !== "off") {
+      const eve = atLocal(b.date, "18:00", -1); // накануне в 18:00
+      if (eve - made >= 3600e3 && t - eve >= 12 * 3600e3) items.push({ ...base, k: "d1", at: eve });
+      const h2 = t - 2 * 3600e3; // за 2 часа — не раньше 8:00 и только если запись сделана заранее
+      if (c.remind !== "day" && t - made >= 4 * 3600e3 && local(h2).getUTCHours() >= 8) items.push({ ...base, k: "h2", at: h2 });
+    }
+    if (c.review) { // через 3 часа после начала; вечером и ночью — на следующее утро в 11:00
+      let rv = t + 3 * 3600e3; const L = local(rv), lh = L.getUTCHours();
+      if (lh >= 21 || lh < 10) rv = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (lh >= 21 ? 1 : 0), 11 - TZ, 0);
+      items.push({ ...base, k: "rv", at: rv });
+    }
+  }
+  if (!items.length) return;
+  await kvRetry(async () => { const q = JSON.parse((await env.KV.get("rmq:" + c.id)) || "[]"); for (const x of items) if (!q.some(y => y.rec === x.rec && y.k === x.k)) q.push(x); await env.KV.put("rmq:" + c.id, JSON.stringify(q.slice(-500))); });
+  await kvRetry(async () => { const ix = JSON.parse((await env.KV.get("rmidx")) || "[]"); if (!ix.includes(c.id)) { ix.push(c.id); await env.KV.put("rmidx", JSON.stringify(ix)); } });
+}
+function remindText(c, b, k, lang) {
+  const svc = [b.services, b.staffName].filter(Boolean).join(" · "), name = c.name, adr = c.address || "";
+  if (lang === "kk") return k === "d1" ? `Еске салу: «${name}» сізді ертең сағат ${b.time}-де күтеді${svc ? " — " + svc : ""}. Жоспарыңыз өзгерсе, осында жазыңыз.`
+    : k === "h2" ? `«${name}» сізді бүгін сағат ${b.time}-де күтеді${svc ? " (" + svc + ")" : ""}.${adr ? " Мекенжай: " + adr + "." : ""} Кешіксеңіз немесе келе алмасаңыз, осында жазыңыз.`
+    : `Бізге келгеніңізге рахмет! «${name}» туралы пікір қалдырсаңыз, қуанамыз: ${c.review}\nБірдеңе ұнамаса, осында жазыңыз — әкімшіге жеткіземіз.`;
+  if (lang === "en") return k === "d1" ? `Reminder: «${name}» is expecting you tomorrow at ${b.time}${svc ? " — " + svc : ""}. If your plans change, just write here.`
+    : k === "h2" ? `We're expecting you today at ${b.time} at «${name}»${svc ? " (" + svc + ")" : ""}.${adr ? " Address: " + adr + "." : ""} If you're running late or can't make it, write here.`
+    : `Thank you for visiting «${name}»! We'd be grateful for a review: ${c.review}\nIf something wasn't right, write here and we'll pass it to the administrator.`;
+  return k === "d1" ? `Напоминаем: завтра в ${b.time} вас ждут в «${name}»${svc ? " — " + svc : ""}. Если планы изменились, напишите сюда.`
+    : k === "h2" ? `Ждём вас сегодня в ${b.time} в «${name}»${svc ? " (" + svc + ")" : ""}.${adr ? " Адрес: " + adr + "." : ""} Если опаздываете или не сможете прийти — напишите сюда.`
+    : `Спасибо, что были у нас в «${name}»! Будем благодарны за отзыв: ${c.review}\nЕсли что-то не понравилось — напишите сюда, передадим администратору.`;
+}
+async function remindSend(env, cid, x, now) {
+  if (!hasClient(cid)) return false;
+  const c = CLIENTS[cid];
+  if (c.off || (x.k === "rv" ? !c.review : c.remind === "off" || (x.k === "h2" && c.remind === "day"))) return false; // бот выключен или в паспорте это уже выключили
+  const mk = `rms:${cid}:${x.rec}:${x.k}`;
+  if (await env.KV.get(mk)) return false;
+  const hk = `h:${x.ch}:${cid}:${x.id}`, h = JSON.parse((await env.KV.get(hk)) || "null"), p = (h && h.profile) || {};
+  const b = (p.bookings || []).find(v => String(v.record_id) === x.rec);
+  if (!b || b.rq || b.date !== x.date || b.time !== x.time || p.stop) return false; // запись отменена, перенесена, по ней просьба — или клиент написал «стоп»
+  if (x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3)) return false;          // официальный WhatsApp: вне 24-часового окна писать можно только шаблоном
+  const route = x.ch === "ga" ? gaRoute(env, cid) || gaShared(env) : waRoute(env, cid, p);
+  if (!route) return false;
+  const text = remindText(c, b, x.k, p.lang);
+  await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 });
+  let r; try { r = x.ch === "ga" ? await sendGreen(env, x.id + "@c.us", text, route, true) : await sendWA(env, x.id, text, route); } catch (e) { r = { ok: false, error: String(e) }; }
+  if (!(r && r.ok)) { console.log("remind send", cid, x.k, JSON.stringify(r).slice(0, 200)); return false; }
+  try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k }]); } catch (e) { console.log("remind log", String(e)); }
+  return true;
+}
+async function remindRun(env, now) {
+  let ix; try { ix = JSON.parse((await env.KV.get("rmidx")) || "[]"); } catch (e) { console.log("remind", String(e)); return 0; }
+  if (!ix.length) return 0;
+  try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); }
+  let sent = 0;
+  for (const cid of ix) {
+    let due = [], empty = false;
+    try {
+      await kvRetry(async () => { // берём из очереди наступившие (не больше 5 за запуск) и убираем устаревшие
+        const q = JSON.parse((await env.KV.get("rmq:" + cid)) || "[]"), keep = [];
+        due = [];
+        for (const x of q) { if (x.at > now) keep.push(x); else if (now - x.at <= REMIND_LATE) (due.length < 5 ? due : keep).push(x); }
+        empty = !keep.length;
+        if (keep.length !== q.length) { if (empty) await env.KV.delete("rmq:" + cid); else await env.KV.put("rmq:" + cid, JSON.stringify(keep)); }
+      });
+    } catch (e) { console.log("remind queue", cid, String(e)); continue; }
+    for (const x of due) { try { if (await remindSend(env, cid, x, now)) sent++; } catch (e) { console.log("remind", cid, String((e && e.stack) || e)); } }
+    if (empty) { try { await kvRetry(async () => { const cur = JSON.parse((await env.KV.get("rmidx")) || "[]"); if (cur.includes(cid) && !(await env.KV.get("rmq:" + cid))) await env.KV.put("rmidx", JSON.stringify(cur.filter(v => v !== cid))); }); } catch (e) { console.log("remind idx", String(e)); } }
+  }
+  return sent;
 }
 async function cronRun(env) {
   let run = [];
