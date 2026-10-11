@@ -49,6 +49,8 @@ import { leadTs, loadLeads, saveLeads, leadKey, allLeads } from "./src/db/kv/lea
 import { bcKey, bcChunkKey, bcMeta, bcPut, bcGet } from "./src/db/kv/broadcasts.js";
 import { detectLang } from "./src/services/conversation/language.js";
 import { CLIENTS, BUILTIN, hasClient } from "./src/config/builtin-clients.js";
+import { notify, tgProbe } from "./src/services/integrations/telegram/client.js";
+import { noteDue, notifyOnce, backupRun } from "./src/services/notifications/telegram.js";
 import { NICHES } from "./src/config/niches.js";
 import { PAUSE_MS, LEAD_TTL, MAX_TURNS, MAX_MSGS_PER_SESSION, MAX_LEN, SESSIONS_PER_IP, HIST_KEEP, ALT_API, ALT_TTL, ALT_BASE_TTL, ALT_DAYS, ALT_MAX_SERVICES, ALT_MAX_STAFF, ALT_MAX_ACTIVE, ALT_MAX_DAY, ALT_MAX_DAY_IP, ALT_MAX_LOC_DAY, ALT_MAX_ADMIN_LEADS, ALT_GONE_AGE, ALT_JOURNAL_DAYS, WA_MAX_DAY, PL_MAX, GRAPH, WA_BATCH, GA_BASE, REPAIR_MAX, SESSION_MS, COOKIE, BC_CHUNK, BC_MAX, BC_STALE, BC_SLOT, BC_DAY, DIGEST_HOUR, REMIND_LATE } from "./src/config/constants.js";
 
@@ -1654,10 +1656,6 @@ function altSay(lang, b) {
   return [`Передала вашу запись администратору: ${b.what}. Он подтвердит её в ближайшее время.`, `Жазбаңызды әкімшіге бердім: ${b.what}. Ол жақын арада растайды.`, `I've passed your booking to the administrator: ${b.what}. They will confirm it shortly.`][L];
 }
 
-// уведомление администратору не чаще раза в 10 минут на один повод
-const lastNote = new Map();
-const noteDue = key => { const now = Date.now(); if (now - (lastNote.get(key) || 0) < 600e3) return false; if (lastNote.size > 500) lastNote.clear(); lastNote.set(key, now); return true; };
-async function notifyOnce(env, key, msg, clientId) { if (noteDue(key)) await notify(env, msg, clientId); }
 
 // /altegio — проверка связи с расписанием: что бот видит в Altegio.
 // Без телефона ничего не создаёт. С телефоном делает пробную запись на первое свободное время и сразу удаляет её.
@@ -3157,28 +3155,6 @@ async function askClaude(env, system, turns, model, info) {
   throw lastErr || new Error("Claude failed");
 }
 
-async function notify(env, text, clientId) { // → true, если хотя бы один чат получил сообщение
-  const chats = String((clientId && env["TG_CHAT_" + String(clientId).toUpperCase()]) || (clientId && hasClient(clientId) && CLIENTS[clientId].tg) || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
-  if (!env.TG_TOKEN || !chats.length) return false;
-  let sent = false;
-  const post = async chat_id => {
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 6000); // зависший Telegram не должен задерживать ответ клиенту
-    try { return await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id, text }), signal: ac.signal }); }
-    finally { clearTimeout(timer); }
-  };
-  for (const chat_id of chats) {
-    try {
-      let r = await post(chat_id);
-      if (r && r.status === 429) { // Telegram просит подождать — одна повторная попытка
-        let wait = 1; try { wait = Math.min(3, Math.max(1, +((await r.json()).parameters || {}).retry_after || 1)); } catch (e) {}
-        await new Promise(s => setTimeout(s, wait * 1000 + 200));
-        r = await post(chat_id);
-      }
-      if (r && r.ok) sent = true;
-    } catch (e) { console.log("tg", String(e)); }
-  }
-  return sent;
-}
 // ================= лимит сессий на IP =================
 const burst = new Map();
 const hooks = new Map(); // вебхук без подписи: запросов в минуту с адреса
@@ -4897,21 +4873,6 @@ async function casesFor(env, c) {
   }
   return out;
 }
-// пробное сообщение в Telegram: что именно ответил Telegram по каждому чату
-async function tgProbe(env, c) {
-  const chats = String(env["TG_CHAT_" + c.id.toUpperCase()] || c.tg || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
-  if (!env.TG_TOKEN) return { ok: false, text: "В Cloudflare нет секрета TG_TOKEN — бот не может писать в Telegram." };
-  if (!chats.length) return { ok: false, text: "Не указан чат Telegram: впишите его номер в паспорт бота." };
-  const res = [];
-  for (const chat_id of chats.slice(0, 5)) {
-    try {
-      const r = await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id, text: `Проверка: уведомления бота «${c.name}» приходят сюда ✅` }) });
-      let d = {}; try { d = await r.json(); } catch (e) {}
-      res.push(r.ok ? `чат ${chat_id}: доставлено ✅` : `чат ${chat_id}: ❌ ${r.status} ${clean(d.description || "", 120)}${r.status === 403 ? " — откройте бота в Telegram и нажмите «Старт»" : r.status === 400 ? " — проверьте номер чата" : r.status === 401 ? " — неверный TG_TOKEN" : ""}`);
-    } catch (e) { res.push(`чат ${chat_id}: ❌ Telegram не ответил`); }
-  }
-  return { ok: res.every(x => x.includes("✅")), text: res.join("\n") };
-}
 async function launchApi(request, env, url, s) {
   const P = url.pathname, M = request.method;
   if (s.role !== "owner") return jsonP({ error: "Эта страница — только для владельца сервиса." }, 403);
@@ -5334,30 +5295,6 @@ async function bcTick(env, cid, id, gaBusy) {
 }
 // фоновая отправка: раз в минуту — одна порция одной рассылки (у бесплатного тарифа Cloudflare 50 внешних запросов на запуск)
 
-// Ежедневная резервная копия заявок: в 03:00 по времени клиентов файл с заявками за 30 дней уходит в Telegram администратора (в тот же чат, что и заявки)
-async function tgFile(env, chat_id, name, text, caption) {
-  const fd = new FormData(); fd.append("chat_id", chat_id); fd.append("caption", caption); fd.append("document", new Blob([text], { type: "application/json" }), name);
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000);
-  try { const r = await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendDocument`, { method: "POST", body: fd, signal: ac.signal }); return !!(r && r.ok); }
-  catch (e) { return false; } finally { clearTimeout(timer); }
-}
-async function backupRun(env, force) {
-  const now = Date.now(), d = local(now);
-  if (!force && !(d.getUTCHours() === 3 && d.getUTCMinutes() < 10)) return 0;
-  if (!env.TG_TOKEN) return 0;
-  const day = isoDay(now), mk = "bkdone:" + day;
-  if (!force) { try { if (await env.KV.get(mk)) return 0; } catch (e) { return 0; } try { await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 }); } catch (e) { return 0; } } // отметка до отправки: копия не придёт дважды
-  let n = 0;
-  for (const cid of Object.keys(CLIENTS)) {
-    const chats = String(env["TG_CHAT_" + cid.toUpperCase()] || CLIENTS[cid].tg || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
-    if (!chats.length) continue;
-    let leads; try { leads = await allLeads(env, cid); } catch (e) { console.log("backup", String(e)); continue; }
-    if (!leads || !leads.length) continue;
-    const name = `zayavki-${cid}-${day}.json`, text = JSON.stringify({ client: cid, day, count: leads.length, leads }, null, 1);
-    for (const chat of chats) if (await tgFile(env, chat, name, text, `Резервная копия заявок: ${CLIENTS[cid].name}, ${leads.length} шт. Файл можно сохранить.`)) n++;
-  }
-  return n;
-}
 // Дневная сводка в Telegram компании: раз в день, в час из паспорта (по умолчанию 21:00 по Астане; утром — за вчерашний день).
 // Только боты из паспортов (демо — без сводки). Отметка «отправлено» ставится до отправки: сводка не придёт дважды
 async function digestRun(env, now) {
