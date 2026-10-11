@@ -44,3 +44,4 @@ export function redact(text) {
   });
 }
 export const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}` : String(p || ""); };
+export const maskPhones = s => { s = String(s); let out = "", at = 0; for (const p of phonesIn(s)) { if (p.at < at) continue; out += s.slice(at, p.at) + "[телефон указан]"; at = p.at + p.len; } return out + s.slice(at); };

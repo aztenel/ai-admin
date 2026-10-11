@@ -49,3 +49,4 @@ export function mergeProfile(cur, mine, base, added, removed, droppedPend) {
   if ((cur.pausedUntil || 0) > (out.pausedUntil || 0)) out.pausedUntil = cur.pausedUntil;
   return out;
 }
+export async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
