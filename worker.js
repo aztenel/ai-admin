@@ -38,7 +38,7 @@
 import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
 // Модули переезда (REFACTORING.md): всё новое — только в src/, worker.js их подключает.
 import { money } from "./src/lib/money.js";
-import { normPhone, phonesIn, redact } from "./src/lib/phone.js";
+import { normPhone, phonesIn, redact, fmtPhone } from "./src/lib/phone.js";
 import { TZ, local, hhmm, mins, isoDay, hm } from "./src/lib/time.js";
 import { clean, snip, lowE, esc, isJoke } from "./src/lib/text.js";
 import { hash, enc8, hmacB64, safeEq, metaSigOk } from "./src/lib/crypto.js";
@@ -51,6 +51,9 @@ import { detectLang } from "./src/services/conversation/language.js";
 import { CLIENTS, BUILTIN, hasClient } from "./src/config/builtin-clients.js";
 import { notify, tgProbe } from "./src/services/integrations/telegram/client.js";
 import { noteDue, notifyOnce, backupRun } from "./src/services/notifications/telegram.js";
+import { gaShared, gaRoute, gaSecret, gaHook } from "./src/services/integrations/greenapi/webhook.js";
+import { gaCall, gaCode, GA_HINT, gaWhy, gaKind, gaInfo } from "./src/services/integrations/greenapi/client.js";
+import { sendGreen } from "./src/services/channels/greenapi.js";
 import { NICHES } from "./src/config/niches.js";
 import { askGemini } from "./src/services/ai/gemini.js";
 import { isClaude } from "./src/services/ai/claude.js";
@@ -3638,78 +3641,7 @@ async function handleWAMessage(env, msg, wx) {
   // реакции и прочее — без ответа
 }
 
-// --- Green-API (обычный WhatsApp по QR-коду)
-// Свой номер у клиента: Text GA_ID_<ID>, Secret GA_TOKEN_<ID>, Text GA_URL_<ID> (apiUrl из кабинета, по умолчанию api.green-api.com).
-//   Вебхук: https://<воркер>/ga/<id>?t=<пароль>. Пароль бот выводит из токена инстанса; адрес показывает «Проверка запуска», там же кнопка «Настроить Green-API».
-// Общий номер воркера (прежний режим): GA_ID, GA_TOKEN, GA_URL, GA_HOOK, GA_CLIENT — вебхук /ga?t=<GA_HOOK>.
-const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", shared: true } : null;
-// номер Green-API клиента: свой (GA_ID_<ID> и GA_TOKEN_<ID>) или общий номер воркера, закреплённый за ним (GA_CLIENT)
-function gaRoute(env, cid) {
-  if (!hasClient(cid)) return null;
-  const up = cid.toUpperCase();
-  if (env["GA_ID_" + up] && env["GA_TOKEN_" + up]) return { client: cid, id: String(env["GA_ID_" + up]).trim(), token: String(env["GA_TOKEN_" + up]), base: env["GA_URL_" + up] || "" };
-  const s = gaShared(env);
-  return s && s.client === cid ? s : null;
-}
-const gaSecret = (r, k) => r.shared ? k : k + "_" + r.client.toUpperCase(); // имя переменной в Cloudflare: GA_TOKEN или GA_TOKEN_<ID>
-// пароль вебхука клиента: из токена его инстанса (без лишнего секрета в панели; токен сменили — адрес вебхука настраивается заново)
-async function gaHook(r) {
-  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(r.token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`ga-hook:${r.client}:${r.id}`)));
-  return [...mac].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
-}
 const eqSafe = (a, b) => { a = String(a); b = String(b); if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
-// запрос к Green-API → { ok, status, j, text }; status 0 — Green-API не ответил
-async function gaCall(r, op, body, ms = 15000) {
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
-  try {
-    const res = await fetch(`${String(r.base || GA_BASE).replace(/\/+$/, "")}/waInstance${r.id}/${op}/${r.token}`, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ac.signal } : { signal: ac.signal });
-    const text = await res.text().catch(() => "");
-    let j = {}; try { j = JSON.parse(text) || {}; } catch (e) {}
-    return { ok: res.ok, status: res.status, j: typeof j === "object" ? j : {}, text };
-  } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
-  finally { clearTimeout(timer); }
-}
-// ответ Green-API → код причины (подсказки — в GA_HINT)
-function gaCode(x) {
-  const s = x.status, t = String((x.j && x.j.message) || x.text || "");
-  if (!s || s === 499) return "ga:net";
-  if (s === 400) return /expired/i.test(t) ? "ga:expired" : /starting process/i.test(t) ? "ga:starting" : /not authorized/i.test(t) ? "ga:auth" : /deleted/i.test(t) ? "ga:deleted" : "ga:400";
-  if ([401, 403, 429, 466].includes(s)) return "ga:" + s;
-  return s >= 500 ? "ga:5xx" : "ga:" + s;
-}
-const GA_HINT = {
-  "ga:net": "Green-API не ответил — дошло ли сообщение, неизвестно", "ga:401": "неверный токен Green-API", "ga:403": "неверный номер инстанса Green-API", "ga:429": "слишком частые запросы к Green-API",
-  "ga:466": "закончился лимит тарифа Green-API (бесплатный тариф пишет только нескольким номерам) — оплатите тариф в кабинете Green-API",
-  "ga:expired": "оплаченный срок инстанса Green-API закончился — оплатите его в кабинете Green-API", "ga:auth": "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API",
-  "ga:starting": "Green-API перезапускает инстанс", "ga:deleted": "инстанс Green-API удалён", "ga:400": "Green-API не принял номер или текст (неверные данные)", "ga:5xx": "временный сбой Green-API",
-  "ga:noAccount": "у номера нет WhatsApp", "ga:failed": "WhatsApp не доставил сообщение"
-};
-// причина отказа человеческим языком, с именем переменной, которую нужно проверить
-const gaWhy = (res, r) => (GA_HINT[res.code] || `Green-API ответил ${res.status}${res.error ? ": " + res.error : ""}`) + (res.code === "ga:401" ? ` — проверьте секрет ${gaSecret(r, "GA_TOKEN")} в Cloudflare` : res.code === "ga:403" ? ` — проверьте ${gaSecret(r, "GA_ID")} и ${gaSecret(r, "GA_URL")} в Cloudflare` : "");
-// → { ok, id } или { ok: false, status, code, error }. quiet — без сигнала администратору (рассылка и пульт сообщают о сбое сами)
-async function sendGreen(env, chatId, message, r, quiet) {
-  r = r || gaShared(env);
-  if (!r) return { ok: false, status: 0, code: "ga:off", error: "Green-API не настроен" };
-  const x = await gaCall(r, "sendMessage", { chatId, message: String(message).slice(0, 4000), typingTime: 1500 });
-  if (x.ok) return { ok: true, id: String(x.j.idMessage || "") };
-  console.log("GA send", x.status, x.text.slice(0, 300));
-  const res = { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
-  if (!quiet) { try { await notifyOnce(env, "gasend:" + r.client, `⚠️ Ответы бота не доходят до клиентов WhatsApp (Green-API: ${gaWhy(res, r)})\nКлиент +${String(chatId).replace(/\D/g, "")} ответа не получил — напишите ему сами.`, r.client); } catch (e) {} }
-  return res;
-}
-// сведения о номере: состояние, номер, настроен ли вебхук на этот бот (и на какой сайт) → { state, phone, hook, host, error }
-async function gaInfo(env, r) {
-  const [s, g] = await Promise.all([gaCall(r, "getStateInstance", null, 10000), gaCall(r, "getSettings", null, 10000)]);
-  if (!s.ok) return { error: s.status === 401 || s.status === 403 ? `Green-API не пускает: ${gaWhy({ code: "ga:" + s.status }, r)}.` : "Green-API не отвечает — попробуйте через минуту." };
-  const st = (g.ok && g.j) || {}, wid = String(st.wid || "").replace(/\D/g, "");
-  let hook = false, host = "";
-  try {
-    const u = new URL(String(st.webhookUrl || "")), want = r.shared ? ["/ga", env.GA_HOOK || ""] : ["/ga/" + r.client, await gaHook(r)];
-    hook = /^https?:$/.test(u.protocol) && u.pathname === want[0] && !!want[1] && u.searchParams.get("t") === want[1] && st.incomingWebhook === "yes"; host = hook ? u.host : "";
-  } catch (e) {}
-  return { state: String(s.j.stateInstance || ""), phone: wid ? fmtPhone(wid) : "", hook, host };
-}
 const GA_STATE_TEXT = { notAuthorized: "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API телефоном с этим номером", blocked: "WhatsApp заблокировал этот номер",
   suspended: "WhatsApp временно ограничил этот номер (жалобы на спам)", yellowCard: "WhatsApp временно ограничил этот номер (жалобы на спам)", sleepMode: "WhatsApp на телефоне не на связи: телефон выключен или без интернета", starting: "Green-API перезапускает инстанс — это до 5 минут" };
 // WhatsApp заблокировал или ограничил номер: тревога администратору, рассылки через Green-API встают до подтверждения
@@ -4187,7 +4119,6 @@ function parseStaff(src) {
     return { name: altText(n, 40), role: altText(r.join(" ").replace(/\)\s*$/, ""), 60) };
   }).filter(m => m.name && /\p{L}/u.test(m.name));
 }
-const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}` : String(p || ""); };
 const CFG_TEXT = { repairs: 20000, pay: 500, upsell: 1200, name: 60, address: 160, kind: 60, greeting: 300, safe: 200, extra: 3000, services: 6000, staff: 1500, schedule: 400, tg: 120 };
 
 const facts0Len = F => F.join("\n").length; // длина описания без прайса ремонта: у прайса свой предел (300 строк)
@@ -5043,8 +4974,6 @@ async function sendTemplate(env, to, b, name, route) {
 // рассылка через Green-API: обычный текст. Предел в сутки — до 300 (по умолчанию 50), между сообщениями 30–150 секунд
 const GA_CAP = [50, 300], GA_GAP = [30e3, 150e3], GA_MSG_MAX = 1500, GA_CAPTION_MAX = 1000;
 const GA_STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
-// как поступать с ошибкой Green-API: temp — подождать 10 минут (получатель в очереди), net — неизвестно, ушло ли (получатель не повторяется), one — дело в этом номере, stop — пауза
-const gaKind = code => code === "ga:net" ? "net" : ["ga:429", "ga:5xx", "ga:starting"].includes(code) ? "temp" : code === "ga:400" ? "one" : "stop";
 // текст как написал администратор (переводы строк сохраняются); в конце — строка «ответьте СТОП», если про «стоп» в тексте ничего нет
 function bcGaMsg(src) {
   const t = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u2060\ufeff\u00ad]/g, "").replace(/\t/g, " ").replace(/[ ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
