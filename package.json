@@ -4,6 +4,13 @@
   "type": "module",
   "description": "AI-администратор: веб-чат и WhatsApp-бот для малого бизнеса (Cloudflare Worker)",
   "scripts": {
-    "test": "node test/smoke.mjs"
+    "test": "node test/smoke.mjs",
+    "test:contract": "node test/contract/routes.mjs",
+    "test:golden": "node test/golden/run.mjs",
+    "test:unit": "node --test test/unit/*.test.mjs",
+    "check": "npm run check:types && npm run check:boundaries",
+    "check:types": "npx --yes -p typescript@6.0.2 tsc -p jsconfig.json",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "build:pult": "node tools/build-pult.mjs"
   }
 }

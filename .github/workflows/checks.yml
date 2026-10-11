@@ -20,8 +20,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Сценарии на заглушках
+      - name: Сценарии на заглушках (с контрактом маршрутов, золотыми переписками и модулями src/)
         run: node test/smoke.mjs
+      - name: Типы (JSDoc, tsc --checkJs) и границы модулей src/
+        if: matrix.node == 24
+        run: |
+          npx --yes -p typescript@6.0.2 tsc -p jsconfig.json
+          node scripts/check-boundaries.mjs
       - name: Пробная сборка без публикации
         if: matrix.node == 24
         run: npx --yes wrangler@latest deploy --dry-run --outdir /tmp/out

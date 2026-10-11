@@ -1,0 +1,17 @@
+{
+  // Проверка типов без сборки (CLAUDE.md §1.3, решение 2): JSDoc-типы в файлах src/, запуск — npm run check.
+  // worker.js сюда не входит: он переезжает в src/ по частям (REFACTORING.md, фаза 1).
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "WebWorker"],
+    "types": [],
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.js"]
+}

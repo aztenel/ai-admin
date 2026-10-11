@@ -36,6 +36,8 @@
 // Новый клиент = новый блок в CLIENTS: факты, график (hours), слоты (slots), безопасные фразы.
 // Страница пульта (дизайн, телефон/планшет/ПК, демо) лежит в папке pult/ и собирается в pult.gen.js командой `node tools/build-pult.mjs`.
 import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
+// Модули переезда (REFACTORING.md): всё новое — только в src/, worker.js их подключает.
+import { money } from "./src/lib/money.js";
 
 const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинаково (индекс 0 = воскресенье)
 function week(sun, weekdays, sat) { const a = W5(weekdays); a[0] = sun; a[6] = sat; return a; }
@@ -905,7 +907,6 @@ function cleanName(s, many) {
 // названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
 const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "(").replace(/[\]}>]/g, ")").replace(/;/g, ",").replace(/\|/g, "/")
   .replace(/(\d{1,2}):(\d{2})/g, "$1.$2").replace(/\s*:\s*/g, " — "), n);
-const money = n => String(Math.round(+n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 const isoDay = ms => local(ms).toISOString().slice(0, 10);
 const WORD = /[^a-zа-яәғқңөұүһі0-9]+/;
 
