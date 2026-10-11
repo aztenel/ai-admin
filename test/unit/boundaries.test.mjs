@@ -70,11 +70,42 @@ test("строки, шаблоны, регулярные выражения и �
   assert.deepEqual(specs(s), ["../routes/a.js", "../routes/b.js"]);
 });
 
-test("любой import( в файле — в отчёт: многострочный, с параметрами, после «{», в шаблоне, через перенос и комментарий, даже в строке и JSDoc; тег @import — нет", () => {
+test("любой import( в файле — в отчёт: многострочный, с параметрами, после «{», в шаблоне, через перенос и комментарий, даже в строке и JSDoc; тег @import — не import(), а зависимость типа", () => {
   const s = 'const m = await import(\n  "../routes/r.js"\n);\nconst j = await import("./d.json", { with: { type: "json" } });\nif (a) {import("./x.js")}\nconst t = `${import("./y.js")}`;\nconst n = await import\n("./n.js");\nconst c = await import /* x */ ("./c.js");\n/* lazy */ const l = await import("./l.js");\nconst q = "call import(x)";\n/** @param {import("../controllers/x.js").T} a */\n/** @import { T } from "../controllers/x.js" */\nexport const f = a => a;\n';
-  const r = importsOf(s);
+  const all = importsOf(s), r = all.filter(x => !x.type);
   assert.deepEqual(r.map(x => x.line), [1, 4, 5, 6, 7, 9, 10, 11, 12]);
+  assert.deepEqual(all.filter(x => x.type).map(x => [x.spec, x.line]), [["../controllers/x.js", 13]]); // @import — зависимость типа, не import()
   assert.ok(r.every(x => x.spec === null && /import\(\)/.test(x.why)));
+});
+
+test("не import(): $import(, obj.import(, комментарий после import в статическом подключении", () => {
+  assert.deepEqual(importsOf('const $import = f => f;\n$import(1);\nconst o = { import: f => f };\no.import(1);\nexport const z = 1;\n'), []);
+  assert.deepEqual(importsOf('import /* side */ "./p.js";\nconst x = /* cast */ (1);\nexport { x };\n').map(x => [x.spec, x.line]), [["./p.js", 1]]);
+});
+
+test("место подключения: многострочный import, пустое подключение; комментарий с тем же именем — не место", () => {
+  assert.deepEqual(importsOf('import { a }\n  from\n  "./a.js";\nexport const q = a;\n').map(x => [x.spec, x.line]), [["./a.js", 3]]);
+  assert.deepEqual(importsOf('// moved from "./a.js"\nimport { a } from "./a.js";\nexport const q = a;\n').map(x => [x.spec, x.line]), [["./a.js", 2]]);
+  assert.deepEqual(importsOf('const z = 1;\nimport x from "";\nexport { z, x };\n').map(x => x.line), [2]);
+});
+
+test("типы JSDoc @import проверяются по слоям, но в циклы не входят", () => {
+  const t = tree({ "lib/a.js": '/** @import { R } from "../routes/r.js" */\n/** @import { B } from "./b.js" */\nexport const a = 1;\n', "lib/b.js": 'import { a } from "./a.js";\nexport const b = a;\n', "routes/r.js": "export const R = 1;\n" });
+  try {
+    const p = checkBoundaries(t.src).problems.join("\n");
+    assert.match(p, /lib\/a\.js:1: lib → routes запрещено/);
+    assert.doesNotMatch(p, /цикл/);
+  } finally { t.done(); }
+});
+
+test("нет package.json — ошибка, только если есть пакеты", () => {
+  const t = tree({ "lib/a.js": 'import { b } from "./b.js";\nexport const a = b;\n', "lib/b.js": "export const b = 1;\n" });
+  try {
+    rmSync(join(t.src, "..", "package.json"));
+    assert.deepEqual(checkBoundaries(t.src).problems, []);
+    writeFileSync(join(t.src, "lib", "c.js"), 'import z from "zod";\nexport const c = z;\n');
+    assert.match(checkBoundaries(t.src).problems.join("\n"), /нет package\.json/);
+  } finally { t.done(); }
 });
 
 test("место подключения: строка самого import, а не комментарий; повтор того же подключения — все строки", () => {

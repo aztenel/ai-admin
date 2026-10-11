@@ -61,18 +61,24 @@ function staticSpecs(srcs) {
   const r = spawnSync(process.execPath, ["--experimental-vm-modules", "--no-warnings", "-e", PARSE], { input: JSON.stringify(srcs), encoding: "utf8", maxBuffer: 1 << 26 });
   try { return JSON.parse(r.stdout); } catch (e) { return srcs.map(() => ({ err: "разбор не удался: " + String(r.stderr || r.error || "").slice(0, 200) })); }
 }
-const DYNAMIC = /\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*\(/g; // import(, import (, import\n(, import /* … */ (
+const COMMENT = String.raw`\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/`; // /* … */, не переходит через первое */
+const DYNAMIC = new RegExp(String.raw`(?<![\w$.])import(?:\s|${COMMENT}|\/\/[^\n]*\n)*\(`, "g"); // import(, import (, import\n(, import /* … */ (
+const TYPE_IMPORT = /@import\s*(?:\{[^}]*\}|\*\s*as\s+[\w$]+|[\w$]+)\s*from\s*(["'])([^"'\n]*)\1/g; // JSDoc /** @import { T } from "./x.js" */ — тоже зависимость между слоями
+const IS_COMMENT_LINE = /^\s*(\/\/|\/\*|\*)/;
 function importsFrom(src, parsed) {
-  const lines = src.split("\n"), out = [], esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lines = src.split("\n"), out = [], starts = [0];
+  for (let i = 0; i < src.length; i++) if (src[i] === "\n") starts.push(i + 1);
+  const lineAt = idx => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= idx) lo = mid; else hi = mid - 1; } return lo + 1; };
+  // где написано подключение: строки import/export с ним (не комментарии); иначе — первая некомментарная строка с ним в кавычках
+  const where = spec => {
+    const q = l => l.includes(`"${spec}"`) || l.includes(`'${spec}'`), code = lines.map((l, i) => [l, i + 1]).filter(([l]) => !IS_COMMENT_LINE.test(l) && q(l));
+    const stmt = code.filter(([l]) => /^\s*(import|export)\b|\bfrom\s*["']/.test(l)).map(([, n]) => n);
+    return stmt.length ? stmt : code.length ? [code[0][1]] : [0];
+  };
   if (parsed.err) out.push({ spec: null, line: 0, why: "файл не разбирается: " + parsed.err });
-  for (const spec of parsed.ok || []) {
-    if (!spec) { out.push({ spec: null, line: 0, why: "пустое подключение" }); continue; }
-    // строки, где это подключение написано (V8 повторы склеивает — показываем все места); не нашли — строка 0
-    const at = new RegExp(`(\\bfrom\\s*|^\\s*import\\s*)(["'])${esc(spec)}\\2`);
-    const found = lines.map((l, i) => at.test(l) ? i + 1 : 0).filter(Boolean);
-    for (const line of found.length ? found : [0]) out.push({ spec, line });
-  }
-  for (const m of src.matchAll(DYNAMIC)) out.push({ spec: null, line: src.slice(0, m.index).split("\n").length, why: "import() — в src/ только import … from (цель import() проверить нельзя; типы в JSDoc — тегом @import)" });
+  for (const spec of parsed.ok || []) for (const line of where(spec)) out.push(spec ? { spec, line } : { spec: null, line, why: "пустое подключение" });
+  for (const m of src.matchAll(TYPE_IMPORT)) out.push(m[2] ? { spec: m[2], line: lineAt(m.index), type: true } : { spec: null, line: lineAt(m.index), why: "пустое подключение" });
+  for (const m of src.matchAll(DYNAMIC)) out.push({ spec: null, line: lineAt(m.index), why: "import() — в src/ только import … from (цель import() проверить нельзя; типы в JSDoc — тегом @import)" });
   return out;
 }
 export const importsOf = src => importsFrom(src, staticSpecs([src])[0]);
@@ -98,17 +104,19 @@ const pkgName = spec => spec.startsWith("@") ? spec.split("/").slice(0, 2).join(
 export function checkBoundaries(srcDir) {
   const root = resolve(srcDir), problems = [];
   if (!existsSync(root)) return { problems: [`нет папки ${srcDir}`], files: 0 };
-  const files = walk(root), graph = new Map(), pkgs = declaredPackages(root, problems);
+  const files = walk(root), graph = new Map();
+  let pkgs = null; // package.json читается, только если есть подключения пакетов
   const texts = files.map(f => readFileSync(f, "utf8")), parsed = staticSpecs(texts);
   for (const [k, f] of files.entries()) {
     const rel = relative(root, f), from = layerOf(rel), deps = [];
     graph.set(f, deps);
     if (!from) { problems.push(`${rel}: файл вне известных слоёв (routes, controllers, services, db, jobs, config, lib, index.js)`); continue; }
-    for (const { spec, line, why } of importsFrom(texts[k], parsed[k])) {
+    for (const { spec, line, why, type } of importsFrom(texts[k], parsed[k])) {
       const at = `${rel}:${line}`;
       if (spec === null) { problems.push(`${at}: ${why}`); continue; }
       if (!spec.startsWith(".") && !spec.startsWith("/")) {
         const name = pkgName(spec);
+        if (!pkgs) pkgs = declaredPackages(root, problems);
         if (pkgs.has(name) && !spec.startsWith("node:")) continue; // объявленный пакет npm: слой не определить, решает ревью
         problems.push(`${at}: «${spec}» — ${spec.startsWith("node:") ? "модулей Node в Worker нет" : "пакета нет в dependencies package.json (модулей Node — fs, events, buffer… — в Worker нет)"}`);
         continue;
@@ -119,7 +127,7 @@ export function checkBoundaries(srcDir) {
       const to = layerOf(relative(root, target));
       if (!to) { problems.push(`${at}: «${spec}» — файл вне известных слоёв`); continue; }
       if (!ALLOWED[from].includes(to)) problems.push(`${at}: ${from} → ${to} запрещено («${spec}»)`);
-      deps.push(target);
+      if (!type) deps.push(target); // типы из @import в циклы не входят: в собранном коде их нет
     }
   }
   // циклы: обход в глубину, цикл печатается один раз
