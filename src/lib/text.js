@@ -1,6 +1,7 @@
 // @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
 // Тексты: очистка, экранирование HTML, нижний регистр без «ё», проверка шуточного имени.
 export const clean = (s, n = 80) => String(s ?? "").replace(/[​-‏⁠﻿­]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
+export const snip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 export const lowE = s => String(s ?? "").toLowerCase().replace(/ё/g, "е");
 export function esc(s) { return String(s ?? "").replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
 // Шуточное имя: известный персонаж («Адольф Гитлер», «Шрек», одно слово «Путин»), проверочное слово, одна буква, брань.

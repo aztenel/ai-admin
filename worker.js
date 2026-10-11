@@ -40,9 +40,13 @@ import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
 import { money } from "./src/lib/money.js";
 import { normPhone, phonesIn, redact } from "./src/lib/phone.js";
 import { TZ, local, hhmm, mins, isoDay, hm } from "./src/lib/time.js";
-import { clean, lowE, esc, isJoke } from "./src/lib/text.js";
+import { clean, snip, lowE, esc, isJoke } from "./src/lib/text.js";
 import { hash, enc8, hmacB64, safeEq, metaSigOk } from "./src/lib/crypto.js";
 import { html, json, jsonP, page, forbid, sameOrigin } from "./src/lib/http.js";
+import { kvRetry } from "./src/db/kv/retry.js";
+import { histTtl, histMeta, putHist, logTurns, mergeProfile } from "./src/db/kv/chats.js";
+import { leadTs, loadLeads, saveLeads, leadKey, allLeads } from "./src/db/kv/leads.js";
+import { bcKey, bcChunkKey, bcMeta, bcPut, bcGet } from "./src/db/kv/broadcasts.js";
 import { detectLang } from "./src/services/conversation/language.js";
 import { CLIENTS, BUILTIN, hasClient } from "./src/config/builtin-clients.js";
 import { NICHES } from "./src/config/niches.js";
@@ -250,57 +254,6 @@ function nextOpen(c, nowMs) {
 
 function consentText(env, c) {
   return (env.CONSENT_TEXT || "Вам отвечает AI-ассистент «{name}». Продолжая переписку, вы соглашаетесь на обработку ваших данных для записи. Позвать администратора — напишите «администратор».").replace("{name}", c.name);
-}
-
-// заявки храним 30 дней
-const leadTs = l => l.ts || parseInt(String(l.id || "").slice(0, -4), 36) || Date.now();
-async function loadLeads(store, cid) { return JSON.parse((await store.get("leads:" + cid)) || "[]"); }
-async function saveLeads(store, cid, leads) {
-  const now = Date.now();
-  await store.put("leads:" + cid, JSON.stringify(leads.filter(l => now - leadTs(l) < LEAD_TTL).slice(-300)));
-}
-// каждая заявка хранится ещё и отдельным ключом (с днём в имени): если два чата сохраняли общий список одновременно и заявка из него выпала, страница заявок вернёт её.
-// Статус заявки («отменена», «заменена») лежит в метаданных ключа: страница берёт его оттуда, даже если в общем списке он потерялся
-const leadKey = (cid, id) => `lead:${cid}:${isoDay(leadTs({ id }))}:${id}`;
-async function allLeads(env, cid) {
-  const fresh = l => Date.now() - leadTs(l) < LEAD_TTL;
-  let leads = [], readable = true, keysRead = false;
-  try { leads = (await loadLeads(env.KV, cid)).filter(fresh); } catch (e) { readable = false; console.log("leads read", String(e)); } // общий список не читается — покажем заявки из отдельных ключей
-  try {
-    if (typeof env.KV.list === "function") {
-      const keys = [];
-      for (let cursor, page = 0; page < 3; page++) { // до 3000 ключей: все заявки клиента за 30 дней одним-тремя запросами
-        const r = await env.KV.list({ prefix: `lead:${cid}:`, limit: 1000, ...(cursor ? { cursor } : {}) });
-        keys.push(...((r && r.keys) || []));
-        if (!r || r.list_complete || !r.cursor) break;
-        cursor = r.cursor;
-      }
-      const have = new Map(leads.map(l => [l.id, l])), miss = [], fixed = new Map();
-      // статус в метаданных отдельного ключа — последний записанный; в общем списке он мог устареть (два чата сохраняли список одновременно)
-      const apply = (l, m) => { if (m.status) l.status = m.status; else delete l.status; if (m.note) l.note = m.note; };
-      for (const k of keys) {
-        const id = String(k.name).split(":").pop(), l = have.get(id), m = k.metadata;
-        if (!l) miss.push(k.name);
-        else if (m && typeof m.status === "string" && (l.status || "") !== m.status) { apply(l, m); fixed.set(id, m); }
-      }
-      const got = [];
-      for (const name of miss.sort().reverse().slice(0, 60)) { const v = JSON.parse((await env.KV.get(name)) || "null"); if (v && v.id && !have.has(v.id) && fresh(v)) { have.set(v.id, v); got.push(v); } } // сначала самые новые
-      if (got.length) { leads.push(...got); leads.sort((a, b) => leadTs(a) - leadTs(b)); }
-      keysRead = true;
-      if (readable && (got.length || fixed.size)) { // возвращаем в общий список: перечитываем его прямо перед записью и только добавляем, чужих изменений не затираем
-        try {
-          const cur = await loadLeads(env.KV, cid), ids = new Set(cur.map(l => l.id));
-          for (const l of cur) { const m = fixed.get(l.id); if (m && (l.status || "") !== m.status) apply(l, m); }
-          for (const v of got) if (!ids.has(v.id)) cur.push(v);
-          cur.sort((a, b) => leadTs(a) - leadTs(b));
-          await saveLeads(env.KV, cid, cur);
-        } catch (e) { console.log("leads heal", String(e)); }
-      }
-    }
-  } catch (e) { console.log("leads heal", String(e)); }
-  // общий список не прочитался: «all» — заявок не видно вовсе, «part» — видны только найденные отдельными ключами. Страница заявок скажет об этом, а не покажет «Пока пусто»
-  if (!readable) Object.defineProperty(leads, "unread", { value: keysRead ? "part" : "all" });
-  return leads;
 }
 
 // ================= слой 3: проверка ответа =================
@@ -1886,38 +1839,6 @@ button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px
 }
 
 // ================= общий мозг =================
-// история чата с паузой («стоп» — 30 дней) живёт не меньше, чем сама пауза
-const histTtl = prof => Math.max(7 * 86400, prof && prof.pausedUntil > Date.now() ? Math.ceil((prof.pausedUntil - Date.now()) / 1000) + 86400 : 0);
-// ---- история чата: один ключ на чат — { n, turns: [{ role, text, t, by?, m? }], profile }.
-// В ИИ уходят последние MAX_TURNS реплик, хранится HIST_KEEP: их видит администратор в пульте чатов.
-// Метаданные ключа — строка списка чатов в пульте (весь список читается одним запросом KV.list, без чтения самих чатов)
-const snip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
-function histMeta(h) {
-  const p = (h && h.profile) || {}, ts = (h && h.turns) || [], last = ts[ts.length - 1] || null, now = Date.now();
-  const m = { t: now };
-  if (p.li) m.li = p.li;
-  if (last) { m.s = snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
-  const nm = p.name || p.waName; if (nm) m.nm = snip(nm, 40);
-  if (p.phone) m.ph = String(p.phone).slice(0, 20);
-  if (p.need && p.need.why) m.nd = String(p.need.why).slice(0, 12);
-  if (p.pausedUntil > now) m.pu = p.pausedUntil;
-  if (p.stop) m.st = 1;
-  const bk = (p.bookings || []).length + (p.pend || []).length; if (bk) m.bk = bk;
-  return m;
-}
-async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
-// у KV лимит — одна запись ключа в секунду (иначе отказ 429): действие повторяется один раз через секунду. Чтение и изменение — внутри f, чтобы вторая попытка шла по свежим данным
-const kvRetry = async f => { try { return await f(); } catch (e) { console.log("kv retry", String(e).slice(0, 120)); await new Promise(r => setTimeout(r, 1100)); return f(); } };
-// дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
-async function logTurns(store, key, add, patch) {
-  return kvRetry(async () => {
-    const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
-    h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
-    if (patch) patch(h.profile, h);
-    await putHist(store, key, h);
-    return h;
-  });
-}
 // ИИ обещает, что с клиентом свяжется администратор
 const CB_PROMISE = /(администратор|менеджер|мастер|сотрудник|мы|я|он|она)\s+(\S+\s+){0,3}?(перезвон(ит|им|ю|ят)|свяж(ет|ем|у|ут)ся|позвон(ит|им|ю|ят)|набер(ёт|ет|у|ём|ем)|напиш(ет|ем|у|ут))(?![а-яё])|(^|[^а-яё])(передам|передала|передал)(?![а-яё])\s+(\S+\s+){0,3}?(администратор|менеджер)|(will|['’]ll)\s+(contact|call|reach)\s+(you|out)|get\s+back\s+to\s+you|хабарласады|қоңырау\s+шалады/i;
 // клиент хочет записаться («Я точно записан?» и «Спасибо за запись» — не просьба)
@@ -3126,23 +3047,6 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   // уведомления администратору: в веб-чате и WhatsApp — уже после ответа клиенту
   if (notes.length) { if (opts.defer) opts.defer(() => sendNotes(notes)); else await sendNotes(notes); }
   return { reply, lead, leads: newLeads.length > 1 ? newLeads.slice() : undefined, cancel, cancelDone, offer: lead ? [] : offers(cc, ctx, reply), guard, isNew };
-}
-
-// два сообщения одного чата обработаны одновременно: к состоянию, которое успело сохраниться (cur), добавляем то, что изменило это сообщение.
-// base — профиль, каким его увидело это сообщение в начале: поле, которое оно не меняло, берём из cur (иначе отмена из соседнего сообщения откатится)
-function mergeProfile(cur, mine, base, added, removed, droppedPend) {
-  const out = { ...cur }, same = (a, b) => JSON.stringify(a) === JSON.stringify(b), goneIds = new Set(removed), noPend = new Set(droppedPend || []);
-  for (const k of new Set([...Object.keys(mine), ...Object.keys(base || {})])) {
-    if (k === "bookings" || k === "pend" || (base && same(mine[k], base[k]))) continue;
-    if (k in mine) out[k] = mine[k]; else delete out[k];
-  }
-  const list = (cur.bookings || []).filter(b => !goneIds.has(b.leadId));
-  for (const b of added) if (!list.some(x => x.leadId === b.leadId)) list.push(b);
-  if (list.length || cur.bookings || mine.bookings) out.bookings = list;
-  const pend = [...(cur.pend || []), ...(mine.pend || [])].filter(p => !noPend.has(p.key));
-  if (pend.length || cur.pend || mine.pend) out.pend = pend.filter((p, i) => pend.findIndex(q => q.key === p.key) === i).slice(-5);
-  if ((cur.pausedUntil || 0) > (out.pausedUntil || 0)) out.pausedUntil = cur.pausedUntil;
-  return out;
 }
 
 // страховка: непредвиденная ошибка в think() не оставляет клиента без ответа, а администратора — без сигнала
@@ -5140,11 +5044,7 @@ const BC_TEMP = new Set([1, 2, 4, 80007, 130429, 131000, 131016]);              
 const BC_ACCOUNT = new Set([3, 10, 190, 200, 368, 130497, 131005, 131031, 131037, 131042, 131045, 131048, 131057, 132001, 132007, 132015, 132016, 133010]); // дело в аккаунте или шаблоне — пауза, получатель возвращается в очередь
 const BC_PARAM = new Set([100, 131008, 131009, 132000, 132005, 132012]);                                                              // дело в подстановках: первый раз — пауза; если после «Продолжить» тот же получатель снова не прошёл — пропускаем его
 const bcWhy = r => String(r.code).startsWith("ga:") ? BC_HINT[r.code] || clean(r.error || "", 160) || "код " + r.code : `код ${r.code}${BC_HINT[r.code] ? ": " + BC_HINT[r.code] : r.error ? ": " + r.error : ""}`;
-const bcKey = (cid, id) => `bc:${cid}:${id}`, bcChunkKey = (cid, id, k) => `bcr:${cid}:${id}:${k}`;
-const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, created: b.created, ...(b.ch ? { ch: b.ch } : {}) });
 const bcCode = c => /^\d+$/.test(c) ? +c : String(c); // коды Meta — числа, причины Green-API — «ga:…»
-const bcPut = (env, cid, b) => kvRetry(() => env.KV.put(bcKey(cid, b.id), JSON.stringify(b), { expirationTtl: 180 * 86400, metadata: bcMeta(b) }));
-const bcGet = async (env, cid, id) => JSON.parse((await env.KV.get(bcKey(cid, id))) || "null");
 const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
 // имя для подстановки {имя} — одно слово из букв. Пометки администратора из клиентской базы («не записывать», «должник Арман») в сообщение клиенту попасть не должны
 const BC_NOT_NAME = /^(не|нет|без|клиент\S*|должни\S*|долг\S*|мама|папа|муж|жена|сын|дочь|брат|сестра|вип|vip|блок\S*|спам|тест\S*|test|админ\S*|мастер|нов(ый|ая)|постоянн\S*|client|unknown|неизвестн\S*|аноним\S*|гость|guest|whatsapp|ватсап\S*|инста\S*|номер|тел|телефон|имя|фио|name|phone)$/i;
