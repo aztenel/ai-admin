@@ -42,7 +42,7 @@
 | Пульт (UI) | Ванильный JS (`pult/app.js`, `views.js`), свой CSS на переменных (`design.base.css`, `layout.css`, `motion.css`), собирается `tools/build-pult.mjs` в строку `pult.gen.js` внутри Worker | Отдельное приложение `apps/pult` (сборка Vite, **Tailwind CSS v4** поверх тех же токенов), раздаётся из `public/` через **Workers Static Assets** |
 | Компьютер | Программа «Пульт» для Windows на **Tauri 2** (`desktop/`), открывает `/inbox` сайта | Без изменений, плюс общий код уведомлений |
 | Телефоны | PWA «на экран Домой» | **Capacitor** (`mobile/`): iOS и Android с родными push-уведомлениями |
-| Тесты | `test/smoke.mjs` (592), `test/platform.mjs` (481), `test/e2e.mjs` (72, Playwright), `test/review/` (~130 независимых сценариев), CI на Node 20/22/24 | Те же наборы как защитная сетка + юнит-тесты модулей + проверки изоляции арендаторов |
+| Тесты | `test/smoke.mjs` (592), `test/platform.mjs` (481), контракт маршрутов `test/contract/` (709), золотые переписки `test/golden/` (51), `test/unit/`, `test/e2e.mjs` (72, Playwright), `test/review/` (~130 независимых сценариев), CI на Node 20/22/24 | Те же наборы как защитная сетка + юнит-тесты модулей + проверки изоляции арендаторов |
 | Выкладка | Cloudflare Workers Builds: `main` → боевой сайт, любая другая ветка → черновик (Worker Previews) | Без изменений; миграции БД — `supabase db push` в отдельном шаге CI |
 
 Слова «Supabase», «Tailwind», «Capacitor», «Realtime» в этом документе — **цель**, их в коде пока нет.
@@ -123,7 +123,14 @@
 
 - `pult/` → `tools/build-pult.mjs` → `pult.gen.js` (не править руками): PWA-пульт (`/inbox`, `/demo`, манифесты, значки).
 - `desktop/` — программа «Пульт» для Windows (Tauri 2), сборка `.github/workflows/desktop.yml`, снимки пробного запуска — ветка `desktop-shots`. Подробно — `desktop/README.md`.
-- `test/` — `harness.mjs` (KV в памяти, заглушки Gemini/Claude/Telegram/Meta/Altegio/Green-API), `smoke.mjs`, `platform.mjs`, `e2e.mjs`, `devserver.mjs` (локальный сервер на заглушках), `review/` (независимые сценарии, `node test/review/run.mjs`).
+- `test/` — `harness.mjs` (KV в памяти, заглушки Gemini/Claude/Telegram/Meta/Altegio/Green-API, `S.gaText` — вебхук Green-API), `smoke.mjs`, `platform.mjs`, `e2e.mjs`, `devserver.mjs` (локальный сервер на заглушках), `review/` (независимые сценарии, `node test/review/run.mjs`).
+- Защитная сетка переезда (шаг 0, всё запускается из `test/smoke.mjs`, значит, и перед выкладкой):
+  - `test/contract/routes.mjs` + `routes.snap.json` — контракт маршрутов: каждый адрес × гость/владелец/сотрудник (код, тип, переадресация, заголовки защиты, ключи JSON) и правила прав (чужие данные не утекают, чужой сайт и неподписанный вебхук отклоняются).
+  - `test/golden/cases.mjs` + `run.mjs` + `expected.json` — 51 «золотая» переписка: ИИ подменён записанными ответами, сверяется решение кода (ответ клиенту, заявки, Altegio, Telegram, состояние чата).
+  - `test/unit/*.test.mjs` (`node --test`) — модули `src/` и проверка границ.
+  - Поведение изменили намеренно — `UPDATE=1 node test/contract/routes.mjs` / `UPDATE=1 node test/golden/run.mjs`, затем **прочитать разницу в git** и объяснить её в коммите. Без `UPDATE=1` разница — ошибка.
+- `src/` — новый код (пока `src/lib/money.js`); `worker.js` подключает его. `jsconfig.json` — проверка типов `src/` (`npm run check:types`). `scripts/check-boundaries.mjs` — границы слоёв (`npm run check:boundaries`).
+- `test/review/bot-copy.mjs` — копии бота в папках `test/review/4a`, `4b` подключают `src/` по абсолютному пути.
 - `.github/workflows/checks.yml` — тесты на Node 20/22/24 и пробная сборка `wrangler deploy --dry-run`.
 - `wrangler.jsonc` — **не `wrangler.toml`**: имя `ai-admin`, `main: worker.js`, KV `KV`, cron `* * * * *`, `keep_vars: true`, блок `previews`.
 
@@ -290,7 +297,7 @@ routes → controllers → services → (services/integrations | db/repositories
                          integrations НЕ импортируют services; db НЕ импортирует services.
 ```
 
-Проверка — `scripts/check-boundaries.mjs` (или dependency-cruiser) в CI.
+Проверка — `scripts/check-boundaries.mjs` (внутри `npm test`). Ещё она запрещает в `src/`: `import()` (цель не всегда видна; типы в JSDoc — тегом `/** @import { T } from "./x.js" */`), модули Node (`fs`, `events`, `node:*` — в Worker их нет), пакеты не из `dependencies` в `package.json`, подключения вне `src/` (новый код не зависит от `worker.js`), несуществующие файлы и другой регистр букв, циклы.
 
 ---
 
@@ -337,7 +344,7 @@ routes → controllers → services → (services/integrations | db/repositories
 
 ### 5.4. Безопасность веба
 
-- Все страницы с данными — через `page()`: `cache-control: no-store`, `x-frame-options: DENY`, CSP (`default-src 'self'`; внешних шрифтов и скриптов нет), `referrer-policy: same-origin`.
+- Все страницы с данными — через `page()`: `cache-control: no-store`, `x-frame-options: DENY`, CSP (`default-src 'self'`; внешних шрифтов и скриптов нет), `referrer-policy: same-origin`. Ответы API с данными — через `jsonP()` (`no-store`). Это проверяет контракт маршрутов (правила 4 и 5).
 - Изменяющие запросы из браузера — проверка источника (`sameOrigin`); для Capacitor — CORS только для `capacitor://localhost` и `https://localhost` и только с токеном `Authorization: Bearer`.
 - Ввод проверяется по схеме в контроллере (длины, форматы телефона, дат); HTML экранируется (`esc`).
 - Подбор ключей ограничен (`keyGate`); после Supabase Auth — встроенные ограничения Supabase + свой лимит на IP.
@@ -345,7 +352,7 @@ routes → controllers → services → (services/integrations | db/repositories
 
 ### 5.5. Тесты и выкладка
 
-- `npm test` (smoke + platform) — зелёный **до** и **после** каждого изменения. Переезд модуля = тесты не меняются, только импорт.
+- `npm test` (smoke + platform + модули `src/` и границы + контракт маршрутов + золотые переписки, ~35 с) — зелёный **до** и **после** каждого изменения. Переезд модуля = тесты и ожидания не меняются, только импорт. `npm run check:types` — типы `src/`.
 - Перед выкладкой, если менялись запись в Altegio, разбор ответа ИИ или защита ответа: `node test/review/run.mjs` («нового нет»).
 - Пульт: `node test/e2e.mjs <папка>` (Playwright: телефон и компьютер, светлая и тёмная тема).
 - `main` = боевой сайт (Cloudflare Workers Builds выкладывает каждый коммит). Новое — в `dev` (черновик `https://dev-ai-admin.azikonps4.workers.dev`). Выкладка в `main` — только по слову владельца, затем живая проверка `/`, `/?c=barber`, `/privacy` и автотест `/api/selftest?key=…&i=N`.
