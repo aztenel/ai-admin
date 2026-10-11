@@ -54,6 +54,9 @@ import { noteDue, notifyOnce, backupRun } from "./src/services/notifications/tel
 import { gaShared, gaRoute, gaSecret, gaHook } from "./src/services/integrations/greenapi/webhook.js";
 import { gaCall, gaCode, GA_HINT, gaWhy, gaKind, gaInfo } from "./src/services/integrations/greenapi/client.js";
 import { sendGreen } from "./src/services/channels/greenapi.js";
+import { waCreds, WA_HINT, waErr } from "./src/services/integrations/meta/client.js";
+import { bcParam, sendTemplate } from "./src/services/integrations/meta/templates.js";
+import { sendWA } from "./src/services/channels/meta.js";
 import { NICHES } from "./src/config/niches.js";
 import { askGemini } from "./src/services/ai/gemini.js";
 import { isClaude } from "./src/services/ai/claude.js";
@@ -3702,31 +3705,6 @@ async function handleGreen(body, env, origin, r) {
   return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, gx, { mime: md.fileMessageData?.mimeType || "" });
 }
 
-// токен и номер, с которого отвечаем: у клиента со своим вебхуком (/wa/<id>) — его секрет WA_TOKEN_<ID> и номер, на который написали; иначе общие WA_TOKEN и PHONE_NUMBER_ID
-const waCreds = (env, wx) => {
-  const cid = wx && wx.client, up = cid ? String(cid).toUpperCase() : "";
-  return cid ? { token: env["WA_TOKEN_" + up] || "", pnid: (wx.pnid || env["PHONE_NUMBER_ID_" + up] || (hasClient(cid) && CLIENTS[cid].waPhoneId) || "") }
-    : { token: env.WA_TOKEN || "", pnid: env.PHONE_NUMBER_ID || (wx && wx.pnid) || "" };
-};
-// → { ok, id } или { ok: false, status, code, error }
-async function sendWA(env, to, t, wx) {
-  const cr = waCreds(env, wx);
-  const r = await fetch(`${GRAPH}/${cr.pnid}/messages`, {
-    method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: t.slice(0, 4000) } })
-  });
-  if (!r.ok) {
-    const t = await r.text(); console.log("WA send", r.status, t.slice(0, 300));
-    let e = {}; try { e = JSON.parse(t).error || {}; } catch (x) {}
-    await waErr(env, "отправка " + r.status, e.code, e.message || t.slice(0, 200), e.error_data?.details);
-    // клиент ответа не получил — администратор должен об этом узнать (не чаще раза в 10 минут)
-    if (!(wx && wx.quiet)) { try { await notifyOnce(env, "wasend:" + ((wx && wx.client) || ""), `⚠️ Ответы бота не доходят до клиентов WhatsApp (ошибка ${r.status}${e.code ? ", код " + e.code : ""})${WA_HINT[e.code] ? " — " + WA_HINT[e.code] : ""}\nКлиент +${String(to).replace(/\D/g, "")} ответа не получил — напишите ему сами. Подробности — на странице /diag.`, wx && wx.client); } catch (x) {} }
-    return { ok: false, status: r.status, code: e.code || 0, error: String(e.message || t).slice(0, 200) };
-  }
-  let id = ""; try { id = ((await r.json()).messages || [])[0]?.id || ""; } catch (x) {}
-  return { ok: true, id };
-}
-
 // Вебхук WhatsApp клиента со своим номером и своим приложением Meta: https://<воркер>/wa/<id>.
 // Подпись проверяется секретом APP_SECRET_<ID>, ответ уходит с токеном WA_TOKEN_<ID> с того номера, на который написали. Без секрета сообщения не принимаем
 async function handleWAClient(request, env, ctx, id, origin) {
@@ -3738,21 +3716,6 @@ async function handleWAClient(request, env, ctx, id, origin) {
   let body = null; try { body = JSON.parse(raw); } catch (e) {}
   if (body) ctx.waitUntil(handleWhatsApp(body, env, { client: id, signed: true, origin }).catch(err => console.log("wa error", err)));
   return new Response("OK");
-}
-
-// коды ошибок Meta, которые встречаются на старте, — подсказка человеческим языком
-const WA_HINT = {
-  190: "токен истёк или неверный — временный токен живёт около суток, нужен постоянный токен системного пользователя",
-  131030: "номер получателя не в списке тестового номера — API Setup → To → Manage phone number list",
-  131047: "прошло больше 24 часов с последнего сообщения клиента — свободным текстом писать нельзя",
-  133010: "номер не зарегистрирован в Cloud API — WhatsApp Manager → номер → Register",
-  131031: "аккаунт WhatsApp Business ограничен Meta — проверьте Business Support Home",
-  100: "неверный параметр — чаще всего не тот PHONE_NUMBER_ID"
-};
-async function waErr(env, where, code, msg, details) {
-  const hint = WA_HINT[code] ? " → " + WA_HINT[code] : "";
-  const line = `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC · ${where}: ${code || ""} ${msg || ""}${details ? " (" + String(details).slice(0, 150) + ")" : ""}${hint}`;
-  try { await env.KV.put("wa:lastErr", line, { expirationTtl: 7 * 86400 }); } catch (e) {}
 }
 
 async function diag(env) {
@@ -4956,21 +4919,6 @@ const bcRoute = (env, cid, ch) => { // с какого номера и каки�
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
   return { error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${up}.` };
 };
-const bcParam = (t, name, fallback) => clean(String(t).replace(/\{\s*(имя|name)\s*\}/gi, name || fallback || "клиент").replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   "), 300) || "—"; // Meta не принимает пустые подстановки, переводы строк, табуляцию и больше четырёх пробелов подряд
-async function sendTemplate(env, to, b, name, route) {
-  const cr = waCreds(env, route), params = (b.params || []).map(t => ({ type: "text", text: bcParam(t, name, b.fallback) }));
-  const comps = [].concat(b.img ? [{ type: "header", parameters: [{ type: "image", image: { link: b.img } }] }] : [], params.length ? [{ type: "body", parameters: params }] : []);
-  let r;
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000);
-  try {
-    r = await fetch(`${GRAPH}/${cr.pnid}/messages`, { method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" }, signal: ac.signal,
-      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: b.tpl, language: { code: b.lang }, ...(comps.length ? { components: comps } : {}) } }) });
-  } catch (e) { return { ok: false, code: 0, error: "Meta не ответила" }; } // ушло сообщение или нет — неизвестно
-  finally { clearTimeout(timer); }
-  if (r.ok) return { ok: true };
-  let e = {}; try { e = (await r.json()).error || {}; } catch (x) {}
-  return { ok: false, status: r.status, code: +e.code || r.status, error: clean(e.message || "", 160) };
-}
 // рассылка через Green-API: обычный текст. Предел в сутки — до 300 (по умолчанию 50), между сообщениями 30–150 секунд
 const GA_CAP = [50, 300], GA_GAP = [30e3, 150e3], GA_MSG_MAX = 1500, GA_CAPTION_MAX = 1000;
 const GA_STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
