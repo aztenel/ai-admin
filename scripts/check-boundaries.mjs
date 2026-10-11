@@ -55,7 +55,10 @@ function walk(dir, out = []) {
 // разбор идёт в одном дочернем процессе с этим флагом (на все файлы сразу).
 // import() в src/ не используем: его цель не всегда видна до запуска. Любое «import(» в файле — в отчёт, даже в строке
 // или комментарии (лучше лишнее предупреждение, чем пропуск); не считаются только методы и имена: obj.import(, $import(.
-// Типы в JSDoc — тегом /** @import { T } from "./x.js" */: такие подключения проверяются по слоям (пакеты для типов — нет).
+// Типы в JSDoc — тегом /** @import { T } from "./x.js" */: такие подключения проверяются по слоям (пакеты для типов — нет:
+// неверное имя пакета в @import поймает tsc).
+// Ограничение: номер строки и теги @import ищутся по тексту, без полного разбора JS. Возможны неточная строка в отчёте и лишнее
+// предупреждение на надуманном тексте («/** @import … */» внутри строки), но не пропуск подключения, которое работает при запуске.
 const PARSE = 'process.stdin.setEncoding("utf8");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(JSON.parse(s).map(t=>{try{return{ok:new (require("vm").SourceTextModule)(t).dependencySpecifiers}}catch(e){return{err:String(e.message||e)}}}))))';
 function staticSpecs(srcs) {
   if (vm.SourceTextModule) return srcs.map(t => { try { return { ok: new vm.SourceTextModule(t).dependencySpecifiers }; } catch (e) { return { err: String(e.message || e) }; } });
@@ -68,8 +71,8 @@ const JSDOC = new RegExp(String.raw`\/\*\*[^*]*\*+(?:[^/*][^*]*\*+)*\/`, "g"); /
 const TYPE_IMPORT = /@import\s*(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s*as\s+[\w$]+|[\w$]+)\s*from\s*(["'])([^"'\n]*)\1/g; // D, { T } / { T } / * as N / D
 // строка с подключением: начинается с import, или export … from, или «} from "…"» (конец многострочного import); ведущий /* … */ не мешает
 const STMT_LINE = /^\s*(?:import\b|export\b.*\bfrom\b|\}?\s*from\s*["'])/;
-const codeOf = l => l.replace(/^\s*\/\*.*?\*\/\s*/, ""); // «/* eslint-disable */ import …» → «import …»
-const isCommentLine = l => /^\s*(\/\/|\*(?!\/)|\/\*)/.test(codeOf(l));
+const codeOf = l => l.replace(/^(?:\s*\/\*.*?\*\/)*\s*/, ""); // «/* a */ /* b */ import …» → «import …»
+const isCommentLine = l => /^\s*(\/\/|\*(?!\/)|\/\*)/.test(l); // l — уже после codeOf
 function importsFrom(src, parsed) {
   const lines = src.split("\n"), out = [], starts = [0];
   for (let i = 0; i < src.length; i++) if (src[i] === "\n") starts.push(i + 1);
@@ -121,9 +124,8 @@ export function checkBoundaries(srcDir) {
       const at = `${rel}:${line}`;
       if (spec === null) { problems.push(`${at}: ${why}`); continue; }
       if (!spec.startsWith(".") && !spec.startsWith("/")) {
-        const name = pkgName(spec);
         if (type) continue; // типы из пакета (@cloudflare/workers-types и т. п.) в сборку не попадают
-        if (!spec.startsWith("node:")) { if (!pkgs) pkgs = declaredPackages(root, problems); if (pkgs.has(name)) continue; } // объявленный пакет npm: слой не определить, решает ревью
+        if (!spec.startsWith("node:")) { if (!pkgs) pkgs = declaredPackages(root, problems); if (pkgs.has(pkgName(spec))) continue; } // объявленный пакет npm: слой не определить, решает ревью
         problems.push(`${at}: «${spec}» — ${spec.startsWith("node:") ? "модулей Node в Worker нет" : "пакета нет в dependencies package.json (модулей Node — fs, events, buffer… — в Worker нет)"}`);
         continue;
       }
