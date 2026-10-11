@@ -50,7 +50,7 @@ test("обратные зависимости, выход из src/, node:*, н�
     const p = checkBoundaries(t.src).problems.join("\n");
     for (const re of [/services\/a\.js:1: services → controllers/, /services\/a\.js:2: .*вне src/, /services\/a\.js:3: .*node:fs/, /services\/a\.js:4: .*файла нет/,
       /controllers\/x\.js:1: controllers → db/, /alt\/client\.js:1: integrations → services/, /q\.js:1: db → services/,
-      /lib\/p\.js:2: import\(\) не строкой/, /lib\/p\.js:3: .*«fs» — модулей Node/, /lib\/p\.js:4: .*папка/, /lib\/p\.js:5: .*регистр/, /lib\/q\.js:1: lib → routes/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
+      /lib\/p\.js:2: подключение не строкой/, /lib\/p\.js:3: .*«fs» — модулей Node/, /lib\/p\.js:4: .*папка/, /lib\/p\.js:5: .*регистр/, /lib\/q\.js:1: lib → routes/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
       assert.match(p, re);
     assert.doesNotMatch(p, /lib → config/); // CLAUDE.md §4: config доступен всем
   } finally { t.done(); }
@@ -61,22 +61,25 @@ test("разбор подключений: многострочный import, ex
   assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["./a.js", "./c.js", "./lazy.js", "./side.js"]);
 });
 
-test("комментарии, JSDoc и строки — не подключения", () => {
-  const s = '/** @param {import("../controllers/x.js").T} a */\n// не import(x)\nconst t = `${"import(\'./z.js\')"}`;\n/* import { q } from "./q.js"; */\nexport const f = a => a;\n';
+test("комментарии с начала строки и JSDoc — не подключения; пустое подключение — в отчёт", () => {
+  const s = '/** @param {import("../controllers/x.js").T} a */\n// не import(x)\n/* import { q } from "./q.js"; */\n/**\n * import { w } from "./w.js";\n */\nexport const f = a => a;\n';
   assert.deepEqual(importsOf(s), []);
+  assert.deepEqual(importsOf('import x from "";\n').map(x => x.spec), [null]);
 });
 
-test("регулярные выражения с кавычкой или /* не прячут подключения; строка-шаблон с «import … from» — не подключение", () => {
-  const s = 'const a = p.replace(/\\/*$/, "");\nconst b = /["\']/.test(a);\nconst m = await import("../routes/r.js");\nconst tpl = `\nimport { x } from "../routes/t.js";\n`;\nconst half = 10 / 2, q = "x" / 1;\nimport { y } from "./y.js";\n';
-  assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["../routes/r.js", "./y.js"]);
+test("код с регулярными выражениями и делением не прячет подключения на следующих строках", () => {
+  const s = 'let k = i++ / 2;\nexport { b } from "../routes/b.js";\nif (ok) /\'/.test(s);\nexport { a } from "../routes/a.js";\nconst c = p.replace(/\\/*$/, "");\nconst m = await import("../routes/r.js");\n';
+  assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["../routes/a.js", "../routes/b.js", "../routes/r.js"]);
 });
 
-test("пакеты npm с именами как у модулей Node (buffer, events) — решает ревью; папка в другом регистре — ошибка", () => {
-  const t = tree({ "lib/a.js": 'import { Buffer } from "buffer";\nimport { EventEmitter } from "events";\nimport { q } from "../db/Repositories/q.js";\nexport const a = [Buffer, EventEmitter, q];\n', "db/repositories/q.js": "export const q = 1;\n" });
+test("пакеты: модуль Node без node: (events, buffer) — ошибка; пакет не из package.json — ошибка; папка в другом регистре — ошибка", () => {
+  const t = tree({ "lib/a.js": 'import { Buffer } from "buffer";\nimport { EventEmitter } from "events";\nimport { q } from "../db/Repositories/q.js";\nimport z from "zod";\nexport const a = [Buffer, EventEmitter, q, z];\n', "db/repositories/q.js": "export const q = 1;\n" });
   try {
     const p = checkBoundaries(t.src).problems.join("\n");
-    assert.doesNotMatch(p, /buffer|events/);
+    assert.match(p, /lib\/a\.js:1: «buffer» — модулей Node/);
+    assert.match(p, /lib\/a\.js:2: «events» — модулей Node/);
     assert.match(p, /lib\/a\.js:3: .*регистр/);
+    assert.match(p, /lib\/a\.js:4: «zod» — пакета нет в package.json/);
   } finally { t.done(); }
 });
 

@@ -3733,7 +3733,7 @@ async function route(request, env, ctx) {
     }
     if (P.startsWith("/api/studio/")) {
       const s = await sessionRead(env, request);
-      return s ? studioApi(request, env, url, s) : json({ error: "Войдите заново." }, 401);
+      return s ? studioApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
     // ---- пульт чатов
     if (M === "GET" && P === "/inbox") {
@@ -3803,13 +3803,13 @@ async function route(request, env, ctx) {
       let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
       const a = await owner(b.key);
       if (a !== true) return a || forbid();
-      return json(await runCase(env, b.i === undefined || b.i === null || b.i === "" ? -1 : +b.i));
+      return jsonP(await runCase(env, b.i === undefined || b.i === null || b.i === "" ? -1 : +b.i)); // переписки автотеста — не кэшировать
     }
     if (request.method === "GET" && P === "/api/selftest") { // один сценарий автотеста по ссылке: ?key=…&i=номер (HEAD — так ссылки проверяют мессенджеры — сценарий не запускает)
       const a = await owner();
       if (a !== true) return a || forbid();
       const i = url.searchParams.get("i");
-      return json(await runCase(env, i === null || i === "" ? -1 : +i)); // без номера сценарий не запускаем
+      return jsonP(await runCase(env, i === null || i === "" ? -1 : +i)); // без номера сценарий не запускаем; не кэшировать
     }
     if (M === "POST" && P === "/api/chat") return handleWebChat(request, env, ctx);
     if (M === "GET" && P === "/api/history") {
@@ -3818,7 +3818,7 @@ async function route(request, env, ctx) {
       let turns = [];
       try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns; }
       catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
-      return json({ turns });
+      return jsonP({ turns }); // переписка клиента: не кэшировать
     }
     if (M === "POST" && P === "/ga") { // Green-API, общий номер воркера
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();

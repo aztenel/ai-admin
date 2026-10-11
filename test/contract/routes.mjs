@@ -101,7 +101,8 @@ const FOREIGN = /[?&]c=dent\b|"c":"dent"/;
 const isProtected = p => PROTECTED.test(p) || PROTECTED_EXACT.has(p.split("?")[0]);
 
 const label = (body, hd) => (body === undefined ? "" : body === META ? " <сообщение Meta>" : body === GREEN ? " <сообщение Green-API>" : " " + (typeof body === "string" ? body : JSON.stringify(body))) + (hd ? " <неверная подпись>" : "");
-const VALID_KEY = new RegExp(`[?&]key=(${OWNER_KEY}|${STAFF_KEY})`); // вход ключом в адресе (старый способ) — это не «гость»
+// вход ключом в адресе (старый способ) — это не «гость»: ключ владельца — к любому клиенту, ключ сотрудника барбершопа — только к барбершопу
+const validKey = p => p.includes("key=" + OWNER_KEY) || (p.includes("key=" + STAFF_KEY) && /[?&]c=barber\b/.test(p));
 const got = {};
 net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
 for (const [method, path, body, hd] of R) {
@@ -113,7 +114,7 @@ for (const [method, path, body, hd] of R) {
     got[id] = o;
     const p = path, data = o.status === 200;
     // 1. гость не получает защищённых страниц и данных
-    if (role === "anon" && isProtected(p) && !VALID_KEY.test(p)) ok(`гость: ${id} → не 200`, !data, JSON.stringify(o));
+    if (role === "anon" && isProtected(p) && !validKey(p)) ok(`гость: ${id} → не 200`, !data, JSON.stringify(o));
     // 2. сотрудник не получает страниц и данных владельца
     if (role === "staff" && OWNER_ONLY.test(p)) ok(`сотрудник: ${id} → не 200`, !data, JSON.stringify(o));
     // 3. сотрудник не видит чужого клиента: API с чужим c= отказывает, а страницы показывают только своего (метки чужих данных в ответе нет)
@@ -122,7 +123,7 @@ for (const [method, path, body, hd] of R) {
     // 4. страницы с личными данными — без кэша, без встраивания, с CSP
     if (data && o.type === "text/html" && isProtected(p)) ok(`страница с данными без кэша и встраивания: ${id}`, o.cache === "no-store" && o.frame === "DENY" && o.csp, JSON.stringify(o));
     // 5. ответы API с данными не кэшируются
-    if (data && /^\/api\/(inbox|launch|bc|studio)\//.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
+    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
     // 6. неподписанный вебхук и вебхук без пароля не запускают бота
     if (/^\/(wa\/|ga\b|webhook|$)/.test(p) && method === "POST") ok(`вебхук без подписи/пароля не доходит до ИИ: ${id}`, o.status !== 200 && net.gemini.length === ai0, JSON.stringify(o));
   }

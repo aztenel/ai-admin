@@ -2,12 +2,13 @@
 //   routes → controllers → services → (services/integrations | db) → lib;  config и lib доступны всем.
 //   services не подключают controllers/routes; integrations не подключают services и db; db не подключает services.
 // Ещё запрещено: подключать из src/ что-либо вне src/ (worker.js, pult.gen.js — старый код зависит от нового, не наоборот),
-// модули Node (node:fs и просто fs — их нет в Cloudflare Worker без флага nodejs_compat), несуществующие файлы и папки,
-// имя файла с другим регистром букв, import() не строкой, циклы. Комментарии и строки (в том числе JSDoc {import("…").T}) не считаются.
+// модули Node (node:fs и просто fs, events — их нет в Cloudflare Worker без флага nodejs_compat), пакеты не из package.json,
+// несуществующие файлы и папки, другой регистр букв в пути, import() не строкой, циклы.
 // Запуск: node scripts/check-boundaries.mjs [папка src]. Код выхода 1 — есть нарушения.
 import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from "node:fs";
 import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { builtinModules } from "node:module";
 
 // слой файла по его месту в src/
 export function layerOf(rel) {
@@ -48,40 +49,17 @@ function walk(dir, out = []) {
   return out;
 }
 
-// текст без комментариев (keepStrings: строки остаются) или ещё и без содержимого строк и регулярных выражений; переносы строк и длина сохраняются
-const REGEX_BEFORE = /[(,=:[!&|?{};+\-*%<>~^]$|(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|void|yield|await|delete|throw|new)$/; // после чего «/» начинает /регулярное выражение/
-export function blank(src, keepStrings) {
-  let out = "", i = 0;
-  const sp = t => t.replace(/[^\n]/g, " ");
-  while (i < src.length) {
-    const c = src[i], d = src[i + 1];
-    if (c === "/" && d === "/") { const j = src.indexOf("\n", i); const e = j < 0 ? src.length : j; out += sp(src.slice(i, e)); i = e; }
-    else if (c === "/" && d === "*") { const j = src.indexOf("*/", i + 2); const e = j < 0 ? src.length : j + 2; out += sp(src.slice(i, e)); i = e; }
-    else if (c === '"' || c === "'" || c === "`") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c && !(c !== "`" && src[j] === "\n")) j += src[j] === "\\" ? 2 : 1;
-      const e = Math.min(j + 1, src.length);
-      out += keepStrings ? src.slice(i, e) : c + sp(src.slice(i + 1, e - 1)) + (e - i > 1 ? c : ""); i = e;
-    } else if (c === "/" && REGEX_BEFORE.test(out.replace(/\s+$/, "") || "(")) { // /…/ — до закрывающей «/» вне [ ], с учётом «\»
-      let j = i + 1, cls = false;
-      while (j < src.length && src[j] !== "\n" && (cls || src[j] !== "/")) { if (src[j] === "\\") j++; else if (src[j] === "[") cls = true; else if (src[j] === "]") cls = false; j++; }
-      const e = Math.min(j + 1, src.length);
-      out += "/" + sp(src.slice(i + 1, e - 1)) + (e - i > 1 ? "/" : ""); i = e;
-    } else { out += c; i++; }
-  }
-  return out;
-}
-
 // подключения файла: import … from "x", export … from "x", import "x", import("x").
-// Где подключение — ищем в тексте без строк (строка-шаблон с «import … from» внутри — не подключение), имя модуля читаем на том же месте со строками.
+// Убираются только комментарии, которые начинаются с начала строки (// … и /* … */, в том числе JSDoc с {import("…").T}):
+// так не нужно разбирать строки и регулярные выражения, а подключения пишутся с начала строки. Всё сомнительное — в отчёт, а не мимо.
 export function importsOf(src) {
-  const code = blank(src, true), bare = blank(src, false), out = [];
-  const specAt = i => { const m = /^(["'])([^"'\n]*)\1/.exec(code.slice(i)); return m ? m[2] : null; };
-  for (const re of [/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])/dgm, /^[ \t]*import\s*(["'])/dgm])
-    for (const m of bare.matchAll(re)) { const spec = specAt(m.indices[1][0]); if (spec) out.push({ spec, line: lineAt(src, m.index) }); }
-  for (const m of bare.matchAll(/\bimport\s*\(/g)) {
-    const arg = /^\s*([^)]*)\)/.exec(code.slice(m.index + m[0].length));
-    const lit = arg && /^(["'])([^"']+)\1$/.exec(arg[1].trim());
+  const sp = m => m.replace(/[^\n]/g, " ");
+  const code = src.replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, sp).replace(/^[ \t]*\/\/.*$/gm, sp);
+  const out = [];
+  for (const m of code.matchAll(/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])([^"'\n]*)\1/gm)) out.push({ spec: m[2] || null, line: lineAt(src, m.index) });
+  for (const m of code.matchAll(/^[ \t]*import\s*(["'])([^"'\n]*)\1/gm)) out.push({ spec: m[2] || null, line: lineAt(src, m.index) });
+  for (const m of code.matchAll(/(?<![\w$.{])import\s*\(\s*([^)\n]*)\)/g)) {
+    const lit = /^(["'])([^"']+)\1$/.exec(m[1].trim());
     out.push({ spec: lit ? lit[2] : null, line: lineAt(src, m.index) });
   }
   return out;
@@ -95,23 +73,32 @@ const isExactFile = (root, p) => {
     return true;
   } catch (e) { return false; }
 };
-// модули, которых в Cloudflare Worker без nodejs_compat нет и которые не заменить пакетом npm (buffer, events, util, url и т. п. — есть пакеты, решает ревью)
-const NODE_ONLY = new Set(["fs", "path", "os", "child_process", "cluster", "dgram", "dns", "http", "http2", "https", "inspector", "module", "net", "perf_hooks", "process", "readline", "repl", "tls", "tty", "v8", "vm", "worker_threads", "zlib", "async_hooks", "crypto", "diagnostics_channel", "trace_events", "wasi", "sqlite", "test"]);
+// пакеты npm: только объявленные в package.json; модули Node (fs, events, buffer… и node:*) — нет в Worker без nodejs_compat,
+// разве что в package.json объявлен одноимённый пакет-замена
+const NODE = new Set(builtinModules.map(m => m.replace(/^node:/, "").split("/")[0]));
+function declaredPackages(srcRoot) {
+  try { const pj = JSON.parse(readFileSync(join(srcRoot, "..", "package.json"), "utf8")); return new Set(Object.keys({ ...pj.dependencies, ...pj.devDependencies, ...pj.optionalDependencies })); } catch (e) { return new Set(); }
+}
+const pkgName = spec => spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
 const lineAt = (s, i) => s.slice(0, i).split("\n").length;
 
 export function checkBoundaries(srcDir) {
   const root = resolve(srcDir), problems = [];
   if (!existsSync(root)) return { problems: [`нет папки ${srcDir}`], files: 0 };
-  const files = walk(root), graph = new Map();
+  const files = walk(root), graph = new Map(), pkgs = declaredPackages(root);
   for (const f of files) {
     const rel = relative(root, f), from = layerOf(rel), deps = [];
     graph.set(f, deps);
     if (!from) { problems.push(`${rel}: файл вне известных слоёв (routes, controllers, services, db, jobs, config, lib, index.js)`); continue; }
     for (const { spec, line } of importsOf(readFileSync(f, "utf8"))) {
       const at = `${rel}:${line}`;
-      if (spec === null) { problems.push(`${at}: import() не строкой — проверить нельзя`); continue; }
-      if (spec.startsWith("node:") || NODE_ONLY.has(spec.split("/")[0])) { problems.push(`${at}: «${spec}» — модулей Node в Worker нет`); continue; }
-      if (!spec.startsWith(".") && !spec.startsWith("/")) continue; // пакет npm: слой не определить, решает ревью
+      if (spec === null) { problems.push(`${at}: подключение не строкой или пустое — проверить нельзя`); continue; }
+      if (!spec.startsWith(".") && !spec.startsWith("/")) {
+        const name = pkgName(spec);
+        if (pkgs.has(name) && !spec.startsWith("node:")) continue; // объявленный пакет npm: слой не определить, решает ревью
+        problems.push(NODE.has(name.replace(/^node:/, "")) ? `${at}: «${spec}» — модулей Node в Worker нет` : `${at}: «${spec}» — пакета нет в package.json`);
+        continue;
+      }
       const target = resolve(dirname(f), spec);
       if (!target.startsWith(root + sep)) { problems.push(`${at}: «${spec}» — вне src/ (новый код не зависит от worker.js и старых файлов)`); continue; }
       if (!isExactFile(root, target)) { problems.push(`${at}: «${spec}» — файла нет (или это папка, или другой регистр букв)`); continue; }

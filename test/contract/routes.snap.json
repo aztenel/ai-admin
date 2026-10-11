@@ -734,6 +734,7 @@
  "GET /api/studio/list [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -758,6 +759,7 @@
  "GET /api/studio/get?id=nope [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -781,6 +783,7 @@
  "POST /api/studio/check {} [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -807,6 +810,7 @@
  "POST /api/studio/save {} [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -833,6 +837,7 @@
  "POST /api/studio/key {\"id\":\"nope\"} [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -856,6 +861,7 @@
  "POST /api/studio/remove {\"id\":\"nope\"} [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -879,6 +885,7 @@
  "GET /api/studio/nope [anon]": {
   "status": 401,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1821,6 +1828,7 @@
  "POST /api/selftest {} [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1838,6 +1846,7 @@
  "GET /api/selftest [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1910,6 +1919,7 @@
  "GET /api/history?c=barber&sid=contract-1 [anon]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
@@ -1917,6 +1927,7 @@
  "GET /api/history?c=barber&sid=contract-1 [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
@@ -1924,6 +1935,7 @@
  "GET /api/history?c=barber&sid=contract-1 [staff]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
@@ -1931,6 +1943,7 @@
  "GET /api/history?c=barber [anon]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
@@ -1938,6 +1951,7 @@
  "GET /api/history?c=barber [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
@@ -1945,6 +1959,7 @@
  "GET /api/history?c=barber [staff]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "turns"
   ]
