@@ -2,7 +2,7 @@
 // Worker импортируется по абсолютному пути. WORKER=<путь> — прогнать на другой версии.
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { workerCopy } from "../bot-copy.mjs";
 
 export const DIR = import.meta.dirname;
 export const SRC = process.env.WORKER || new URL("../../../worker.js", import.meta.url).pathname;
@@ -23,10 +23,8 @@ export async function internals() {
     "ALT_CLAIM", "ALT_CHANGE", "ALT_NEG", "ALT_WANT_CHANGE", "altOverLimit", "altCount", "altLimKeys", "ipKey", "noteDue", "mergeProfile", "detectLang", "checkReply",
     "altPickServices", "altPickStaff", "normPhone", "findPhone", "maskPhones", "redact", "CLIENTS", "altCache", "lastNote", "wantsHuman", "nameKey", "altDay", "isoDay"];
   const p = DIR + "/worker_x.mjs";
-  // копия лежит в другой папке: относительные импорты бота (./src/…, ./pult.gen.js) переводим в абсолютные; функции из src/ тоже можно экспортировать дальше
-  const src = readFileSync(SRC, "utf8").replace(/(\bfrom\s*["'])\.\//g, "$1" + new URL("./", pathToFileURL(SRC)).href);
-  const imp = [...src.matchAll(/^import\s*\{([^}]*)\}\s*from/gm)].flatMap(m => m[1].split(",").map(x => x.trim().split(/\s+as\s+/).pop()));
-  const have = names.filter(n => imp.includes(n) || new RegExp("(^|\\n)(async function|function|const|let) " + n + "\\b").test(src)); // имён, которых в новой версии нет, не экспортируем
+  const { src, has } = workerCopy(readFileSync(SRC, "utf8"), SRC); // подключения ./src/… — по абсолютному пути (см. ../bot-copy.mjs)
+  const have = names.filter(has); // имён, которых в новой версии нет, не экспортируем
   const compat = /\nfunction altClaims\b/.test(src) ? "\nexport const altFlat = s => { const c = altClaims(s); return (c.book ? \"[утверждает: записала] \" : \"\") + (c.change ? \"[утверждает: отменила/перенесла] \" : \"\") + \"остаток: \" + c.keep; };\nexport { altClaims };\n" : "";
   writeFileSync(p, src + "\nexport { " + have.join(", ") + " };\n" + compat);
   return import(p + "?v=" + Math.random());

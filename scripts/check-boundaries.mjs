@@ -2,11 +2,13 @@
 //   routes → controllers → services → (services/integrations | db) → lib;  config и lib доступны всем.
 //   services не подключают controllers/routes; integrations не подключают services и db; db не подключает services.
 // Ещё запрещено: подключать из src/ что-либо вне src/ (worker.js, pult.gen.js — старый код зависит от нового, не наоборот),
-// модули node:* (их нет в Cloudflare Worker без флага nodejs_compat), несуществующие файлы, import() не строкой, циклы.
+// модули Node (node:fs и просто fs — их нет в Cloudflare Worker без флага nodejs_compat), несуществующие файлы и папки,
+// имя файла с другим регистром букв, import() не строкой, циклы. Комментарии и строки (в том числе JSDoc {import("…").T}) не считаются.
 // Запуск: node scripts/check-boundaries.mjs [папка src]. Код выхода 1 — есть нарушения.
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative, resolve, dirname, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from "node:fs";
+import { join, relative, resolve, dirname, basename, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { builtinModules } from "node:module";
 
 // слой файла по его месту в src/
 export function layerOf(rel) {
@@ -35,7 +37,7 @@ export const ALLOWED = {
   integrations: ["integrations", "config", "lib"],
   db: ["db", "config", "lib"],
   config: ["config", "lib"],
-  lib: ["lib"]
+  lib: ["lib", "config"] // CLAUDE.md §4: config и lib доступны всем (константы в lib — можно; цикл config ↔ lib поймает проверка циклов)
 };
 
 const isCode = f => /\.(m?js)$/.test(f);
@@ -47,17 +49,40 @@ function walk(dir, out = []) {
   return out;
 }
 
-// подключения файла: import … from "x", export … from "x", import "x", import("x")
-export function importsOf(src) {
-  const out = [];
-  for (const m of src.matchAll(/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
-  for (const m of src.matchAll(/^[ \t]*import\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
-  for (const m of src.matchAll(/\bimport\s*\(\s*([^)]*)\)/g)) {
-    const lit = /^(["'])([^"']+)\1$/.exec(m[1].trim());
-    out.push(lit ? { spec: lit[2], line: lineAt(src, m.index) } : { spec: null, line: lineAt(src, m.index) });
+// текст без комментариев (keepStrings: строки остаются) или ещё и без содержимого строк; переносы строк и длина сохраняются
+// Ограничение: регулярные выражения /…/ не разбираются — кавычка внутри них может сбить разбор этого файла (тогда смотреть глазами).
+export function blank(src, keepStrings) {
+  let out = "", i = 0;
+  const sp = t => t.replace(/[^\n]/g, " ");
+  while (i < src.length) {
+    const c = src[i], d = src[i + 1];
+    if (c === "/" && d === "/") { const j = src.indexOf("\n", i); const e = j < 0 ? src.length : j; out += sp(src.slice(i, e)); i = e; }
+    else if (c === "/" && d === "*") { const j = src.indexOf("*/", i + 2); const e = j < 0 ? src.length : j + 2; out += sp(src.slice(i, e)); i = e; }
+    else if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+      const e = Math.min(j + 1, src.length);
+      out += keepStrings ? src.slice(i, e) : c + sp(src.slice(i + 1, e - 1)) + (e - i > 1 ? c : ""); i = e;
+    } else { out += c; i++; }
   }
   return out;
 }
+
+// подключения файла: import … from "x", export … from "x", import "x", import("x")
+export function importsOf(src) {
+  const code = blank(src, true), bare = blank(src, false), out = [];
+  for (const m of code.matchAll(/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
+  for (const m of code.matchAll(/^[ \t]*import\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
+  for (const m of bare.matchAll(/\bimport\s*\(/g)) { // где import( — ищем без строк, аргумент читаем со строками
+    const arg = /^\s*([^)]*)\)/.exec(code.slice(m.index + m[0].length));
+    const lit = arg && /^(["'])([^"']+)\1$/.exec(arg[1].trim());
+    out.push({ spec: lit ? lit[2] : null, line: lineAt(src, m.index) });
+  }
+  return out;
+}
+// файл есть и имя совпадает с точностью до регистра (macOS и Windows регистр не различают, а Linux и сборка — различают)
+const isExactFile = p => { try { return statSync(p).isFile() && readdirSync(dirname(p)).includes(basename(p)); } catch (e) { return false; } };
+const NODE = new Set(builtinModules.flatMap(m => [m, m.split("/")[0]]));
 const lineAt = (s, i) => s.slice(0, i).split("\n").length;
 
 export function checkBoundaries(srcDir) {
@@ -71,11 +96,11 @@ export function checkBoundaries(srcDir) {
     for (const { spec, line } of importsOf(readFileSync(f, "utf8"))) {
       const at = `${rel}:${line}`;
       if (spec === null) { problems.push(`${at}: import() не строкой — проверить нельзя`); continue; }
-      if (spec.startsWith("node:")) { problems.push(`${at}: «${spec}» — модулей Node в Worker нет`); continue; }
+      if (spec.startsWith("node:") || NODE.has(spec) || NODE.has(spec.split("/")[0])) { problems.push(`${at}: «${spec}» — модулей Node в Worker нет`); continue; }
       if (!spec.startsWith(".") && !spec.startsWith("/")) continue; // пакет npm: слой не определить, решает ревью
       const target = resolve(dirname(f), spec);
       if (!target.startsWith(root + sep)) { problems.push(`${at}: «${spec}» — вне src/ (новый код не зависит от worker.js и старых файлов)`); continue; }
-      if (!existsSync(target)) { problems.push(`${at}: «${spec}» — файла нет`); continue; }
+      if (!isExactFile(target)) { problems.push(`${at}: «${spec}» — файла нет (или это папка, или другой регистр букв)`); continue; }
       const to = layerOf(relative(root, target));
       if (!to) { problems.push(`${at}: «${spec}» — файл вне известных слоёв`); continue; }
       if (!ALLOWED[from].includes(to)) problems.push(`${at}: ${from} → ${to} запрещено («${spec}»)`);
@@ -99,8 +124,10 @@ export function checkBoundaries(srcDir) {
   return { problems, files: files.length };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-  const dir = process.argv[2] || new URL("../src", import.meta.url).pathname;
+const self = fileURLToPath(import.meta.url);
+const real = p => { try { return realpathSync(p); } catch (e) { return p; } };
+if (process.argv[1] && real(resolve(process.argv[1])) === real(self)) { // запуск командой (в том числе через ссылку на папку), а не import
+  const dir = process.argv[2] || join(dirname(self), "..", "src");
   const { problems, files } = checkBoundaries(dir);
   if (problems.length) { console.log(`Границы модулей: нарушений ${problems.length}\n  ` + problems.join("\n  ")); process.exitCode = 1; }
   else console.log(`Границы модулей: нарушений нет (файлов в src/: ${files})`);

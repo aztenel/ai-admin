@@ -4,6 +4,7 @@ import worker from "../worker.js";
 import { createHmac } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const mem = new Map();
 const puts = new Map(); // сколько раз за прогон записан каждый ключ
@@ -2314,9 +2315,9 @@ console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 // новые части (история чата для пульта, паспорт бота, вход, пульт чатов) проверяются отдельным файлом и в отдельном процессе
 const platform = spawnSync(process.execPath, [new URL("./platform.mjs", import.meta.url).pathname], { stdio: "inherit" });
 // защитная сетка переезда (REFACTORING.md, шаг 0): модули src/, контракт маршрутов, золотые сценарии — тоже отдельными процессами
-const here = p => new URL(p, import.meta.url).pathname;
+const here = p => fileURLToPath(new URL(p, import.meta.url)); // не .pathname: путь с пробелом или кириллицей
 const unitFiles = readdirSync(here("./unit/")).filter(f => f.endsWith(".test.mjs")).sort().map(f => here("./unit/" + f));
 const unit = spawnSync(process.execPath, ["--test", "--test-reporter=dot", ...unitFiles], { stdio: "inherit" });
 console.log(`Модули src/ (${unitFiles.length} файлов): ${unit.status === 0 ? "прошло" : "НЕ ПРОШЛО"}`);
-const extra = [].map(f => spawnSync(process.execPath, [here(f)], { stdio: "inherit" }));
+const extra = ["./contract/routes.mjs"].map(f => spawnSync(process.execPath, [here(f)], { stdio: "inherit" }));
 process.exit(fail || platform.status !== 0 || unit.status !== 0 || extra.some(r => r.status !== 0) ? 1 : 0);

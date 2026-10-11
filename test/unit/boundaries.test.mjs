@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { checkBoundaries, importsOf } from "../../scripts/check-boundaries.mjs";
 
 function tree(files) {
@@ -35,7 +36,11 @@ test("обратные зависимости, выход из src/, node:*, н�
     "controllers/x.js": 'import { q } from "../db/repositories/q.js";\nexport const c = q;\n',
     "services/integrations/alt/client.js": 'import { a } from "../../a.js";\nexport const k = a;\n',
     "db/repositories/q.js": 'import { a } from "../../services/a.js";\nexport const q = a;\n',
-    "lib/p.js": 'import { k } from "../config/c.js";\nconst m = await import(k);\nexport const p = m;\n',
+    "lib/p.js": 'import { k } from "../config/c.js";\nconst m = await import(k);\nimport { readFileSync } from "fs";\nimport { d } from "./dir";\nimport { M } from "./Money.js";\nexport const p = [m, readFileSync, d, M];\n',
+    "lib/dir/index.js": "export const d = 1;\n",
+    "lib/money.js": "export const M = 1;\n",
+    "lib/q.js": 'import { R } from "../routes/r.js";\nexport const q = R;\n',
+    "routes/r.js": "export const R = 1;\n",
     "lib/c1.js": 'import { y } from "./c2.js";\nexport const x = y;\n',
     "lib/c2.js": 'import { x } from "./c1.js";\nexport const y = x;\n',
     "config/c.js": "export const k = 1;\n",
@@ -45,8 +50,9 @@ test("обратные зависимости, выход из src/, node:*, н�
     const p = checkBoundaries(t.src).problems.join("\n");
     for (const re of [/services\/a\.js:1: services → controllers/, /services\/a\.js:2: .*вне src/, /services\/a\.js:3: .*node:fs/, /services\/a\.js:4: .*файла нет/,
       /controllers\/x\.js:1: controllers → db/, /alt\/client\.js:1: integrations → services/, /q\.js:1: db → services/,
-      /lib\/p\.js:1: lib → config/, /lib\/p\.js:2: import\(\) не строкой/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
+      /lib\/p\.js:2: import\(\) не строкой/, /lib\/p\.js:3: .*«fs» — модулей Node/, /lib\/p\.js:4: .*папка/, /lib\/p\.js:5: .*регистр/, /lib\/q\.js:1: lib → routes/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
       assert.match(p, re);
+    assert.doesNotMatch(p, /lib → config/); // CLAUDE.md §4: config доступен всем
   } finally { t.done(); }
 });
 
@@ -55,6 +61,12 @@ test("разбор подключений: многострочный import, ex
   assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["./a.js", "./c.js", "./lazy.js", "./side.js"]);
 });
 
+test("комментарии, JSDoc и строки — не подключения", () => {
+  const s = '/** @param {import("../controllers/x.js").T} a */\n// не import(x)\nconst t = `${"import(\'./z.js\')"}`;\n/* import { q } from "./q.js"; */\nexport const f = a => a;\n';
+  assert.deepEqual(importsOf(s), []);
+});
+
+// единственное место, где настоящая src/ проверяется в npm test (а значит, и перед выкладкой Cloudflare); CI отдельно её не гоняет
 test("настоящая папка src/ — без нарушений", () => {
-  assert.deepEqual(checkBoundaries(new URL("../../src", import.meta.url).pathname).problems, []);
+  assert.deepEqual(checkBoundaries(fileURLToPath(new URL("../../src", import.meta.url))).problems, []);
 });

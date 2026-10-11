@@ -1,0 +1,2092 @@
+{
+ "GET / [anon]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET / [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET / [staff]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=barber [anon]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=barber [staff]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=nope [anon]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=nope [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /?c=nope [staff]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /chat [anon]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /chat [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /chat [staff]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /privacy [anon]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /privacy [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /privacy [staff]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /nope [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /nope [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /nope [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /nope {} [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /nope {} [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /nope {} [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=12345 [anon]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "#"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=12345 [owner]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "#"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=12345 [staff]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "#"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=bad&hub.challenge=1 [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Wrong verify token"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=bad&hub.challenge=1 [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Wrong verify token"
+ },
+ "GET /?hub.mode=subscribe&hub.verify_token=bad&hub.challenge=1 [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Wrong verify token"
+ },
+ "GET /demo [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /demo [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /demo [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /demo/ [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /demo/ [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /demo/ [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /manifest.webmanifest [anon]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /manifest.webmanifest [owner]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /manifest.webmanifest [staff]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /demo.webmanifest [anon]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /demo.webmanifest [owner]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /demo.webmanifest [staff]": {
+  "status": 200,
+  "type": "application/manifest+json",
+  "cache": "public, max-age=3600",
+  "json": [
+   "background_color",
+   "display",
+   "icons",
+   "id",
+   "lang",
+   "name",
+   "orientation",
+   "scope",
+   "short_name",
+   "start_url",
+   "theme_color"
+  ]
+ },
+ "GET /pult/icon-180.png [anon]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-180.png [owner]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-180.png [staff]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-192.png [anon]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-192.png [owner]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-192.png [staff]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-512.png [anon]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-512.png [owner]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-512.png [staff]": {
+  "status": 200,
+  "type": "image/png",
+  "cache": "public, max-age=86400"
+ },
+ "GET /pult/icon-64.png [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /pult/icon-64.png [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /pult/icon-64.png [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /login [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Finbox [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Finbox [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Finbox [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "POST /login key=wrong-key [anon]": {
+  "status": 403,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "POST /login key=wrong-key [owner]": {
+  "status": 403,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "POST /login key=wrong-key [staff]": {
+  "status": 403,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /logout [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login",
+  "cookie": "clear",
+  "cache": "no-store"
+ },
+ "GET /logout [owner]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login",
+  "cookie": "clear",
+  "cache": "no-store"
+ },
+ "GET /logout [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login",
+  "cookie": "clear",
+  "cache": "no-store"
+ },
+ "GET /leads [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fleads",
+  "cache": "no-store"
+ },
+ "GET /leads [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=barber [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fleads%3Fc%3Dbarber",
+  "cache": "no-store"
+ },
+ "GET /leads?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=barber [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=dent [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fleads%3Fc%3Ddent",
+  "cache": "no-store"
+ },
+ "GET /leads?c=dent [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=dent [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?key=wrong [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /leads?key=wrong [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?key=wrong [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /studio [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fstudio",
+  "cache": "no-store"
+ },
+ "GET /studio [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /studio [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /inbox [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Finbox",
+  "cache": "no-store"
+ },
+ "GET /inbox [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /inbox [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /inbox?c=barber [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Finbox%3Fc%3Dbarber",
+  "cache": "no-store"
+ },
+ "GET /inbox?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /inbox?c=barber [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /inbox?c=dent [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Finbox%3Fc%3Ddent",
+  "cache": "no-store"
+ },
+ "GET /inbox?c=dent [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /inbox?c=dent [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /inbox?c=nope [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Finbox%3Fc%3Dnope",
+  "cache": "no-store"
+ },
+ "GET /inbox?c=nope [owner]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox"
+ },
+ "GET /inbox?c=nope [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /launch [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Flaunch",
+  "cache": "no-store"
+ },
+ "GET /launch [owner]": {
+  "status": 303,
+  "type": "-",
+  "location": "/studio"
+ },
+ "GET /launch [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /launch?c=barber [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Flaunch%3Fc%3Dbarber",
+  "cache": "no-store"
+ },
+ "GET /launch?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /launch?c=barber [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/inbox?c=barber"
+ },
+ "GET /broadcast [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fbroadcast",
+  "cache": "no-store"
+ },
+ "GET /broadcast [owner]": {
+  "status": 303,
+  "type": "-",
+  "location": "/studio"
+ },
+ "GET /broadcast [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/broadcast?c=barber"
+ },
+ "GET /broadcast?c=barber [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fbroadcast%3Fc%3Dbarber",
+  "cache": "no-store"
+ },
+ "GET /broadcast?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /broadcast?c=barber [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /broadcast?c=dent [anon]": {
+  "status": 303,
+  "type": "-",
+  "location": "/login?next=%2Fbroadcast%3Fc%3Ddent",
+  "cache": "no-store"
+ },
+ "GET /broadcast?c=dent [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /broadcast?c=dent [staff]": {
+  "status": 303,
+  "type": "-",
+  "location": "/broadcast?c=barber"
+ },
+ "GET /api/studio/list [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/list [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "clients",
+   "niches"
+  ]
+ },
+ "GET /api/studio/list [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/get?id=nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/get?id=nope [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/get?id=nope [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/check {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/check {} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "errors",
+   "ok",
+   "preview",
+   "warnings"
+  ]
+ },
+ "POST /api/studio/check {} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/save {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/save {} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "json": [
+   "errors",
+   "ok",
+   "preview",
+   "warnings"
+  ]
+ },
+ "POST /api/studio/save {} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/key {\"id\":\"nope\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/key {\"id\":\"nope\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/key {\"id\":\"nope\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/remove {\"id\":\"nope\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/remove {\"id\":\"nope\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/remove {\"id\":\"nope\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/nope [owner]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/studio/nope [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/me [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/me [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "c",
+   "owner"
+  ]
+ },
+ "GET /api/inbox/me [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "c",
+   "owner"
+  ]
+ },
+ "GET /api/inbox/list?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "more",
+   "need",
+   "now",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "more",
+   "need",
+   "now",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "more",
+   "need",
+   "now",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/chat?c=barber&ch=web&id=nobody [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/chat?c=barber&ch=web&id=nobody [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/chat?c=barber&ch=web&id=nobody [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/leads?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/leads?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "leads",
+   "partial"
+  ]
+ },
+ "GET /api/inbox/leads?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "leads",
+   "partial"
+  ]
+ },
+ "GET /api/inbox/leads?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/leads?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "leads",
+   "partial"
+  ]
+ },
+ "GET /api/inbox/leads?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"barber\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"barber\"} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"dent\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"barber\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"barber\"} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"dent\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/nope?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/nope?c=barber [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/nope?c=barber [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/launch/status?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/launch/status?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "cases",
+   "checks",
+   "client",
+   "ga",
+   "last"
+  ]
+ },
+ "GET /api/launch/status?c=barber [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/launch/status?c=nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/launch/status?c=nope [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/launch/status?c=nope [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/tg {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/tg {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok",
+   "text"
+  ]
+ },
+ "POST /api/launch/tg {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/ga {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/ga {\"c\":\"barber\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/ga {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/done {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/done {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok"
+  ]
+ },
+ "POST /api/launch/done {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/case {\"c\":\"barber\",\"i\":999} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/case {\"c\":\"barber\",\"i\":999} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/case {\"c\":\"barber\",\"i\":999} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/list?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/list?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "fail",
+   "ga",
+   "health",
+   "hold",
+   "list",
+   "now",
+   "owner",
+   "ready",
+   "stops",
+   "used",
+   "why"
+  ]
+ },
+ "GET /api/bc/list?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "fail",
+   "ga",
+   "health",
+   "hold",
+   "list",
+   "now",
+   "owner",
+   "ready",
+   "stops",
+   "used",
+   "why"
+  ]
+ },
+ "GET /api/bc/list?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/list?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "fail",
+   "ga",
+   "health",
+   "hold",
+   "list",
+   "now",
+   "owner",
+   "ready",
+   "stops",
+   "used",
+   "why"
+  ]
+ },
+ "GET /api/bc/list?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/get?c=barber&id=nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/get?c=barber&id=nope [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/get?c=barber&id=nope [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "stopped",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\"} [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "stopped",
+   "valid"
+  ]
+ },
+ "POST /api/bc/test {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/test {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/test {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\"} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/tick {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/tick {\"c\":\"barber\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/tick {\"c\":\"barber\"} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "stopped",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /wa/barber [anon]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "OK"
+ },
+ "GET /wa/barber [owner]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "OK"
+ },
+ "GET /wa/barber [staff]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "OK"
+ },
+ "POST /wa/barber <сообщение Meta> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "APP_SECRET is not set for this client"
+ },
+ "POST /wa/barber <сообщение Meta> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "APP_SECRET is not set for this client"
+ },
+ "POST /wa/barber <сообщение Meta> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "APP_SECRET is not set for this client"
+ },
+ "POST /wa/nope <сообщение Meta> [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Unknown client"
+ },
+ "POST /wa/nope <сообщение Meta> [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Unknown client"
+ },
+ "POST /wa/nope <сообщение Meta> [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Unknown client"
+ },
+ "GET /diag [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag [owner]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "KV: подключено ✅\nGEMINI_KEY: есть ✅ (8 симв., stub…)\nLEADS_K"
+ },
+ "GET /diag [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag?key=wrong [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag?key=wrong [owner]": {
+  "status": 200,
+  "type": "text/plain",
+  "text": "KV: подключено ✅\nGEMINI_KEY: есть ✅ (8 симв., stub…)\nLEADS_K"
+ },
+ "GET /diag?key=wrong [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /altegio [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /altegio [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /altegio [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /altegio c=barber [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /altegio c=barber [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "POST /altegio c=barber [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /altegio/user [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: нет входа владельца — откройте /studio, войдите к"
+ },
+ "GET /altegio/user [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /altegio/user [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: нет входа владельца — откройте /studio, войдите к"
+ },
+ "POST /altegio/user c=barber [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: нет входа владельца — откройте /studio, войдите к"
+ },
+ "POST /altegio/user c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "POST /altegio/user c=barber [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: нет входа владельца — откройте /studio, войдите к"
+ },
+ "GET /selftest [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /selftest [owner]": {
+  "status": 200,
+  "type": "text/html"
+ },
+ "GET /selftest [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /api/selftest {} [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /api/selftest {} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/selftest {} [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /api/selftest [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /api/selftest [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/selftest [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /api/chat {} [anon]": {
+  "status": 400,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chat {} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chat {} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chat {\"c\":\"barber\",\"sid\":\"contract-1\",\"text\":\"Здравствуйте\"} [anon]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "cancel",
+   "cancelDone",
+   "guard",
+   "isNew",
+   "lead",
+   "offer",
+   "reply"
+  ]
+ },
+ "POST /api/chat {\"c\":\"barber\",\"sid\":\"contract-1\",\"text\":\"Здравствуйте\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "cancel",
+   "cancelDone",
+   "guard",
+   "isNew",
+   "lead",
+   "offer",
+   "reply"
+  ]
+ },
+ "POST /api/chat {\"c\":\"barber\",\"sid\":\"contract-1\",\"text\":\"Здравствуйте\"} [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "cancel",
+   "cancelDone",
+   "guard",
+   "isNew",
+   "lead",
+   "offer",
+   "reply"
+  ]
+ },
+ "GET /api/history?c=barber&sid=contract-1 [anon]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "GET /api/history?c=barber&sid=contract-1 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "GET /api/history?c=barber&sid=contract-1 [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "GET /api/history?c=barber [anon]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "GET /api/history?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "GET /api/history?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "json": [
+   "turns"
+  ]
+ },
+ "POST /ga <сообщение Green-API> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga <сообщение Green-API> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga <сообщение Green-API> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga?t=wrong <сообщение Green-API> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga?t=wrong <сообщение Green-API> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga?t=wrong <сообщение Green-API> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga/barber?t=wrong <сообщение Green-API> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga/barber?t=wrong <сообщение Green-API> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga/barber?t=wrong <сообщение Green-API> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST / <сообщение Meta> [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST / <сообщение Meta> [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST / <сообщение Meta> [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /webhook <сообщение Meta> [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /webhook <сообщение Meta> [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /webhook <сообщение Meta> [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /api/studio/check {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/save {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/key {\"id\":\"nope\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/studio/remove {\"id\":\"nope\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/act {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/tg {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/ga {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/done {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/launch/case {\"c\":\"barber\",\"i\":999} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/test {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/tick {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /altegio c=barber [owner, чужой сайт]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /altegio/user c=barber [owner, чужой сайт]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: форма отправлена с другого адреса (https://evil.e"
+ },
+ "POST /login [чужой сайт]": {
+  "status": 403,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /api/inbox/me [поддельная cookie]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ }
+}
