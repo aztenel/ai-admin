@@ -98,6 +98,17 @@ test("типы JSDoc @import проверяются по слоям, но в ц�
   } finally { t.done(); }
 });
 
+test("после пятой проверки: место с ведущим /* */, строки с тем же путём, @import D, { T }, @import вне /** */, типы из пакетов, node: без package.json", () => {
+  assert.deepEqual(importsOf('/* eslint-disable */ import x from "../routes/r.js";\nexport const p = "../routes/r.js";\nconst m = "copied from \'../routes/r.js\'";\nexport { x, m };\n').map(x => [x.spec, x.line]), [["../routes/r.js", 1]]);
+  assert.deepEqual(importsOf('/** @import D, { T } from "../routes/r.js" */\nconst s = "@import { x } from \'./zz.js\'";\n// @import { y } from "./yy.js"\nexport { s };\n').filter(x => x.type).map(x => x.spec), ["../routes/r.js"]);
+  const t = tree({ "lib/a.js": '/** @import { KV } from "@cloudflare/workers-types" */\n/** @import { B } from "node:buffer" */\nimport fs from "node:fs";\nexport const a = fs;\n' });
+  try {
+    rmSync(join(t.src, "..", "package.json"));
+    const p = checkBoundaries(t.src).problems;
+    assert.deepEqual(p.map(x => x.replace(/ — .*/, "")), ["lib/a.js:3: «node:fs»"]);
+  } finally { t.done(); }
+});
+
 test("нет package.json — ошибка, только если есть пакеты", () => {
   const t = tree({ "lib/a.js": 'import { b } from "./b.js";\nexport const a = b;\n', "lib/b.js": "export const b = 1;\n" });
   try {
