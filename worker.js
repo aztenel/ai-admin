@@ -41,7 +41,8 @@ import { money } from "./src/lib/money.js";
 import { normPhone, phonesIn, redact } from "./src/lib/phone.js";
 import { TZ, local, hhmm, mins, isoDay, hm } from "./src/lib/time.js";
 import { clean, lowE, esc, isJoke } from "./src/lib/text.js";
-import { hash } from "./src/lib/crypto.js";
+import { hash, enc8, hmacB64, safeEq, metaSigOk } from "./src/lib/crypto.js";
+import { html, json, jsonP, page, forbid, sameOrigin } from "./src/lib/http.js";
 import { detectLang } from "./src/services/conversation/language.js";
 
 const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинаково (индекс 0 = воскресенье)
@@ -4168,18 +4169,6 @@ async function handleWAClient(request, env, ctx, id, origin) {
   return new Response("OK");
 }
 
-// подпись Meta: заголовок x-hub-signature-256 = "sha256=" + HMAC-SHA256(App secret, тело запроса)
-async function metaSigOk(secret, raw, header) {
-  if (!header || !header.startsWith("sha256=")) return false;
-  const enc = new TextEncoder();
-  const k = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(raw)));
-  const want = [...mac].map(b => b.toString(16).padStart(2, "0")).join(""), got = header.slice(7).toLowerCase();
-  if (got.length !== want.length) return false;
-  let d = 0; for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
-  return d === 0;
-}
-
 // коды ошибок Meta, которые встречаются на старте, — подсказка человеческим языком
 const WA_HINT = {
   190: "токен истёк или неверный — временный токен живёт около суток, нужен постоянный токен системного пользователя",
@@ -4270,10 +4259,7 @@ async function diag(env) {
 }
 
 // ================= страницы =================
-function html(s) { return new Response(s, { headers: { "content-type": "text/html; charset=utf-8" } }); }
 function text(s) { return new Response(s, { headers: { "content-type": "text/plain; charset=utf-8" } }); }
-function json(o, status = 200) { return new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8" } }); }
-function forbid() { return new Response("Forbidden: неверный ?key=", { status: 403 }); }
 
 const BASE_CSS = `:root{--bg:#e6eeef;--panel:#fff;--ink:#12303a;--muted:#5e7780;--line:#d3dfe2;--head:#0f3d4c;--bot:#dcf4ea;--acc:#159a7a;--lead:#fff8e6;--leadl:#e8c766;--bad:#b3261e;--good:#1b7f4b}
 @media (prefers-color-scheme:dark){:root{--bg:#0b1a1f;--panel:#12252b;--ink:#e4f0ee;--muted:#8fa9ae;--line:#23393f;--head:#0e2f39;--bot:#15463c;--acc:#2bbf98;--lead:#2e2811;--leadl:#9c8436;--bad:#ff8a80;--good:#6fd39c}}
@@ -4712,14 +4698,7 @@ async function loadCfgs(env) { return JSON.parse((await env.KV.get("cfg:all")) |
 // ================= ВХОД: владелец сервиса и сотрудники клиентов =================
 // Вход по ключу один раз, дальше — cookie (30 дней). Ключ в адресе страницы оставлять не нужно.
 // Владелец входит ключом LEADS_KEY и видит всё. Сотрудник клиента входит ключом клиента (KEY_<ID> в Cloudflare или ключ, выданный на странице «Мои боты») и видит только своего клиента.
-const enc8 = new TextEncoder();
-const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-async function hmacB64(secret, msg) {
-  const k = await crypto.subtle.importKey("raw", enc8.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return b64u(await crypto.subtle.sign("HMAC", k, enc8.encode(msg)));
-}
 async function sha256Hex(s) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", enc8.encode(String(s))))].map(b => b.toString(16).padStart(2, "0")).join(""); }
-const safeEq = (a, b) => { a = String(a); b = String(b); let d = a.length ^ b.length; for (let i = 0; i < a.length && i < b.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const SESSION_MS = 30 * 86400e3, COOKIE = "aia";
 // отпечаток ключа сотрудника: ключ сменили — прежние сессии перестают действовать
 async function staffMark(env, cid) {
@@ -4780,12 +4759,6 @@ async function keyGate(request, env, key, wants) {
 const tooManyKeys = () => new Response("Слишком много неверных ключей с вашего адреса. Подождите 10 минут.", { status: 429, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 // доступ к данным клиента cid: владелец — к любому, сотрудник — к своему
 const canSee = (s, cid) => !!s && (s.role === "owner" || (s.role === "staff" && s.cid === cid));
-// запросы, которые что-то меняют, принимаем только со своей страницы (cookie сама по себе — не доказательство намерения)
-const sameOrigin = (request, url) => { const o = request.headers.get("origin"); return !o || o === url.origin; };
-function page(body, status = 200, extra = {}) { // страницы с личными данными: не кэшировать, не встраивать в чужие сайты, скрипты — только свои
-  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "same-origin", "x-content-type-options": "nosniff",
-    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'", ...extra } }); // второй забор: даже если в страницу попадёт чужой текст, данные на чужой сайт не уйдут // referrer-policy: адрес страницы не уходит на чужие сайты, а своя форма входа по-прежнему присылает заголовок Origin
-}
 const safeNext = n => { n = String(n || ""); return /^\/[a-z]/.test(n) && !/[\\\s]/.test(n) && !n.startsWith("//") ? n.slice(0, 200) : "/studio"; };
 function loginPage(next, msg) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — AI-администратор</title>
@@ -4981,7 +4954,6 @@ load();
 // У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
 // Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.
 const CHAT_ID = { wa: /^\d{5,20}$/, ga: /^\d{5,20}$/, web: /^[a-zA-Z0-9-]{1,64}$/ };
-const jsonP = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 const NEED_TEXT = { human: "ждёт ответа", limit: "бот не ответил", media: "прислал файл", ai: "сбой бота", req: "просит отменить или перенести", lead: "новая заявка", call: "ждёт звонка", off: "бот выключен" };
 // через какой номер администратор пишет клиенту этого чата
 function waRoute(env, cid, prof) {
