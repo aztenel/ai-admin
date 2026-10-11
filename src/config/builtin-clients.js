@@ -1,9 +1,12 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Встроенные демо-клиенты: CLIENTS — ОДИН общий изменяемый объект (syncClients в worker.js дописывает в него паспорта), BUILTIN — их id, hasClient.
 
+/** @param {any} t */
 export const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинаково (индекс 0 = воскресенье)
+/** @param {any} sun @param {any} weekdays @param {any} sat */
 export function week(sun, weekdays, sat) { const a = W5(weekdays); a[0] = sun; a[6] = sat; return a; }
 
+/** @type {Record<string, any>} */
 export const CLIENTS = {
   dent: {
     name: "Демо Дент",
@@ -140,6 +143,7 @@ export const CLIENTS = {
   }
 };
 for (const [id, c] of Object.entries(CLIENTS)) c.id = id;
+/** @param {any} id */
 export const hasClient = id => typeof id === "string" && Object.hasOwn(CLIENTS, id);
 // id встроенных демо-клиентов (паспорт не может занять их идентификатор); считается до того, как syncClients дописал паспорта
 export const BUILTIN = new Set(Object.keys(CLIENTS));
