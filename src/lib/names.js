@@ -27,3 +27,9 @@ export const svTrim = s0 => {
   if (v === undefined) { if (SV_CACHE.size > 3000) SV_CACHE.clear(); v = svTrim0(s); SV_CACHE.set(s, v); }
   return v;
 };
+
+// слова названия услуги и их основы (общее для подбора услуги и проверки «другая ли запись»)
+export const SV_STOP = new Set(["для", "или", "без", "при", "под", "над", "кроме", "the", "and", "for", "with", "without", "except"]);
+export const svWords = s => (s.match(/[\p{L}\p{N}]+/gu) || []).filter(w => (w.length >= 3 || /\d/.test(w)) && !SV_STOP.has(w));
+export const svStem = w => /\d/.test(w) || w.length <= 4 ? w : w.slice(0, Math.max(4, w.length - 2));
+export const svParts = s => s.replace(/\([^()]*\)/g, " ").split(/\s*(?:\+|&|,|\sи\s|\sand\s)\s*/).map(x => x.trim()).filter(Boolean); // составные части: «стрижка + борода»; пояснение в скобках — не часть
