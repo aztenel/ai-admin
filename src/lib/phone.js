@@ -1,5 +1,6 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Телефоны Казахстана: нормализация, поиск в тексте, скрытие ИИН/карт и номеров.
+/** @param {any} s @returns {string} */
 export function normPhone(s) {
   let d = String(s || "").replace(/\D/g, "");
   if (d.length === 11 && d[0] === "8") d = "7" + d.slice(1);
@@ -11,6 +12,7 @@ const PHONE_RE = /(?<!\d)(?:\+?[78])[\s(.–—-]*\d{3}(?:[\s().–—-]*\d){7}(
 const INTL_RE = /\+(?![78][\s(.–—-]*\d{3})\d(?:[\s().–—-]*\d){9,13}(?!\d)/g; // номер другой страны — только с «+» и кодом: +998 90 123 45 67
 const ORDER_CTX = /(заказ\S*|чек\S*|код\S*|накладн\S*|договор\S*|квитанци\S*|order|ticket|№|#)\s*(номер\S*\s*)?[:№#]?\s*$/i; // «заказ 7001234567» — не телефон
 // телефоны в тексте по порядку: [{ at, len, phone }]
+/** @param {any} text @returns {{ at: number, len: number, phone: string }[]} */
 export function phonesIn(text) {
   const s = String(text || ""), out = [];
   for (const m of s.matchAll(PHONE_RE)) {
@@ -24,7 +26,9 @@ export function phonesIn(text) {
 
 // ИИН (12 цифр) и номера карт (13–19 цифр) не храним и не отправляем в ИИ. Телефон рядом с другим числом («завтра в 10:00 87771234567»,
 // «8 705 111 22 33 15:00», «ИИН 990101300123 87051112233») остаётся телефоном: в цепочке цифр ищем номер, который состоит из целых групп
+/** @param {any} text @returns {string} */
 export function redact(text) {
+  /** @param {string} s @returns {boolean} */
   const long = s => s.replace(/\D/g, "").length >= 12;
   return String(text).replace(/(\+?)(\d(?:[\s-]?\d){11,})/g, (all, plus, run) => {
     if (plus && !/^[78]/.test(run) && run.replace(/\D/g, "").length <= 15) return all; // «+998 90 123 45 67» — номер другой страны
@@ -43,5 +47,7 @@ export function redact(text) {
     return plus + "[скрыто] ";
   });
 }
+/** @param {any} p @returns {string} */
 export const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}` : String(p || ""); };
+/** @param {any} s @returns {string} */
 export const maskPhones = s => { s = String(s); let out = "", at = 0; for (const p of phonesIn(s)) { if (p.at < at) continue; out += s.slice(at, p.at) + "[телефон указан]"; at = p.at + p.len; } return out + s.slice(at); };

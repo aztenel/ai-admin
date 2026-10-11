@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Общий CSS служебных страниц (светлая и тёмная тема) — нужен страницам владельца и пульту рассылок.
 
 export const BASE_CSS = `:root{--bg:#e6eeef;--panel:#fff;--ink:#12303a;--muted:#5e7780;--line:#d3dfe2;--head:#0f3d4c;--bot:#dcf4ea;--acc:#159a7a;--lead:#fff8e6;--leadl:#e8c766;--bad:#b3261e;--good:#1b7f4b}

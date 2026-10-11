@@ -1,20 +1,27 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Время и разбор времени: чистые функции (часовой пояс Астаны, чтение «10 утра», «в 10:30» и т. п.).
 export const TZ = 5; // Астана, UTC+5
+/** @param {number} ms @returns {Date} */
 export const local = ms => new Date(ms + TZ * 3600e3); // читать через getUTC*
+/** @param {Date} d @returns {string} */
 export const hhmm = d => `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+/** @param {string} t @returns {number} */
 export const mins = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+/** @param {number} ms @returns {string} */
 export const isoDay = ms => local(ms).toISOString().slice(0, 10);
 // время из любого вида: «09:00» → «9:00», «в 10:00», «11.00», «09:30:00», «10 утра», «7:30 вечера» → «19:30», «с 10.00 до 11.00» → начало
+/** @param {any} t @returns {string} */
 export const hm = t => {
   const s = String(t ?? "").toLowerCase();
   let h = -1, mi = "00", end = -1;
+  /** @param {any} m @param {string | number} hh @param {string} [mm] */
   const take = (m, hh, mm) => { h = +hh; mi = mm || "00"; end = m.index + m[0].length; };
   let m = s.match(/(\d{1,2}):(\d{2})/);
   if (m) take(m, m[1], m[2]);
   else {
     // «11.00», «10.30» — время. «04.10» читается и как 4 октября: такую пару считаем временем, только если она стоит после «в» или «к» либо перед ней уже есть дата
     const all = [...s.matchAll(/(?:^|[^\d.])(\d{1,2})\.(\d{2})(?!\d|\.\d)/g)].filter(x => +x[1] < 24 && +x[2] < 60);
+    /** @param {RegExpMatchArray} x @returns {boolean} */
     const dateLike = x => +x[2] >= 1 && +x[2] <= 12 && +x[1] >= 1;
     const x = all.find(v => !dateLike(v)) || all.find(v => /(^|[^а-яёa-z])(в|к|at|сағат)\s*$/.test(s.slice(0, v.index + v[0].length - v[1].length - v[2].length - 1))) || (all.length > 1 ? all[all.length - 1] : null);
     if (x) take(x, x[1], x[2]);
