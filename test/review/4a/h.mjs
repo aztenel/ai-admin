@@ -25,7 +25,7 @@ export async function internals() {
   const p = DIR + "/worker_x.mjs";
   const { src, has } = workerCopy(readFileSync(SRC, "utf8"), SRC); // подключения ./src/… — по абсолютному пути (см. ../bot-copy.mjs)
   const have = names.filter(has); // имён, которых в новой версии нет, не экспортируем
-  const compat = /\nfunction altClaims\b/.test(src) ? "\nexport const altFlat = s => { const c = altClaims(s); return (c.book ? \"[утверждает: записала] \" : \"\") + (c.change ? \"[утверждает: отменила/перенесла] \" : \"\") + \"остаток: \" + c.keep; };\nexport { altClaims };\n" : "";
+  const compat = has("altClaims") ? "\nexport const altFlat = s => { const c = altClaims(s); return (c.book ? \"[утверждает: записала] \" : \"\") + (c.change ? \"[утверждает: отменила/перенесла] \" : \"\") + \"остаток: \" + c.keep; };\nexport { altClaims };\n" : "";
   writeFileSync(p, src + "\nexport { " + have.join(", ") + " };\n" + compat);
   return import(p + "?v=" + Math.random());
 }

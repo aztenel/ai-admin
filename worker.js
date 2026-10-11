@@ -53,6 +53,9 @@ import { histTtl, histMeta, putHist, logTurns, mergeProfile, readHist } from "./
 import { leadTs, loadLeads, saveLeads, leadKey, allLeads } from "./src/db/kv/leads.js";
 import { bcKey, bcChunkKey, bcMeta, bcPut, bcGet } from "./src/db/kv/broadcasts.js";
 import { detectLang } from "./src/services/conversation/language.js";
+import { PAY_TAG, PAY_TAG_G, tagFields, tagField, tagsOf, altDateOf, tidyTags, MON_RU, MON_EN_RE, MON_KK, dowsIn } from "./src/services/conversation/tags.js";
+import { altClaims, CL_DATA_Q } from "./src/services/conversation/claims.js";
+import { wantsChange, myRecQ, ALT_WANT_CHANGE, ALT_KEEP, ALT_UNDO, ADMIN_CX, CX_TOPIC, ALT_ASKS_DO, ALT_STATUS_Q, MOVE_WISH } from "./src/services/conversation/intents.js";
 import { CLIENTS, BUILTIN, hasClient } from "./src/config/builtin-clients.js";
 import { notify, tgProbe } from "./src/services/integrations/telegram/client.js";
 import { noteDue, notifyOnce, backupRun } from "./src/services/notifications/telegram.js";
@@ -164,7 +167,6 @@ const UPSELL_RULE = `
 
 Допродажа
 Когда клиент выбрал услугу из левой части списка ниже, один раз за весь разговор мягко предложи дополнение из правой части — одной фразой и с ценой из фактов (например: «К стрижке можно добавить оформление бороды — от 4000 ₸. Добавить?»). Если клиент отказался или не ответил на предложение — больше не предлагай. Не предлагай, если клиент торопится, жалуется, отменяет или переносит запись.`;
-const PAY_TAG = /\[\s*РЕКВИЗИТЫ\s*\]/i, PAY_TAG_G = /[ \t]*\[\s*РЕКВИЗИТЫ\s*\][ \t]*\n?/gi;
 // клиент сам спрашивает про оплату — реквизиты придут, даже если ИИ забыл метку
 const PAY_Q = /kaspi|каспи|реквизит|предоплат|(куда|как|на\s+что|по\s+какому)\s+(можно\s+)?(перевест|переве|скинуть|кинуть|отправить\s+деньг|оплат|заплат)|номер\s+(для\s+)?(оплат|перевод)|сч[её]т\s+(на\s+оплат|для\s+оплат)|ссылк\S*\s+(на|для)\s+оплат|төле|аудар|payment\s+details|how\s+(can|do)\s+i\s+pay|where\s+to\s+pay/i;
 
@@ -457,139 +459,6 @@ const safeAsk = c => c.booking === "none" ? `${c.safe} Оставьте, пож�
 const FALLBACK = "Спасибо за сообщение! Администратор ответит вам в ближайшее время.";
 
 // ================= Altegio: запись в расписание =================
-// ---- ИИ пишет, что записал клиента, отменил или перенёс запись. Без служебной строки это неправда: такие фразы до клиента не доходят
-const L0 = "(?<![а-яёәғқңөұүһіa-z])", L1 = "(?![а-яёәғқңөұүһіa-z])"; // границы слова
-const rx = (list, flags = "i") => new RegExp(list.join("|"), flags);
-const CLAIM_BOOK = rx([
-  L0 + "(записал[аи]?|записано|забронировал[аи]?|зарезервировал[аи]?|оформил[аи]?|закрепил[аи]?|зафиксировал[аи]?|вписал[аи]?)" + L1,
-  L0 + "(записан[аоы]?|забронирован[аоы]?|зарезервирован[аоы]?)" + L1,
-  L0 + "(запись|бронь|визит)" + L1 + "[^.!?\\n]*?" + L0 + "(создан[аоы]?|оформлен[аоы]?|подтвержд[её]н[аоы]?|сделан[аоы]?|добавлен[аоы]?|закреплен[аоы]?|принят[аоы]?|зафиксирован[аоы]?|внесен[аоы]?)" + L1,
-  L0 + "ваш[ае]\\s+(запись|бронь)" + L1 + "[^.!?\\n]*?" + L0 + "активн[аоы]" + L1, L0 + "запись\\s+есть\\s*:",
-  L0 + "(бронь|время|место)" + L1 + "\\s+(\\S+\\s+){0,4}?за\\s+вами" + L1, L0 + "вы\\s+(уже\\s+)?в\\s+(расписании|списке)" + L1,
-  L0 + "вн[её]с(л[аи])?\\s+(вас|тебя|вашу\\s+запись|запись)" + L1, L0 + "(добавил[аи]?|поставил[аи]?)\\s+(вас|вашу\\s+запись|запись)\\s+(в|на|к)\\s",
-  "you(['’]re| are| have been)\\s+(now\\s+|all\\s+)?(booked|confirmed|scheduled|set|on\\s+the\\s+schedule)", "(^|[^a-z])i(['’]ve| have)?\\s+(just\\s+)?(booked|scheduled|reserved|put\\s+you)", "(^|[^a-z])(booked|scheduled)\\s+you(?![a-z])", "(^|[^a-z])(got|have)\\s+you\\s+(booked|down|scheduled)",
-  "(booking|appointment|reservation|slot|haircut|visit)\\s+(is\\s+|has\\s+been\\s+|was\\s+)?(now\\s+)?(confirmed|complete|created|booked|scheduled|set|made|reserved)(?![a-z])", "(is|been)\\s+reserved", "^\\s*booked(?![a-z])", "consider\\s+it\\s+done",
-  "жаздым", "жаздық", "жазып\\s+қойды[мқ]", "жазылдыңыз", "тіркедім", "тіркелдіңіз", "брондадым", "брондап\\s+қойды[мқ]", "рәсімделді", "рәсімдедім", "расталды", "жасалды", "сәтті\\s+өтті"
-]);
-// «записываю вас…», «отменяю…» — итог, если в предложении нет условия («перенесу, как только выберете время» — обещание)
-const CLAIM_BOOK_NOW = rx([L0 + "записыва(ю|ем)(\\s+(вас|тебя)|\\s*:|\\s+на\\s)", L0 + "бронирую\\s+(вас|для\\s+вас|за\\s+вами|время)", L0 + "оформляю\\s+(вам\\s+|вашу\\s+|вас\\s+)?(запись|бронь|на\\s)", L0 + "(ставлю|вношу|вписываю)\\s+вас" + L1]);
-// «ждём вас», «до встречи», «готово» — итог, только если в ответе названо время визита («ждём вас с 9:00 до 21:00» — это часы работы)
-const CLAIM_SOFT = rx([L0 + "жд[её]м\\s+вас", L0 + "жду\\s+вас", L0 + "буд(ем|ет|у)\\s+(вас\\s+)?ждать", L0 + "вас\\s+(будет\\s+)?жд[её]т", L0 + "вас\\s+примет", L0 + "до\\s+(встречи|завтра)" + L1,
-  L0 + "(приходите|приезжайте|подходите)" + L1, L0 + "ваше\\s+время\\s*[—–:-]", "all\\s+set", "see\\s+you", "looking\\s+forward", "күтеміз", "күтемін",
-  "^\\s*((отлично|хорошо|супер|вс[её])[,!]?\\s+)?(готово|сделано|принято|оформлено)" + L1, "^\\s*done(?![a-z])"]);
-const CLAIM_CHANGE = rx([
-  L0 + "(отменил[аи]?|удалил[аи]?|аннулировал[аи]?|перенесл[аи]|перен[её]с|перезаписал[аи]?|сдвинул[аи]?|передвинул[аи]?)" + L1,
-  L0 + "(отмен[её]н[аоы]?|удал[её]н[аоы]?|аннулирован[аоы]?|перенес[её]н[аоы]?|перезаписан[аоы]?)" + L1,
-  L0 + "(убрал[аи]?|сняла?|сняли)\\s+(вашу\\s+|вас\\s+|эту\\s+|её\\s+|ее\\s+)?(запись|бронь|визит|из\\s+расписания|с\\s+записи)",
-  L0 + "(запись|бронь|визит)" + L1 + "[^.!?\\n]*?" + L0 + "(убрал[аи]?|сняла?|сняли|снят[аоы]?|убран[аоы]?)" + L1,
-  L0 + "(отмена|перенос)" + L1 + "[^.!?\\n]*?" + L0 + "(оформлен[аоы]?|выполнен[аоы]?|подтвержд[её]н[аоы]?|прошл[аои]|успешн\\S*|сделан[аоы]?|завершен[аоы]?)" + L1,
-  L0 + "(изменил[аи]?|поменял[аи]?|сменил[аи]?)\\s+(\\S+\\s+)?(время|дату|день|запись|мастера|услугу)" + L1 + "(?!\\s+работы)",
-  L0 + "(время|дата|запись)\\s+(\\S+\\s+){0,2}?изменен[аоы]?" + L1, L0 + "освободил[аи]?\\s+(ваше\\s+|это\\s+|вам\\s+)?(время|место|окно|запись)",
-  "теперь\\s+(ваша\\s+|у\\s+вас\\s+)?(запись|бронь|визит)\\s+(\\S+\\s+){0,2}?(на|в)\\s", "теперь\\s+(вы\\s+)?записан[аы]?" + L1, L0 + "вы\\s+теперь\\s+записан[аы]?" + L1,
-  "(^|[^a-z])(i|we)(['’]ve|\\s+have)?\\s+(just\\s+)?(removed|deleted|cancel+ed|moved|changed|freed)\\s+(your|the|it|you)(?![a-z])",
-  "cancel+ed", "rescheduled", "(^|[^a-z])moved\\s+(it|you|your|the)(?![a-z])", "(booking|appointment|slot)\\s+(has\\s+been|is|was)\\s+(moved|deleted|removed|changed|freed)", "(appointment|booking)\\s+is\\s+now\\s+(at|on|for)", "freed\\s+up",
-  "болдырмадым", "болдырылды", "жойдым", "жойылды", "өшірдім", "өшірілді", "ауыстырдым", "ауыстырылды", "өзгерттім", "өзгертілді", "алып\\s+тастадым", "тоқтатылды", "тоқтаттым"
-]);
-const CLAIM_CHANGE_NOW = rx([L0 + "(отмен(яю|ю|яем)|удал(яю|ю|яем)|переношу|перенесу|переносим|перезаписываю|аннулирую)" + L1,
-  L0 + "(убираю|снимаю)\\s+(вашу\\s+|эту\\s+|вас\\s+)?(запись|бронь|из\\s+расписания)", L0 + "сдвигаю\\s+(вашу\\s+|вас|запись|время)", "(i['’]ll|i\\s+will|i['’]m|i\\s+am)\\s+(cancel|mov|resched)"]);
-// «вы больше не записаны», «записи больше нет» — тоже «отменила», хотя в них стоит «не»
-const CLAIM_GONE = rx(["больше\\s+не\\s+(записан[аы]?|действует|числится)" + L1, L0 + "(записи|брони)\\s+больше\\s+нет" + L1, "больше\\s+нет\\s+в\\s+расписании"]);
-const CL_VERB = "(записа\\S*|запис[ыа]н\\S*|записыва\\S*|заброн\\S*|бронир\\S*|оформ\\S*|отмен\\S*|перен[её]с\\S*|перенош\\S*|перенос\\S*|перезапис\\S*|удал\\S*|убра\\S*|убира\\S*|подтвержд\\S*|созда\\S*|закрепл?\\S*|сня\\S*|снима\\S*|сдвин\\S*|сдвиг\\S*|измен\\S*|поменя\\S*|меня[юе]\\S*|вн[её]с\\S*|добав\\S*|освобо\\S*|аннулир\\S*|book\\S*|cancel\\S*|moved?|chang\\S*|resched\\S*|confirm\\S*|reserv\\S*|remov\\S*|delet\\S*|schedul\\S*)";
-// условие («если…», «как только…») — не утверждение
-// придаточное кончается перед новым «я …» / «мы …»: в «Когда вы написали я сразу записала вас» утверждение остаётся
-const CL_COND = /(^|[^а-яёa-z])(чтобы|если|когда|как\s+только|только\s+после|после\s+того,?\s+как|прежде\s+чем|once|after|before|if|when)(?![а-яёa-z])(\s+(?:я|мы|i|we)(?![а-яёa-z]))?(?:(?!\s(?:я|мы|i|we)\s)[^.,!?\n])*/gi;
-const CL_HAS_COND = /(^|[^а-яёa-z])(чтобы|если|когда|как\s+только|только\s+после|после\s+того,?\s+как|прежде\s+чем|once|after|before|if|when)(?![а-яёa-z])/i;
-// «не записала», «ещё не отменена», «ничего не отменяю и не переношу»
-const CL_NEG = new RegExp("(^|[^а-яёa-z])(не|not|n['’]t)\\s+((ещё|еще|пока|уже|была?|были|been|yet)\\s+)?" + CL_VERB, "gi");
-// английское отрицание относится к глаголу, только если стоит перед ним в той же части фразы: «No problem, your booking has been cancelled» — утверждение
-const CL_EN_IDIOM = /(^|[^a-z])(no\s+(problem|worries|issue|trouble|sweat|doubt|need\s+to\s+worry)|not\s+(a\s+problem|an\s+issue|to\s+worry|at\s+all|only)|why\s+not|don['’]?t\s+(worry|forget|hesitate|be\s+late)|no\s+later\s+than)(?![a-z])/gi;
-const CL_EN_NEG = /(^|[^a-z])(no|not|never|cannot|\w+n['’]t|havent|hasnt|isnt|wasnt|didnt|dont|wont|cant|couldnt|unable|nothing|neither|nor|without)(?![a-z])(\s+[^\s,.;:!?—–]+){0,4}?\s+(book\w*|cancel\w*|moved?|moving|chang\w*|resched\w*|confirm\w*|reserv\w*|remov\w*|delet\w*|schedul\w*|set|done|freed|made|created)(?![a-z])/gi;
-// «будет оформлена», «может быть отменена или перенесена», «я бы записала», «can be cancelled»
-const CL_MODAL = new RegExp("(^|[^а-яёa-z])(буд[еу]т\\S*|может\\s+быть|могут\\s+быть|можно|могу|можем|смогу|сможем|бы|нужно|надо|следует|will|can|could|would|may|might|should)\\s+(\\S+\\s+){0,3}?" + CL_VERB + "(\\s+(или|и|либо|or|and)\\s+\\S+)*", "gi");
-const CL_DATA = /имя|имени|телефон|номер|данны|контакт|пожелани|вопрос|просьб|обращени|сообщени|комментар|атыңыз|нөмір|(^|[^a-z])(name|number|phone|request|question)(?![a-z])/i; // «имя и телефон записала» — это не о записи
-const CL_OTHER = /друг(ой|им|ого|ому)\s+(клиент|человек|посетител)|кем-то|кто-то|another\s+(client|customer|person|guest)|someone\s+else|басқа\s+(клиент|адам)/i; // «на 10:00 уже записан другой клиент»
-const CL_YOU = /(^|[^а-яё])вы\s+(\S+\s+){0,2}?(отменили|перенесли|удалили|изменили|поменяли|записались|записывались)(?![а-яё])/gi; // это сделал клиент, а не бот
-const CL_TAGQ = /^(верно|правильно|так|да|хорошо|ок|подходит|подойд[её]т|right|correct|ok|okay|иә|солай|дұрыс|или|либо|or|әлде)(?![а-яёa-zәғқңөұүһі])/i;
-const CL_OFFER = /свобод|окн|окош|есть\s+время|могу|можем|можно|предлож|предлага|подойд|вариант|(^|\s)или\s|либо|ближайш|занят|освобод|free|available|how\s+about|(^|[^а-яёәғқңөұүһі])бос(?![а-яёәғқңөұүһі])/i;
-// вопрос ИИ о том, чего не хватает для записи: его оставляем клиенту, когда убираем ложное «записала»
-const CL_DATA_Q = /зовут|имя|фамили|телефон|номер|как\s+к\s+вам|как(ую|ая|ие)\s+услуг|на\s+как(ую|ое|ой)|какое\s+время|во\s+сколько|в\s+какой\s+день|когда\s+вам|к\s+какому\s+мастеру|какой\s+мастер|к\s+кому|кого\s+запис|подтвержда|(^|[^a-z])(name|phone|number)(?![a-z])|which\s+(service|time|day)|what\s+time|атыңыз|есіміңіз|нөмір|қай\s+(уақыт|күн|қызмет|шебер)/i;
-// время визита в утверждении: «в 10:00», «завтра, 10:00». «С 9:00 до 21:00» и «свободно в 10:00» — не оно
-function clPoint(stmt) {
-  for (const cl of stmt.split(/[,;:]\s|\s[—–-]\s/)) {
-    if (CL_OFFER.test(cl)) continue;
-    for (const m of cl.matchAll(/\d{1,2}[:.]\d{2}/g)) {
-      if (/(^|[^а-яёa-z])(с|со|от|до|по|from|until|till|to)\s*$/i.test(cl.slice(0, m.index)) || /^\s*(до|[-–—]|to)\s*\d/i.test(cl.slice(m.index + m[0].length))) continue;
-      return true;
-    }
-  }
-  return false;
-}
-// что утверждает ответ ИИ: book — «записала», change — «отменила / перенесла»; keep — ответ без таких фраз, before — текст до первой из них;
-// soft — «записала» сказано только мягко («ждём вас завтра в 10:00»); times — время, названное в этих фразах
-function altClaims(reply) {
-  // длинные цепочки пробелов сначала сжимаем: иначе разбор на предложения на них работает медленно
-  const parts = String(reply).replace(/[^\S\n]{2,}/g, " ").replace(/ ?\n[ \n]*/g, "\n").split(/(?<=[.!?…]) |\n| ?(?:[✅✔☑\u{1F44D}\u{1F44C}\u{1F389}]️?)+ ?/u).filter(s => s && s.trim());
-  // вопрос — не утверждение; но в «Вы записаны на 10:00, чем ещё помочь?» утверждение стоит перед вопросом
-  const stmts = parts.map(s => {
-    if (!/\?\s*$/.test(s)) return s;
-    const cl = s.split(/,\s+|;\s+|:\s+|\s[—–-]\s/);
-    return cl.length > 1 && !CL_TAGQ.test(cl[cl.length - 1].trim()) ? cl.slice(0, -1).join(", ") : "";
-  });
-  const point = stmts.some(clPoint);
-  let book = false, change = false, hard = false, first = -1;
-  const keep = [], times = [];
-  parts.forEach((s, i) => {
-    const st = stmts[i];
-    let b = false, c = false;
-    if (st) {
-      const f0 = st.replace(CL_COND, " ").replace(CL_YOU, " "), f = f0.replace(CL_NEG, " ").replace(CL_MODAL, " ").replace(CL_EN_IDIOM, " ").replace(CL_EN_NEG, " ");
-      const now = !CL_HAS_COND.test(st);
-      {
-        c = CLAIM_GONE.test(f0) || CLAIM_CHANGE.test(f) || (now && CLAIM_CHANGE_NOW.test(f));
-        const data = CL_DATA.test(f) && !/\d{1,2}:\d{2}/.test(f) && !/(записал[аи]?|забронировал[аи]?)\s+вас|вы\s+(уже\s+|успешно\s+)*записан/i.test(f);
-        const h = !c && !CL_OTHER.test(st) && ((CLAIM_BOOK.test(f) && !data) || (now && CLAIM_BOOK_NOW.test(f)));
-        b = h || (!c && now && point && CLAIM_SOFT.test(f));
-        if (h) hard = true;
-      }
-    }
-    if (b) book = true;
-    if (c) change = true;
-    if (b || c) { if (first < 0) first = i; times.push(...(s.match(/\d{1,2}:\d{2}/g) || []).map(x => x.replace(/^0(\d)/, "$1"))); } else keep.push(s);
-  });
-  return { book, change, soft: book && !hard, times, keep: keep.join(" ").trim(), before: (first < 0 ? parts : parts.slice(0, first)).join(" ").trim() };
-}
-// клиент сам просит отменить или перенести — или пишет, что не придёт
-const ALT_WANT_CHANGE = /отмен|отбой|перенес|перенос|перезапи|удал|убер|убир|сним|снять|аннул|отказ|откаж|сдвин|(?<![а-яё])не\s+(смогу|сможем|приду|прид[её]м|приеду|приедем|подойду|подъеду|пойду|буду|получится|получается|успева|нужн|надо|актуальн)|передума|планы\s+(по|из)мен|cancel|resched|move|remove|delete|can['’]?t\s+(make|come)|won['’]?t\s+(make|come)|not\s+coming|no\s+longer|болдырма|ауыстыр|жой|өшір|алып\s+таста|бас\s+тарт|керек\s+емес|келе\s+алмай|келмей|boldyrma|kele\s+alma/i;
-// клиент просит запись не трогать: «оставьте», «не надо отменять», «пусть будет»
-const ALT_KEEP = /остав(ь|им|ить|ля|лю)|пусть\s+(\S+\s+)?(буд|оста)|(?<![а-яё])не\s+(надо|нужно|стоит|хочу|буду|будем)\s+(\S+\s+){0,2}(отмен|удал|перенос|перенес|трог|меня)|(?<![а-яё])не\s+(отмен|удал|трог|перенос|убир)|ничего\s+не\s+(надо|нужно|меня)|как\s+(есть|было)|(^|[^a-z])(keep|leave\s+it|never\s*mind|no\s+need|don['’]?t\s+(cancel|move|change|touch))(?![a-z])|қалдыр|қалсын|тимеңіз/i;
-// вопрос о том, что уже сделано («точно отменили?», «так перенесли?») — не новая просьба
-// просьба отменить или перенести — не считая слов внутри просьбы оставить («не надо отменять» — это не просьба об отмене)
-const ALT_KEEP_G = new RegExp(ALT_KEEP.source, "gi");
-const wantsChange = t => ALT_WANT_CHANGE.test(String(t || "").replace(ALT_KEEP_G, " "));
-// клиент передумал отменять: «не надо отменять», «не отменяйте», «верните запись», «я всё-таки приду». Общие «ничего не надо», «пусть будет так» сюда не входят
-const ALT_UNDO = /(?<![а-яё])не\s+(надо|нужно|стоит)\s+(\S+\s+)?отмен|(?<![а-яё])не\s+отмен(яй|яйте|ять|ите|и)(?![а-яё])|отмен\S*\s+не\s+(надо|нужно)|отмена\s+отменяется|верните\s+(\S+\s+)?запис|оставьте\s+(\S+\s+)?запис|запис\S*\s+(пусть\s+)?(оста[её]тся|в\s+силе)|вс[её][\s-]*таки\s+прид|(^|[^а-яё])я\s+приду(?![а-яё])|передумал[аи]?\s*,?\s*(я\s+)?(приду|(?<![а-яё])не\s+отмен)|don['’]?t\s+cancel|keep\s+(my|the)\s+(booking|appointment)/i;
-// просьба в виде вопроса («можете перенести запись?») — не вопрос о том, что уже сделано
-// ИИ пишет клиенту, что его просьба у администратора: «передала администратору», «администратор отменит», «отмену подтвердит администратор».
-// Служебную строку ИИ при этом мог и не поставить — в режиме «отмену делает администратор» такая фраза считается за неё
-const ADMIN_CX = new RegExp([
-  "(переда(л[аи]?|м|ю|дим|[её]м)|сообщ(ил[аи]?|у|им)|уведом(ил[аи]?|лю|им)|направ(ил[аи]?|лю)|отправ(ил[аи]?|лю)|попрошу|попросила)(?![а-яё])[^.!?\\n]{0,80}(администратор|менеджер)",
-  "(администратор|менеджер)[а-яё]*[^.!?\\n]{0,60}(отмен(ит|ят)|перенес[её]т|перенесут|подтверд(ит|ят))(?![а-яё])",
-  "(отмен|перенос)[а-яё]*[^.!?\\n]{0,40}(подтверд(ит|ят)|выполн(ит|яет)|сдела(ет|ют))\\s+(администратор|менеджер)",
-  "(отправлен|передан|направлен)[аоы]?\\s+(администратор|менеджер)",
-  "будет\\s+(отменена|перенесена)(?![а-яё])",
-  "әкімшіге\\s+(\\S+\\s+){0,2}(жібердім|жеткіздім|бердім|хабарладым|айттым)|әкімші\\s+(\\S+\\s+){0,3}(болдырмайды|ауыстырады|растайды)",
-  "(passed|forwarded|sent|relayed)[^.!?\\n]{0,60}(administrator|admin|manager|team|staff)|(administrator|admin|manager)[^.!?\\n]{0,40}will\\s+(cancel|reschedule|move|confirm)"
-].join("|"), "i");
-const CX_TOPIC = /отмен|перенос|перенес|перен[её]с|перезапи|cancel|resched|болдырма|ауыстыр/i;
-const ALT_ASKS_DO = /перенесите|перенести|отмените|отменить|уберите|убрать|удалите|можете|можно|нужно|надо|хочу|пожалуйста|could\s+you|can\s+you|please/i;
-// «Did you cancel it?», «Болдырдыңыз ба?» — тоже вопрос о сделанном, а не просьба
-// вопрос клиента о своих записях («я записан?», «какие у меня записи?», «точно?»): на такой вопрос бот никого не записывает,
-// даже если ИИ поставил строку [ЗАЯВКА] (вживую 10 октября: «какие у меня записи?» → «Записала вас…» без просьбы клиента)
-const ALT_MY_Q = /(я\s+(уже\s+|точно\s+|вообще\s+)?записан|меня\s+(уже\s+|точно\s+)?записал|записал[аи]?\s+(ли\s+)?меня|запис(ь|и)\s+(у\s+меня\s+)?(есть|ест|остал)|как(ие|ая)\s+(у\s+меня\s+)?запис|мо[ия]\s+запис|есть\s+(ли\s+)?(у\s+меня\s+)?запис|(на\s+)?когда\s+(я\s+)?записан|когда\s+(у\s+меня\s+)?запись|жазылдым\s+ба|жазылғанмын\s+ба|жазып\s+қойдыңыз\s+ба|менің\s+жазыл|am\s+i\s+booked|my\s+(booking|appointment))/i;
-const ALT_SURE_Q = /^\s*(точно|правда|серьезно|серьёзно|уверен[аы]?|да\s*\?|так\s*\?|рас\s+ма|шынымен\s+бе|sure|really)\s*[?!.]*\s*$/i;
-const ALT_BOOK_ASK = /(запиш|записать|записаться|запиши|оформ|хочу|можно|давайте|давай|ещё\s+одн|еще\s+одн|book\s+me|жазыңыз|жазып\s+бер|жазайын|жазылғым)/i;
-const myRecQ = text => (ALT_MY_Q.test(text) || ALT_SURE_Q.test(text)) && !ALT_BOOK_ASK.test(text);
-const ALT_STATUS_Q = /(отменил[аи]?|отмен[её]н[аоы]?|отменилась|удалил[аи]?|удал[её]н[аоы]?|перенесл[аи]|перен[её]с|перенес[её]н[аоы]?|cancel+ed|moved|rescheduled|болдырылды|жойылды|ауыстырылды|болдырдыңыз|жойдыңыз|ауыстырдыңыз|өшірдіңіз)(?![а-яёa-zәғқңөұүһі])[^.!]*\?|(^|[^a-z])(did|have|has)\s+(you|it|they)\s+(\S+\s+){0,2}?(cancel|move|resched|delete|remove)[a-z]*(?![a-z])[^.!]*\?/i;
 // Кто отменяет и переносит записи. По умолчанию — администратор: бот в расписании ничего не удаляет, а передаёт ему просьбу клиента.
 // Бот отменяет и переносит сам, только если это включено: altegio.selfCancel в блоке клиента или Text ALTEGIO_SELF_CANCEL = 1 (для одного клиента — ALTEGIO_SELF_CANCEL_<ID>)
 const altSelfCancel = (env, c) => {
@@ -664,178 +533,6 @@ const caseName = (a, b, sure) => {
   return s.every(p => l.some(q => isForm(p, q, sure) || isForm(q, p, sure)));
 };
 
-// поля служебной строки: «Имя: …; Телефон: …; Услуга: …». ИИ пишет её по-разному: через «;», «,», «.», без знаков, с «—» или «=» вместо «:», с ключами на английском или казахском
-const TAG_KEYS = { "имя": "имя", "имя клиента": "имя", "клиент": "имя", "фио": "имя", "name": "имя", "client": "имя", "аты": "имя", "есімі": "имя",
-  "телефон": "телефон", "телефоны": "телефон", "phone": "телефон",
-  "услуга": "услуга", "услуги": "услуга", "service": "услуга", "services": "услуга", "қызмет": "услуга", "қызметі": "услуга",
-  "мастер": "мастер", "специалист": "мастер", "врач": "мастер", "доктор": "мастер", "master": "мастер", "specialist": "мастер", "staff": "мастер", "barber": "мастер", "doctor": "мастер", "шебер": "мастер", "шебері": "мастер",
-  "дата": "дата", "день": "дата", "date": "дата", "day": "дата", "күні": "дата",
-  "комментарий": "заметка", "примечание": "заметка", "пожелание": "заметка", "пожелания": "заметка", "comment": "заметка", "note": "заметка",
-  "время": "время", "когда": "время", "time": "время", "when": "время", "уақыты": "время", "уақыт": "время", "қашан": "время", "дата и время": "время", "день и время": "время", "date and time": "время" };
-const tagKeyRe = sep => new RegExp("(^[\\s:—–-]*|[;|]\\s*|[,.]\\s*|\\s)(" + Object.keys(TAG_KEYS).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|") + ")\\s*" + sep, "gi");
-const TAG_RE = tagKeyRe("[:=]"), TAG_RE2 = tagKeyRe("(?:[—–]|\\s-\\s)");
-// plain — заявка обычного клиента: «услуга, мастер: Арман» и «время, дата: 14 ноября» остаются частью услуги и времени, как их написал ИИ
-function tagFields(line, plain) {
-  const s = String(line || "").replace(/：/g, ":").replace(/；/g, ";").replace(/，/g, ","), o = {}, labels = {};
-  const scan = re => [...s.matchAll(re)].map(m => ({ k: TAG_KEYS[m[2].toLowerCase().replace(/\s+/g, " ")], label: m[2], strong: m.index === 0 || /[;|]/.test(m[1]), at: m.index, from: m.index + m[0].length }));
-  let marks = scan(TAG_RE);
-  if (!marks.length) marks = scan(TAG_RE2); // «Имя — Тимур; Услуга — стрижка»
-  if (plain) marks = marks.filter(x => x.strong || (x.k !== "мастер" && x.k !== "дата"));
-  // «Услуга: Уход. Время: 30 минут; Время: 10:00»: если ключ есть и после «;», то тот же ключ после точки или запятой — часть значения, а не поле
-  const strongKeys = new Set(marks.filter(x => x.strong).map(x => x.k)), live = marks.filter(x => x.strong || !strongKeys.has(x.k));
-  live.forEach((x, i) => {
-    const v = s.slice(x.from, i + 1 < live.length ? live[i + 1].at : s.length).replace(/[;,|.\s]+$/, "").trim();
-    const same = live.filter(y => y.k === x.k);
-    if (x.k === "услуга" && same.length > 1 && same.every(y => y.strong)) { o[x.k] = o[x.k] ? o[x.k] + " | " + v : v; return; } // «Услуга: А; Услуга: Б» — обе услуги
-    if (x !== (x.k === "время" || x.k === "дата" ? same[same.length - 1] : same[0])) return; // повтор ключа: день и время берём последние, остальное — первое
-    o[x.k] = v; labels[x.k] = x.label;
-  });
-  Object.defineProperty(o, "labels", { value: labels }); // как ключ назвал ИИ («Врач», «Master») — для заявки обычного клиента
-  return o;
-}
-const tagField = (line, k) => tagFields(line)[k.toLowerCase()] || "";
-
-// дата из служебной строки: «2026-10-04», «04.10», «04/10/2026», «4 октября», «4 окт.», «4 қазан», «October 4», «завтра», «в воскресенье»
-const MON_RU = "(январ[яь]|янв|феврал[яь]|фев|март[ае]?|мар|апрел[яь]|апр|ма[йяе]|июн[яь]|июн|июл[яь]|июл|август[ае]?|авг|сентябр[яь]|сент?|октябр[яь]|окт|ноябр[яь]|нояб?|декабр[яь]|дек)\\.?(?![а-яё])";
-const MON_RU3 = ["янв", "фев", "мар", "апр", "ма", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-const MON_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-const MON_EN_RE = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?(?![a-z])";
-const MON_KK = ["қаңтар", "ақпан", "наурыз", "сәуір", "мамыр", "маусым", "шілде", "тамыз", "қыркүйек", "қазан", "қараша", "желтоқсан"];
-// дни недели, названные в тексте: 0 — воскресенье
-const DOW_RE = ["воскресень|жексенбі|sunday", "понедельник|дүйсенбі|monday", "вторник|сейсенбі|tuesday", "сред[ауые]|сәрсенбі|wednesday", "четверг|бейсенбі|thursday", "пятниц|жұма|friday", "суббот|сенбі|saturday"]
-  .map(x => new RegExp("(?<![а-яёәғқңөұүһіa-z])(" + x + ")", "i"));
-const dowsIn = s => DOW_RE.map((re, i) => re.test(s) ? i : -1).filter(i => i >= 0);
-const relDay = s => /послезавтра|бүрсігүні|day after tomorrow/.test(s) ? 2 : /завтра|ертең|tomorrow/.test(s) ? 1 : /сегодня|бүгін|today/.test(s) ? 0 : -1;
-function altDateOf(s, nowMs) {
-  s = lowE(s);
-  const ok = (y, mo, d) => { const t = new Date(Date.UTC(y, mo - 1, d)); return mo >= 1 && mo <= 12 && d >= 1 && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? t.toISOString().slice(0, 10) : ""; };
-  const today = isoDay(nowMs), y = +today.slice(0, 4);
-  const near = (mo, d) => { const a = ok(y, mo, d); return a && a >= today ? a : ok(y + 1, mo, d); }; // день уже прошёл — значит, следующий год
-  let m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/), r;
-  if (m) return ok(+m[1], +m[2], +m[3]);
-  if ((m = s.match(/(?:^|[^\d])(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4}|\d{2})(?!\d)/))) {
-    // день, месяц, год; если такая дата уже прошла, а «месяц, день» — впереди, значит, дата написана по-американски
-    const yy = m[3].length === 2 ? 2000 + +m[3] : +m[3], a = ok(yy, +m[2], +m[1]), b = ok(yy, +m[1], +m[2]);
-    if ((r = a && (a >= today || !b || b < today) ? a : b)) return r;
-  }
-  if ((m = s.match(new RegExp("(\\d{1,2})(?:-?(?:го|ое|е))?\\s+" + MON_RU))) && (r = near(MON_RU3.findIndex(x => m[2].startsWith(x)) + 1, +m[1]))) return r;
-  if ((m = s.match(new RegExp("(\\d{1,2})[\\s-]*(" + MON_KK.join("|") + ")"))) && (r = near(MON_KK.indexOf(m[2]) + 1, +m[1]))) return r;
-  if ((m = s.match(new RegExp("(?:^|[^\\d:])(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?" + MON_EN_RE))) && (r = near(MON_EN.indexOf(m[2].slice(0, 3)) + 1, +m[1]))) return r;
-  if ((m = s.match(new RegExp("(?:^|[^a-z])" + MON_EN_RE + "\\s+(\\d{1,2})(?:st|nd|rd|th)?(?![\\d:])"))) && (r = near(MON_EN.indexOf(m[1].slice(0, 3)) + 1, +m[2]))) return r;
-  const rel = relDay(s);
-  if (rel >= 0) return isoDay(nowMs + rel * 86400e3); // «завтра в 10.05»: день назван словом, а «10.05» — время
-  // «04.10» — день и месяц (месяц двумя цифрами). «в 10.05» — время, «1.5 часа» — не дата
-  for (const x of s.matchAll(/(^|[^\d:.])(\d{1,2})\.(\d{2})(?!\d|:|\.\d)/g)) {
-    if (/(^|[^а-яёa-z])(в|к|at|сағат)\s*$/.test(s.slice(0, x.index + x[1].length))) continue;
-    if ((r = near(+x[3], +x[2]))) return r;
-  }
-  if ((m = s.match(/(?:^|[^\d\/])(\d{1,2})\/(\d{1,2})(?![\d\/])/)) && (r = near(+m[2], +m[1]))) return r;
-  const dw = dowsIn(s); // день недели — ближайший такой день, не сегодня
-  if (dw.length === 1) return isoDay(nowMs + (((dw[0] - local(nowMs).getUTCDay() + 7) % 7) || 7) * 86400e3);
-  return "";
-}
-// ---- служебные строки ИИ приводим к одному виду: «(ЗАЯВКА)», «ЗАЯВКА: …», «[БРОНЬ]», «[BOOKING]», «[ЗАЯВК]» → «[ЗАЯВКА]»; поля столбиком — в одну строку.
-// Служебная строка не должна дойти до клиента, что бы ИИ ни дописал к метке: номер («[ЗАЯВКА 1]»), пояснение («[ОТМЕНА записи]», «[BOOKING REQUEST]»), поля внутри скобок
-// («[ЗАЯВКА: Имя: …]»), JSON, жирный шрифт, кавычки, слова перед меткой («Служебная строка: [ЗАЯВКА] …»). Обычная фраза со словом «заявка», «запись» или «отмена»
-// («Ваша заявка принята», «Отмена бесплатна») служебной строкой не становится: без скобок метка — это слово заглавными буквами либо слово с двоеточием, после которого идёт поле («Имя: …»)
-const TAGW_BOOK = "ЗАЯВК[АИУ]?|ЗАПИСЬ|БРОНЬ|БРОНИРОВАНИЕ|BOOKING|BOOK|ORDER|REQUEST|APPOINTMENT|ӨТІНІМ|ӨТІНІШ|ТАПСЫРЫС|ЖАЗЫЛУ";
-const TAGW_CANCEL = "ОТМЕН[АЫУ]?|ОТМЕНИТЬ|CANCEL|CANCELLATION|CANCELATION|БОЛДЫРМАУ";
-// без скобок «ОТМЕНИТЬ» и «CANCELLATION» меткой не были и раньше: это слова обычной фразы («Напишите одно слово: ПЕРЕНЕСТИ или ОТМЕНИТЬ»)
-const TAGW_BARE = TAGW_BOOK + "|ОТМЕН[АЫУ]?|CANCEL|БОЛДЫРМАУ";
-const TAGW = TAGW_BOOK + "|" + TAGW_CANCEL, TAG_LT = "A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
-const tagKeyAlt = pick => Object.keys(TAG_KEYS).filter(pick).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
-const TAG_KEY_ALT = tagKeyAlt(() => true), TAG_NAME_ALT = tagKeyAlt(k => TAG_KEYS[k] === "имя");
-const TAG_NUM = "(?:\\s*(?:(?:№|#|N)\\s*)?\\d{1,3})?";                                                 // номер после метки: «ЗАЯВКА 1», «ЗАЯВКА №2»
-const TAG_OPEN = "\\\\?\\[\\s*(?:(?:НОВАЯ|НОВЫЙ|NEW|СЛУЖЕБНАЯ\\s+СТРОКА|СТРОКА|МЕТКА|TAG)[\\s:—–-]+)?(" + TAGW + ")(?![" + TAG_LT + "])" + TAG_NUM;
-// метка в квадратных скобках — в любом регистре, с номером и пояснением: «[Заявка]», «[ЗАЯВКА №1]», «[BOOKING REQUEST]», «[ОТМЕНА ЗАПИСИ]», «[НОВАЯ ЗАЯВКА]», «\[ЗАЯВКА\]»
-const TAG_SQ = new RegExp(TAG_OPEN + "(?:\\s+(?:ЗАПИСИ|ЗАПИСЬ|ЗАЯВКИ|БРОНИ|КЛИЕНТА|НА\\s+ЗАПИСЬ|REQUEST|BOOKING|LINE))?" + TAG_NUM + "\\s*\\\\?\\]", "gi");
-const TAG_SQ_IN = new RegExp(TAG_OPEN + "\\s*(?:([:=—–])\\s*|(?<=\\s)(?=(?:" + TAG_KEY_ALT + ")\\s*[:=]))", "gi"); // поля внутри скобок: «[ЗАЯВКА: Имя: …]», «[ЗАЯВКА Имя: …]»
-const TAG_SQ_ANY = new RegExp("\\\\?\\[([^\\[\\]\\n]*?)(?<![" + TAG_LT + "])(ЗАЯВКА|ОТМЕНА)(?![" + TAG_LT + "])([^\\[\\]\\n]*)\\]", "g"); // метка заглавными где угодно в скобках: «[ОТМЕНА записи на 15:00]»
-const TAG_MARK = "[\\s*_`~>«\"“„'-]*";                                                                  // разметка и кавычки перед меткой
-// в других скобках и без скобок — только заглавными, в начале строки: «(ЗАЯВКА) …», «ЗАЯВКА: …», «**ЗАЯВКА №1:** …»
-const TAG_BARE = new RegExp("^[\\s*_`~>\"“„'-]*(?:[(<{【«]\\s*(" + TAGW + ")" + TAG_NUM + "\\s*[)>}】»]|«?(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + ")[*_`]*\\s*[:—–-]?\\s*[*_`]*\\s*(.*)$");
-// слово «Заявка», «Отмена», «Booking» не заглавными — метка, только если после него двоеточие или тире, а дальше поле «Имя: …» («Отмена: Время: за два часа до визита» — рассказ о правилах, а не отмена)
-const TAG_SOFT = new RegExp("^" + TAG_MARK + "(" + TAGW_BARE + ")(?![" + TAG_LT + "])" + TAG_NUM + "[*_`]*\\s*[:—–=-]\\s*[*_`]*\\s*(.*)$", "i");
-const TAG_ITEM = "(?:(?:[-•*·]|\\d{1,2}[.)])\\s*)?";                                                    // пункт списка перед полем: «- Имя: …», «1. Имя: …»
-const TAG_KEY_START = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*(?:[:=]|[—–]|\\s-\\s)", "i");
-const TAG_KEY_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_KEY_ALT + ")\\s*[:=]", "i"), TAG_NAME_COLON = new RegExp("^\\s*" + TAG_ITEM + "(?:" + TAG_NAME_ALT + ")\\s*[:=]", "i");
-const TAG_FIELD_LINE = new RegExp("^\\s*" + TAG_ITEM + "[" + TAG_LT + "][^:=\\n]{0,30}[:=]\\s*\\S");     // «Возраст: 30» — строка похожа на поле, хотя ключ незнакомый
-const TAG_ITEM_HEAD = /^\s*(?:[-•*·]|\d{1,2}[.)])\s*/;
-const TAG_ITEM_IN = new RegExp("(\\]\\s*(?:[:—–-]\\s*)?|[;|]\\s*)\\d{1,2}[.)]\\s*(?=(?:" + TAG_KEY_ALT + ")\\s*[:=])", "gi"); // «[ЗАЯВКА] 1) Имя: …; 2) Телефон: …» — номера полей в одной строке
-const TAG_IS_CANCEL = new RegExp("^(?:" + TAGW_CANCEL + ")$", "i");
-const TAG_JSON = new RegExp("\\{\\s*\"(" + TAGW + ")\"\\s*:\\s*\\{([^{}]*)\\}\\s*\\}", "gi");             // {"ЗАЯВКА": {"Имя": "…", …}} — одной строкой или столбиком
-const TAG_JSON_AFTER = new RegExp("(\\[\\s*(?:" + TAGW + ")\\s*\\][*_`]*\\s*(?::\\s*)?)\\{([^{}]*)\\}", "gi"); // [ЗАЯВКА] {"Имя": "…", …}
-const TAG_LABEL = /(?:служебн[а-яё]*\s+строк[а-яё]*|строка\s+для\s+(?:системы|администратора)|service\s+line|system\s+line|метка|tag)\s*[:—–-]?/gi; // слова, которыми ИИ подписывает метку
-const TAG_HAS = /\[(?:ЗАЯВКА|ОТМЕНА)\]/, TAG_ONLY = /^\[(?:ЗАЯВКА|ОТМЕНА)\]$/, TAG_JSON_START = /^\{\s*"/;
-const TAG_PLAIN = new RegExp("^[\\s*_`>-]*(?:" + TAGW_BARE + ")\\s*[:—–-]?\\s*$"), TAG_LINE_START = /^[\s*_`~>«"“„'-]*(?:\\?\[|\{)/; // «ОТМЕНА», «ЗАЯВКА:» — слово без разметки после него; строка, которая начинается со скобки
-const TAG_TRAIL = " \t\r*_`~\\", TAG_PAIRS = [["[", "]"], ["«", "»"], ["(", ")"], ["{", "}"], ["“", "”"]]; // разметка в конце служебной строки; скобки и кавычки, которые могут остаться без пары
-// знаки из набора в конце строки — без регулярного выражения: «[…]+$» на длинной строке работает за квадрат её длины
-const rtrimSet = (s, set) => { let e = s.length; while (e > 0 && set.includes(s[e - 1])) e--; return e < s.length ? s.slice(0, e) : s; };
-// поля из JSON: «"Имя": "Азамат", "Время": "завтра, 12:00"» → «Имя: Азамат; Время: завтра, 12:00»
-const tagJson = body => [...String(body).matchAll(/"([^"\n]{1,40})"\s*:\s*(?:"([^"]*)"|\[([^\]]*)\]|([^,"{}\n]+))/g)]
-  .map(m => m[1].trim() + ": " + (m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3].replace(/"\s*,\s*"/g, " | ").replace(/"/g, "") : m[4]).trim().replace(/;/g, ",")).join("; ");
-function tidyTags(raw) {
-  const canon = w => TAG_IS_CANCEL.test(w.trim()) ? "[ОТМЕНА]" : "[ЗАЯВКА]";
-  const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";")
-    .replace(TAG_JSON, (m, w, body) => "\n" + canon(w) + " " + tagJson(body) + "\n")
-    .replace(TAG_JSON_AFTER, (m, head, body) => /"\s*:/.test(body) ? head + tagJson(body) : m)
-    .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, "") // границы блока кода клиенту не нужны
-    .split("\n"), out = [];
-  const nextText = i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
-  const tagNext = i => { const nx = nextText(i); return !nx || TAG_KEY_START.test(nx) || TAG_LINE_START.test(nx); }; // дальше — конец ответа, поле («Имя: …») или другая служебная строка
-  for (let i = 0; i < lines.length; i++) {
-    let ln = lines[i];
-    if (ln.includes("[")) ln = ln.replace(TAG_SQ, (m, w) => canon(w))
-      .replace(TAG_SQ_IN, (m, w, sep, at, s) => sep && w !== w.toUpperCase() && !TAG_KEY_COLON.test(s.slice(at + m.length)) ? m : canon(w) + " ") // «[Запись: завтра в 12:00]» — не метка
-      .replace(TAG_SQ_ANY, (m, a, w, b) => { const rest = (a + " " + b).replace(/\\+$/, "").replace(/^[\s:—–=№#\d-]+/, "").trim(); return rest ? `[${w}] ${rest}` : `[${w}]`; });
-    const m = ln.match(TAG_BARE);
-    // слово заглавными без полей — метка, как и раньше («ОТМЕНА», «ЗАЯВКА:»). С разметкой или номером («**ОТМЕНА**», «ЗАЯВКА №1») — только если дальше нет обычного текста: так выглядит и заголовок в рассказе о правилах
-    if (m && (m[1] || TAG_KEY_START.test(m[3]) || TAG_JSON_START.test(m[3]) || (!m[3] && (TAG_PLAIN.test(ln) || tagNext(i))))) ln = canon(m[1] || m[2]) + (m[3] ? " " + (TAG_JSON_START.test(m[3]) ? tagJson(m[3]) : m[3]) : "");
-    else if (!TAG_HAS.test(ln)) {
-      const s = ln.match(TAG_SOFT);
-      if (s && (TAG_NAME_COLON.test(s[2] || nextText(i)) || TAG_JSON_START.test(s[2]))) ln = canon(s[1]) + (s[2] ? " " + (TAG_JSON_START.test(s[2]) ? tagJson(s[2]) : s[2]) : "");
-    }
-    if (TAG_HAS.test(ln)) {
-      const at = ln.search(TAG_HAS);
-      // «[ЗАЯВКА] [ЗАЯВКА] …» — одна метка. Повтор «[ОТМЕНА]» не трогаем: строки отмены бот исполняет по одной, менять их число и порядок нельзя
-      let head = ln.slice(0, at), tail = ln.slice(at).replace(/(\[ЗАЯВКА\])(?:[\s:—–*_`-]*\[ЗАЯВКА\])+/g, "$1").replace(TAG_ITEM_IN, "$1");
-      // перед меткой только разметка, номер пункта или слова «служебная строка» — это часть служебной строки, а не ответа клиенту; кавычка или скобка, открытая перед меткой, — тоже
-      if (!head.replace(TAG_LABEL, "").replace(/[\s*_`~>«"“„'(\[{:.—–#•·\d)\\-]/g, "")) head = "";
-      else { const h = rtrimSet(head, TAG_TRAIL + "«\"“„'([{"); if (h.length < head.length) head = h + " "; }
-      // в конце строки — разметка и закрывающая скобка или кавычка без пары: они остались от «[ЗАЯВКА: …]», ««[ЗАЯВКА] …»», «**[ЗАЯВКА] …**»
-      const cnt = ch => tail.split(ch).length - 1, over = TAG_PAIRS.map(([o, c]) => cnt(c) - cnt(o));
-      let end = tail.length, odd = cnt('"') % 2;
-      for (let go = true; go;) {
-        while (end > 0 && TAG_TRAIL.includes(tail[end - 1])) end--;
-        const p = TAG_PAIRS.findIndex(([, c], k) => over[k] > 0 && tail[end - 1] === c);
-        go = p >= 0 || (odd === 1 && tail[end - 1] === '"');
-        if (p >= 0) over[p]--; else if (go) odd = 0;
-        if (go) end--;
-      }
-      tail = tail.slice(0, end);
-      // поля столбиком: за меткой идут строки «Ключ: значение» — с номерами, после пустой строки, с незнакомым полем между знакомыми
-      let j = i + 1;
-      if (TAG_ONLY.test(tail)) { let k = j; while (k < lines.length && !lines[k].trim()) k++; if (k < lines.length && TAG_KEY_START.test(lines[k])) j = k; }
-      const extra = [], isKey = x => TAG_KEY_START.test(x || ""), isField = x => TAG_FIELD_LINE.test(x || "");
-      for (; j < lines.length; j++) {
-        if (isKey(lines[j])) tail += (/\]$/.test(tail) ? " " : "; ") + lines[j].replace(TAG_ITEM_HEAD, "").trim();
-        else if (isField(lines[j]) && (isKey(lines[j + 1]) || (isField(lines[j + 1]) && isKey(lines[j + 2])))) extra.push(lines[j].replace(TAG_ITEM_HEAD, "").trim());
-        else break;
-      }
-      if (extra.length) tail += "; Комментарий: " + extra.join(", "); // незнакомые поля не теряются: администратор увидит их в заявке
-      i = j - 1;
-      ln = head + tail;
-    }
-    out.push(ln);
-  }
-  // «[ЗАЯВКА]» без полей, а строкой ниже «[ЗАЯВКА] Имя: …» — это одна служебная строка. С «[ОТМЕНА]» так не делаем: строка отмены без подробностей — отдельная просьба
-  for (let k = out.length - 2; k >= 0; k--) {
-    if (!/^\s*\[ЗАЯВКА\]\s*$/.test(out[k])) continue;
-    let n = k + 1; while (n < out.length && !out[n].trim()) n++;
-    if (n < out.length && out[n].trimStart().startsWith("[ЗАЯВКА]")) out.splice(k, 1);
-  }
-  return out.join("\n");
-}
 
 // ---- клиент говорит о другой записи? rec — запись этого чата { name, date, time, services, staffName }.
 // Возвращает причину («время», «день», «человек», «имя», «услуга», «мастер») или пустую строку. Не уверены — считаем, что о другой:
@@ -1694,7 +1391,6 @@ const CB_WANTS = /запиш|записаться|записать(?![а-яё])|
 const CHANGE_WISH = /друг|смен|меня[йт]|поменя|замен|измен|добав|вместо|лучше|перезапи|перенес|можно\s+(ли\s+)?к|change|add|instead|switch|ауыстыр|қос|орнына/i;
 // ИИ оформил перенос ([ОТМЕНА] + [ЗАЯВКА]), а клиент просил «ещё одну запись» и ни слова о переносе или отмене — это вторая запись, прежняя остаётся
 const ADD_WISH = /(^|[^а-яё])(ещ[её]|также|тоже|дополнительно|плюс|втор(ую|ой|ая)\s+запис[а-я]*)(?![а-яё])|(^|[^a-z])(another|also|as\s+well|one\s+more|a\s+second)(?![a-z])|тағы/i;
-const MOVE_WISH = /перенес|перенос|перезапи|сдвин|передвин|(поменя|измени|смени|замени)\S*\s+(\S+\s+)?(время|день|дату|запись|числ)|друг(ое|ой|ую)\s+(время|день|дату|число)|вместо|лучше|позже|раньше|(?<![а-яё])не\s+(успева|успею|смогу|сможем|получается|получится|могу)|опаздыва|опозда|задерж|передума|resched|(^|[^a-z])(move|instead|later|earlier)(?![a-z])|change\s+(\S+\s+)?(time|day|date|booking|appointment)|can['’]?t\s+make|ауыстыр|кейінірек|ертерек|орнына/i;
 // продолжение только что исполненной просьбы об отмене: «и сына тоже», «и ту, что в 10:00», «а ещё вторую»
 const CX_MORE = /^\s*(и|а\s+ещ[её]|ещ[её]|также|тоже|плюс|and|also|тағы|және)(?![а-яёa-zәғқңөұүһі])|(^|[^а-яё])(тоже|также|заодно)(?![а-яё])|(^|[^a-z])(too|as\s+well)(?![a-z])/i;
 const ALL_RECS = /(^|[^а-яё])(все|обе|оба)\s+(мои\s+|наши\s+)?(запис|брон)|^\s*(обе|оба|все|всё)[\s!.]*$|all\s+(of\s+them|my\s+bookings)|(^|[^a-z])both(?![a-z])|барлық\s+жазба|екеуін/i;
@@ -2019,8 +1715,6 @@ async function think(env, store, clientId, histKey, rawText, source, opts = {}) 
   // телефон берём у клиента; номер из строки ИИ годится, только если клиент сам написал эти цифры (ИИ настоящего номера не видит)
   const userDigits = userAll.replace(/\D/g, "");
   const phoneOf = tagPhone => { const p = normPhone(tagPhone); return opts.phone || saved.profile.phone || (p && userDigits.includes(p.slice(2)) ? p : ""); };
-  // служебные строки: от метки до конца строки или до следующей метки; пометки вида ** и ` не мешают
-  const tagsOf = (s, name) => [...new Set([...String(s || "").replace(/\*\*|__|`/g, "").matchAll(new RegExp("\\[\\s*" + name + "\\s*\\]((?:(?!\\[\\s*(?:ЗАЯВКА|ОТМЕНА)\\s*\\])[^\\n])*)", "gi"))].map(m => m[1].trim()))];
   const draftOnly = raw === "";                                    // защита заменила ответ ИИ заготовкой
   const leaked = draftOnly && /^leak/.test(guard || "");           // ИИ пересказывал инструкции — его служебным строкам не верим
   const aiSilent = !draftOnly && !strip(raw).replace(/\*\*|__|`|#/g, "").trim(); // ИИ не написал клиенту ничего, кроме служебных строк и разметки
