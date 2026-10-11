@@ -38,11 +38,16 @@
 import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
 // Модули переезда (REFACTORING.md): всё новое — только в src/, worker.js их подключает.
 import { money } from "./src/lib/money.js";
+import { nameToks, svTrim } from "./src/lib/names.js";
 import { normPhone, phonesIn, redact, fmtPhone, maskPhones } from "./src/lib/phone.js";
 import { TZ, local, hhmm, mins, isoDay, hm } from "./src/lib/time.js";
 import { clean, snip, lowE, esc, isJoke } from "./src/lib/text.js";
 import { hash, enc8, hmacB64, safeEq, metaSigOk } from "./src/lib/crypto.js";
 import { html, json, jsonP, page, forbid, sameOrigin } from "./src/lib/http.js";
+import { altText, altCall } from "./src/services/integrations/altegio/client.js";
+import { altCache, altBase, altDates, altDropTimes, altTimes, altRecord, altCancel } from "./src/services/integrations/altegio/booking-api.js";
+import { altJournal } from "./src/services/integrations/altegio/journal-api.js";
+import { altEmailErr, ALT_EMAIL_TIP } from "./src/services/integrations/altegio/errors.js";
 import { kvRetry } from "./src/db/kv/retry.js";
 import { histTtl, histMeta, putHist, logTurns, mergeProfile, readHist } from "./src/db/kv/chats.js";
 import { leadTs, loadLeads, saveLeads, leadKey, allLeads } from "./src/db/kv/leads.js";
@@ -585,7 +590,6 @@ const ALT_SURE_Q = /^\s*(точно|правда|серьезно|серьёзн
 const ALT_BOOK_ASK = /(запиш|записать|записаться|запиши|оформ|хочу|можно|давайте|давай|ещё\s+одн|еще\s+одн|book\s+me|жазыңыз|жазып\s+бер|жазайын|жазылғым)/i;
 const myRecQ = text => (ALT_MY_Q.test(text) || ALT_SURE_Q.test(text)) && !ALT_BOOK_ASK.test(text);
 const ALT_STATUS_Q = /(отменил[аи]?|отмен[её]н[аоы]?|отменилась|удалил[аи]?|удал[её]н[аоы]?|перенесл[аи]|перен[её]с|перенес[её]н[аоы]?|cancel+ed|moved|rescheduled|болдырылды|жойылды|ауыстырылды|болдырдыңыз|жойдыңыз|ауыстырдыңыз|өшірдіңіз)(?![а-яёa-zәғқңөұүһі])[^.!]*\?|(^|[^a-z])(did|have|has)\s+(you|it|they)\s+(\S+\s+){0,2}?(cancel|move|resched|delete|remove)[a-z]*(?![a-z])[^.!]*\?/i;
-const altCache = new Map(); // память изолята: у Altegio лимит 5 запросов в секунду
 // Кто отменяет и переносит записи. По умолчанию — администратор: бот в расписании ничего не удаляет, а передаёт ему просьбу клиента.
 // Бот отменяет и переносит сам, только если это включено: altegio.selfCancel в блоке клиента или Text ALTEGIO_SELF_CANCEL = 1 (для одного клиента — ALTEGIO_SELF_CANCEL_<ID>)
 const altSelfCancel = (env, c) => {
@@ -613,9 +617,6 @@ function cleanName(s, many) {
   const body = t.match(many ? NAME_MANY : NAME_ONE)[0];
   return many ? body.split(/\s*[,+&]\s*/).map(one).filter(Boolean).slice(0, 3).join(", ").slice(0, 60).replace(/[\s,'’ʼ-]+$/, "") : one(body);
 }
-// названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
-const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "(").replace(/[\]}>]/g, ")").replace(/;/g, ",").replace(/\|/g, "/")
-  .replace(/(\d{1,2}):(\d{2})/g, "$1.$2").replace(/\s*:\s*/g, " — "), n);
 const WORD = /[^a-zа-яәғқңөұүһі0-9]+/;
 
 // падежные формы имени: «Тимур» → Тимура, Тимуру…; «Мария» → Марии, Марию…; казахское «Арманға».
@@ -634,20 +635,6 @@ function nameForms(n, sure) {
   return f;
 }
 const firstWord = s => clean(s).toLowerCase().split(" ")[0];
-// имя для сравнения: без знаков и кавычек, казахские буквы — как русские («Айгүл» = «Айгуль»), латиница — как кириллица («Timur» = «Тимур»)
-const KK_RU = { ә: "а", ғ: "г", қ: "к", ң: "н", ө: "о", ұ: "у", ү: "у", һ: "х", і: "и" };
-const LAT = [["shch", "щ"], ["zh", "ж"], ["kh", "х"], ["ch", "ч"], ["sh", "ш"], ["ts", "ц"], ["yu", "ю"], ["ya", "я"], ["yo", "е"], ["ye", "е"],
-  ["a", "а"], ["b", "б"], ["c", "к"], ["d", "д"], ["e", "е"], ["f", "ф"], ["g", "г"], ["h", "х"], ["i", "и"], ["j", "ж"], ["k", "к"], ["l", "л"], ["m", "м"], ["n", "н"], ["o", "о"], ["p", "п"], ["q", "к"],
-  ["r", "р"], ["s", "с"], ["t", "т"], ["u", "у"], ["v", "в"], ["w", "в"], ["x", "кс"], ["y", "й"], ["z", "з"]];
-const LAT_RE = new RegExp(LAT.map(x => x[0]).join("|"), "g"), LAT_MAP = Object.fromEntries(LAT);
-const LOOK = { a: "а", b: "в", c: "с", e: "е", h: "н", k: "к", m: "м", o: "о", p: "р", t: "т", x: "х", y: "у" }; // латинская буква среди русских («Aйгуль») — похожая по виду
-const translit = w => {
-  if (!/[a-z]/.test(w)) return w;
-  if (/[а-я]/.test(w)) return w.replace(/[a-z]/g, ch => LOOK[ch] || LAT_MAP[ch] || ch);
-  return w.replace(/([bcdfghjklmnpqrstvwxz])y$/, "$1ий").replace(/([bcdfghjklmnpqrstvwxz])y(?=[bcdfghjklmnpqrstvwxz])/g, "$1ы").replace(/(iia|iya|ia)$/, "ия") // Dmitry, Shyngys, Maria
-    .replace(LAT_RE, x => LAT_MAP[x]);
-};
-const nameToks = s => lowE(clean(s, 160)).replace(/[әғқңөұүһі]/g, ch => KK_RU[ch]).replace(/[^a-zа-я0-9\s-]/g, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean).map(translit);
 const tokNorm = x => x.replace(/ь/g, "").replace(/й/g, "и").replace(/э/g, "е").replace(/ия$/, "я"); // «Айгүл» = «Айгуль», «Эльдар» = «Eldar», «Наталья» = «Наталия»
 const tokEq = (x, y) => tokNorm(x) === tokNorm(y);
 const nameKey = s => tokNorm(nameToks(s)[0] || "");
@@ -1033,40 +1020,6 @@ function confirmsCx(text, rec, o = {}, opt = {}) {
   const own = svWords(svTrim([rec.services, rec.staffName].filter(Boolean).join(" ")));
   return words.every(w => CX_WORD(w) || doIt(w) || dowsIn(w).length > 0 || new RegExp("^" + MON_RU).test(w) || MON_KK.includes(w) || new RegExp("^" + MON_EN_RE + "$").test(w) || own.some(z => svStem(z) === svStem(w)) || caseName(rec.name || "", w) || caseName(rec.staffName || "", w));
 }
-function altError(status, message, code) { return Object.assign(new Error(message || ("Altegio " + status)), { status, code: +code || 0 }); }
-
-async function altCall(env, method, path, body, user) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
-  if (!env.ALTEGIO_PARTNER) throw altError(0, "не задан ключ ALTEGIO_PARTNER");
-  for (let attempt = 0; ; attempt++) {
-    const ac = new AbortController();
-    let timer, r, txt;
-    const req = (async () => {
-      r = await fetch(ALT_API + path, { method, signal: ac.signal,
-        headers: { authorization: "Bearer " + env.ALTEGIO_PARTNER + (user ? ", User " + user : ""), accept: "application/vnd.api.v2+json", "content-type": "application/json" },
-        body: body ? JSON.stringify(body) : undefined });
-      txt = await r.text();
-    })();
-    req.catch(() => {});
-    // срок общий — на ответ целиком, вместе с телом
-    try { await Promise.race([req, new Promise((_, rej) => { timer = setTimeout(() => { ac.abort(); rej(new Error("timeout")); }, 8000); })]); }
-    catch (e) { throw altError(0, "нет связи с Altegio"); }
-    finally { clearTimeout(timer); }
-    if (r.status === 429 && attempt === 0) { await new Promise(s => setTimeout(s, 1100)); continue; } // лимит запросов — одна повторная попытка
-    let j = null;
-    if (txt && txt.trim()) { try { j = JSON.parse(txt); } catch (e) { if (r.ok) throw altError(r.status, "Altegio ответил не в формате JSON"); } }
-    if (!r.ok || (j && j.success === false)) {
-      const m = (j && j.meta) || {};
-      let er = m.errors ?? (j && j.errors); // бывает списком, объектом {code, message} или словарём «поле → ошибки»
-      if (Array.isArray(er)) er = er[0];
-      else if (er && typeof er === "object" && !("code" in er) && !("message" in er)) er = Object.values(er)[0];
-      if (Array.isArray(er)) er = er[0];
-      if (typeof er === "string") er = { message: er };
-      if (!er || typeof er !== "object") er = {};
-      throw altError(r.status, clean(er.message || m.message || "", 200) || ("Altegio " + r.status), er.code || m.code);
-    }
-    return j ? j.data : null;
-  }
-}
 
 // Удалена ли запись в Altegio (администратор удалил её прямо в журнале или клиента там отменили).
 // true — удалена; false — на месте; null — не знаем (тогда запись считаем существующей). b — { record_id, record_hash, date, time, staffName, loc }
@@ -1136,25 +1089,6 @@ async function altPrune(env, prof, nowMs, loc) {
 // Вживую 10 октября (пробная локация): вход логином и паролем → user_token, GET /records/<локация> отдаёт записи с полями
 // id, datetime, staff, client (с телефоном), services, deleted, attendance. Без ключа пользователя — прежний режим (память чата)
 const altUserKey = (env, c) => String(env["ALTEGIO_USER_" + String(c.id).toUpperCase()] || "").trim();
-async function altJournal(env, user, loc, phone, nowMs) { // → [{ name, date, time, services, staffName, loc, record_id, j: 1 }]
-  const want = normPhone(phone);
-  if (!want || !loc || loc < 0) return null;
-  const from = isoDay(nowMs), to = isoDay(nowMs + ALT_JOURNAL_DAYS * 86400e3), nowT = hhmm(local(nowMs)), out = [];
-  for (let pg = 1; pg <= 3; pg++) { // 200 записей на страницу; у салона больше 600 записей на месяц вперёд — бывает редко
-    const d = await altCall(env, "GET", `/records/${loc}?start_date=${from}&end_date=${to}&count=200&page=${pg}`, null, user);
-    const arr = Array.isArray(d) ? d : [];
-    for (const r of arr) {
-      if (!r || typeof r !== "object" || r.deleted === true || r.deleted === 1 || +r.attendance === -1) continue; // удалена или клиент не пришёл
-      if (normPhone(String((r.client && r.client.phone) || "")) !== want) continue;
-      const dt = String(r.datetime || ""), date = dt.slice(0, 10), time = hm(dt.slice(11, 16));
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !time || (date === from && mins(time) <= mins(nowT))) continue;
-      out.push({ name: altText((r.client && r.client.name) || "", 60), date, time, services: (Array.isArray(r.services) ? r.services : []).map(x => altText(x && x.title, 90)).filter(Boolean).join(" + "),
-        staffName: altText((r.staff && r.staff.name) || "", 60), loc, record_id: r.id, j: 1 });
-    }
-    if (arr.length < 200) break;
-  }
-  return out.sort((a, b) => (a.date + String(mins(a.time)).padStart(4, "0")).localeCompare(b.date + String(mins(b.time)).padStart(4, "0")));
-}
 // записи чата = записи из журнала; пометки бота (просьба об отмене, заявка, код записи) переносим по номеру записи.
 // Записи, которых в журнале больше нет, — удалены в Altegio: их заявки помечаются «отменена»
 function altFromJournal(prof, list, nowMs) {
@@ -1168,70 +1102,6 @@ function altFromJournal(prof, list, nowMs) {
   if (lids.length) prof.altGone = [...new Set([...(prof.altGone || []), ...lids])].slice(-8);
   return gone.length;
 }
-// одинаковые названия различаем подписью (категория, специализация), а если и она совпала — номером: иначе бот запишет не туда
-function altUniq(list, key, hint, norm) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
-  const k = x => norm(x[key]);
-  const count = () => { const n = new Map(); for (const x of list) n.set(k(x), (n.get(k(x)) || 0) + 1); return n; };
-  let n = count();
-  for (const x of list) if (n.get(k(x)) > 1 && hint(x)) x[key] = `${x[key]} (${hint(x)})`;
-  n = count();
-  const used = new Set(list.map(k)), seq = new Map();
-  for (const x of list) if (n.get(k(x)) > 1) {
-    const b = x[key], kb = k(x); let i = seq.get(kb) || 0, t;
-    do { i++; t = `${b} №${i}`; } while (used.has(norm(t)));
-    seq.set(kb, i); used.add(norm(t)); x[key] = t;
-  }
-}
-
-// услуги и мастера меняются редко — держим 10 минут
-async function altBase(env, loc, nowMs) {
-  const k = "base:" + loc, hit = altCache.get(k);
-  if (hit && Math.abs(nowMs - hit.at) < ALT_BASE_TTL) return hit.v;
-  const [sv, st] = await Promise.all([altCall(env, "GET", `/book_services/${loc}`), altCall(env, "GET", `/book_staff/${loc}`)]);
-  const cats = new Map(((sv && Array.isArray(sv.category) && sv.category) || []).map(x => [x.id, altText(x.title, 40)]));
-  const allSv = ((sv && Array.isArray(sv.services) && sv.services) || []).filter(x => x && x.id && altText(x.title) && x.active !== 0 && x.active !== false);
-  const services = allSv.slice(0, ALT_MAX_SERVICES)
-    .map(x => ({ id: x.id, title: altText(x.title, 90), min: +x.price_min || 0, max: +x.price_max || 0, minutes: Math.round((+x.seance_length || 0) / 60), cat: cats.get(x.category_id) || "" }));
-  altUniq(services, "title", x => x.cat, svTrim);
-  // bookable=false у Altegio значит «сейчас нет свободного времени», а не «мастера нет» — такого мастера оставляем в списке
-  const allSt = (Array.isArray(st) ? st : []).filter(m => m && m.id && altText(m.name) && !+m.fired && !+m.hidden);
-  const staff = allSt.slice(0, ALT_MAX_STAFF)
-    .map(m => ({ id: m.id, base: altText(m.name, 60), name: altText(m.name, 60), spec: altText(m.specialization || (m.position && m.position.title) || "", 50), busy: m.bookable === false }));
-  altUniq(staff, "name", m => m.spec, x => nameToks(x).join(" "));
-  const v = { services, staff, cut: allSv.length > services.length || allSt.length > staff.length, total: { services: allSv.length, staff: allSt.length } };
-  if (altCache.size > 400) altCache.clear();
-  altCache.set(k, { at: nowMs, v });
-  return v;
-}
-
-// ответ book_dates → список дат «ГГГГ-ММ-ДД» начиная с сегодня
-function altDates(d, nowMs) {
-  const today = isoDay(nowMs), out = new Set();
-  const bd = d && d.booking_dates, arr = Array.isArray(bd) ? bd : bd && typeof bd === "object" ? Object.values(bd).flat() : [];
-  for (const x of arr) out.add(typeof x === "number" ? isoDay(x * 1000) : String(x).slice(0, 10));
-  if (!out.size && d && d.booking_days && typeof d.booking_days === "object") {
-    const n = local(nowMs), y = n.getUTCFullYear(), cm = n.getUTCMonth() + 1;
-    for (const [mo, days] of Object.entries(d.booking_days)) for (const day of Array.isArray(days) ? days : [])
-      out.add(`${+mo < cm ? y + 1 : y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
-  }
-  return [...out].filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x) && x >= today).sort();
-}
-
-const altDropTimes = loc => { for (const k of [...altCache.keys()]) if (k.startsWith(`t:${loc}:`)) altCache.delete(k); };
-
-async function altTimes(env, loc, staffId, date, serviceIds, nowMs, fresh) {
-  const q = (serviceIds || []).map(id => "service_ids%5B%5D=" + encodeURIComponent(id)).join("&");
-  const k = `t:${loc}:${staffId}:${date}:${q}`, hit = altCache.get(k);
-  if (!fresh && hit && Math.abs(nowMs - hit.at) < ALT_TTL) return hit.v;
-  let d;
-  try { d = await altCall(env, "GET", `/book_times/${loc}/${staffId}/${date}${q ? "?" + q : ""}`); }
-  catch (e) { if (e.status !== 404) throw e; d = []; } // 404 здесь — «на этот день свободного времени нет»
-  const v = (Array.isArray(d) ? d : []).map(x => ({ time: hm(x && x.time), datetime: (x && x.datetime) || "" })).filter(x => x.time);
-  if (altCache.size > 400) altCache.clear();
-  altCache.set(k, { at: nowMs, v });
-  return v;
-}
-
 function altDay(date, times, nowMs) {
   const d = new Date(date + "T00:00:00Z"), i = Math.round((d - new Date(isoDay(nowMs) + "T00:00:00Z")) / 86400e3);
   return { date, rel: i === 0 ? "сегодня" : i === 1 ? "завтра" : i === 2 ? "послезавтра" : "", label: dayLabel(d), times };
@@ -1361,16 +1231,6 @@ async function altSnapshot(env, c, nowMs, userText) {
 
 // ---- подбор услуги и мастера по тому, что написал ИИ. Правило одно: не уверены — переспрашиваем, а не угадываем
 const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&"); // дефис не трогаем: в режиме «u» запись «\-» вне скобок — ошибка
-// название для сравнения: без эмодзи, кавычек и невидимых знаков, тире одного вида
-const svTrim0 = s => lowE(s).replace(/[^\p{L}\p{N}\s+\-()\/.,№&—–]/gu, " ").replace(/\s*[—–]\s*/g, " - ").replace(/\s+-\s+/g, " - ").replace(/\s+/g, " ").trim().slice(0, 160).replace(/[\s.,]+$/, "").trim();
-const SV_CACHE = new Map(); // названия услуг локации сравниваются на каждое сообщение — считаем один раз
-const svTrim = s0 => {
-  const s = String(s0 ?? "");
-  if (s.length > 300) return svTrim0(s.slice(0, 600));
-  let v = SV_CACHE.get(s);
-  if (v === undefined) { if (SV_CACHE.size > 3000) SV_CACHE.clear(); v = svTrim0(s); SV_CACHE.set(s, v); }
-  return v;
-};
 // та же строка без хвостов, которые ИИ мог переписать из списка: « — от 6 000 ₸», «, около 60 мин», «(60 мин)»
 function svForms(w) {
   const out = [w], add = x => { x = x.replace(/[\s.,]+$/, "").trim(); if (x && !out.includes(x)) out.push(x); return x || out[out.length - 1]; };
@@ -1471,20 +1331,6 @@ function altPickStaff(staff, raw) {
   return pick.length === 1 ? { staff: pick[0] } : { ask: pick };
 }
 
-// Запрос на создание записи. Проверено на настоящем Altegio: без поля email он отвечает 422 «The required parameter email was not passed» —
-// передаём его пустым (почты клиента у бота нет). Номер идёт с «+», как в справочнике; если формат не принят (431) — повторяем цифрами.
-async function altRecord(env, loc, body) {
-  const sent = { email: "", ...body }, post = () => altCall(env, "POST", `/book_record/${loc}`, sent);
-  try { return { data: await post(), sent }; }
-  catch (e) {
-    if (e.code !== 431 || !/^\+/.test(String(sent.phone))) throw e;
-    sent.phone = String(sent.phone).replace(/\D/g, ""); // запись при 431 не создана — повтор безопасен
-    return { data: await post(), sent };
-  }
-}
-// локация требует настоящий email клиента: пустой не подошёл
-const altEmailErr = e => !!e && e.status === 422 && /e-?mail/i.test(e.message || "");
-const ALT_EMAIL_TIP = "Altegio требует email клиента для онлайн-записи — сделайте поле email необязательным в настройках онлайн-записи Altegio";
 
 // создаёт запись в Altegio. Возвращает { ok } либо причину: soft — уточнить у клиента, иначе — передать администратору
 async function altBook(env, A, q, nowMs, test) {
@@ -1567,11 +1413,6 @@ function altLabel(b, lang, nowMs, abs) {
   if (!ru) return `${what} — ${b.date.slice(8, 10)}.${b.date.slice(5, 7)}, ${b.time}`;
   const d = altDay(b.date, [], nowMs);
   return abs ? `${b.name}: ${what} — ${d.label} (${b.date}), в ${b.time}` : `${what} — ${d.rel ? d.rel + ", " : ""}${d.label}, в ${b.time}`;
-}
-
-async function altCancel(env, a) {
-  await altCall(env, "DELETE", `/user/records/${a.record_id}/${a.record_hash}`);
-  altDropTimes(a.loc);
 }
 
 // ответы, которые бот даёт сам, без ИИ: на русском, казахском и английском
