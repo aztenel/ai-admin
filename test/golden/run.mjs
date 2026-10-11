@@ -5,7 +5,6 @@
 // Ожидания — test/golden/expected.json. Запуск: node test/golden/run.mjs [часть id]. SHOW=1 — показать каждый шаг.
 // Поведение изменили намеренно — UPDATE=1 node test/golden/run.mjs и проверить разницу в git (это и есть «что поменялось»).
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { mk, net, D0, D1, D2, ALT_DEFAULT } from "../harness.mjs";
 import { CASES } from "./cases.mjs";
@@ -14,18 +13,13 @@ const FILE = fileURLToPath(new URL("./expected.json", import.meta.url));
 const only = process.argv.slice(2).find(a => !a.startsWith("-")) || "";
 const OWNER = "owner-key-123456";
 
-// всё, что меняется от запуска к запуску, заменяем метками
-function normalizer() {
-  const ids = new Map();
-  const tag = (re, name) => s => s.replace(re, m => { if (!ids.has(m)) ids.set(m, `<${name}${[...ids.values()].filter(v => v.startsWith("<" + name)).length + 1}>`); return ids.get(m); });
-  const leadId = tag(/\b(?=[a-z]*\d)[0-9a-z]{12}\b/g, "id"); // номер заявки: 12 знаков base36 (время + случайные), хотя бы одна цифра
-  const str = s => leadId(s.split(D0).join("<D0>").split(D1).join("<D1>").split(D2).join("<D2>").replace(/\b1[78]\d{11}\b/g, "<ts>").replace(/wamid\.[\w.]+/g, "<wamid>"));
-  const walk = v => typeof v === "string" ? str(v)
-    : typeof v === "number" && v > 1.7e12 && v < 1.9e12 ? "<ts>" // время в мс
-    : Array.isArray(v) ? v.map(walk)
-    : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v;
-  return walk;
-}
+// всё, что меняется от запуска к запуску или от места сценария в списке, заменяем метками
+const norm = (v, key) => typeof v === "string" ? (key === "at" && /^\d{1,2}:\d{2} /.test(v) ? "<время>" + v.slice(v.indexOf(" ")) : v) // время создания заявки: часы идут по-настоящему
+  .split(D0).join("<D0>").split(D1).join("<D1>").split(D2).join("<D2>").replace(/\b1[78]\d{11}\b/g, "<ts>").replace(/wamid\.[\w.]+/g, "<wamid>")
+  : typeof v === "number" && v > 1.7e12 && v < 1.9e12 ? "<ts>" // время в мс
+  : key === "loc" && typeof v === "number" ? "<loc>" // своя локация Altegio у каждого сценария
+  : Array.isArray(v) ? v.map(x => norm(x))
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, norm(x, k)])) : v;
 
 const chOf = cs => cs.ch === "ga" ? "ga" : cs.ch ? "wa" : "web";
 const pick = (o, keys) => Object.fromEntries(keys.filter(k => o && o[k] !== undefined).map(k => [k, o[k]]));
@@ -57,9 +51,7 @@ async function runCase(cs) {
         await S.waText(cs.ch === "wa" ? "/wa/" + cs.c : "/", who, st.in, { secret: cs.ch === "wa" ? "sec-" + cs.c : undefined, names: { [who]: cs.waName || "" } });
         rec.out = net.graph.slice(w0).filter(g => g.body && g.body.to === who).map(g => (g.body.text && g.body.text.body) || (g.body.template ? "[шаблон " + g.body.template.name + "]" : "[" + g.body.type + "]"));
       } else if (cs.ch === "ga") {
-        const r = { client: cs.c, id: "7105000001", token: "ga-tok-" + cs.c };
-        const t = createHmac("sha256", r.token).update(`ga-hook:${r.client}:${r.id}`).digest("hex").slice(0, 32);
-        await S.call(`/ga/${cs.c}?t=${t}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ typeWebhook: "incomingMessageReceived", instanceData: { idInstance: 7105000001, wid: "77000000077@c.us" }, timestamp: Math.floor(Date.now() / 1000), idMessage: `IN-${cs.id}-${++mid}`, senderData: { chatId: who + "@c.us", sender: who + "@c.us", senderName: cs.waName || "" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: st.in } } }) });
+        await S.gaText(cs.c, { id: "7105000001", token: "ga-tok-" + cs.c }, who, st.in, { idMessage: `IN-${cs.id}-${++mid}`, name: cs.waName });
         rec.out = net.ga.slice(ga0).filter(x => x.op === "sendMessage").map(x => x.body.message);
       } else {
         const r = await S.call("/api/chat", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify({ c: cs.c, sid, text: st.in }) });
@@ -78,11 +70,13 @@ async function runCase(cs) {
       rec.adminStatus = r.status;
       rec.out = net.graph.slice(w0).filter(g => g.body && g.body.to === who).map(g => g.body.text && g.body.text.body).concat(net.ga.slice(ga0).filter(x => x.op === "sendMessage").map(x => x.body.message));
     }
-    if (st.cron) { await S.cron(); rec.cron = true; rec.out = net.graph.slice(w0).filter(g => g.body && g.body.to === who).map(g => (g.body.text && g.body.text.body) || "[шаблон]"); }
     rec.ai = net.gemini.length - g0;
     rec.altegio = net.alt.slice(a0).filter(x => !/^GET /.test(x)).map(x => x.replace(/\/\d{4,}/g, "/<n>"));
     rec.tg = net.tg.slice(t0).map(x => x.text || x.caption || "");
-    if (st.flags === false) delete rec.flags;
+    { // состояние чата после шага: пауза, «ждёт ответа», отказ от рассылок (в конце сценария его уже может не быть)
+      const ph = S.hist(chOf(cs), cs.c, cs.ch ? who : sid), pp = (ph && ph.profile) || {};
+      rec.state = { paused: !!(pp.pausedUntil && pp.pausedUntil > Date.now()), need: pp.need ? pp.need.why : null, stop: !!pp.stop, optout: S.kv.mem.has(`optout:${cs.c}:${who}`) };
+    }
     steps.push(rec);
   }
   const ch = chOf(cs), hid = cs.ch ? who : sid;
@@ -90,9 +84,9 @@ async function runCase(cs) {
   const leads = S.leads(cs.c).map(l => { const { id, ts, ...rest } = l; return rest; });
   const end = {
     leads,
-    bookings: (p.bookings || []).map(b => pick(b, ["name", "service", "staff", "date", "time", "rq"])),
+    bookings: (p.bookings || []).map(b => pick(b, ["name", "services", "staffName", "date", "time", "rq", "j"])),
     pend: (p.pend || []).length,
-    req: p.req ? pick(p.req, ["kind", "what"]) : null,
+    req: p.req ? { key: String(p.req.key || "").replace(/\|[0-9a-z]+$/, "|<hash>"), ids: (p.req.ids || []).length } : null, // одна просьба — одна заявка
     need: p.need ? p.need.why : null,
     paused: !!(p.pausedUntil && p.pausedUntil > Date.now()),
     stop: !!p.stop,
@@ -100,16 +94,19 @@ async function runCase(cs) {
     turns: (h.turns || []).length,
     altRecords: net.altRecords.length, altDeleted: net.altDeleted.length
   };
-  return normalizer()({ title: cs.title, steps, end });
+  return norm({ title: cs.title, steps, end });
 }
 
 const exp = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : {};
 const got = {};
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, ran = 0;
+const broken = [];
 for (const cs of CASES) {
   if (!cs.id.includes(only)) { if (exp[cs.id]) got[cs.id] = exp[cs.id]; continue; }
+  ran++;
   let r;
-  try { r = await runCase(cs); } catch (e) { r = { title: cs.title, error: String((e && e.stack) || e).split("\n").slice(0, 3).join(" | ") }; }
+  try { r = await runCase(cs); } catch (e) { r = { title: cs.title, error: String((e && e.message) || e).slice(0, 300) }; console.log(`  СБОЙ ${cs.id}: ${(e && e.stack) || e}`); }
+  if (r.error || r.steps.some(x => x.adminStatus && x.adminStatus !== 200)) broken.push(cs.id); // сбой сценария или отказ пульта — не ожидание, а ошибка
   got[cs.id] = r;
   if (process.env.SHOW) console.log(`\n== ${cs.id}: ${cs.title}\n` + JSON.stringify(r, null, 1));
   if (process.env.UPDATE === "1") continue;
@@ -121,10 +118,12 @@ for (const cs of CASES) {
   diff(exp[cs.id], r, "    ");
 }
 for (const id of Object.keys(exp)) if (!CASES.some(c => c.id === id)) { if (process.env.UPDATE === "1") continue; fail++; console.log(`  ЛИШНЕЕ ОЖИДАНИЕ ${id} — сценария больше нет`); }
+if (!ran) { console.log(`Золотые переписки: ни один сценарий не подходит под «${only}»`); process.exit(1); }
 if (process.env.UPDATE === "1") {
+  if (broken.length) { console.log(`Золотые переписки: ожидания НЕ записаны — сбой или отказ пульта в сценариях: ${broken.join(", ")}`); process.exit(1); }
   writeFileSync(FILE, JSON.stringify(got, null, 1) + "\n");
-  console.log(`Золотые переписки: ожидания записаны (${Object.keys(got).length}) — проверьте разницу в git`);
-} else console.log(`Золотые переписки (${CASES.length}): прошло ${pass}, не прошло ${fail}`);
+  console.log(`Золотые переписки: ожидания записаны (${ran}) — проверьте разницу в git`);
+} else console.log(`Золотые переписки (${ran}${ran < CASES.length ? " из " + CASES.length : ""}): прошло ${pass}, не прошло ${fail}`);
 process.exit(fail ? 1 : 0);
 
 // первые расхождения по путям

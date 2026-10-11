@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
-import { mk, net, ok, T } from "../harness.mjs";
+import { mk, net, ok, T, gaPass } from "../harness.mjs";
 
 const SNAP = fileURLToPath(new URL("./routes.snap.json", import.meta.url));
 const OWNER_KEY = "owner-key-123456", STAFF_KEY = "staff-key-barber-0001", OTHER_KEY = "staff-key-dent-0002";
@@ -17,7 +17,7 @@ const S = mk({ KEY_BARBER: STAFF_KEY, KEY_DENT: OTHER_KEY, WA_TOKEN_BARBER: "tok
   GA_ID_BARBER: GA.id, GA_TOKEN_BARBER: GA.token, GA_URL_BARBER: "https://7105.api.green-api.com",
   GA_ID: "7105000009", GA_TOKEN: "ga-tok-shared", GA_URL: "https://7105.api.green-api.com", GA_CLIENT: "barber", GA_HOOK: "ga-hook-shared" });
 const sig = (secret, body) => "sha256=" + createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex");
-const gaPass = createHmac("sha256", GA.token).update(`ga-hook:barber:${GA.id}`).digest("hex").slice(0, 32);
+const gaPw = gaPass("barber", GA);
 
 // у каждого запроса свой адрес: неверные ключи считаются по адресу, и проверки не должны блокировать друг друга
 let ipN = 0;
@@ -132,7 +132,7 @@ for (const [method, path, body, hd] of R) {
 
 // проверка подписи и пароля сама работает: правильно подписанный вебхук и правильный пароль Green-API доходят до бота (ИИ отвечает)
 for (const [path, body, hd] of [["/wa/barber", META, { "x-hub-signature-256": sig("sec-barber", META) }], ["/", { ...META, entry: [{ ...META.entry[0], changes: [{ ...META.entry[0].changes[0], value: { ...META.entry[0].changes[0].value, messages: [{ ...META.entry[0].changes[0].value.messages[0], id: "wamid.contract.2" }] } }] }] }, null],
-  [`/ga/barber?t=${gaPass}`, { ...GREEN, idMessage: "GA-contract-2", instanceData: { idInstance: +GA.id } }, null], ["/ga?t=ga-hook-shared", { ...GREEN, idMessage: "GA-contract-3", senderData: { chatId: "77010000008@c.us", sender: "77010000008@c.us" }, instanceData: { idInstance: 7105000009 } }, null]]) {
+  [`/ga/barber?t=${gaPw}`, { ...GREEN, idMessage: "GA-contract-2", instanceData: { idInstance: +GA.id } }, null], ["/ga?t=ga-hook-shared", { ...GREEN, idMessage: "GA-contract-3", senderData: { chatId: "77010000008@c.us", sender: "77010000008@c.us" }, instanceData: { idInstance: 7105000009 } }, null]]) {
   const h = hd || (path === "/" ? { "x-hub-signature-256": sig("sec-shared", body) } : {});
   const ai0 = net.gemini.length, r = await go(null, "POST", path, body, h);
   ok(`правильно подписанный вебхук доходит до бота: POST ${path.replace(/t=[^&]+/, "t=<пароль>")}`, r.status === 200 && net.gemini.length > ai0, `${r.status} ИИ: ${net.gemini.length - ai0}`);

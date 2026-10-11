@@ -152,6 +152,9 @@ globalThis.fetch = async (u, init = {}) => {
   throw new Error("unexpected fetch " + url);
 };
 
+// пароль вебхука Green-API клиента — как gaHook в worker.js: HMAC токена инстанса от «ga-hook:<клиент>:<номер инстанса>»
+export const gaPass = (c, inst) => createHmac("sha256", inst.token).update(`ga-hook:${c}:${inst.id}`).digest("hex").slice(0, 32);
+
 // ---- один «сайт»: окружение воркера и помощники для запросов
 export function mk(envExtra = {}) {
   const kv = mkKV();
@@ -192,11 +195,15 @@ export function mk(envExtra = {}) {
     return call(path, { method: "POST", body, headers });
   };
   const waText = (path, from, text, o) => waPost(path, { from, type: "text", text: { body: text } }, o);
+  // вебхук Green-API клиента c (/ga/<c>?t=<пароль>): inst — { id, token } его инстанса (GA_ID_<C>, GA_TOKEN_<C>)
+  const gaText = (c, inst, from, text, { idMessage = "IN-" + (++waId), name = "" } = {}) => call(`/ga/${c}?t=${gaPass(c, inst)}`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ typeWebhook: "incomingMessageReceived", instanceData: { idInstance: +inst.id, wid: "77000000077@c.us" }, timestamp: Math.floor(Date.now() / 1000), idMessage,
+      senderData: { chatId: from + "@c.us", sender: from + "@c.us", senderName: name }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: text } } }) });
   const sentTo = to => net.graph.filter(g => g.body && g.body.to === to).map(g => (g.body.text && g.body.text.body) || (g.body.template && "[шаблон " + g.body.template.name + "]") || "");
   const hist = (ch, c, id) => kv.json(`h:${ch}:${c}:${id}`);
   const leads = c => kv.json("leads:" + c) || [];
   const cron = async at => { await worker.scheduled({ cron: "* * * * *", ...(at ? { scheduledTime: at } : {}) }, env, ctx); await settle(); }; // фоновая задача (раз в минуту); at — время запуска, мс
-  return { env, kv, call, settle, browser, chat, waPost, waText, sentTo, hist, leads, cron };
+  return { env, kv, call, settle, browser, chat, waPost, waText, gaText, sentTo, hist, leads, cron };
 }
 
 // ---- счёт проверок
