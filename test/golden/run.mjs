@@ -17,11 +17,16 @@ const OWNER = "owner-key-123456";
 const norm = (v, key) => typeof v === "string" ? (key === "at" && /^\d{1,2}:\d{2} /.test(v) ? "<время>" + v.slice(v.indexOf(" ")) : v) // время создания заявки: часы идут по-настоящему
   .split(D0).join("<D0>").split(D1).join("<D1>").split(D2).join("<D2>").replace(/\b1[78]\d{11}\b/g, "<ts>").replace(/wamid\.[\w.]+/g, "<wamid>")
   : typeof v === "number" && v > 1.7e12 && v < 1.9e12 ? "<ts>" // время в мс
-  : key === "loc" && typeof v === "number" ? "<loc>" // своя локация Altegio у каждого сценария
+  : key === "loc" && (typeof v === "number" || typeof v === "string") ? "<loc>" // своя локация Altegio у каждого сценария
   : Array.isArray(v) ? v.map(x => norm(x))
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, norm(x, k)])) : v;
 
 const chOf = cs => cs.ch === "ga" ? "ga" : cs.ch ? "wa" : "web";
+// состояние чата: пауза, «ждёт ответа», «стоп», отказ от рассылок (только WhatsApp: веб-чат — без номера)
+const stateOf = (S, cs, p, who) => ({ paused: !!(p.pausedUntil && p.pausedUntil > Date.now()), need: p.need ? p.need.why : null, stop: !!p.stop, ...(cs.ch ? { optout: S.kv.mem.has(`optout:${cs.c}:${who}`) } : {}) });
+// номера заявок (случайные) — метками <заявка1>, <заявка2>… во всех строках результата
+const maskLeadIds = (v, ids) => typeof v === "string" ? ids.reduce((x, id, i) => x.split(id).join(`<заявка${i + 1}>`), v)
+  : Array.isArray(v) ? v.map(x => maskLeadIds(x, ids)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskLeadIds(x, ids)])) : v;
 const pick = (o, keys) => Object.fromEntries(keys.filter(k => o && o[k] !== undefined).map(k => [k, o[k]]));
 
 async function runCase(cs) {
@@ -32,7 +37,7 @@ async function runCase(cs) {
   if (cs.ch === "wa") Object.assign(env, { ["WA_TOKEN_" + cs.c.toUpperCase()]: "tok-" + cs.c, ["APP_SECRET_" + cs.c.toUpperCase()]: "sec-" + cs.c });
   if (cs.ch === "ga") Object.assign(env, { ["GA_ID_" + cs.c.toUpperCase()]: "7105000001", ["GA_TOKEN_" + cs.c.toUpperCase()]: "ga-tok-" + cs.c, ["GA_URL_" + cs.c.toUpperCase()]: "https://7105.api.green-api.com" });
   const S = mk(env);
-  const who = cs.from || "77011234567", sid = "golden-" + cs.id, ip = `10.200.${CASES.indexOf(cs)}.1`;
+  const who = cs.from || "77011234567", sid = "golden-" + cs.id, ip = `10.200.${CASES.indexOf(cs)}.1`, hid = cs.ch ? who : sid;
   let mid = 0;
   const owner = S.browser();
   const steps = [];
@@ -63,38 +68,32 @@ async function runCase(cs) {
     if (st.net) { st.net(net); rec.net = st.note || "снаружи"; }
     if (st.admin) { // действие администратора в пульте
       if (!owner.cookie) await owner.go("/studio?key=" + OWNER);
-      const ch = chOf(cs), id = cs.ch ? who : sid;
+      const ch = chOf(cs), id = hid;
       const body = typeof st.admin.body === "function" ? st.admin.body({ leads: S.leads(cs.c) }) : st.admin.body; // функция — когда нужен номер заявки
       const r = await owner.post(st.admin.path, { c: cs.c, ch, id, ...body });
       rec.admin = st.admin.path + " " + JSON.stringify({ ...body, ...(body.lead ? { lead: "<заявка>" } : {}) });
       rec.adminStatus = r.status;
+      if (r.status !== (st.admin.status || 200)) rec.adminUnexpected = true; // ждали другой ответ пульта (по умолчанию 200)
       rec.out = net.graph.slice(w0).filter(g => g.body && g.body.to === who).map(g => g.body.text && g.body.text.body).concat(net.ga.slice(ga0).filter(x => x.op === "sendMessage").map(x => x.body.message));
     }
     rec.ai = net.gemini.length - g0;
     rec.altegio = net.alt.slice(a0).filter(x => !/^GET /.test(x)).map(x => x.replace(/\/\d{4,}/g, "/<n>"));
     rec.tg = net.tg.slice(t0).map(x => x.text || x.caption || "");
-    { // состояние чата после шага: пауза, «ждёт ответа», отказ от рассылок (в конце сценария его уже может не быть)
-      const ph = S.hist(chOf(cs), cs.c, cs.ch ? who : sid), pp = (ph && ph.profile) || {};
-      rec.state = { paused: !!(pp.pausedUntil && pp.pausedUntil > Date.now()), need: pp.need ? pp.need.why : null, stop: !!pp.stop, optout: S.kv.mem.has(`optout:${cs.c}:${who}`) };
-    }
+    rec.state = stateOf(S, cs, (S.hist(chOf(cs), cs.c, hid) || {}).profile || {}, who); // после шага (в конце сценария может быть уже другим)
     steps.push(rec);
   }
-  const ch = chOf(cs), hid = cs.ch ? who : sid;
-  const h = S.hist(ch, cs.c, hid) || {}, p = h.profile || {};
+  const h = S.hist(chOf(cs), cs.c, hid) || {}, p = h.profile || {};
   const leads = S.leads(cs.c).map(l => { const { id, ts, ...rest } = l; return rest; });
   const end = {
     leads,
     bookings: (p.bookings || []).map(b => pick(b, ["name", "services", "staffName", "date", "time", "rq", "j"])),
     pend: (p.pend || []).length,
-    req: p.req ? { key: String(p.req.key || "").replace(/\|[0-9a-z]+$/, "|<hash>"), ids: (p.req.ids || []).length } : null, // одна просьба — одна заявка
-    need: p.need ? p.need.why : null,
-    paused: !!(p.pausedUntil && p.pausedUntil > Date.now()),
-    stop: !!p.stop,
-    optout: S.kv.mem.has(`optout:${cs.c}:${who}`),
+    req: p.req ? { key: p.req.key || "", ids: (p.req.ids || []).length } : null, // одна просьба — одна заявка (ключ — от текста просьбы, постоянный)
+    ...stateOf(S, cs, p, who),
     turns: (h.turns || []).length,
     altRecords: net.altRecords.length, altDeleted: net.altDeleted.length
   };
-  return norm({ title: cs.title, steps, end });
+  return norm(maskLeadIds({ title: cs.title, steps, end }, S.leads(cs.c).map(l => l.id).filter(Boolean)));
 }
 
 const exp = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : {};
@@ -106,7 +105,7 @@ for (const cs of CASES) {
   ran++;
   let r;
   try { r = await runCase(cs); } catch (e) { r = { title: cs.title, error: String((e && e.message) || e).slice(0, 300) }; console.log(`  СБОЙ ${cs.id}: ${(e && e.stack) || e}`); }
-  if (r.error || r.steps.some(x => x.adminStatus && x.adminStatus !== 200)) broken.push(cs.id); // сбой сценария или отказ пульта — не ожидание, а ошибка
+  if (r.error || r.steps.some(x => x.adminUnexpected)) broken.push(cs.id); // сбой сценария или неожиданный ответ пульта — не ожидание, а ошибка
   got[cs.id] = r;
   if (process.env.SHOW) console.log(`\n== ${cs.id}: ${cs.title}\n` + JSON.stringify(r, null, 1));
   if (process.env.UPDATE === "1") continue;
