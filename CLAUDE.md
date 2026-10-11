@@ -129,7 +129,7 @@
   - `test/golden/cases.mjs` + `run.mjs` + `expected.json` — 51 «золотая» переписка: ИИ подменён записанными ответами, сверяется решение кода (ответ клиенту, заявки, Altegio, Telegram, состояние чата).
   - `test/unit/*.test.mjs` (`node --test`) — модули `src/` и проверка границ.
   - Поведение изменили намеренно — `UPDATE=1 node test/contract/routes.mjs` / `UPDATE=1 node test/golden/run.mjs`, затем **прочитать разницу в git** и объяснить её в коммите. Без `UPDATE=1` разница — ошибка.
-- `src/` — новый код (пока `src/lib/money.js`); `worker.js` подключает его. `jsconfig.json` — проверка типов `src/` (`npm run check:types`). `scripts/check-boundaries.mjs` — границы слоёв (`npm run check:boundaries`).
+- `src/` — перенесённый и новый код (фаза 1, пункты 1–9 таблицы §1.1 `REFACTORING.md` сделаны 11 октября 2026: `lib/` чистые помощники и HTTP/подпись, `config/` демо-клиенты, ниши, константы, `db/kv/` чаты, заявки, `kvRetry`, `services/integrations/{telegram,greenapi,meta}`, `services/{ai,notifications,channels}`); `worker.js` (5 461 строка) подключает его. Файлы перенесены «как есть» и помечены `// @ts-nocheck` — типы добавляются отдельным шагом. Номера строк в таблице §2.1 устарели — ищи по имени функции. `jsconfig.json` — проверка типов `src/` (`npm run check:types`). `scripts/check-boundaries.mjs` — границы слоёв (`npm run check:boundaries`).
 - `test/review/bot-copy.mjs` — копии бота в папках `test/review/4a`, `4b` подключают `src/` по абсолютному пути.
 - `.github/workflows/checks.yml` — тесты на Node 20/22/24 и пробная сборка `wrangler deploy --dry-run`.
 - `wrangler.jsonc` — **не `wrangler.toml`**: имя `ai-admin`, `main: worker.js`, KV `KV`, cron `* * * * *`, `keep_vars: true`, блок `previews`.
