@@ -38,6 +38,11 @@
 import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
 // Модули переезда (REFACTORING.md): всё новое — только в src/, worker.js их подключает.
 import { money } from "./src/lib/money.js";
+import { normPhone, phonesIn, redact } from "./src/lib/phone.js";
+import { TZ, local, hhmm, mins, isoDay, hm } from "./src/lib/time.js";
+import { clean, lowE, esc, isJoke } from "./src/lib/text.js";
+import { hash } from "./src/lib/crypto.js";
+import { detectLang } from "./src/services/conversation/language.js";
 
 const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинаково (индекс 0 = воскресенье)
 function week(sun, weekdays, sat) { const a = W5(weekdays); a[0] = sun; a[6] = sat; return a; }
@@ -181,16 +186,11 @@ for (const [id, c] of Object.entries(CLIENTS)) c.id = id;
 const hasClient = id => typeof id === "string" && Object.hasOwn(CLIENTS, id);
 
 // ================= время и расписание =================
-const TZ = 5; // Астана, UTC+5
 const DOW = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
 const MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
-const local = ms => new Date(ms + TZ * 3600e3); // читать через getUTC*
-const hhmm = d => `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 const dayLabel = d => `${DOW[d.getUTCDay()]}, ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
-const mins = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 const hStr = h => `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`; // час работы → «9:00», «9:30»
 
-function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; }
 
 // свободные окна: реальный график минус «занятые» (для демо — псевдослучайно, стабильно на день)
 function freeSlots(c, nowMs) {
@@ -326,65 +326,11 @@ const ATTACK = new RegExp([
   "system\\s+(prompt|message)", "нұсқаулық", "нұсқауларды", "ережелерді\\s+(ұмыт|елеме)", "елеме"
 ].join("|"), "i");
 
-// Шуточное имя: известный персонаж («Адольф Гитлер», «Шрек», одно слово «Путин»), проверочное слово, одна буква, брань.
-// Настоящие фамилии — «Токаева», «Назарбаев», «Путинцева», «Блялин» — шуткой не считаются: искать нужно слово целиком, а не его кусок
-const JOKE_ANY = new Set(["гитлер", "hitler", "бэтмен", "бетмен", "batman", "шрек", "shrek", "пикачу", "хуй", "хер", "пизда", "блядь", "блять", "бля", "жопа", "сука", "суки", "мудак", "пидор", "пидорас", "гандон", "чмо", "fuck", "shit"]);
-const JOKE_SOLO = new Set(["путин", "putin", "сталин", "ленин", "трамп", "trump", "байден", "biden", "наполеон", "обама", "маск"]);
-const JOKE_FIRST = new Set(["тест", "test", "бот", "bot", "admin", "asdf", "qwer", "qwerty", "йцук", "йцукен", "фыва", "абв", "abc"]);
-const JOKE_FULL = /(владимир\s+(владимирович\s+)?путин|путин\s+владимир|иосиф\s+(виссарионович\s+)?сталин|владимир\s+(ильич\s+)?ленин|дональд\s+трамп|джо\s+байден|наполеон\s+бонапарт|нурсултан\s+(абишевич\s+)?назарбаев|назарбаев\s+нурсултан|[кқ]асым[\s-]*жомарт\s+(кемелевич\s+)?токаев|токаев\s+[кқ]асым|человек[\s-]+паук|спанч[\s-]*боб|гарри\s+поттер|дарт\s+вейдер|илон\s+маск|elon\s+musk)/;
-function isJoke(name) {
-  const s = String(name || "").toLowerCase().replace(/ё/g, "е").trim(), w = s.match(/[a-zа-яәғқңөұүһі]+/g) || [];
-  if (/^[a-zа-я]$/.test(s)) return true;                                   // одна буква
-  if (JOKE_FULL.test(s) || w.some(x => JOKE_ANY.has(x))) return true;
-  return w.length > 0 && (JOKE_FIRST.has(w[0]) || (w.length === 1 && JOKE_SOLO.has(w[0])));
-}
 const JOKE = { test: isJoke };
 
-function normPhone(s) {
-  let d = String(s || "").replace(/\D/g, "");
-  if (d.length === 11 && d[0] === "8") d = "7" + d.slice(1);
-  if (d.length === 10 && d[0] === "7") d = "7" + d;
-  return /^7[3-9]\d{9}$/.test(d) ? "+" + d : ""; // после 7 идёт код оператора или города: с 0, 1 и 2 он не начинается («8 000 000 10 15» — не телефон)
-}
-// номер с 7 или 8 в начале и любыми знаками между цифрами («8.777.123.45.67», «8 777 1234 567») либо десять цифр мобильного без 7 и 8
-const PHONE_RE = /(?<!\d)(?:\+?[78])[\s(.–—-]*\d{3}(?:[\s().–—-]*\d){7}(?!\d)|(?<![\d+])7(?:0[0-8]|47|71|7[5-8])[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}(?!\d)/g;
-const INTL_RE = /\+(?![78][\s(.–—-]*\d{3})\d(?:[\s().–—-]*\d){9,13}(?!\d)/g; // номер другой страны — только с «+» и кодом: +998 90 123 45 67
-const ORDER_CTX = /(заказ\S*|чек\S*|код\S*|накладн\S*|договор\S*|квитанци\S*|order|ticket|№|#)\s*(номер\S*\s*)?[:№#]?\s*$/i; // «заказ 7001234567» — не телефон
-// телефоны в тексте по порядку: [{ at, len, phone }]
-function phonesIn(text) {
-  const s = String(text || ""), out = [];
-  for (const m of s.matchAll(PHONE_RE)) {
-    const p = normPhone(m[0]);
-    if (!p || (m[0].replace(/\D/g, "").length === 10 && ORDER_CTX.test(s.slice(Math.max(0, m.index - 24), m.index)))) continue;
-    out.push({ at: m.index, len: m[0].length, phone: p });
-  }
-  for (const m of s.matchAll(INTL_RE)) out.push({ at: m.index, len: m[0].length, phone: "+" + m[0].replace(/\D/g, "") });
-  return out.sort((a, b) => a.at - b.at);
-}
 const findPhone = s => (phonesIn(s)[0] || {}).phone || "";
 const maskPhones = s => { s = String(s); let out = "", at = 0; for (const p of phonesIn(s)) { if (p.at < at) continue; out += s.slice(at, p.at) + "[телефон указан]"; at = p.at + p.len; } return out + s.slice(at); };
 
-// ИИН (12 цифр) и номера карт (13–19 цифр) не храним и не отправляем в ИИ. Телефон рядом с другим числом («завтра в 10:00 87771234567»,
-// «8 705 111 22 33 15:00», «ИИН 990101300123 87051112233») остаётся телефоном: в цепочке цифр ищем номер, который состоит из целых групп
-function redact(text) {
-  const long = s => s.replace(/\D/g, "").length >= 12;
-  return String(text).replace(/(\+?)(\d(?:[\s-]?\d){11,})/g, (all, plus, run) => {
-    if (plus && !/^[78]/.test(run) && run.replace(/\D/g, "").length <= 15) return all; // «+998 90 123 45 67» — номер другой страны
-    const parts = run.split(/([\s-]+)/), n = (parts.length + 1) / 2;              // группы цифр стоят на чётных местах, между ними разделители
-    for (let i = 0; i < n; i++) {
-      let d = "";
-      for (let j = i; j < n && d.length < 11; j++) {
-        d += parts[2 * j];
-        const phone = (d.length === 11 && /^[78]/.test(d) && normPhone(d)) || (d.length === 10 && /^7(0[0-8]|47|71|7[5-8])/.test(d) && (j + 1 === n || d.length + parts[2 * j + 2].length > 11));
-        if (!phone) continue;
-        // то, что стоит до и после телефона, — отдельные числа: короткие (время, дата, размер) оставляем, длинные (ИИН, карта) прячем
-        const left = plus + parts.slice(0, 2 * i).join(""), mid = parts.slice(2 * i, 2 * j + 1).join(""), right = parts.slice(2 * j + 1).join("");
-        return (long(left) ? "[скрыто] " : left) + mid + (long(right) ? redact(right) : right);
-      }
-    }
-    return plus + "[скрыто] ";
-  });
-}
 
 // ================= передача живому администратору =================
 // Клиент просит живого сотрудника. «Хочу записать человека», «на 200 человек», «менеджер покажет зал?», «можно к администратору подойти?» — не просьба
@@ -493,33 +439,6 @@ async function allLeads(env, cid) {
   // общий список не прочитался: «all» — заявок не видно вовсе, «part» — видны только найденные отдельными ключами. Страница заявок скажет об этом, а не покажет «Пока пусто»
   if (!readable) Object.defineProperty(leads, "unread", { value: keysRead ? "part" : "all" });
   return leads;
-}
-// Язык сообщения; prev — язык прошлых сообщений этого чата. Латиница сама по себе — не английский («Camry R16», «Kaspi», «Azamat», «privet»):
-// английский — когда есть обычные английские слова, казахский — когда есть казахские. Имя или короткий ответ языка чата не меняют
-const EN_WORDS = new Set("hi hello hey yes no not the an is are am do does did can could would will how much many what when where which who why for and or to at on in of with my me you your we it this that please thanks thank have has there any some today tomorrow time free available open book booking appointment haircut cut beard price cost need needed want cleaning teeth tooth good morning evening afternoon speak english men women kids child".split(" "));
-const EN_STRONG = new Set("hello hi hey please thanks thank haircut appointment booking price tomorrow today how what when where which the english".split(" "));
-const KK_LAT = /^(salem|salam|salemetsiz\w*|assalau\w*|aleikum|rakhmet|rahmet|raqmet|jaqsy|jaksy|zhaksy|joq|jok|zhok|ia|iya|qansha|kansha|turady|kerek|jazyl\w*|jazyp|qalay\w*|qalai\w*|sizde|bugin|erten|keledi|kelemin|kelsem|kelem|kelmeimin|emes|tis\w{0,3}|auyr\w+|qai|qay|kun|kuni|bos|saiyn|jumys|iste\w{3,}|saqal|sakal|shash|sagat|uaqyt|qashan|qaida|bola|bar|ma)$/;
-const KK_CYR = /(^|[^а-яё])(салем|салам|саламатсыз\S*|салеметсиз\S*|рахмет|ракмет|жарайды|жаксы|жок|иа|канша|турады|керек|ертен|бугин|казир|сагат|уакыт|калай\S*|кайда|кашан|жазыл\S*|тис|шаш\s+кию)(?![а-яё])/i;
-const RU_WORDS = /(^|[^а-яё])(и|в|на|не|что|как|это|или|но|для|мне|меня|я|вы|вас|вам|мы|у|к|с|по|за|есть|можно|хочу|нужно|надо|сколько|стоит|когда|где|завтра|сегодня|запишите|записать|записаться|запись|время|пожалуйста|спасибо|здравствуйте|привет|добрый|хорошо|отмените|перенесите|цена|адрес|мой|моя|мое|мои|ваш|ваша|этот|эта|номер|телефон|имя|зовут|буду|будет|приду|давайте|тогда|тоже|только|уже|еще|очень|сейчас|утром|вечером|нужен|нужна|понятно|отлично|ладно|стрижк[аиу]|ли|до|предоплат[аыу]|подойти|прийти|оплат[аыу]|стрижку|бород[аыу])(?![а-яё])/i;
-const KK_CYR_G = new RegExp(KK_CYR.source, "gi"), RU_WORDS_G = new RegExp(RU_WORDS.source, "gi");
-function detectLang(t, prev) {
-  t = String(t || "");
-  if (/[әғқңөұүһі]/i.test(t)) return "kk";
-  const lat = (t.match(/[a-z]/gi) || []).length, cyr = (t.match(/[а-яё]/gi) || []).length;
-  if (lat > cyr) {
-    const w = (t.toLowerCase().match(/[a-z]+(?:['’][a-z]+)?/g) || []).map(x => x.replace(/['’]s$/, ""));
-    const kk = w.filter(x => KK_LAT.test(x)).length, en = w.filter(x => EN_WORDS.has(x)).length;
-    if (kk > 0 && kk >= en) return "kk"; // «men» — и казахское «я», и английское «мужской»: решают соседние слова
-    if (en >= 2 || (en > 0 && (en === w.length || w.some(x => EN_STRONG.has(x))))) return "en";
-    return prev || "ru";                 // марка, имя или русский текст латиницей («my hotim zapisatsya»)
-  }
-  if (cyr > 0) {
-    const kkN = (t.match(KK_CYR_G) || []).length, ruN = (t.match(RU_WORDS_G) || []).length;
-    if (kkN && kkN > ruN) return "kk"; // казахских слов больше, чем русских служебных: «Рахмет», «Салем, канша турады?»; «Салам, сколько стоит стрижка?» — по-русски
-    if (prev === "kk" && !RU_WORDS.test(t)) return "kk"; // «Тимур Ахметов, +7…» после казахского сообщения — язык прежний
-    return "ru";
-  }
-  return prev || "ru"; // цифры, «+», смайлик
 }
 
 // ================= слой 3: проверка ответа =================
@@ -861,33 +780,6 @@ const altLoc = (env, c) => {
   if (v != null && String(v).trim() !== "") return /^\d{1,12}$/.test(String(v).trim()) && +v > 0 ? +v : -1; // опечатка в номере — это сбой настройки, а не «расписания нет»
   return +((c.altegio && c.altegio.location) || 0) || 0;
 };
-// время из любого вида: «09:00» → «9:00», «в 10:00», «11.00», «09:30:00», «10 утра», «7:30 вечера» → «19:30», «с 10.00 до 11.00» → начало
-const hm = t => {
-  const s = String(t ?? "").toLowerCase();
-  let h = -1, mi = "00", end = -1;
-  const take = (m, hh, mm) => { h = +hh; mi = mm || "00"; end = m.index + m[0].length; };
-  let m = s.match(/(\d{1,2}):(\d{2})/);
-  if (m) take(m, m[1], m[2]);
-  else {
-    // «11.00», «10.30» — время. «04.10» читается и как 4 октября: такую пару считаем временем, только если она стоит после «в» или «к» либо перед ней уже есть дата
-    const all = [...s.matchAll(/(?:^|[^\d.])(\d{1,2})\.(\d{2})(?!\d|\.\d)/g)].filter(x => +x[1] < 24 && +x[2] < 60);
-    const dateLike = x => +x[2] >= 1 && +x[2] <= 12 && +x[1] >= 1;
-    const x = all.find(v => !dateLike(v)) || all.find(v => /(^|[^а-яёa-z])(в|к|at|сағат)\s*$/.test(s.slice(0, v.index + v[0].length - v[1].length - v[2].length - 1))) || (all.length > 1 ? all[all.length - 1] : null);
-    if (x) take(x, x[1], x[2]);
-    else if ((m = s.match(/(?:^|[^\d:.])(\d{1,2})\s*(?:ч|час[а-я]*)?\s*(?=утра|дня|вечера|ночи|[ap]\.?m)/))) take(m, m[1]);             // «10 утра», «7 pm», «3 часа дня»
-    else if ((m = s.match(/(?:^|[^а-яёa-z])(?:в|на|к|at|сағат)\s*(\d{1,2})(?:\s*(?:ч|час[а-я]*))?(?![\d:.\/-])(?!\s*(?:числ|янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек|-?го|\d))/))) take(m, m[1]); // «в 10»
-    else if ((m = s.match(/^\D*?(\d{1,2})\s*(?:ч|час[а-я]*)?\s*$/))) take(m, m[1]);                                                    // «10», «10ч»
-    else if ((m = s.match(/(?:^|[^\d])(\d{1,2})[\s-](00|30)(?!\d)/))) take(m, m[1], m[2]);                                          // «10-00», «10 30»
-    else if (/полдень/.test(s)) return "12:00";
-    else if (/полночь/.test(s)) return "0:00";
-  }
-  if (h < 0) return "";
-  const tail = s.slice(end).match(/^\s*(?:ч|час[а-я]*)?\s*(утра|дня|вечера|ночи|a\.?m|p\.?m)/);
-  if (tail) { const w = tail[1][0]; if ((w === "в" || w === "p" || (w === "д" && h <= 6)) && h < 12) h += 12; else if ((w === "у" || w === "a" || w === "н") && h === 12) h = 0; }
-  return h < 24 && +mi < 60 ? `${h}:${mi}` : "";
-};
-const clean = (s, n = 80) => String(s ?? "").replace(/[​-‏⁠﻿­]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
-const lowE = s => String(s ?? "").toLowerCase().replace(/ё/g, "е");
 // Имя человека из строки ИИ попадает в подсказку ИИ и в расписание, поэтому от поля «Имя» остаётся только имя: до трёх слов из букв
 // (русских, казахских, латинских; дефис и апостроф — внутри слова), не длиннее 40 знаков. Всё после точки, запятой, цифры, скобки и любого другого знака отбрасывается.
 // «А. Иванов», «Иванов А.С.» — точка после одной буквы считается инициалом. many — имён может быть несколько («Тимур, Алихан», «Тимур + Алихан»): они остаются через запятую
@@ -907,7 +799,6 @@ function cleanName(s, many) {
 // названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
 const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "(").replace(/[\]}>]/g, ")").replace(/;/g, ",").replace(/\|/g, "/")
   .replace(/(\d{1,2}):(\d{2})/g, "$1.$2").replace(/\s*:\s*/g, " — "), n);
-const isoDay = ms => local(ms).toISOString().slice(0, 10);
 const WORD = /[^a-zа-яәғқңөұүһі0-9]+/;
 
 // падежные формы имени: «Тимур» → Тимура, Тимуру…; «Мария» → Марии, Марию…; казахское «Арманға».
@@ -4379,7 +4270,6 @@ async function diag(env) {
 }
 
 // ================= страницы =================
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
 function html(s) { return new Response(s, { headers: { "content-type": "text/html; charset=utf-8" } }); }
 function text(s) { return new Response(s, { headers: { "content-type": "text/plain; charset=utf-8" } }); }
 function json(o, status = 200) { return new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8" } }); }
