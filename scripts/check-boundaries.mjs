@@ -52,26 +52,30 @@ function walk(dir, out = []) {
 
 // подключения файла. Статические (import … from, export … from, import "x") находит сам V8 — тот же разбор, что у Node
 // и у сборки: комментарии, строки, шаблоны и регулярные выражения ему не мешают. Без флага --experimental-vm-modules
-// разбор идёт в дочернем процессе с этим флагом. import() в src/ не используем: его цель не всегда видна до запуска —
-// каждое «import(» в коде идёт в отчёт (строки-комментарии и JSDoc {import("…").T} не считаются).
-const PARSE = 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.stringify({ok:new (require("vm").SourceTextModule)(s).dependencySpecifiers}))}catch(e){process.stdout.write(JSON.stringify({err:String(e.message||e)}))}})';
-function staticSpecs(src) {
-  if (vm.SourceTextModule) { try { return { ok: new vm.SourceTextModule(src).dependencySpecifiers }; } catch (e) { return { err: String(e.message || e) }; } }
-  const r = spawnSync(process.execPath, ["--experimental-vm-modules", "--no-warnings", "-e", PARSE], { input: src, encoding: "utf8" });
-  try { return JSON.parse(r.stdout); } catch (e) { return { err: "разбор не удался: " + String(r.stderr || r.error || "").slice(0, 200) }; }
+// разбор идёт в одном дочернем процессе с этим флагом (на все файлы сразу).
+// import() в src/ не используем: его цель не всегда видна до запуска. Любое «import(» в файле — в отчёт, даже в строке
+// или комментарии (лучше лишнее предупреждение, чем пропуск). Типы в JSDoc — тегом /** @import { T } from "./x.js" */.
+const PARSE = 'process.stdin.setEncoding("utf8");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(JSON.parse(s).map(t=>{try{return{ok:new (require("vm").SourceTextModule)(t).dependencySpecifiers}}catch(e){return{err:String(e.message||e)}}}))))';
+function staticSpecs(srcs) {
+  if (vm.SourceTextModule) return srcs.map(t => { try { return { ok: new vm.SourceTextModule(t).dependencySpecifiers }; } catch (e) { return { err: String(e.message || e) }; } });
+  const r = spawnSync(process.execPath, ["--experimental-vm-modules", "--no-warnings", "-e", PARSE], { input: JSON.stringify(srcs), encoding: "utf8", maxBuffer: 1 << 26 });
+  try { return JSON.parse(r.stdout); } catch (e) { return srcs.map(() => ({ err: "разбор не удался: " + String(r.stderr || r.error || "").slice(0, 200) })); }
 }
-export function importsOf(src) {
-  const lines = src.split("\n"), out = [];
-  const lineOf = spec => { const i = lines.findIndex(l => l.includes(`"${spec}"`) || l.includes(`'${spec}'`)); return i + 1; };
-  const r = staticSpecs(src);
-  if (r.err) out.push({ spec: null, line: 0, why: "файл не разбирается: " + r.err });
-  for (const spec of r.ok || []) out.push({ spec: spec || null, line: lineOf(spec), ...(spec ? {} : { why: "пустое подключение" }) });
-  lines.forEach((l, i) => {
-    if (/^\s*(\/\/|\/\*|\*)/.test(l)) return; // строка-комментарий, JSDoc
-    if (/(^|[^\w$.])import\s*\(/.test(l)) out.push({ spec: null, line: i + 1, why: "import() — в src/ только import … from (цель import() проверить нельзя)" });
-  });
+const DYNAMIC = /\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*\(/g; // import(, import (, import\n(, import /* … */ (
+function importsFrom(src, parsed) {
+  const lines = src.split("\n"), out = [], esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (parsed.err) out.push({ spec: null, line: 0, why: "файл не разбирается: " + parsed.err });
+  for (const spec of parsed.ok || []) {
+    if (!spec) { out.push({ spec: null, line: 0, why: "пустое подключение" }); continue; }
+    // строки, где это подключение написано (V8 повторы склеивает — показываем все места); не нашли — строка 0
+    const at = new RegExp(`(\\bfrom\\s*|^\\s*import\\s*)(["'])${esc(spec)}\\2`);
+    const found = lines.map((l, i) => at.test(l) ? i + 1 : 0).filter(Boolean);
+    for (const line of found.length ? found : [0]) out.push({ spec, line });
+  }
+  for (const m of src.matchAll(DYNAMIC)) out.push({ spec: null, line: src.slice(0, m.index).split("\n").length, why: "import() — в src/ только import … from (цель import() проверить нельзя; типы в JSDoc — тегом @import)" });
   return out;
 }
+export const importsOf = src => importsFrom(src, staticSpecs([src])[0]);
 // файл есть и каждая часть пути совпадает с точностью до регистра (macOS и Windows регистр не различают, а Linux и сборка — различают)
 const isExactFile = (root, p) => {
   try {
@@ -83,26 +87,24 @@ const isExactFile = (root, p) => {
 };
 // пакеты npm — только из dependencies в package.json (devDependencies — для проверок и сборки, не для Worker);
 // модулей Node (fs, events, buffer… и node:*) в Worker без nodejs_compat нет
-function declaredPackages(srcRoot) {
-  let dir = srcRoot;
-  for (;;) { // ближайший package.json выше src/
-    const f = join(dir, "package.json");
-    if (existsSync(f)) { const pj = JSON.parse(readFileSync(f, "utf8")); return new Set(Object.keys(pj.dependencies || {})); } // испорченный package.json — ошибка, а не «пакетов нет»
-    const up = dirname(dir); if (up === dir) return new Set(); dir = up;
-  }
+function declaredPackages(srcRoot, problems) { // package.json рядом с папкой src/
+  const f = join(srcRoot, "..", "package.json");
+  if (!existsSync(f)) { problems.push("нет package.json рядом с src/ — пакеты npm считаются необъявленными"); return new Set(); }
+  try { return new Set(Object.keys(JSON.parse(readFileSync(f, "utf8")).dependencies || {})); }
+  catch (e) { problems.push("package.json не читается: " + String(e.message || e).slice(0, 120)); return new Set(); }
 }
 const pkgName = spec => spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
-const lineAt = (s, i) => s.slice(0, i).split("\n").length;
 
 export function checkBoundaries(srcDir) {
   const root = resolve(srcDir), problems = [];
   if (!existsSync(root)) return { problems: [`нет папки ${srcDir}`], files: 0 };
-  const files = walk(root), graph = new Map(), pkgs = declaredPackages(root);
-  for (const f of files) {
+  const files = walk(root), graph = new Map(), pkgs = declaredPackages(root, problems);
+  const texts = files.map(f => readFileSync(f, "utf8")), parsed = staticSpecs(texts);
+  for (const [k, f] of files.entries()) {
     const rel = relative(root, f), from = layerOf(rel), deps = [];
     graph.set(f, deps);
     if (!from) { problems.push(`${rel}: файл вне известных слоёв (routes, controllers, services, db, jobs, config, lib, index.js)`); continue; }
-    for (const { spec, line, why } of importsOf(readFileSync(f, "utf8"))) {
+    for (const { spec, line, why } of importsFrom(texts[k], parsed[k])) {
       const at = `${rel}:${line}`;
       if (spec === null) { problems.push(`${at}: ${why}`); continue; }
       if (!spec.startsWith(".") && !spec.startsWith("/")) {

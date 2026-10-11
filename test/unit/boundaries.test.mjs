@@ -70,11 +70,16 @@ test("строки, шаблоны, регулярные выражения и �
   assert.deepEqual(specs(s), ["../routes/a.js", "../routes/b.js"]);
 });
 
-test("любой import() в коде — в отчёт (многострочный, с параметрами, после «{», в шаблоне); JSDoc и строки-комментарии — нет", () => {
-  const s = 'const m = await import(\n  "../routes/r.js"\n);\nconst j = await import("./d.json", { with: { type: "json" } });\nif (a) {import("./x.js")}\nconst t = `${import("./y.js")}`;\n/** @param {import("../controllers/x.js").T} a */\n// import("./gone.js")\n/**\n * import("./w.js")\n */\nexport const f = a => a;\n';
+test("любой import( в файле — в отчёт: многострочный, с параметрами, после «{», в шаблоне, через перенос и комментарий, даже в строке и JSDoc; тег @import — нет", () => {
+  const s = 'const m = await import(\n  "../routes/r.js"\n);\nconst j = await import("./d.json", { with: { type: "json" } });\nif (a) {import("./x.js")}\nconst t = `${import("./y.js")}`;\nconst n = await import\n("./n.js");\nconst c = await import /* x */ ("./c.js");\n/* lazy */ const l = await import("./l.js");\nconst q = "call import(x)";\n/** @param {import("../controllers/x.js").T} a */\n/** @import { T } from "../controllers/x.js" */\nexport const f = a => a;\n';
   const r = importsOf(s);
-  assert.deepEqual(r.map(x => x.line), [1, 4, 5, 6]);
+  assert.deepEqual(r.map(x => x.line), [1, 4, 5, 6, 7, 9, 10, 11, 12]);
   assert.ok(r.every(x => x.spec === null && /import\(\)/.test(x.why)));
+});
+
+test("место подключения: строка самого import, а не комментарий; повтор того же подключения — все строки", () => {
+  const r = importsOf('// see "./a.js" for details\nimport { a } from "./a.js";\nimport { b } from "./a.js";\nexport const x = [a, b];\n');
+  assert.deepEqual(r.map(x => [x.spec, x.line]), [["./a.js", 2], ["./a.js", 3]]);
 });
 
 test("файл с ошибкой разбора — в отчёт; пустое подключение — в отчёт", () => {
