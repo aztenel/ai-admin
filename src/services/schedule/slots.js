@@ -25,3 +25,10 @@ export function freeSlots(c, nowMs) {
 
 // свободные окна: из расписания Altegio (ctx.slots), иначе демо-график клиента
 export const getSlots = (c, ctx) => ctx.slots || freeSlots(c, ctx.nowMs);
+
+export function openNow(c, nowMs) {
+  const n = local(nowMs), h = c.hours[n.getUTCDay()];
+  if (!h) return false;
+  const m = n.getUTCHours() * 60 + n.getUTCMinutes();
+  return m >= h[0] * 60 && m < h[1] * 60;
+}

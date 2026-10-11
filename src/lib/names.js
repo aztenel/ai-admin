@@ -33,3 +33,23 @@ export const SV_STOP = new Set(["для", "или", "без", "при", "под"
 export const svWords = s => (s.match(/[\p{L}\p{N}]+/gu) || []).filter(w => (w.length >= 3 || /\d/.test(w)) && !SV_STOP.has(w));
 export const svStem = w => /\d/.test(w) || w.length <= 4 ? w : w.slice(0, Math.max(4, w.length - 2));
 export const svParts = s => s.replace(/\([^()]*\)/g, " ").split(/\s*(?:\+|&|,|\sи\s|\sand\s)\s*/).map(x => x.trim()).filter(Boolean); // составные части: «стрижка + борода»; пояснение в скобках — не часть
+
+// Имя человека из строки ИИ попадает в подсказку ИИ и в расписание, поэтому от поля «Имя» остаётся только имя: до трёх слов из букв
+// (русских, казахских, латинских; дефис и апостроф — внутри слова), не длиннее 40 знаков. Всё после точки, запятой, цифры, скобки и любого другого знака отбрасывается.
+// «А. Иванов», «Иванов А.С.» — точка после одной буквы считается инициалом. many — имён может быть несколько («Тимур, Алихан», «Тимур + Алихан»): они остаются через запятую
+const NAME_CH = "A-Za-zÀ-ÖØ-öø-ɏА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+
+const NAME_HEAD = new RegExp("^[^" + NAME_CH + "]+"), NAME_INITIAL = new RegExp("(^|[ ,+&])([" + NAME_CH + "])\\.(?=[ " + NAME_CH + "]|$)", "g");
+
+const NAME_ONE = new RegExp("^[" + NAME_CH + "'’ʼ\\s-]*"), NAME_MANY = new RegExp("^[" + NAME_CH + "'’ʼ\\s,+&-]*");
+
+export function cleanName(s, many) {
+  const t = clean(s, 200).replace(NAME_HEAD, "").replace(NAME_INITIAL, "$1$2 ").replace(NAME_INITIAL, "$1$2 "); // второй проход — для инициалов подряд: «А.С. Иванов»
+  const one = x => { // слова до первого «слова» без букв: «Тимур - постоянный клиент» → «Тимур»
+    const out = [];
+    for (const w0 of x.trim().split(/\s+/)) { const w = w0.replace(/^['’ʼ-]+|['’ʼ-]+$/g, ""); if (!w || out.push(w) === 3) break; }
+    return out.join(" ").slice(0, 40).replace(/[\s'’ʼ-]+$/, "");
+  };
+  const body = t.match(many ? NAME_MANY : NAME_ONE)[0];
+  return many ? body.split(/\s*[,+&]\s*/).map(one).filter(Boolean).slice(0, 3).join(", ").slice(0, 60).replace(/[\s,'’ʼ-]+$/, "") : one(body);
+}

@@ -87,3 +87,8 @@ export function altFromJournal(prof, list, nowMs) {
   if (lids.length) prof.altGone = [...new Set([...(prof.altGone || []), ...lids])].slice(-8);
   return gone.length;
 }
+
+// ---- журнал Altegio (ключ пользователя салона ALTEGIO_USER_<ID>): записи клиента бот берёт из CRM, а не из своей памяти.
+// Вживую 10 октября (пробная локация): вход логином и паролем → user_token, GET /records/<локация> отдаёт записи с полями
+// id, datetime, staff, client (с телефоном), services, deleted, attendance. Без ключа пользователя — прежний режим (память чата)
+export const altUserKey = (env, c) => String(env["ALTEGIO_USER_" + String(c.id).toUpperCase()] || "").trim();
