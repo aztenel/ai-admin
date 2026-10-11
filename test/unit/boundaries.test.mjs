@@ -11,6 +11,7 @@ function tree(files) {
   const root = mkdtempSync(join(tmpdir(), "bnd-")), src = join(root, "src");
   for (const [p, body] of Object.entries(files)) { mkdirSync(dirname(join(src, p)), { recursive: true }); writeFileSync(join(src, p), body); }
   writeFileSync(join(root, "worker.js"), "export const old = 1;\n");
+  writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { decl: "1.0.0" }, devDependencies: { devonly: "1.0.0" } }));
   return { src, done: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -50,36 +51,47 @@ test("обратные зависимости, выход из src/, node:*, н�
     const p = checkBoundaries(t.src).problems.join("\n");
     for (const re of [/services\/a\.js:1: services → controllers/, /services\/a\.js:2: .*вне src/, /services\/a\.js:3: .*node:fs/, /services\/a\.js:4: .*файла нет/,
       /controllers\/x\.js:1: controllers → db/, /alt\/client\.js:1: integrations → services/, /q\.js:1: db → services/,
-      /lib\/p\.js:2: подключение не строкой/, /lib\/p\.js:3: .*«fs» — модулей Node/, /lib\/p\.js:4: .*папка/, /lib\/p\.js:5: .*регистр/, /lib\/q\.js:1: lib → routes/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
+      /lib\/p\.js:2: import\(\) — в src\/ только import … from/, /lib\/p\.js:3: «fs» — пакета нет в dependencies/, /lib\/p\.js:4: .*папка/, /lib\/p\.js:5: .*регистр/, /lib\/q\.js:1: lib → routes/, /цикл: lib\/c1\.js → lib\/c2\.js → lib\/c1\.js|цикл: lib\/c2\.js → lib\/c1\.js → lib\/c2\.js/, /misc\/odd\.js: файл вне известных слоёв/])
       assert.match(p, re);
     assert.doesNotMatch(p, /lib → config/); // CLAUDE.md §4: config доступен всем
   } finally { t.done(); }
 });
 
-test("разбор подключений: многострочный import, export from, import без имён, import() строкой", () => {
-  const s = 'import {\n  a,\n  b\n} from "./a.js";\nexport { c } from \'./c.js\';\nimport "./side.js";\nconst x = await import("./lazy.js");\nconst t = "from \\"./not-import.js\\"";\n';
-  assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["./a.js", "./c.js", "./lazy.js", "./side.js"]);
+const specs = src => importsOf(src).map(x => x.spec ?? "<" + x.why.split(" ")[0] + ">").sort();
+
+test("разбор подключений (V8): многострочный import, export from, import без имён, комментарии с кавычками в списке имён", () => {
+  const s = 'import {\n  a, // it\'s a\n  b /* don\'t */\n} from "./a.js";\nexport { c } from \'./c.js\';\nexport * from "./d.js";\nimport "./side.js";\n';
+  assert.deepEqual(specs(s), ["./a.js", "./c.js", "./d.js", "./side.js"]);
+  assert.equal(importsOf(s).find(x => x.spec === "./c.js").line, 5);
 });
 
-test("комментарии с начала строки и JSDoc — не подключения; пустое подключение — в отчёт", () => {
-  const s = '/** @param {import("../controllers/x.js").T} a */\n// не import(x)\n/* import { q } from "./q.js"; */\n/**\n * import { w } from "./w.js";\n */\nexport const f = a => a;\n';
-  assert.deepEqual(importsOf(s), []);
-  assert.deepEqual(importsOf('import x from "";\n').map(x => x.spec), [null]);
+test("строки, шаблоны, регулярные выражения и деление не прячут и не выдумывают статических подключений", () => {
+  const s = 'let k = i++ / 2;\nexport { b } from "../routes/b.js";\nif (ok) /\'/.test(s);\nconst css = `\n/* header\n`;\nexport { a } from "../routes/a.js";\nconst c = p.replace(/\\/*$/, "");\nconst tpl = `\nimport { q } from "./q.js";\n`;\nconst z = "*/";\n';
+  assert.deepEqual(specs(s), ["../routes/a.js", "../routes/b.js"]);
 });
 
-test("код с регулярными выражениями и делением не прячет подключения на следующих строках", () => {
-  const s = 'let k = i++ / 2;\nexport { b } from "../routes/b.js";\nif (ok) /\'/.test(s);\nexport { a } from "../routes/a.js";\nconst c = p.replace(/\\/*$/, "");\nconst m = await import("../routes/r.js");\n';
-  assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["../routes/a.js", "../routes/b.js", "../routes/r.js"]);
+test("любой import() в коде — в отчёт (многострочный, с параметрами, после «{», в шаблоне); JSDoc и строки-комментарии — нет", () => {
+  const s = 'const m = await import(\n  "../routes/r.js"\n);\nconst j = await import("./d.json", { with: { type: "json" } });\nif (a) {import("./x.js")}\nconst t = `${import("./y.js")}`;\n/** @param {import("../controllers/x.js").T} a */\n// import("./gone.js")\n/**\n * import("./w.js")\n */\nexport const f = a => a;\n';
+  const r = importsOf(s);
+  assert.deepEqual(r.map(x => x.line), [1, 4, 5, 6]);
+  assert.ok(r.every(x => x.spec === null && /import\(\)/.test(x.why)));
 });
 
-test("пакеты: модуль Node без node: (events, buffer) — ошибка; пакет не из package.json — ошибка; папка в другом регистре — ошибка", () => {
-  const t = tree({ "lib/a.js": 'import { Buffer } from "buffer";\nimport { EventEmitter } from "events";\nimport { q } from "../db/Repositories/q.js";\nimport z from "zod";\nexport const a = [Buffer, EventEmitter, q, z];\n', "db/repositories/q.js": "export const q = 1;\n" });
+test("файл с ошибкой разбора — в отчёт; пустое подключение — в отчёт", () => {
+  assert.match(importsOf("export const = ;\n")[0].why, /не разбирается/);
+  assert.match(importsOf('import x from "";\n')[0].why, /пустое/);
+});
+
+test("пакеты: модуль Node (events, buffer) и пакет не из dependencies (в том числе devDependencies) — ошибка; объявленный — можно; папка в другом регистре — ошибка", () => {
+  const t = tree({ "lib/b.js": 'import { x } from "decl";\nimport { y } from "devonly";\nexport const b = [x, y];\n', "lib/a.js": 'import { Buffer } from "buffer";\nimport { EventEmitter } from "events";\nimport { q } from "../db/Repositories/q.js";\nimport z from "zod";\nexport const a = [Buffer, EventEmitter, q, z];\n', "db/repositories/q.js": "export const q = 1;\n" });
   try {
     const p = checkBoundaries(t.src).problems.join("\n");
-    assert.match(p, /lib\/a\.js:1: «buffer» — модулей Node/);
-    assert.match(p, /lib\/a\.js:2: «events» — модулей Node/);
+    assert.match(p, /lib\/a\.js:1: «buffer» — пакета нет в dependencies package\.json \(модулей Node/);
+    assert.match(p, /lib\/a\.js:2: «events» — пакета нет/);
     assert.match(p, /lib\/a\.js:3: .*регистр/);
-    assert.match(p, /lib\/a\.js:4: «zod» — пакета нет в package.json/);
+    assert.match(p, /lib\/a\.js:4: «zod» — пакета нет в dependencies/);
+    assert.doesNotMatch(p, /«decl»/);
+    assert.match(p, /lib\/b\.js:2: «devonly» — пакета нет в dependencies/);
   } finally { t.done(); }
 });
 
