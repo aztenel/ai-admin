@@ -66,6 +66,20 @@ test("комментарии, JSDoc и строки — не подключен�
   assert.deepEqual(importsOf(s), []);
 });
 
+test("регулярные выражения с кавычкой или /* не прячут подключения; строка-шаблон с «import … from» — не подключение", () => {
+  const s = 'const a = p.replace(/\\/*$/, "");\nconst b = /["\']/.test(a);\nconst m = await import("../routes/r.js");\nconst tpl = `\nimport { x } from "../routes/t.js";\n`;\nconst half = 10 / 2, q = "x" / 1;\nimport { y } from "./y.js";\n';
+  assert.deepEqual(importsOf(s).map(x => x.spec).sort(), ["../routes/r.js", "./y.js"]);
+});
+
+test("пакеты npm с именами как у модулей Node (buffer, events) — решает ревью; папка в другом регистре — ошибка", () => {
+  const t = tree({ "lib/a.js": 'import { Buffer } from "buffer";\nimport { EventEmitter } from "events";\nimport { q } from "../db/Repositories/q.js";\nexport const a = [Buffer, EventEmitter, q];\n', "db/repositories/q.js": "export const q = 1;\n" });
+  try {
+    const p = checkBoundaries(t.src).problems.join("\n");
+    assert.doesNotMatch(p, /buffer|events/);
+    assert.match(p, /lib\/a\.js:3: .*регистр/);
+  } finally { t.done(); }
+});
+
 // единственное место, где настоящая src/ проверяется в npm test (а значит, и перед выкладкой Cloudflare); CI отдельно её не гоняет
 test("настоящая папка src/ — без нарушений", () => {
   assert.deepEqual(checkBoundaries(fileURLToPath(new URL("../../src", import.meta.url))).problems, []);

@@ -6,9 +6,8 @@
 // имя файла с другим регистром букв, import() не строкой, циклы. Комментарии и строки (в том числе JSDoc {import("…").T}) не считаются.
 // Запуск: node scripts/check-boundaries.mjs [папка src]. Код выхода 1 — есть нарушения.
 import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from "node:fs";
-import { join, relative, resolve, dirname, basename, sep } from "node:path";
+import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { builtinModules } from "node:module";
 
 // слой файла по его месту в src/
 export function layerOf(rel) {
@@ -49,8 +48,8 @@ function walk(dir, out = []) {
   return out;
 }
 
-// текст без комментариев (keepStrings: строки остаются) или ещё и без содержимого строк; переносы строк и длина сохраняются
-// Ограничение: регулярные выражения /…/ не разбираются — кавычка внутри них может сбить разбор этого файла (тогда смотреть глазами).
+// текст без комментариев (keepStrings: строки остаются) или ещё и без содержимого строк и регулярных выражений; переносы строк и длина сохраняются
+const REGEX_BEFORE = /[(,=:[!&|?{};+\-*%<>~^]$|(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|void|yield|await|delete|throw|new)$/; // после чего «/» начинает /регулярное выражение/
 export function blank(src, keepStrings) {
   let out = "", i = 0;
   const sp = t => t.replace(/[^\n]/g, " ");
@@ -60,29 +59,44 @@ export function blank(src, keepStrings) {
     else if (c === "/" && d === "*") { const j = src.indexOf("*/", i + 2); const e = j < 0 ? src.length : j + 2; out += sp(src.slice(i, e)); i = e; }
     else if (c === '"' || c === "'" || c === "`") {
       let j = i + 1;
-      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+      while (j < src.length && src[j] !== c && !(c !== "`" && src[j] === "\n")) j += src[j] === "\\" ? 2 : 1;
       const e = Math.min(j + 1, src.length);
       out += keepStrings ? src.slice(i, e) : c + sp(src.slice(i + 1, e - 1)) + (e - i > 1 ? c : ""); i = e;
+    } else if (c === "/" && REGEX_BEFORE.test(out.replace(/\s+$/, "") || "(")) { // /…/ — до закрывающей «/» вне [ ], с учётом «\»
+      let j = i + 1, cls = false;
+      while (j < src.length && src[j] !== "\n" && (cls || src[j] !== "/")) { if (src[j] === "\\") j++; else if (src[j] === "[") cls = true; else if (src[j] === "]") cls = false; j++; }
+      const e = Math.min(j + 1, src.length);
+      out += "/" + sp(src.slice(i + 1, e - 1)) + (e - i > 1 ? "/" : ""); i = e;
     } else { out += c; i++; }
   }
   return out;
 }
 
-// подключения файла: import … from "x", export … from "x", import "x", import("x")
+// подключения файла: import … from "x", export … from "x", import "x", import("x").
+// Где подключение — ищем в тексте без строк (строка-шаблон с «import … from» внутри — не подключение), имя модуля читаем на том же месте со строками.
 export function importsOf(src) {
   const code = blank(src, true), bare = blank(src, false), out = [];
-  for (const m of code.matchAll(/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
-  for (const m of code.matchAll(/^[ \t]*import\s*(["'])([^"']+)\1/gm)) out.push({ spec: m[2], line: lineAt(src, m.index) });
-  for (const m of bare.matchAll(/\bimport\s*\(/g)) { // где import( — ищем без строк, аргумент читаем со строками
+  const specAt = i => { const m = /^(["'])([^"'\n]*)\1/.exec(code.slice(i)); return m ? m[2] : null; };
+  for (const re of [/^[ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*(["'])/dgm, /^[ \t]*import\s*(["'])/dgm])
+    for (const m of bare.matchAll(re)) { const spec = specAt(m.indices[1][0]); if (spec) out.push({ spec, line: lineAt(src, m.index) }); }
+  for (const m of bare.matchAll(/\bimport\s*\(/g)) {
     const arg = /^\s*([^)]*)\)/.exec(code.slice(m.index + m[0].length));
     const lit = arg && /^(["'])([^"']+)\1$/.exec(arg[1].trim());
     out.push({ spec: lit ? lit[2] : null, line: lineAt(src, m.index) });
   }
   return out;
 }
-// файл есть и имя совпадает с точностью до регистра (macOS и Windows регистр не различают, а Linux и сборка — различают)
-const isExactFile = p => { try { return statSync(p).isFile() && readdirSync(dirname(p)).includes(basename(p)); } catch (e) { return false; } };
-const NODE = new Set(builtinModules.flatMap(m => [m, m.split("/")[0]]));
+// файл есть и каждая часть пути совпадает с точностью до регистра (macOS и Windows регистр не различают, а Linux и сборка — различают)
+const isExactFile = (root, p) => {
+  try {
+    if (!statSync(p).isFile()) return false;
+    let dir = root;
+    for (const part of relative(root, p).split(sep)) { if (!readdirSync(dir).includes(part)) return false; dir = join(dir, part); }
+    return true;
+  } catch (e) { return false; }
+};
+// модули, которых в Cloudflare Worker без nodejs_compat нет и которые не заменить пакетом npm (buffer, events, util, url и т. п. — есть пакеты, решает ревью)
+const NODE_ONLY = new Set(["fs", "path", "os", "child_process", "cluster", "dgram", "dns", "http", "http2", "https", "inspector", "module", "net", "perf_hooks", "process", "readline", "repl", "tls", "tty", "v8", "vm", "worker_threads", "zlib", "async_hooks", "crypto", "diagnostics_channel", "trace_events", "wasi", "sqlite", "test"]);
 const lineAt = (s, i) => s.slice(0, i).split("\n").length;
 
 export function checkBoundaries(srcDir) {
@@ -96,11 +110,11 @@ export function checkBoundaries(srcDir) {
     for (const { spec, line } of importsOf(readFileSync(f, "utf8"))) {
       const at = `${rel}:${line}`;
       if (spec === null) { problems.push(`${at}: import() не строкой — проверить нельзя`); continue; }
-      if (spec.startsWith("node:") || NODE.has(spec) || NODE.has(spec.split("/")[0])) { problems.push(`${at}: «${spec}» — модулей Node в Worker нет`); continue; }
+      if (spec.startsWith("node:") || NODE_ONLY.has(spec.split("/")[0])) { problems.push(`${at}: «${spec}» — модулей Node в Worker нет`); continue; }
       if (!spec.startsWith(".") && !spec.startsWith("/")) continue; // пакет npm: слой не определить, решает ревью
       const target = resolve(dirname(f), spec);
       if (!target.startsWith(root + sep)) { problems.push(`${at}: «${spec}» — вне src/ (новый код не зависит от worker.js и старых файлов)`); continue; }
-      if (!isExactFile(target)) { problems.push(`${at}: «${spec}» — файла нет (или это папка, или другой регистр букв)`); continue; }
+      if (!isExactFile(root, target)) { problems.push(`${at}: «${spec}» — файла нет (или это папка, или другой регистр букв)`); continue; }
       const to = layerOf(relative(root, target));
       if (!to) { problems.push(`${at}: «${spec}» — файл вне известных слоёв`); continue; }
       if (!ALLOWED[from].includes(to)) problems.push(`${at}: ${from} → ${to} запрещено («${spec}»)`);
@@ -125,8 +139,9 @@ export function checkBoundaries(srcDir) {
 }
 
 const self = fileURLToPath(import.meta.url);
-const real = p => { try { return realpathSync(p); } catch (e) { return p; } };
-if (process.argv[1] && real(resolve(process.argv[1])) === real(self)) { // запуск командой (в том числе через ссылку на папку), а не import
+const real = p => { try { return realpathSync(p); } catch (e) { return null; } };
+const argv1 = process.argv[1] ? resolve(process.argv[1]) : "";
+if (argv1 && [argv1, argv1 + ".mjs"].some(p => real(p) === real(self))) { // запуск командой (в том числе через ссылку на папку), а не import
   const dir = process.argv[2] || join(dirname(self), "..", "src");
   const { problems, files } = checkBoundaries(dir);
   if (problems.length) { console.log(`Границы модулей: нарушений ${problems.length}\n  ` + problems.join("\n  ")); process.exitCode = 1; }

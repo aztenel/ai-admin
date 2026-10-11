@@ -2313,7 +2313,7 @@ ok("«Можно оплатить через администратора?» —
 
 console.log(`\nИтого: прошло ${pass}, не прошло ${fail}`);
 // новые части (история чата для пульта, паспорт бота, вход, пульт чатов) проверяются отдельным файлом и в отдельном процессе
-const platform = spawnSync(process.execPath, [new URL("./platform.mjs", import.meta.url).pathname], { stdio: "inherit" });
+const platform = spawnSync(process.execPath, [fileURLToPath(new URL("./platform.mjs", import.meta.url))], { stdio: "inherit" });
 // защитная сетка переезда (REFACTORING.md, шаг 0): модули src/, контракт маршрутов, золотые сценарии — тоже отдельными процессами
 const here = p => fileURLToPath(new URL(p, import.meta.url)); // не .pathname: путь с пробелом или кириллицей
 const unitFiles = readdirSync(here("./unit/")).filter(f => f.endsWith(".test.mjs")).sort().map(f => here("./unit/" + f));

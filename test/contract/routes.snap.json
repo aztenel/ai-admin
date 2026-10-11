@@ -492,6 +492,67 @@
   "csp": true,
   "frame": "DENY"
  },
+ "GET /leads?key=owner-key-123456 [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?key=owner-key-123456 [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?key=owner-key-123456 [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=barber&key=staff-key-barber-0001 [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=barber&key=staff-key-barber-0001 [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=barber&key=staff-key-barber-0001 [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=dent&key=staff-key-barber-0001 [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /leads?c=dent&key=staff-key-barber-0001 [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /leads?c=dent&key=staff-key-barber-0001 [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
  "GET /studio [anon]": {
   "status": 303,
   "type": "-",
@@ -680,6 +741,7 @@
  "GET /api/studio/list [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "clients",
    "niches"
@@ -688,6 +750,7 @@
  "GET /api/studio/list [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -702,6 +765,7 @@
  "GET /api/studio/get?id=nope [owner]": {
   "status": 404,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -709,6 +773,7 @@
  "GET /api/studio/get?id=nope [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -723,6 +788,7 @@
  "POST /api/studio/check {} [owner]": {
   "status": 200,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "errors",
    "ok",
@@ -733,6 +799,7 @@
  "POST /api/studio/check {} [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -747,6 +814,7 @@
  "POST /api/studio/save {} [owner]": {
   "status": 400,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "errors",
    "ok",
@@ -757,6 +825,7 @@
  "POST /api/studio/save {} [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -771,6 +840,7 @@
  "POST /api/studio/key {\"id\":\"nope\"} [owner]": {
   "status": 400,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -778,6 +848,7 @@
  "POST /api/studio/key {\"id\":\"nope\"} [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -792,6 +863,7 @@
  "POST /api/studio/remove {\"id\":\"nope\"} [owner]": {
   "status": 404,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -799,6 +871,7 @@
  "POST /api/studio/remove {\"id\":\"nope\"} [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -813,6 +886,7 @@
  "GET /api/studio/nope [owner]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -820,6 +894,7 @@
  "GET /api/studio/nope [staff]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1218,11 +1293,12 @@
   ]
  },
  "POST /api/launch/ga {\"c\":\"barber\"} [owner]": {
-  "status": 409,
+  "status": 200,
   "type": "application/json",
   "cache": "no-store",
   "json": [
-   "error"
+   "ok",
+   "text"
   ]
  },
  "POST /api/launch/ga {\"c\":\"barber\"} [staff]": {
@@ -1580,17 +1656,32 @@
  "POST /wa/barber <сообщение Meta> [anon]": {
   "status": 403,
   "type": "text/plain",
-  "text": "APP_SECRET is not set for this client"
+  "text": "Bad signature"
  },
  "POST /wa/barber <сообщение Meta> [owner]": {
   "status": 403,
   "type": "text/plain",
-  "text": "APP_SECRET is not set for this client"
+  "text": "Bad signature"
  },
  "POST /wa/barber <сообщение Meta> [staff]": {
   "status": 403,
   "type": "text/plain",
-  "text": "APP_SECRET is not set for this client"
+  "text": "Bad signature"
+ },
+ "POST /wa/barber <сообщение Meta> <неверная подпись> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
+ },
+ "POST /wa/barber <сообщение Meta> <неверная подпись> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
+ },
+ "POST /wa/barber <сообщение Meta> <неверная подпись> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
  },
  "POST /wa/nope <сообщение Meta> [anon]": {
   "status": 404,
@@ -1644,7 +1735,10 @@
  },
  "GET /altegio [owner]": {
   "status": 200,
-  "type": "text/html"
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
  },
  "GET /altegio [staff]": {
   "status": 403,
@@ -1658,7 +1752,10 @@
  },
  "POST /altegio c=barber [owner]": {
   "status": 200,
-  "type": "text/html"
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
  },
  "POST /altegio c=barber [staff]": {
   "status": 403,
@@ -1706,7 +1803,10 @@
  },
  "GET /selftest [owner]": {
   "status": 200,
-  "type": "text/html"
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
  },
  "GET /selftest [staff]": {
   "status": 403,
@@ -1879,6 +1979,21 @@
   "type": "text/plain",
   "text": "Forbidden: неверный ?key="
  },
+ "POST /ga/barber <сообщение Green-API> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga/barber <сообщение Green-API> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "POST /ga/barber <сообщение Green-API> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
  "POST /ga/barber?t=wrong <сообщение Green-API> [anon]": {
   "status": 403,
   "type": "text/plain",
@@ -1895,38 +2010,54 @@
   "text": "Forbidden: неверный ?key="
  },
  "POST / <сообщение Meta> [anon]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
  },
  "POST / <сообщение Meta> [owner]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
  },
  "POST / <сообщение Meta> [staff]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
+ },
+ "POST / <сообщение Meta> <неверная подпись> [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
+ },
+ "POST / <сообщение Meta> <неверная подпись> [owner]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
+ },
+ "POST / <сообщение Meta> <неверная подпись> [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Bad signature"
  },
  "POST /webhook <сообщение Meta> [anon]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
  },
  "POST /webhook <сообщение Meta> [owner]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
  },
  "POST /webhook <сообщение Meta> [staff]": {
-  "status": 404,
+  "status": 403,
   "type": "text/plain",
-  "text": "Not found"
+  "text": "Bad signature"
  },
  "POST /api/studio/check {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1934,6 +2065,7 @@
  "POST /api/studio/save {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1941,6 +2073,7 @@
  "POST /api/studio/key {\"id\":\"nope\"} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]
@@ -1948,6 +2081,7 @@
  "POST /api/studio/remove {\"id\":\"nope\"} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
+  "cache": "no-store",
   "json": [
    "error"
   ]

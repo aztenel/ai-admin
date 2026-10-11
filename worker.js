@@ -3717,7 +3717,7 @@ async function route(request, env, ctx) {
       const g = await keyGate(request, env, key, [leadsKey(env), hasClient(c) && env["KEY_" + c.toUpperCase()]]);
       if (g === -2) return tooManyKeys();
       if (g < 0) return forbid();
-      return html(await leadsPage(env, g === 0 ? (hasClient(c) ? c : null) : c));
+      return page(await leadsPage(env, g === 0 ? (hasClient(c) ? c : null) : c)); // заявки с телефонами: не кэшировать, не встраивать (как и вход по cookie)
     }
     // ---- демо пульта (вымышленные данные, всё в браузере, к серверу и хранилищу не обращается) и установка на экран «Домой»
     if (M === "GET" && (P === "/demo" || P === "/demo/")) return page(PULT_DEMO, 200, { "x-robots-tag": "noindex, nofollow" });
@@ -3796,9 +3796,9 @@ async function route(request, env, ctx) {
       if (M === "POST" && !sameOrigin(request, url)) return forbid(); // пробную запись запускает только своя страница
       const a = await owner(q.key);
       if (a !== true) return a || forbid();
-      return html(altPage(await altDiag(env, q.c, q.loc, q.phone), q.key || "", q.c, q.loc));
+      return page(altPage(await altDiag(env, q.c, q.loc, q.phone), q.key || "", q.c, q.loc)); // в странице ключ владельца и данные Altegio
     }
-    if (M === "GET" && P === "/selftest") { const a = await owner(); return a === true ? html(selftestPage(url.searchParams.get("key") || "")) : a || forbid(); }
+    if (M === "GET" && P === "/selftest") { const a = await owner(); return a === true ? page(selftestPage(url.searchParams.get("key") || "")) : a || forbid(); }
     if (M === "POST" && P === "/api/selftest") {
       let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
       const a = await owner(b.key);
@@ -4948,17 +4948,17 @@ function clientState(env, c) {
 }
 async function studioApi(request, env, url, s) {
   const P = url.pathname, M = request.method;
-  if (s.role !== "owner") return json({ error: "Эта страница — только для владельца сервиса." }, 403);
+  if (s.role !== "owner") return jsonP({ error: "Эта страница — только для владельца сервиса." }, 403);
   if (M === "GET" && P === "/api/studio/list") {
-    return json({ clients: Object.values(CLIENTS).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
+    return jsonP({ clients: Object.values(CLIENTS).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
   }
   if (M === "GET" && P === "/api/studio/get") {
     const id = url.searchParams.get("c"), all = await loadCfgs(env);
-    if (!Object.hasOwn(all, id)) return json({ error: "Такого бота нет." }, 404);
+    if (!Object.hasOwn(all, id)) return jsonP({ error: "Такого бота нет." }, 404);
     const { keyHash, ...cfg } = all[id];
-    return json({ cfg: { ...cfg, id }, hasKey: !!keyHash });
+    return jsonP({ cfg: { ...cfg, id }, hasKey: !!keyHash });
   }
-  if (M !== "POST" || !sameOrigin(request, url)) return json({ error: "Запрос отклонён." }, 403);
+  if (M !== "POST" || !sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403);
   let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
   const id = String(b.id || b.c || "").trim();
   if (P === "/api/studio/check" || P === "/api/studio/save") {
@@ -4967,32 +4967,32 @@ async function studioApi(request, env, url, s) {
     const r = compileClient(cfg);
     if (P === "/api/studio/save" && b.isNew && old) r.errors.push(`бот с идентификатором «${id}» уже есть — откройте его в списке`);
     const preview = r.errors.length ? null : { facts: r.client.facts, hours: r.client.hoursText, greeting: r.client.greeting, slots: freeSlots(r.client, Date.now()).map(d => `${d.rel ? d.rel + ", " : ""}${d.label}: ${d.times.join(", ")}`), services: r.client.services.length };
-    if (P === "/api/studio/check" || r.errors.length) return json({ ok: !r.errors.length, errors: r.errors, warnings: r.warnings, preview }, P === "/api/studio/save" && r.errors.length ? 400 : 200);
+    if (P === "/api/studio/check" || r.errors.length) return jsonP({ ok: !r.errors.length, errors: r.errors, warnings: r.warnings, preview }, P === "/api/studio/save" && r.errors.length ? 400 : 200);
     all[id] = { ...cfg, v: ((old && old.v) || 0) + 1, updated: Date.now() };
     delete all[id].id;
-    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ ok: false, errors: ["не удалось сохранить — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return jsonP({ ok: false, errors: ["не удалось сохранить — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
     await syncClients(env, true);
-    return json({ ok: true, id, warnings: r.warnings, preview });
+    return jsonP({ ok: true, id, warnings: r.warnings, preview });
   }
   if (P === "/api/studio/key") { // новый ключ для сотрудников клиента: показываем один раз, в хранилище — только его хеш
     const all = await loadCfgs(env);
-    if (!Object.hasOwn(all, id)) return json({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
+    if (!Object.hasOwn(all, id)) return jsonP({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
     const raw = crypto.getRandomValues(new Uint8Array(15)), key = [...raw].map(x => "abcdefghjkmnpqrstuvwxyz23456789"[x % 31]).join("").replace(/(.{5})(?=.)/g, "$1-");
     all[id].keyHash = await sha256Hex(key);
-    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return jsonP({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
     await syncClients(env, true);
-    return json({ ok: true, key });
+    return jsonP({ ok: true, key });
   }
   if (P === "/api/studio/remove") {
     const all = await loadCfgs(env);
-    if (!Object.hasOwn(all, id)) return json({ error: "Такого бота нет." }, 404);
-    if (String(b.confirm || "") !== id) return json({ error: "Для удаления введите идентификатор бота." }, 400);
+    if (!Object.hasOwn(all, id)) return jsonP({ error: "Такого бота нет." }, 404);
+    if (String(b.confirm || "") !== id) return jsonP({ error: "Для удаления введите идентификатор бота." }, 400);
     delete all[id];
-    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return json({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+    try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return jsonP({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
     await syncClients(env, true);
-    return json({ ok: true });
+    return jsonP({ ok: true });
   }
-  return json({ error: "Не найдено." }, 404);
+  return jsonP({ error: "Не найдено." }, 404);
 }
 const ADMIN_CSS = `${BASE_CSS}
 .top{background:var(--head);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5}.top b{font-size:17px;flex:1}.top a{color:#cfe9e2;font-size:14px;text-decoration:none}
