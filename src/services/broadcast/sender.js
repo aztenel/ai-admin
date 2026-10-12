@@ -1,5 +1,6 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check — перенесено из worker.js как есть (REFACTORING.md, фаза 1)
 // Рассылки: маршрут отправки (bcRoute), сообщения Green-API, сведения о номере Meta, порция отправки (bcTick), список идущих рассылок (bcRun).
+/** @import { Env } from "../../lib/types.js" */
 import { clean } from "../../lib/text.js";
 import { TZ, local, hhmm, isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
@@ -28,7 +29,9 @@ import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } fr
 // Ключи: bc:<клиент>:<id> — рассылка; bcr:<клиент>:<id>:<k> — получатели, по 250; bcrun — что сейчас идёт; bcq:<клиент> — сколько отправлено за сутки;
 // bchold:<клиент> — сигнал Meta «остановиться» (ga — сигнал Green-API: номер заблокирован или ограничен); bcf:<клиент>:<день> — недоставленные; bclast:<клиент> — текст последней рассылки (его видит ИИ и пульт);
 // bcq:<клиент>:ga — сколько отправлено за сутки с номера Green-API
+/** @param {number} ms @param {number} now */
 export const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
+/** @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
 export const bcRoute = (env, cid, ch) => { // с какого номера и каким токеном уходят шаблоны (ch = "ga" — номер Green-API клиента)
   const up = cid.toUpperCase();
   if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Green-API у этого клиента не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} (номер и токен инстанса из кабинета Green-API).` }; }
@@ -40,12 +43,16 @@ export const bcRoute = (env, cid, ch) => { // с какого номера и к
 export const GA_CAP = [50, 300], GA_GAP = [30e3, 150e3], GA_MSG_MAX = 1500, GA_CAPTION_MAX = 1000;
 export const GA_STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
 // текст как написал администратор (переводы строк сохраняются); в конце — строка «ответьте СТОП», если про «стоп» в тексте ничего нет
+/** @param {any} src */
 export function bcGaMsg(src) {
   const t = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u2060\ufeff\u00ad]/g, "").replace(/\t/g, " ").replace(/[ ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return !t ? "" : /(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(t) ? t : t + "\n\n" + GA_STOP_LINE;
 }
+/** @param {any} b @param {any} name */
 export const bcGaText = (b, name) => String(b.msg || "").replace(/\{\s*(имя|name)\s*\}/gi, name || b.fallback || "уважаемый клиент");
+/** @param {string} u */
 const bcFileName = u => { let n = ""; try { n = decodeURIComponent(new URL(u).pathname.split("/").pop() || ""); } catch (e) {} n = n.replace(/[^\p{L}\p{N}._-]/gu, "").slice(-60); return /\.[a-z0-9]{2,5}$/i.test(n) ? n : "image.jpg"; };
+/** @param {Env} env @param {string} digits @param {any} b @param {any} name @param {any} r */
 export async function bcSendGa(env, digits, b, name, r) {
   const text = bcGaText(b, name), chatId = digits + "@c.us";
   if (!b.img) return sendGreen(env, chatId, text, r, true);
@@ -53,9 +60,10 @@ export async function bcSendGa(env, digits, b, name, r) {
   return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
 }
 // сведения о номере из Meta: качество и предел получателей за 24 часа
+/** @param {Env} env @param {any} route */
 export async function bcHealth(env, route) {
   const cr = waCreds(env, route);
-  const get = async f => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = {}; try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
+  const get = async (/** @type {string} */ f) => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = /** @type {any} */ ({}); try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
   try {
     let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле
     if (j.error && j.error.code === 100) j = await get("display_phone_number,verified_name,quality_rating,messaging_limit_tier");
@@ -65,16 +73,18 @@ export async function bcHealth(env, route) {
     return { phone: clean(j.display_phone_number || "", 24), name: clean(j.verified_name || "", 60), quality: String(j.quality_rating || "").toUpperCase(), limit: m ? +m[1] * (m[2] ? 1000 : 1) : /UNLIMITED/i.test(tier) ? -1 : 0 };
   } catch (e) { return { error: "Meta не отвечает — сведения о номере получить не удалось." }; }
 }
+/** @param {Env} env @param {string} cid @param {string} id @param {boolean} on */
 export async function bcRun(env, cid, id, on) { // список рассылок, которые сейчас идут: по нему работает фоновая отправка
   try {
     await kvRetry(async () => {
-      const cur = JSON.parse((await env.KV.get("bcrun")) || "[]") || [], rest = cur.filter(x => !(x.c === cid && x.id === id));
+      const cur = JSON.parse((await env.KV.get("bcrun")) || "[]") || [], rest = cur.filter(/** @param {any} x */ x => !(x.c === cid && x.id === id));
       if (on) rest.push({ c: cid, id });
       if (JSON.stringify(rest) !== JSON.stringify(cur)) await env.KV.put("bcrun", JSON.stringify(rest.slice(-40)));
     });
   } catch (e) { console.log("bcrun", String(e)); }
 }
 // когда отправлять нельзя: вне часов отправки или после временного отказа Meta → { note, till }
+/** @param {any} b @param {number} now */
 export function bcWait(b, now) {
   if (b.retryAt > now) return { note: `${b.retryWhy || bcFrom(b) + " временно не принимает сообщения"} — повторю ${bcAt(b.retryAt, now)}.`, till: b.retryAt };
   const n = local(now), hr = n.getUTCHours() + n.getUTCMinutes() / 60;
@@ -84,6 +94,7 @@ export function bcWait(b, now) {
 }
 // одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки.
 // gaBusy — с номера Green-API этого клиента в эту минуту уже ушло сообщение (другой рассылкой): ждём следующей минуты
+/** @param {Env} env @param {string} cid @param {string} id @param {any} gaBusy @returns {Promise<Record<string, any>>} */
 export async function bcTick(env, cid, id, gaBusy) {
   const now = Date.now(), lk = `bcl:${cid}:${id}`, token = Math.random().toString(36).slice(2);
   let b = await bcGet(env, cid, id);
@@ -91,8 +102,11 @@ export async function bcTick(env, cid, id, gaBusy) {
   if (b.status !== "running") return { b, state: b.status };
   const ga = b.ch === "ga";
   if (ga && gaBusy) return { b, state: "busy" };
+  /** @param {string} text */
   const tell = async text => { try { await notify(env, text, cid); } catch (e) { console.log("bc tg", String(e)); } };
+  /** @param {any} w */
   const waitFor = async w => { if (b.waitNote !== w.note) { b.waitNote = w.note; b.waitTill = w.till; try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); } } return { b, state: "wait" }; };
+  /** @param {string} note */
   const stopFor = async note => {
     b.status = "paused"; b.note = note; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     await bcPut(env, cid, b); await bcRun(env, cid, id, false);
@@ -107,6 +121,7 @@ export async function bcTick(env, cid, id, gaBusy) {
   if (hold) return stopFor(`Сигнал от ${bcFrom(b)}: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
   // предел на 24 часа — общий для всех рассылок клиента с этого номера: Meta считает получателей за скользящие сутки; у номера Green-API свой счётчик
   const qk = "bcq:" + cid + (ga ? ":ga" : "");
+  /** @type {Record<string, any>} */
   let q = {}; try { q = JSON.parse((await env.KV.get(qk)) || "{}") || {}; } catch (e) {}
   const slot = Math.floor(now / BC_SLOT), live = Object.keys(q).filter(k => +k > slot - BC_DAY && +q[k] > 0), used = live.reduce((a, k) => a + +q[k], 0);
   if (used >= b.cap) { const till = (Math.min(...live.map(Number)) + BC_DAY) * BC_SLOT; return waitFor({ note: `За последние 24 часа отправлено ${used} — это предел (${b.cap}). Продолжу ${bcAt(till, now)}.`, till }); }
@@ -173,7 +188,7 @@ export async function bcTick(env, cid, id, gaBusy) {
     if (ga && did) b.nextAt = now + GA_GAP[0] + Math.floor(Math.random() * (GA_GAP[1] - GA_GAP[0])); // следующее сообщение — через 30–150 секунд
     if (halt && halt.kind === "temp") { b.tmp = (b.tmp || 0) + 1; if (b.tmp < 6) b.retryAt = now + 600e3; }
     if (sentNow) { // учёт отправленного за сутки
-      try { const nq = {}; for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put(qk, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
+      try { const nq = /** @type {Record<string, any>} */ ({}); for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put(qk, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
     }
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
       const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);

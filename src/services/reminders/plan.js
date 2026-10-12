@@ -1,5 +1,6 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check — перенесено из worker.js как есть (REFACTORING.md, фаза 1)
 // Напоминания о записи и просьба об отзыве: расписание (remindPlan) и тексты (remindText).
+/** @import { Env, Client } from "../../lib/types.js" */
 import { TZ, local } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
 // ===== Напоминания о записи и просьба об отзыве =====
@@ -7,9 +8,12 @@ import { kvRetry } from "../../db/kv/retry.js";
 // Очередь клиента — ключ rmq:<клиент> (список { k, at, ch, id, rec, date, time }), список клиентов с очередью — rmidx.
 // Перед отправкой бот перечитывает чат: запись должна быть на месте, без просьбы об отмене или переносе, клиент не писал «стоп».
 // Через официальный WhatsApp (Meta) — только в 24-часовом окне (иначе нужен шаблон). Отметка «отправлено» ставится до отправки
+/** @param {string} date @param {string} time @param {number} [dayShift] */
 export const atLocal = (date, time, dayShift = 0) => { const [y, mo, d] = date.split("-").map(Number), [hh, mm] = time.split(":").map(Number); return Date.UTC(y, mo - 1, d + dayShift, hh - TZ, mm); };
+/** @param {Env} env @param {Client} c @param {string} hk @param {any[]} books @param {number} made */
 export async function remindPlan(env, c, hk, books, made) {
   const m = /^h:(wa|ga):([^:]+):(\d+)$/.exec(hk); if (!m) return;
+  /** @type {any[]} */
   const items = [];
   for (const b of books) {
     if (!b || !b.record_id || !/^\d{4}-\d{2}-\d{2}$/.test(b.date || "") || !/^\d{1,2}:\d{2}$/.test(b.time || "")) continue;
@@ -27,9 +31,10 @@ export async function remindPlan(env, c, hk, books, made) {
     }
   }
   if (!items.length) return;
-  await kvRetry(async () => { const q = JSON.parse((await env.KV.get("rmq:" + c.id)) || "[]"); for (const x of items) if (!q.some(y => y.rec === x.rec && y.k === x.k)) q.push(x); await env.KV.put("rmq:" + c.id, JSON.stringify(q.slice(-500))); });
+  await kvRetry(async () => { const q = JSON.parse((await env.KV.get("rmq:" + c.id)) || "[]"); for (const x of items) if (!q.some(/** @param {any} y */ y => y.rec === x.rec && y.k === x.k)) q.push(x); await env.KV.put("rmq:" + c.id, JSON.stringify(q.slice(-500))); });
   await kvRetry(async () => { const ix = JSON.parse((await env.KV.get("rmidx")) || "[]"); if (!ix.includes(c.id)) { ix.push(c.id); await env.KV.put("rmidx", JSON.stringify(ix)); } });
 }
+/** @param {Client} c @param {any} b @param {string} k @param {any} [lang] */
 export function remindText(c, b, k, lang) {
   const svc = [b.services, b.staffName].filter(Boolean).join(" · "), name = c.name, adr = c.address || "";
   if (lang === "kk") return k === "d1" ? `Еске салу: «${name}» сізді ертең сағат ${b.time}-де күтеді${svc ? " — " + svc : ""}. Жоспарыңыз өзгерсе, осында жазыңыз.`
