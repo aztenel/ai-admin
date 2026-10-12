@@ -648,6 +648,80 @@ try {
     await lv.context().close();
   }
 
+  // ---- живой пульт: открытый чат обновляется каждые 3 с (список — раз в 15 с), пока вкладка видна
+  {
+    const PID = "77051119901", hk = "h:wa:kairat:" + PID;
+    await wa({ c: "kairat", from: PID, name: "Опрос Три", text: "Добрый день" });
+    { // длинная переписка, чтобы было что прокручивать
+      const h = S.kv.json(hk), t0 = Date.now() - 3 * 3600e3, old = [];
+      for (let i = 0; i < 40; i++) old.push({ role: i % 2 ? "assistant" : "user", text: "Старая реплика номер " + i + " для прокрутки", t: t0 + i * 60e3 });
+      h.turns = old.concat(h.turns);
+      await S.kv.api.put(hk, JSON.stringify(h), { metadata: S.kv.meta.get(hk) || {} });
+    }
+    const pp = await newPage({ width: 390, height: 844 });
+    const cnt = { chat: 0, list: 0, act: 0, max: 0 };
+    pp.on("request", r => { const u = new URL(r.url()); if (u.pathname === "/api/inbox/chat") { cnt.chat++; cnt.act++; cnt.max = Math.max(cnt.max, cnt.act); } else if (u.pathname === "/api/inbox/list") cnt.list++; });
+    const fin = r => { if (new URL(r.url()).pathname === "/api/inbox/chat") cnt.act--; };
+    pp.on("requestfinished", fin); pp.on("requestfailed", fin);
+    const reset = () => { cnt.chat = 0; cnt.list = 0; cnt.max = 0; };
+    await pp.goto(url + "/inbox?c=kairat&key=" + OWNER); await pp.waitForSelector("#rows a.row");
+    await pp.waitForTimeout(4500);
+    ok("опрос чата: пока чат не открыт, /api/inbox/chat не запрашивается", cnt.chat === 0, String(cnt.chat));
+    await pp.click(".chip:text-is('Все')"); await pp.locator("#rows a.row", { hasText: "Опрос Три" }).click(); await pp.waitForSelector("#msgs .m");
+    await pp.waitForTimeout(300); reset();
+    const M0 = await pp.evaluate(() => { const m = document.getElementById("msgs"); m.querySelector(".m").__same = 1; return m.scrollTop > 0; });
+    await pp.waitForTimeout(7000);
+    ok("опрос чата: за 7 с при открытом чате и видимой вкладке — 2–4 запроса переписки, списка не больше одного", cnt.chat >= 2 && cnt.chat <= 4 && cnt.list <= 1, JSON.stringify(cnt));
+    ok("опрос чата: чат открылся прокрученным вниз", M0 === true);
+    ok("опрос чата: если ничего не изменилось, переписка не перерисовывается", await pp.evaluate(() => document.getElementById("msgs").querySelector(".m").__same === 1));
+
+    // новое входящее появляется само
+    const t1 = Date.now(); await wa({ c: "kairat", from: PID, name: "Опрос Три", text: "Новое входящее раз" });
+    await pp.waitForFunction(() => /Новое входящее раз/.test(document.getElementById("msgs").textContent), null, { timeout: 6000 });
+    const dt = Date.now() - t1;
+    ok("опрос чата: новое входящее появилось в открытом чате за ≤ 4 с без ручного обновления", dt <= 4000, dt + " мс");
+    ok("опрос чата: чат был внизу — остался внизу", await pp.evaluate(() => { const m = document.getElementById("msgs"); return m.scrollHeight - m.scrollTop - m.clientHeight < 80; }));
+
+    // черновик и прокрутка вверх не сбрасываются
+    await pp.fill("#txt", "мой черновик ответа");
+    await pp.evaluate(() => { document.getElementById("msgs").scrollTop = 0; });
+    await pp.waitForTimeout(200);
+    await wa({ c: "kairat", from: PID, name: "Опрос Три", text: "Новое входящее два" });
+    await pp.waitForFunction(() => /Новое входящее два/.test(document.getElementById("msgs").textContent), null, { timeout: 6000 });
+    ok("опрос чата: черновик в поле ответа сохранился после обновления переписки", (await pp.inputValue("#txt")) === "мой черновик ответа");
+    ok("опрос чата: читаете старое выше — прокрутка не прыгает вниз", await pp.evaluate(() => document.getElementById("msgs").scrollTop < 5), String(await pp.evaluate(() => document.getElementById("msgs").scrollTop)));
+    await pp.evaluate(() => { const m = document.getElementById("msgs"); m.scrollTop = m.scrollHeight; });
+    await pp.waitForTimeout(200);
+    await wa({ c: "kairat", from: PID, name: "Опрос Три", text: "Новое входящее три" });
+    await pp.waitForFunction(() => /Новое входящее три/.test(document.getElementById("msgs").textContent), null, { timeout: 6000 });
+    await pp.waitForTimeout(400);
+    ok("опрос чата: внизу и пришло новое — прокрутка идёт вниз вместе с ним", await pp.evaluate(() => { const m = document.getElementById("msgs"); return m.scrollHeight - m.scrollTop - m.clientHeight < 80; }));
+
+    // скрытая вкладка: переписка не запрашивается; при возврате — снова
+    await pp.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" }); document.dispatchEvent(new Event("visibilitychange")); });
+    await pp.waitForTimeout(400); reset();
+    await pp.waitForTimeout(7000);
+    ok("опрос чата: вкладка скрыта — запросов переписки нет", cnt.chat === 0, String(cnt.chat));
+    await pp.evaluate(() => { delete document.visibilityState; document.dispatchEvent(new Event("visibilitychange")); });
+    await pp.waitForTimeout(4000);
+    ok("опрос чата: вкладка снова видна — опрос возобновился", cnt.chat >= 1, String(cnt.chat));
+
+    // медленный сервер: запросы не накладываются
+    await pp.waitForTimeout(300);
+    await pp.route("**/api/inbox/chat*", async r => { await new Promise(x => setTimeout(x, 3600)); await r.continue(); });
+    await pp.waitForTimeout(3500); reset(); // дождались завершения уже идущих запросов
+    await pp.waitForTimeout(11000);
+    ok("опрос чата: сервер отвечает медленнее интервала — запросы не накладываются (одновременно не больше одного)", cnt.max <= 1 && cnt.chat >= 1, JSON.stringify(cnt));
+    await pp.unroute("**/api/inbox/chat*");
+
+    // закрыли чат — опрос чата остановлен
+    await pp.waitForTimeout(4000);
+    await pp.click("#back"); await pp.waitForTimeout(500); reset();
+    await pp.waitForTimeout(4500);
+    ok("опрос чата: чат закрыт — запросов переписки больше нет", cnt.chat === 0, String(cnt.chat));
+    await pp.context().close();
+  }
+
   // ---- страницы заявок и выхода
   await st.goto(url + "/leads");
   ok("сотрудник видит заявки своего клиента", /Barber House/.test(await st.locator("body").innerText()) && !/Демо Дент/.test(await st.locator("body").innerText()));
