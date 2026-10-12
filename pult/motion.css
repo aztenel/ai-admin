@@ -89,7 +89,7 @@
   .nav a:active{transform:scale(.92)}
   .row:active{transform:scale(.99)}
   .row.wait::before{animation:p-tape .9s linear infinite}
-  #rows.in>.row{animation:p-row .38s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 40ms)}
+  #rows.in .row{animation:p-row .38s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 40ms)}
   .m.new,.bk.new,.sys.new{animation:p-pop .26s cubic-bezier(.2,.9,.3,1.2) both}
   .m.in.new{transform-origin:0 100%}
   .m.bot.new,.m.adm.new,.bk.new{transform-origin:100% 100%}
@@ -98,6 +98,9 @@
   .scrim{animation:p-fade .2s ease}
   .sheet{animation:p-sheet-ph .3s cubic-bezier(.2,.9,.25,1)}
   .toast{animation:p-toast .26s cubic-bezier(.2,.9,.3,1.15)}
+  .sw.snap>.row{transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+  .swh{transition:opacity .12s ease,transform .12s ease}
+  .sw.go .swh{transform:scale(1.08)}
   .bump{animation:p-bump .42s cubic-bezier(.3,.7,.4,1)}
   .sk,.sk-row .sk-av{animation:p-shine 1.4s ease-in-out infinite}
   .app.card #v-chats .inf{animation:p-side .26s cubic-bezier(.2,.8,.2,1)}

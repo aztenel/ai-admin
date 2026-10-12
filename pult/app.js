@@ -45,7 +45,7 @@ var CHN = { wa: "WhatsApp", ga: "WhatsApp", web: "Сайт" };
 
 /* ---------- слой данных ---------- */
 function jf(p, b) {
-  return fetch(p, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : { credentials: "same-origin" }).then(function (r) {
+  return fetch(p, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b), keepalive: true } : { credentials: "same-origin" }).then(function (r) {
     if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search + location.hash); throw 0; }
     return r.json();
   });
@@ -79,7 +79,15 @@ function fitViewport() {
   vv.addEventListener("resize", fit); vv.addEventListener("scroll", fit); fit();
 }
 var toastT = 0;
-function toast(text) { var o = $("toast"); o.textContent = text; o.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { o.hidden = true; }, 3200); }
+// Отложенное свайп-действие: SW.pend — одно за раз; SW.ms — сколько секунд даём на «Отменить» (тесты ставят меньше)
+var SW = { ms: 5000, drag: null, later: false, pend: null, endRow: null, endAt: 0, tOn: false };
+// o.undo — функция: в тосте появляется кнопка «Отменить» (44 px); o.ms — сколько показывать
+function toast(text, o) {
+  var t = $("toast"); o = o || {}; clear(t); t.classList.toggle("act", !!o.undo); SW.tOn = !!o.undo;
+  t.appendChild(h("span", "tt", text));
+  if (o.undo) { var b = h("button", "tb", "Отменить", { type: "button" }); b.onclick = o.undo; t.appendChild(b); }
+  t.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { t.hidden = true; SW.tOn = false; }, o.ms || 3200);
+}
 function sheet(title, body, foot) {
   closeSheet();
   var sc = h("div", "scrim", null, { id: "scrim" }), sh = h("div", "sheet", [h("div", "grab"), title ? h("h2", "", title) : null, h("div", "sbody", body), foot || null], { role: "dialog", "aria-modal": "true", id: "sheet" });
@@ -206,7 +214,7 @@ function bizSheet() {
 // демо: переключение бизнеса. Данные подменяет __DEMO_API.setBiz; здесь сбрасываем всё, что относилось к прежнему бизнесу
 function demoSwitch(c) {
   if (c.id === S.C) return;
-  API.setBiz(c.id); saveDraft(); S.C = c.id; S.cur = null; S.chat = null; S.card = false; S.rows = []; S.ready = false; S.shown = false; S.f = "need"; S.q = ""; S.stage = ""; S.needWas = null; $("q").value = "";
+  swFlush(); API.setBiz(c.id); saveDraft(); S.C = c.id; S.cur = null; S.chat = null; S.card = false; S.rows = []; S.ready = false; S.shown = false; S.f = "need"; S.q = ""; S.stage = ""; S.needWas = null; $("q").value = "";
   app.classList.remove("chat", "card"); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
   skeleton(); chipsEl(); toast("Открыт бизнес: " + c.name);
   loadList().then(function () { go(S.v); });
@@ -231,19 +239,26 @@ function rowEl(r, i) {
   var hot = !!r.nd;
   var prev = (r.d === "u" ? "" : r.d === "a" ? "Вы: " : "Бот: ") + (r.s || "");
   var tag = r.nd ? h("span", "tag", r.why || NEED[r.nd] || "Нужен ответ") : r.pu ? h("span", "tag ok", "Бот молчит до " + hm(r.pu)) : r.st ? h("span", "tag mut", "Просил не писать") : null;
+  if (r.nd && r.pu) tag = h("div", "r3", [tag, h("span", "tag ok", "Бот молчит")]); // забрали чат у бота, а клиент всё ещё ждёт
   var a = h("a", "row" + (sel ? " sel" : "") + (hot ? " wait" : ""), [
     h("span", "av", initials(r.nm, r.ph), { style: "--c:" + colorOf(r.id) }),
     h("div", "rb", [h("div", "r1", [h("span", "nm", nm), h("span", "tm2" + (hot || r.un ? " hot" : ""), rowTime(r.li || r.t))]),
       h("div", "r2", [h("span", "pv", prev), r.un ? h("span", "ub", r.un) : null]), tag])
   ], { href: "#" + r.ch + ":" + r.id, style: "--i:" + Math.min(i || 0, 12) });
-  a.onclick = function (e) { e.preventDefault(); openChat(r.ch, r.id); };
-  return a;
+  a.onclick = function (e) { e.preventDefault(); if (SW.endRow === a && Date.now() - SW.endAt < 450) return; openChat(r.ch, r.id); }; // клик сразу после свайпа — не открытие чата
+  var w = h("div", "sw", a); swBind(w, a, r); return w;
 }
-function renderList() {
-  var R = clear($("rows")), rows = S.rows.slice();
+function visibleRows() {
+  var rows = S.rows.slice();
+  if (S.f === "need") rows = rows.filter(function (r) { return r.nd; });
   if (S.f === "pause") rows = rows.filter(function (r) { return r.pu; });
   var q = S.q.trim().toLowerCase();
   if (q) rows = rows.filter(function (r) { return ((r.nm || "") + " " + (r.ph || "") + " " + (r.s || "")).toLowerCase().indexOf(q) >= 0; });
+  return rows;
+}
+function renderList() {
+  if (SW.drag && SW.drag.on) { SW.later = true; return; } // палец ведёт строку: перерисуем, когда отпустит
+  var R = clear($("rows")), rows = visibleRows(), q = S.q.trim();
   if (!S.ready) { skeleton(); return; }
   if (!rows.length) {
     var msg = q ? ["Ничего не найдено", "Попробуйте другое имя или номер."] : S.f === "web" ? ["Чатов с сайта пока нет", "Они появятся, когда клиенты напишут боту на сайте."] : S.f === "need" ? ["Никто не ждёт ответа", "Все чаты — на вкладке «Все»."] : S.f === "pause" ? ["Бот не молчит ни в одном чате", "Здесь появятся чаты, где вы взяли разговор на себя."] : ["Чатов пока нет", "Они появятся, когда клиенты напишут в WhatsApp."];
@@ -262,11 +277,12 @@ function loadList() {
     if (d.error) { clear($("rows")).appendChild(h("div", "empty", [h("b", "", "Не получилось загрузить"), h("span", "", d.error)])); return; }
     S.ready = true; S.rows = d.chats || []; S.client = d.client || S.client; S.total = d.total || S.rows.length;
     if (want !== "web") { S.need = d.need || 0; noteCheck(S.rows); }
+    swOverlay();
     $("bizslot").replaceChildren(bizBtn());
-    $("meta").textContent = S.need ? S.need + " ждут ответа · " + S.total + " чатов" : "ждущих нет · " + S.total + " чатов";
-    setBadge(); chipsEl(); renderList();
+    listMeta(); setBadge(); chipsEl(); renderList();
   }).catch(function (e) { if (e !== 0) netErr(true); });
 }
+function listMeta() { $("meta").textContent = S.need ? S.need + " ждут ответа · " + S.total + " чатов" : "ждущих нет · " + S.total + " чатов"; }
 function pickCompany() {
   API.clients().then(function (d) {
     var R = clear($("rows")); if (d.error) { R.appendChild(h("div", "empty", [h("b", "", "Нет доступа"), h("span", "", d.error)])); return; }
@@ -275,13 +291,125 @@ function pickCompany() {
   }).catch(function (e) { if (e !== 0) netErr(true); });
 }
 
+/* ---------- свайпы по строке чата (только телефон: касание или перо, ширина < 720) ----------
+   Влево — «Готово» (act resolve), вправо — «Забрать у бота» (act pause): то же, что пункты меню чата. Кнопки остаются, свайп — ускоритель.
+   Отката на сервере у «Готово» нет (а «resume» заодно снял бы пометку «ждёт ответа»), поэтому действие откладывается на SW.ms:
+   строка сразу показывает результат, «Отменить» просто отменяет отправку. Закрыли страницу или открыли этот чат — уходит сразу. */
+var SW_ACT = { l: { a: "resolve", label: "Готово", icon: "check" }, r: { a: "pause", label: "Забрать у бота", icon: "clock" } };
+function swPhone() { return root.clientWidth < 720; }
+function swReduce() { return !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches); }
+function swThr(w) { return Math.max(56, Math.min(80, w * 0.35)); } // ~35% ширины или 80 px — что меньше, но не менее 56
+function swCan(r, d) { return d === "l" ? !!r.nd : r.ch !== "web" && !r.pu && !r.st && !S.client.off; } // как пункты меню: «Готово» — ждущему, «Забрать» — тому, где бот ещё говорит
+function swHint(sw) {
+  var b = sw.querySelector(".swb"); if (b) return b;
+  b = h("div", "swb", ["l", "r"].map(function (d) { return h("span", "swh " + d, [ic(SW_ACT[d].icon, 22), h("span", "", SW_ACT[d].label)]); }), { "aria-hidden": "true" });
+  sw.insertBefore(b, sw.firstChild); return b;
+}
+function swBind(sw, row, r) {
+  row.addEventListener("pointerdown", function (e) {
+    if (SW.drag || e.isPrimary === false || !(e.pointerType === "touch" || e.pointerType === "pen") || !swPhone()) return;
+    SW.drag = { sw: sw, row: row, r: r, id: e.pointerId, x0: e.clientX, y0: e.clientY, on: false, x: 0, w: row.offsetWidth || 360, dir: "", go: false };
+  });
+  row.addEventListener("pointermove", swMove);
+  row.addEventListener("pointerup", swUp);
+  row.addEventListener("pointercancel", swCancel);
+}
+function swMove(e) {
+  var g = SW.drag; if (!g || e.pointerId !== g.id) return;
+  var dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+  if (!g.on) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { SW.drag = null; return; } // это прокрутка списка
+    if (Math.abs(dx) <= 10 || Math.abs(dx) <= Math.abs(dy)) return; // пока не жест: строка стоит, клики как раньше
+    g.on = true; g.sw.classList.add("on", "drag"); swHint(g.sw);
+    try { g.row.setPointerCapture(e.pointerId); } catch (x) {}
+  }
+  var x = dx, dir = x < 0 ? "l" : "r", thr = swThr(g.w), a = Math.abs(x);
+  if (!swCan(g.r, dir)) { x = 0; a = 0; dir = ""; }
+  var go = a >= thr;
+  if (a > thr) a = thr + (a - thr) * 0.4; // за порогом строка «тянется» туго
+  a = Math.min(a, g.w * 0.75); x = dir === "l" ? -a : a;
+  g.x = x; g.row.style.transform = "translate3d(" + x + "px,0,0)";
+  if (dir !== g.dir) { g.dir = dir; if (dir) g.sw.setAttribute("data-d", dir); else g.sw.removeAttribute("data-d"); }
+  if (go !== g.go) { g.go = go; g.sw.classList.toggle("go", go); if (go) try { navigator.vibrate && navigator.vibrate(8); } catch (x2) {} }
+}
+function swUp(e) {
+  var g = SW.drag; if (!g || e.pointerId !== g.id) return;
+  if (!g.on) { SW.drag = null; return; }
+  SW.endRow = g.row; SW.endAt = Date.now();
+  try { g.row.releasePointerCapture(g.id); } catch (x) {}
+  if (g.go && g.dir) swTrigger(g); else { SW.drag = null; swGo(g, 0); } // не дотянули до порога — плавно назад, ничего не делаем
+}
+function swCancel(e) {
+  var g = SW.drag; if (!g || e.pointerId !== g.id) return;
+  SW.drag = null; if (g.on) { SW.endRow = g.row; SW.endAt = Date.now(); swGo(g, 0); }
+}
+// увести строку в точку to (0 — вернуть, ±ширина — «улетела») и убрать следы жеста; без анимации при reduced motion
+function swGo(g, to, after) {
+  var sw = g.sw, row = g.row, done = false;
+  function fin() {
+    if (done) return; done = true;
+    sw.classList.remove("on", "drag", "snap", "go"); sw.removeAttribute("data-d"); row.style.transform = "";
+    var hn = sw.querySelector(".swb"); if (hn) hn.remove();
+    if (after) after();
+    if (SW.later && !SW.drag) { SW.later = false; renderList(); }
+  }
+  if (swReduce() || Math.abs(g.x - to) < 1) { fin(); return; }
+  sw.classList.remove("drag"); sw.classList.add("snap"); row.style.transform = "translate3d(" + to + "px,0,0)";
+  row.addEventListener("transitionend", function te(e) { if (e.target === row && e.propertyName === "transform") { row.removeEventListener("transitionend", te); fin(); } });
+  setTimeout(fin, 320);
+}
+function swPatchRow(r, a) { if (a === "resolve") { r.nd = ""; r.why = ""; } else r.pu = Date.now() + 12 * 3600e3; }
+function swFind(k) { for (var i = 0; i < S.rows.length; i++) if (keyOf(S.rows[i]) === k) return S.rows[i]; return null; }
+function swRepaint() { listMeta(); setBadge(); chipsEl(); renderList(); }
+// список с сервера пришёл, а действие ещё не отправлено: показываем строку уже с действием, иначе она «вернётся» на 8–15 секунд
+function swOverlay() {
+  var p = SW.pend; if (!p) return;
+  var r = swFind(p.k); if (!r) return;
+  if (p.a === "resolve" && r.nd && S.f !== "web") S.need = Math.max(0, S.need - 1);
+  swPatchRow(r, p.a);
+}
+function swUnpatch(p) {
+  var r = swFind(p.k); if (r) { r.nd = p.was.nd; r.why = p.was.why; r.pu = p.was.pu; }
+  if (p.dec) S.need++;
+}
+function swTrigger(g) {
+  var r = g.r, A = SW_ACT[g.dir], k = keyOf(r), nm = r.nm || r.ph || "Гость сайта", dir = g.dir;
+  SW.drag = null; swFlush(); // предыдущее отложенное (если было) уходит сразу: окно «Отменить» одно
+  var p = SW.pend = { k: k, a: A.a, ch: r.ch, id: r.id, was: { nd: r.nd, why: r.why, pu: r.pu }, dec: A.a === "resolve" && !!r.nd, sent: false, p: null, t: setTimeout(function () { swFlush(); }, SW.ms) };
+  swPatchRow(r, A.a); if (p.dec) S.need = Math.max(0, S.need - 1);
+  var leaves = !visibleRows().some(function (x) { return keyOf(x) === k; });
+  toast(A.a === "resolve" ? "Готово: " + nm : "Бот молчит: " + nm, { ms: SW.ms, undo: swUndo });
+  swGo(g, leaves ? (dir === "l" ? -g.w : g.w) : 0, swRepaint); // ушла из списка — «улетает» в сторону свайпа, осталась — возвращается уже с новой пометкой
+}
+function swUndo() {
+  var p = SW.pend; if (!p || p.sent) return;
+  clearTimeout(p.t); SW.pend = null; swUnpatch(p); swRepaint();
+  toast("Возвращено", { ms: 1800 });
+}
+// отправить отложенное действие сейчас; key — только если оно по этому чату; возвращает обещание или null
+function swFlush(key) {
+  var p = SW.pend; if (!p || (key && p.k !== key)) return null;
+  if (p.sent) return p.p;
+  p.sent = true; clearTimeout(p.t);
+  if (SW.tOn) { clearTimeout(toastT); $("toast").hidden = true; SW.tOn = false; }
+  function back() { if (SW.pend === p) SW.pend = null; }
+  p.p = API.act(p.ch, p.id, p.a).then(function (d) {
+    back();
+    if (d && d.error) { swUnpatch(p); swRepaint(); toast(d.error, { ms: 7000 }); return; } // сервер не разрешил: строка на месте, причина словами сервера
+    loadList();
+  }).catch(function (e) { back(); swUnpatch(p); swRepaint(); loadList(); oops(e); });
+  return p.p;
+}
+
 /* ---------- переписка ---------- */
 function openChat(ch, id) {
   saveDraft(); S.cur = { ch: ch, id: id }; S.chat = null; S.card = false; app.classList.remove("card");
   $("txt").value = S.drafts[keyOf(S.cur)] || ""; fit();
   try { history.replaceState(null, "", location.pathname + location.search + "#" + ch + ":" + id); } catch (e) {}
   app.classList.add("chat"); replay($("chatp"), "enter"); clear($("msgs")); clear($("cards")); $("strip").hidden = true; $("cname").textContent = "…"; $("cst").textContent = "";
-  renderList(); loadChat(true);
+  renderList();
+  var pw = swFlush(keyOf(S.cur)); // отложенное действие по этому чату уходит сразу, чтобы чат открылся уже с ним
+  if (pw) pw.then(function () { loadChat(true); }); else loadChat(true);
 }
 function closeChat() {
   saveDraft(); S.cur = null; S.chat = null; S.card = false; app.classList.remove("chat", "card"); replay($("listp"), "enter");
@@ -447,6 +575,8 @@ function init() {
   $("send").onclick = sendMsg; $("quick").onclick = quickSheet; $("pay").onclick = insertPay; $("back").onclick = closeChat; $("menu").onclick = menuSheet; $("infobtn").onclick = openCard;
   $("who").onclick = openCard; $("cback").onclick = closeCard; $("cs").onclick = closeCard;
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if ($("sheet")) closeSheet(); else if (S.card) closeCard(); } });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) swFlush(); });
+  window.addEventListener("pagehide", function () { swFlush(); }); // закрыли вкладку — отложенное действие уходит сразу
   window.addEventListener("hashchange", function () { var m = /^#(wa|ga|web):([\w-]+)$/.exec(location.hash); if (m && S.C && !same(S.cur, { ch: m[1], id: m[2] })) openChat(m[1], m[2]); });
   skeleton(); chipsEl();
   API.me().then(function (d) { S.owner = !!d.owner; if (d.c && !S.C) S.C = d.c; $("me").textContent = DEMO ? "А" : S.owner ? "В" : "А"; $("bizslot").replaceChildren(bizBtn()); }).catch(function () {}).then(function () {
@@ -458,6 +588,6 @@ function init() {
   setInterval(refresh, DEMO ? 8000 : 15000);
   go("chats");
 }
-window.__pult = { tel: telHref, S: S, go: go, h: h, ic: ic, add: add, clear: clear, money: money, hm: hm, dk: dk, rowTime: rowTime, colorOf: colorOf, initials: initials, sheet: sheet, closeSheet: closeSheet, opt: opt, toast: toast, notice: notice, headerEl: headerEl, ibtn: ibtn, titleEl: titleEl, setTheme: setTheme, openChat: openChat, loadList: loadList, API: function () { return API; }, DEMO: DEMO, enc: enc, bizSheet: bizSheet, NB: NB, ic_: IC };
+window.__pult = { tel: telHref, S: S, go: go, h: h, ic: ic, add: add, clear: clear, money: money, hm: hm, dk: dk, rowTime: rowTime, colorOf: colorOf, initials: initials, sheet: sheet, closeSheet: closeSheet, opt: opt, toast: toast, notice: notice, headerEl: headerEl, ibtn: ibtn, titleEl: titleEl, setTheme: setTheme, openChat: openChat, loadList: loadList, SW: SW, API: function () { return API; }, DEMO: DEMO, enc: enc, bizSheet: bizSheet, NB: NB, ic_: IC };
 window.__pultBoot = init;
 })();

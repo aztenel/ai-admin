@@ -11,8 +11,8 @@ if (shots) mkdirSync(shots, { recursive: true });
 const { S, server, url } = await start(0);
 const browser = await chromium.launch();
 const errors = [];
-const newPage = async (viewport = { width: 390, height: 844 }) => {
-  const ctx = await browser.newContext({ viewport, locale: "ru-RU" });
+const newPage = async (viewport = { width: 390, height: 844 }, opts = {}) => {
+  const ctx = await browser.newContext({ viewport, locale: "ru-RU", ...opts });
   const page = await ctx.newPage();
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
   page.on("console", m => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push("console: " + m.text()); });
@@ -442,6 +442,210 @@ try {
     ok("ждущий чат отмечен «лентой внимания»", await n.locator("#rows a.row.wait").count() > 0);
     await shot(n, "18b-notify-wide");
     await n.close();
+  }
+
+  // ---- свайпы по строке чата на телефоне: влево — «Готово», вправо — «Забрать у бота», тост «Отменить» 5 секунд.
+  // Касания — настоящие, через CDP (Input.dispatchTouchEvent): браузер сам решает, где прокрутка, а где жест. Демо — без сервера, плюс живой /inbox на заглушках.
+  {
+    const touchKit = async page => {
+      const cdp = await page.context().newCDPSession(page);
+      const send = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts });
+      const pos = async loc => { await loc.scrollIntoViewIfNeeded(); const b = await loc.boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+      const kit = {
+        pos,
+        async begin(loc, dx, dy = 0, steps = 8) { const p = await pos(loc); await send("touchStart", [{ x: p.x, y: p.y }]); for (let i = 1; i <= steps; i++) await send("touchMove", [{ x: p.x + dx * i / steps, y: p.y + dy * i / steps }]); return p; }, // палец идёт и остаётся на экране
+        async to(p, dx) { await send("touchMove", [{ x: p.x + dx, y: p.y }]); },
+        async end() { await send("touchEnd", []); },
+        async drag(loc, dx, dy = 0, steps = 8) { await kit.begin(loc, dx, dy, steps); await kit.end(); }
+      };
+      return kit;
+    };
+    const R = (pg, n) => pg.locator(`#rows a.row:has(.nm:text-is("${n}"))`);
+    const rowsN = pg => pg.locator("#rows a.row").count();
+    const needN = async pg => Number(/Ждут ответа\s*(\d+)/.exec(await pg.locator(".chip", { hasText: "Ждут ответа" }).first().innerText())?.[1] || 0);
+    const track = pg => pg.evaluate(() => { const A = window.__pult.API(), o = A.act; window.__acts = []; A.act = function (ch, id, a) { window.__acts.push(ch + ":" + id + ":" + a); return o.apply(A, arguments); }; }); // какие действия реально ушли
+    const acts = pg => pg.evaluate(() => window.__acts.slice());
+    const toastGone = pg => pg.waitForSelector("#toast", { state: "hidden", timeout: 9000 });
+    const settle = pg => pg.waitForTimeout(450);
+    const api = [];
+    const phoneDemo = async (opts = {}, viewport = { width: 390, height: 844 }) => {
+      const pg = await newPage(viewport, { hasTouch: true, ...opts });
+      pg.on("request", r => { if (new URL(r.url()).pathname.startsWith("/api/")) api.push(r.url()); });
+      await pg.goto(url + "/demo"); await pg.waitForSelector("#rows a.row");
+      await pg.evaluate(() => { window.__pult.setTheme("light", true); window.__pult.SW.ms = 1200; });
+      await track(pg); await settle(pg);
+      return pg;
+    };
+
+    // --- телефон (390), демо, светлая тема
+    const d = await phoneDemo(), tk = await touchKit(d);
+    ok("свайп: 3 ждущих чата, значок «Ждут ответа 4»", (await rowsN(d)) === 3 && (await needN(d)) === 4);
+    // подсказка под строкой: цвет + значок + подпись, не только цвет
+    const mad = R(d, "Мадина Темирова");
+    let pt = await tk.begin(mad, -120);
+    const hintL = await d.evaluate(() => { const s = document.querySelector(".sw.on"), v = s && s.querySelector(".swh.l"), cs = v && getComputedStyle(v); return { on: !!s, d: s && s.getAttribute("data-d"), go: s && s.classList.contains("go"), shown: !!cs && cs.display !== "none", text: v ? v.textContent : "", svg: v ? v.querySelectorAll("svg").length : 0, bg: getComputedStyle(s.querySelector(".swb")).backgroundColor, tx: s.querySelector(".row").style.transform }; });
+    ok("свайп влево: строка идёт за пальцем, под ней шафрановая подсказка «Готово» со значком", hintL.on && hintL.d === "l" && hintL.go && hintL.shown && /^Готово$/.test(hintL.text) && hintL.svg === 1 && /translate3d\(-/.test(hintL.tx) && hintL.bg !== "rgba(0, 0, 0, 0)", JSON.stringify(hintL));
+    await shot(d, "swipe-left-phone");
+    await tk.to(pt, 0); await tk.end(); await settle(d);
+    ok("палец вернули к началу и отпустили — ничего не произошло", (await rowsN(d)) === 3 && (await acts(d)).length === 0 && await d.locator("#toast").isHidden());
+    // короткий свайп ниже порога
+    await tk.drag(mad, -50); await settle(d);
+    ok("короткий свайп (ниже порога): действия нет, тоста нет, строка вернулась на место", (await rowsN(d)) === 3 && (await acts(d)).length === 0 && await d.locator("#toast").isHidden() && (await d.evaluate(() => document.querySelectorAll(".sw.on").length + document.querySelectorAll(".row[style*=transform]").length)) === 0);
+    // длинный свайп влево: «Готово»
+    await tk.drag(R(d, "Айдос Акберов"), -160); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length === 2);
+    const tb = await d.locator("#toast .tb").boundingBox();
+    ok("свайп влево за порогом: чат ушёл из «Ждут ответа», появился тост «Отменить»", (await rowsN(d)) === 2 && (await R(d, "Айдос Акберов").count()) === 0 && /Готово: Айдос/.test(await d.locator("#toast").innerText()) && await d.locator("#toast .tb").isVisible() && (await d.locator("#toast .tb").innerText()) === "Отменить");
+    ok("после свайпа значок «Ждут ответа» уменьшился (4 → 3), чат не открылся", (await needN(d)) === 3 && /3 ждут ответа/.test(await d.locator("#meta").innerText()) && (await d.evaluate(() => window.__pult.S.cur)) === null);
+    ok("кнопка «Отменить» не меньше 44×44 px, тост — role=status", tb.width >= 44 && tb.height >= 44 && (await d.locator("#toast").getAttribute("role")) === "status", JSON.stringify(tb));
+    ok("пока тост виден, на сервер (в демо — в «API») ничего не ушло", (await acts(d)).length === 0);
+    await d.locator("#toast .tb").tap();
+    await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length === 3);
+    ok("«Отменить» возвращает чат в «Ждут ответа», счётчик снова 4", (await R(d, "Айдос Акберов").count()) === 1 && (await needN(d)) === 4 && (await R(d, "Айдос Акберов").evaluate(e => e.classList.contains("wait"))));
+    await d.waitForTimeout(1700);
+    ok("после «Отменить» действие так и не уходит (даже когда время вышло)", (await acts(d)).length === 0 && (await rowsN(d)) === 3);
+    // не отменили — через паузу действие уходит
+    await toastGone(d);
+    await tk.drag(R(d, "Айдос Акберов"), -160); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length === 2);
+    await d.waitForFunction(() => window.__acts.length === 1, null, { timeout: 5000 });
+    ok("не нажали «Отменить» — действие «resolve» уходит по этому чату, тост убрался", JSON.stringify(await acts(d)) === JSON.stringify(["wa:demo-01:resolve"]) && await d.locator("#toast").isHidden());
+    await d.evaluate(() => window.__pult.loadList()); await d.waitForTimeout(300);
+    ok("после обновления списка чат остаётся закрытым (ответ демо принят)", (await R(d, "Айдос Акберов").count()) === 0 && (await needN(d)) === 3);
+    // чат с просьбой клиента: сервер не даёт нажать «Готово» — строка возвращается и сказано почему
+    await tk.drag(R(d, "Данияр С."), -160); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length === 1);
+    await d.waitForFunction(() => window.__acts.length === 2 && /невыполненная просьба/.test(document.getElementById("toast").textContent) && document.querySelectorAll("#rows a.row").length === 2, null, { timeout: 5000 });
+    ok("чат с невыполненной просьбой: сервер отказал — строка вернулась, в тосте текст ошибки сервера", (await R(d, "Данияр С.").count()) === 1 && /невыполненная просьба клиента/.test(await d.locator("#toast").innerText()) && (await R(d, "Данияр С.").evaluate(e => e.classList.contains("wait"))) && (await needN(d)) === 3);
+    await toastGone(d);
+
+    // --- вправо: «Забрать у бота»
+    await d.locator(".chip:text-is('Все')").click(); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length >= 10); await settle(d);
+    const pausedBefore = await d.locator("#rows .tag.ok").count();
+    const erl = R(d, "Ерлан Касымов");
+    pt = await tk.begin(erl, 120);
+    const hintR = await d.evaluate(() => { const s = document.querySelector(".sw.on"), v = s && s.querySelector(".swh.r"), cs = v && getComputedStyle(v); return { d: s && s.getAttribute("data-d"), go: s && s.classList.contains("go"), shown: !!cs && cs.display !== "none", text: v ? v.textContent : "", svg: v ? v.querySelectorAll("svg").length : 0, left: s.querySelector(".swh.l") ? getComputedStyle(s.querySelector(".swh.l")).display : "" }; });
+    ok("свайп вправо: подсказка «Забрать у бота» со значком (а «Готово» скрыто)", hintR.d === "r" && hintR.go && hintR.shown && /^Забрать у бота$/.test(hintR.text) && hintR.svg === 1 && hintR.left === "none", JSON.stringify(hintR));
+    await shot(d, "swipe-right-phone");
+    await tk.end(); await R(d, "Ерлан Касымов").locator(".tag.ok").waitFor({ timeout: 3000 }); // строка вернулась на место уже с пометкой
+    ok("свайп вправо за порогом: бот на паузе (метка «Бот молчит до …» в строке), тост «Отменить»", (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 1 && /Бот молчит до/.test(await R(d, "Ерлан Касымов").innerText()) && (await d.locator("#rows .tag.ok").count()) === pausedBefore + 1 && (await d.locator("#toast .tb").innerText()) === "Отменить" && (await acts(d)).length === 2, JSON.stringify([await R(d, "Ерлан Касымов").locator(".tag.ok").count(), await R(d, "Ерлан Касымов").innerText(), await d.locator("#rows .tag.ok").count(), pausedBefore, await acts(d)]));
+    await d.locator("#toast .tb").tap();
+    await d.waitForFunction(() => !document.querySelector("#rows a.row .tag.ok") || document.querySelectorAll("#rows .tag.ok").length === 1);
+    ok("«Отменить» после «Забрать у бота»: метки паузы в строке нет, на сервер ничего не ушло", (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 0 && (await acts(d)).length === 2);
+    await d.waitForTimeout(1700); await toastGone(d);
+    ok("…и через время тоже не уходит", (await acts(d)).length === 2 && (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 0);
+    // недоступные направления: бот уже молчит — вправо нельзя; чат не ждёт — влево нельзя
+    await tk.drag(R(d, "Алибек Н."), 160); await tk.drag(R(d, "Нурлан Б."), -160); await settle(d);
+    ok("недоступное действие (бот уже молчит / чат не ждёт ответа) не срабатывает", (await acts(d)).length === 2 && await d.locator("#toast").isHidden());
+    // настоящая пауза: действие «pause» уходит
+    await tk.drag(erl, 160);
+    await d.waitForFunction(() => window.__acts.length === 3, null, { timeout: 5000 });
+    ok("не отменили — действие «pause» уходит по этому чату", (await acts(d))[2] === "wa:demo-04:pause");
+    await d.locator(".chip:text-is('Бот молчит')").click(); await d.waitForTimeout(300);
+    ok("фильтр «Бот молчит» теперь показывает и этот чат", (await R(d, "Ерлан Касымов").count()) === 1 && (await R(d, "Алибек Н.").count()) === 1);
+    await d.locator(".chip:text-is('Все')").click(); await d.waitForTimeout(300);
+
+    // --- тёмная тема
+    await d.evaluate(() => window.__pult.setTheme("dark", true)); await settle(d);
+    pt = await tk.begin(R(d, "Мадина Темирова"), -120);
+    await shot(d, "swipe-left-phone-dark");
+    await tk.to(pt, 0); await tk.end(); await settle(d);
+    pt = await tk.begin(R(d, "Ержан А."), 120);
+    await shot(d, "swipe-right-phone-dark");
+    ok("тёмная тема: подсказка видна (цвет фона подсказки отличается от фона строки)", await d.evaluate(() => { const s = document.querySelector(".sw.on"); return !!s && getComputedStyle(s.querySelector(".swb")).backgroundColor !== getComputedStyle(s.querySelector(".row")).backgroundColor; }));
+    await tk.to(pt, 0); await tk.end(); await settle(d);
+    await d.evaluate(() => window.__pult.setTheme("light", true));
+    ok("палец вернули в начало: ничего не сработало", (await acts(d)).length === 3 && await d.locator("#toast").isHidden());
+
+    // --- вертикальная прокрутка списка не запускает жест, а нажатие по-прежнему открывает чат
+    const scroller = d.locator("#rows");
+    await scroller.evaluate(e => { e.scrollTop = 0; }); await settle(d);
+    const before = await scroller.evaluate(e => e.scrollTop);
+    await tk.drag(R(d, "Ерлан Касымов"), 6, -320, 12); await settle(d);
+    const scrolled = await scroller.evaluate(e => e.scrollTop);
+    ok("вертикальная прокрутка списка: список прокрутился, жест не начался, действий нет", scrolled > before && (await acts(d)).length === 3 && await d.locator("#toast").isHidden() && (await d.locator(".sw.on").count()) === 0, `${before}→${scrolled}`);
+    await scroller.evaluate(e => { e.scrollTop = 0; }); await settle(d);
+    await R(d, "Тимур К.").tap(); await d.waitForSelector("#msgs .m");
+    ok("обычное нажатие по строке открывает чат (клики как раньше)", /Тимур/.test(await d.locator("#cname").innerText()));
+    await d.click("#back"); await d.waitForSelector("#rows a.row"); await settle(d);
+
+    // --- окно «Отменить» длится 5 секунд (по умолчанию)
+    await d.evaluate(() => { window.__pult.SW.ms = 5000; });
+    await tk.drag(R(d, "Тимур К."), 160);
+    const t0 = Date.now();
+    await d.waitForFunction(() => /Бот молчит: Тимур/.test(document.getElementById("toast").textContent));
+    await d.waitForTimeout(3800);
+    ok("тост «Отменить» держится больше 3,5 секунды, действие ещё не ушло", await d.locator("#toast .tb").isVisible() && (await acts(d)).length === 3, String(Date.now() - t0));
+    await d.waitForFunction(() => window.__acts.length === 4, null, { timeout: 4000 });
+    const dt = Date.now() - t0;
+    ok("через ~5 секунд действие уходит, тост убран", dt >= 4500 && dt <= 6500 && await d.locator("#toast").isHidden() && (await acts(d))[3] === "wa:demo-07:pause", String(dt));
+    // два свайпа подряд: первое действие уходит сразу, окно «Отменить» — у последнего
+    await d.evaluate(() => { window.__pult.SW.ms = 1200; });
+    await tk.drag(R(d, "Ержан А."), 160); await d.waitForFunction(() => /Бот молчит: Ержан/.test(document.getElementById("toast").textContent));
+    await tk.drag(R(d, "Санжар Ж."), 160); await d.waitForFunction(() => /Бот молчит: Санжар/.test(document.getElementById("toast").textContent));
+    ok("два свайпа подряд: первое действие ушло сразу, у второго — свой «Отменить»", (await acts(d)).includes("wa:demo-10:pause") && !(await acts(d)).includes("wa:demo-06:pause"));
+    await d.locator("#toast .tb").tap(); await d.waitForTimeout(300);
+    ok("«Отменить» отменяет только последнее", !(await acts(d)).includes("wa:demo-06:pause") && (await R(d, "Санжар Ж.").locator(".tag.ok").count()) === 0 && (await R(d, "Ержан А.").locator(".tag.ok").count()) === 1);
+    ok("свайпы в демо не обращаются к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
+    await d.context().close();
+
+    // --- reduced motion: жест работает, но без анимации (строка пропадает сразу)
+    const rm = await phoneDemo({ reducedMotion: "reduce" }), tkr = await touchKit(rm);
+    ok("reduced motion: браузер сообщает об отключённой анимации", await rm.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches));
+    await tkr.drag(R(rm, "Айдос Акберов"), -160);
+    const instant = await rm.evaluate(() => ({ rows: document.querySelectorAll("#rows a.row").length, snap: document.querySelectorAll(".sw.snap").length, toast: !document.getElementById("toast").hidden }));
+    ok("reduced motion: свайп влево сработал, строка убрана сразу, без скольжения (.snap нет), тост есть", instant.rows === 2 && instant.snap === 0 && instant.toast, JSON.stringify(instant));
+    await rm.waitForTimeout(500); // сразу после жеста браузер пропускает касание — как и у человека
+    await rm.locator("#toast .tb").tap(); await rm.waitForTimeout(150);
+    ok("reduced motion: «Отменить» возвращает чат тоже сразу", (await rowsN(rm)) === 3);
+    await tkr.drag(R(rm, "Мадина Темирова"), -50); await rm.waitForTimeout(100);
+    ok("reduced motion: короткий свайп ничего не делает, строка на месте", (await rowsN(rm)) === 3 && (await acts(rm)).length === 0 && (await rm.locator(".row[style*=transform]").count()) === 0);
+    await rm.context().close();
+
+    // --- компьютер (1280): мышь и касание при широком окне не запускают жест
+    const wd = await phoneDemo({}, { width: 1280, height: 800 });
+    const wk = await touchKit(wd), wrow = R(wd, "Айдос Акберов"), wb = await wrow.boundingBox();
+    await wd.mouse.move(wb.x + wb.width / 2, wb.y + wb.height / 2); await wd.mouse.down();
+    for (let i = 1; i <= 10; i++) await wd.mouse.move(wb.x + wb.width / 2 - 16 * i, wb.y + wb.height / 2);
+    ok("компьютер (мышь): во время перетаскивания строка не двигается и подсказки нет", (await wd.locator(".sw.on").count()) === 0 && (await wrow.evaluate(e => e.style.transform)) === "");
+    await wd.mouse.up(); await wd.waitForTimeout(300);
+    ok("компьютер (мышь): перетаскивание строки не запускает действие", (await acts(wd)).length === 0 && (await rowsN(wd)) === 3 && await wd.locator("#toast").isHidden());
+    await wk.drag(wrow, -160); await wd.waitForTimeout(300);
+    ok("широкое окно, даже с касанием: свайпа нет", (await acts(wd)).length === 0 && (await rowsN(wd)) === 3 && await wd.locator("#toast").isHidden());
+    await wrow.click(); await wd.waitForSelector("#msgs .m");
+    ok("компьютер: обычный щелчок по строке открывает чат", /Айдос/.test(await wd.locator("#cname").innerText()));
+    await wd.context().close();
+
+    // --- живой /inbox на заглушках: «Готово» и «Забрать у бота» доходят до сервера; при уходе со страницы действие уходит сразу
+    for (const [id, nm, tx] of [["77051118801", "Свайп Один", "Позовите администратора"], ["77051118802", "Свайп Два", "Добрый день"], ["77051118803", "Свайп Три", "Позовите администратора"]]) await wa({ c: "kairat", from: id, name: nm, text: tx });
+    const prof = id => (S.kv.json("h:wa:kairat:" + id) || {}).profile || {};
+    ok("живой пульт (подготовка): двое ждут ответа, у третьего бот отвечает сам", !!prof("77051118801").need && !!prof("77051118803").need && !prof("77051118802").need && !(prof("77051118802").pausedUntil > Date.now()));
+    const lv = await newPage({ width: 390, height: 844 }, { hasTouch: true }), lk = await touchKit(lv);
+    await lv.goto(url + "/inbox?c=kairat&key=" + OWNER); await lv.waitForSelector("#rows a.row");
+    await lv.evaluate(() => { window.__pult.SW.ms = 800; }); await track(lv); await settle(lv);
+    await lk.drag(R(lv, "Свайп Один"), -170);
+    await lv.waitForFunction(() => document.querySelectorAll("#rows a.row .nm").length > 0 && ![...document.querySelectorAll("#rows a.row .nm")].some(e => e.textContent === "Свайп Один"));
+    ok("живой пульт: свайп влево — чат ушёл из «Ждут ответа» сразу, тост «Отменить»", await lv.locator("#toast .tb").isVisible() && !!prof("77051118801").need);
+    await lv.waitForFunction(() => window.__acts.length === 1, null, { timeout: 4000 });
+    await lv.waitForTimeout(300);
+    ok("живой пульт: через паузу «Готово» дошло до сервера (пометка «ждёт ответа» снята)", (await acts(lv))[0] === "wa:77051118801:resolve" && !prof("77051118801").need && !!prof("77051118803").need);
+    await lv.locator(".chip:text-is('Все')").click(); await lv.waitForSelector("#rows a.row .nm >> text=Свайп Два");
+    await lv.evaluate(() => { window.__pult.SW.ms = 5000; });
+    await lk.drag(R(lv, "Свайп Два"), 170);
+    await lv.waitForFunction(() => /Бот молчит: Свайп Два/.test(document.getElementById("toast").textContent));
+    await lv.locator("#toast .tb").tap(); await lv.waitForTimeout(400);
+    ok("живой пульт: «Отменить» после свайпа вправо — на сервер ничего не ушло", (await acts(lv)).length === 1 && !(prof("77051118802").pausedUntil > Date.now()) && (await R(lv, "Свайп Два").locator(".tag.ok").count()) === 0);
+    await lv.evaluate(() => { window.__pult.SW.ms = 800; });
+    await lk.drag(R(lv, "Свайп Два"), 170);
+    await lv.waitForFunction(() => window.__acts.length === 2, null, { timeout: 4000 }); await lv.waitForTimeout(300);
+    ok("живой пульт: свайп вправо — бот в этом чате на паузе (на сервере и в строке)", prof("77051118802").pausedUntil > Date.now() && /Бот молчит до/.test(await R(lv, "Свайп Два").innerText()));
+    await shot(lv, "swipe-live-inbox-phone");
+    // закрыли страницу, не дождавшись пяти секунд: действие всё равно уходит
+    await lv.evaluate(() => { window.__pult.SW.ms = 5000; });
+    await lk.drag(R(lv, "Свайп Три"), -170);
+    await lv.waitForFunction(() => /Готово: Свайп Три/.test(document.getElementById("toast").textContent));
+    ok("уход со страницы (подготовка): пока ждём, действие на сервер не ушло", !!prof("77051118803").need);
+    await lv.goto("about:blank");
+    for (let i = 0; i < 40 && prof("77051118803").need; i++) await new Promise(r => setTimeout(r, 100));
+    ok("живой пульт: ушли со страницы в окне «Отменить» — «Готово» отправлено сразу", !prof("77051118803").need);
+    await lv.context().close();
   }
 
   // ---- страницы заявок и выхода

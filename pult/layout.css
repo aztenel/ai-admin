@@ -46,6 +46,22 @@ button.chip,button.stg,button.ibtn,button.row{font:inherit}
 .sheet .kv2 span:last-child{color:var(--fg2);text-align:right}
 .toast{position:absolute;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(var(--navb) + var(--navh) + 18px);max-width:min(92%,420px);padding:12px 16px;border-radius:16px;background:var(--fg);color:var(--bg);font-size:14px;font-weight:500;line-height:1.35;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.35)}
 .app.chat .toast{bottom:calc(var(--sab) + 84px)}
+.toast.act{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 16px;text-align:left}
+.toast .tt{min-width:0;overflow-wrap:anywhere}
+.toast .tb{flex:none;min-width:44px;height:44px;padding:0 16px;border-radius:12px;background:var(--acbg);color:var(--acfg);font-size:14px;font-weight:600}
+/* свайп по строке чата: цветная подсказка лежит под строкой и открывается по мере сдвига */
+.sw{position:relative;overflow:hidden;overflow:clip visible}
+.sw>.row{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.sw.on>.row{background:var(--bg)}
+.sw.on>.row.sel{background:var(--s1)}
+.sw.drag>.row{transition:none!important}
+.swb{position:absolute;inset:0;display:flex;align-items:center;padding:0 6px;pointer-events:none}
+.sw[data-d="l"] .swb{justify-content:flex-end;background:var(--acbg);color:var(--acfg)}
+.sw[data-d="r"] .swb{justify-content:flex-start;background:var(--chipbg);color:var(--chipfg)}
+.sw:not([data-d]) .swb{visibility:hidden}
+.swh{display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:76px;font-size:12px;font-weight:600;line-height:1.15;text-align:center;opacity:.65}
+.sw[data-d="l"] .swh.l,.sw[data-d="r"] .swh.r{display:flex}
+.sw.go .swh{opacity:1}
 /* поле ввода сообщения */
 .inp{height:auto;min-height:44px;align-items:flex-end;border-radius:22px}
 .inp textarea{flex:1;min-width:0;border:0;outline:0;background:transparent;resize:none;font:inherit;font-size:16px;line-height:22px;max-height:120px;padding:11px 0;color:inherit}
