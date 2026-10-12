@@ -2,6 +2,7 @@
 (function () {
 "use strict";
 var P = window.__pult, S = P.S, h = P.h, ic = P.ic, clear = P.clear, DEMO = P.DEMO, NB = P.NB;
+function prof() { return DEMO && P.API().profile ? P.API().profile() : null; } // демо: подписи бизнеса (барбершоп / магазин телефонов)
 var $ = function (id) { return document.getElementById(id); };
 function api() { return P.API(); }
 function scrollBox(el, kids, nonav) { var s = h("div", "scroll" + (nonav ? " nonav" : ""), kids); el.appendChild(s); return s; }
@@ -59,7 +60,7 @@ function liveLeads(v) {
 function newLead() {
   if (!DEMO) return;
   var name = h("input", "", "", { type: "text", placeholder: "Имя", "aria-label": "Имя", style: "width:100%;height:48px;border-radius:14px;background:var(--bg);border:1px solid var(--line);padding:0 14px;font-size:16px;color:var(--fg);outline:0" });
-  var what = h("input", "", "", { type: "text", placeholder: "Что хочет: например, стрижка завтра в 18:00", "aria-label": "Запрос", style: "width:100%;height:48px;border-radius:14px;background:var(--bg);border:1px solid var(--line);padding:0 14px;font-size:16px;color:var(--fg);outline:0" });
+  var what = h("input", "", "", { type: "text", placeholder: (prof() || {}).leadHint || "Что хочет: например, стрижка завтра в 18:00", "aria-label": "Запрос", style: "width:100%;height:48px;border-radius:14px;background:var(--bg);border:1px solid var(--line);padding:0 14px;font-size:16px;color:var(--fg);outline:0" });
   var ok = h("button", "btn pri", "Добавить лид", { type: "button", style: "width:calc(100% - 32px);margin:12px 16px 0" });
   ok.onclick = function () { if (!name.value.trim()) { name.focus(); return; } api().newLead({ name: name.value.trim(), what: what.value.trim() }).then(function () { P.closeSheet(); P.toast("Лид добавлен в «Новый»"); if (S.v === "leads") leads(); else P.loadList(); }); };
   P.sheet("Новый лид", h("div", "", [name, what], { style: "display:flex;flex-direction:column;gap:10px;padding:0 16px" }), ok);
@@ -125,9 +126,9 @@ function more() {
   var v = mount("more");
   v.appendChild(h("div", "ttl", h("h1", "", "Ещё"), { style: "padding-top:calc(var(--sat) + 14px)" }));
   var sc = h("div", "scroll"); v.appendChild(sc);
-  var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? "#B5652A" : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
-    h("div", "", [h("span", "nm", nm, { style: "font-size:19px" }), DEMO ? tag("WhatsApp подключён", "ok") : null, h("span", "nx", DEMO ? "Запись через Altegio" : S.C)], { style: "flex:1;min-width:0;display:flex;flex-direction:column;gap:2px" })], { style: "padding:14px 16px;display:flex;align-items:center;gap:14px" });
+  var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания"), pf = prof();
+  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? (S.client.color || "#B5652A") : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
+    h("div", "", [h("span", "nm", nm, { style: "font-size:19px" }), DEMO ? tag("WhatsApp подключён", "ok") : null, h("span", "nx", DEMO ? pf.sub : S.C)], { style: "flex:1;min-width:0;display:flex;flex-direction:column;gap:2px" })], { style: "padding:14px 16px;display:flex;align-items:center;gap:14px" });
   if (S.owner || DEMO) { var cb = h("button", "ibtn", ic("chev"), { type: "button", style: "background:var(--s2)", "aria-label": "Сменить компанию" }); cb.onclick = P.bizSheet; biz.appendChild(cb); }
   var themes = h("div", "seg"); [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]].forEach(function (t) { var b = h("button", S.theme === t[0] ? "on" : "", t[1], { type: "button", style: "flex:1;height:40px;border-radius:20px;font-size:15px;font-weight:500;color:" + (S.theme === t[0] ? "var(--fg)" : "var(--fg2)") + ";background:" + (S.theme === t[0] ? "var(--bg)" : "transparent") }); b.onclick = function () { P.setTheme(t[0]); more(); }; themes.appendChild(b); });
   var kids = [biz, h("div", "", [h("span", "cap", "Тема оформления", { style: "padding:0 6px" }), themes], { style: "display:flex;flex-direction:column;gap:6px" })];
@@ -135,14 +136,14 @@ function more() {
     kids.push(h("div", "grp", [
       tapRow("bolt", "Быстрые ответы", String((window.__QUICK || []).length), function () { var b = h("div", ""); (window.__QUICK || []).forEach(function (q) { b.appendChild(h("div", "kv2", h("span", "", q))); }); P.sheet("Быстрые ответы", b); }),
       tapRow("book", "База знаний бота", "", function () { api().kb().then(function (k) { var b = h("div", ""); b.appendChild(h("div", "note", "Из этого бот берёт цены, мастеров и график. Если здесь написано неверно, бот ответит неверно.")); k.rows.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); P.sheet("База знаний бота", b); }); }),
-      tapRow("cut", "Мастера и услуги", "3 мастера", function () { api().kb().then(function (k) { var b = h("div", ""); k.services.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); b.appendChild(h("div", "note", "Мастера: " + k.masters)); P.sheet("Мастера и услуги", b); }); }),
-      tapRow("clock", "График работы", "10:00–22:00", function () { P.notice("График работы", "Ежедневно с 10:00 до 22:00. Бот предлагает только свободные окна из расписания и не записывает вне рабочих часов."); })
+      tapRow(pf.svc[0], pf.svc[1], pf.svc[2], function () { api().kb().then(function (k) { var b = h("div", ""); k.services.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); b.appendChild(h("div", "note", pf.staff + ": " + k.masters)); P.sheet("Мастера и услуги", b); }); }),
+      tapRow("clock", "График работы", pf.hours, function () { P.notice("График работы", pf.hoursText); })
     ]));
     kids.push(h("div", "grp", [
-      tapRow("link", "Подключения", "3 из 3", function () { var b = h("div", ""); [["WhatsApp", "подключён"], ["Altegio (запись)", "подключено"], ["Telegram (уведомления)", "подключён"]].forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); P.sheet("Подключения", b); }),
-      tapRow("users", "Команда и роли", "3", function () { var b = h("div", ""); [["Асель", "администратор"], ["Бакыт", "администратор"], ["Кайрат", "владелец"]].forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); b.appendChild(h("div", "note", "Администратор видит чаты и отвечает клиентам. Владелец видит ещё и сводку.")); P.sheet("Команда и роли", b); })
+      tapRow("link", "Подключения", pf.connVal, function () { var b = h("div", ""); pf.conn.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); P.sheet("Подключения", b); }),
+      tapRow("users", "Команда и роли", String(pf.team.length), function () { var b = h("div", ""); pf.team.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); b.appendChild(h("div", "note", pf.teamNote)); P.sheet("Команда и роли", b); })
     ]));
-    kids.push(h("div", "grp", [linkRow("chats", "Написать боту на сайте", "живой бот, который отвечает клиентам", "/?c=barber", true)]));
+    if (pf.web) kids.push(h("div", "grp", [linkRow("chats", "Написать боту на сайте", pf.webSub, pf.web, true)]));
   } else {
     var g1 = [linkRow("rec", "Заявки", "", ext("/leads")), linkRow("bc", "Рассылки", "", ext("/broadcast")), linkRow("chats", "Бот на сайте", "тот, что видят клиенты", "/?c=" + P.enc(S.C), true)];
     if (S.owner) { g1.push(linkRow("shield", "Проверка запуска", "", ext("/launch"))); g1.push(linkRow("users", "Боты и сотрудники", "", "/studio")); }

@@ -190,7 +190,7 @@ function setBadge() {
 /* ---------- шапка: переключатель компании ---------- */
 function bizBtn() {
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? "#B5652A" : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
+  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? (S.client.color || "#B5652A") : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
   b.onclick = bizSheet; return b;
 }
 function bizSheet() {
@@ -198,10 +198,18 @@ function bizSheet() {
   var body = h("div", "");
   API.clients().then(function (d) {
     if (d.error) { body.appendChild(h("div", "note", d.error)); return; }
-    (d.clients || []).forEach(function (c) { var o = opt(null, c.name, c.kind + " · " + c.id, function () { if (DEMO) toast("В демо — только этот барбершоп"); else location.href = "/inbox?c=" + c.id; }); if (c.id === S.C) o.classList.add("sel"); body.appendChild(o); });
+    (d.clients || []).forEach(function (c) { var o = opt(null, c.name, c.kind + " · " + c.id, function () { if (DEMO) demoSwitch(c); else location.href = "/inbox?c=" + c.id; }); if (c.id === S.C) o.classList.add("sel"); body.appendChild(o); });
   }).catch(function () { body.appendChild(h("div", "note", "Не удалось получить список компаний.")); });
-  if (DEMO) body.appendChild(h("div", "note", "Здесь появятся ваши другие бизнесы — например, магазин телефонов. Вход один, переключаются одним нажатием."));
+  if (DEMO) body.appendChild(h("div", "note", "Оба бизнеса вымышленные. Вход один, переключаются одним нажатием — у каждого свои чаты и сводка."));
   sheet("Компания", body);
+}
+// демо: переключение бизнеса. Данные подменяет __DEMO_API.setBiz; здесь сбрасываем всё, что относилось к прежнему бизнесу
+function demoSwitch(c) {
+  if (c.id === S.C) return;
+  API.setBiz(c.id); saveDraft(); S.C = c.id; S.cur = null; S.chat = null; S.card = false; S.rows = []; S.ready = false; S.shown = false; S.f = "need"; S.q = ""; S.stage = ""; S.needWas = null; $("q").value = "";
+  app.classList.remove("chat", "card"); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+  skeleton(); chipsEl(); toast("Открыт бизнес: " + c.name);
+  loadList().then(function () { go(S.v); });
 }
 function headerEl(extra) {
   var hd = h("div", "hdr", [bizBtn(), h("span", "sp")]);

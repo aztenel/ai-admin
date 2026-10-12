@@ -323,6 +323,106 @@ try {
     ok("демо не обращается к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
   }
 
+  // ---- /demo: второй бизнес «Магазин телефонов» (вымышленный «Смарт Маркет»): переключатель, чаты, счётчики, маски номеров
+  {
+    const api = [];
+    const open = async (viewport, theme) => {
+      const d = await newPage(viewport);
+      d.on("request", r => { if (new URL(r.url()).pathname.startsWith("/api/")) api.push(r.url()); });
+      await d.goto(url + "/demo");
+      await d.waitForSelector("#rows a.row");
+      await d.evaluate(t => window.__pult.setTheme(t, true), theme);
+      return d;
+    };
+    const biz = d => d.locator("#bizslot .biz .n").first().innerText();
+    const switchTo = async (d, name) => {
+      await d.locator("#bizslot .biz").first().click();
+      await d.waitForSelector("#sheet .opt");
+      await d.locator("#sheet .opt", { hasText: name }).click();
+      await d.waitForFunction(n => { const e = document.querySelector("#bizslot .biz .n"); return e && e.textContent === n && document.querySelectorAll("#rows a.row, #rows .empty").length > 0 && !document.querySelector("#rows .sk-row"); }, name);
+    };
+    const calm = async d => { await d.waitForSelector("#toast", { state: "hidden", timeout: 6000 }); await d.waitForTimeout(450); }; // перед снимком: тост убрался, анимации закончились
+    const chip = (d, t) => d.locator(".chip", { hasText: t }).first();
+    const rowsText = d => d.locator("#rows").innerText();
+    const waitNum = async d => Number(/Ждут ответа\s*(\d+)/.exec(await chip(d, "Ждут ответа").innerText())?.[1] || 0);
+    const allList = async d => { await d.locator(".chip:text-is('Все')").click(); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length > 0); await d.waitForTimeout(150); };
+
+    // --- телефон (390), светлая тема
+    const d = await open({ width: 390, height: 844 }, "light");
+    await allList(d);
+    const barberRows = await d.locator("#rows a.row").count(), barberText = await rowsText(d), barberWait = await d.locator("#rows a.row.wait").count(), barberChip = await waitNum(d);
+    ok("демо: в переключателе оба бизнеса", await (async () => { await d.locator("#bizslot .biz").first().click(); await d.waitForSelector("#sheet .opt"); const t = await d.locator("#sheet").innerText(); await d.keyboard.press("Escape"); return /Барбершоп/.test(t) && /Магазин телефонов/.test(t); })());
+    await switchTo(d, "Магазин телефонов");
+    ok("демо: шапка показывает выбранный бизнес «Магазин телефонов»", (await biz(d)) === "Магазин телефонов");
+    await allList(d);
+    const shopRows = await d.locator("#rows a.row").count(), shopText = await rowsText(d), shopWait = await d.locator("#rows a.row.wait").count();
+    ok("магазин: в списке не меньше 8 чатов, барбершопных клиентов нет", shopRows >= 8 && !/Айдос|Мадина|Данияр С\./.test(shopText) && /Бекзат/.test(shopText), String(shopRows));
+    ok("магазин: есть чат про trade-in и чат с «менеджер»", /trade-?in/i.test(shopText) && /менеджер/i.test(shopText), shopText.slice(0, 400));
+    const chipN = await waitNum(d), badge = Number(await d.locator("#bdg").innerText());
+    ok("магазин: счётчик «Ждут ответа» (вкладка, значок, заголовок) совпадает с числом ждущих чатов", shopWait >= 3 && chipN === shopWait && badge === shopWait && new RegExp("^" + shopWait + " ждут ответа").test(await d.locator("#meta").innerText()), `${chipN}/${badge}/${shopWait}`);
+    await chip(d, "Ждут ответа").click(); await d.waitForTimeout(200);
+    ok("магазин: фильтр «Ждут ответа» показывает ровно ждущие чаты", (await d.locator("#rows a.row").count()) === shopWait && (await d.locator("#rows a.row:not(.wait)").count()) === 0);
+    await chip(d, "Бот молчит").click(); await d.waitForTimeout(200);
+    ok("магазин: «Бот молчит» — один чат с паузой бота", (await d.locator("#rows a.row").count()) === 1 && /Бот молчит до/.test(await rowsText(d)));
+    await allList(d);
+    await calm(d); await shot(d, "demo-shop-phone-light");
+    await d.evaluate(() => window.__pult.setTheme("dark", true)); await calm(d);
+    await shot(d, "demo-shop-phone-dark");
+    // содержимое чатов: trade-in с вилкой, менеджер, ночные, ответ администратора; в каждом открытом чате нет tel: и настоящих на вид номеров
+    const idx = {}; const n = await d.locator("#rows a.row").count();
+    const leak = [];
+    for (let i = 0; i < n; i++) {
+      await d.locator("#rows a.row").nth(i).click(); await d.waitForSelector("#msgs .m");
+      const nm = await d.locator("#cname").innerText(), txt = await d.locator("#msgs").innerText(), pageText = await d.locator("body").innerText();
+      idx[nm] = { txt, ts: await d.locator("#msgs .m .ts").allInnerTexts(), adm: await d.locator("#msgs .m.adm").count(), strip: await d.locator("#strip").innerText().catch(() => "") };
+      if (/\d{11}/.test(pageText)) leak.push(nm + ": 11 цифр");
+      if (/(?:\+7|8)[\s (-]*7\d\d[)\s -]*\d{3}[\s -]*\d{2}[\s -]*\d{2}/.test(pageText)) leak.push(nm + ": номер");
+      if (await d.locator('a[href^="tel:"]').count()) leak.push(nm + ": tel:");
+      await d.click("#back");
+    }
+    ok("магазин: чат trade-in — бот называет вилку и зовёт на осмотр", /185 000–210 000 ₸/.test(idx["Бекзат Н."].txt) && /осмотр/i.test(idx["Бекзат Н."].txt) && /аккумулятор/i.test(idx["Бекзат Н."].txt));
+    ok("магазин: рассрочка Kaspi Red / Halyk — общими словами, без обещанных условий", /Kaspi Red/.test(idx["Руслан К."].txt) && /Halyk/.test(idx["Руслан К."].txt) && /решени\w+ банка|определяет банк/.test(idx["Руслан К."].txt) && !/\d+\s?%/.test(idx["Руслан К."].txt));
+    ok("магазин: чат «Позовите менеджера» ждёт ответа — в чате кнопка «Забрать чат»", /менеджер/i.test(idx["Жанар Е."].txt) && /Забрать чат/.test(idx["Жанар Е."].strip), idx["Жанар Е."].strip);
+    ok("магазин: ночные чаты — сообщения клиентов написаны с 02:00 до 05:00", idx["Арсен Б."].ts.length >= 2 && /^0[2-4]:/.test(idx["Арсен Б."].ts[0]) && /^0[2-4]:/.test(idx["Динара С."].ts[0]) && /Вне рабочих часов/.test(idx["Арсен Б."].txt), JSON.stringify([idx["Арсен Б."].ts, idx["Динара С."].ts]));
+    ok("магазин: у одного чата ответ администратора (и пауза бота)", idx["Мейрам А."].adm >= 1 && /Вернуть бота/.test(idx["Мейрам А."].strip));
+    ok("магазин: доставка по городу, в другой город, гарантия, чехол и стекло — есть чаты", /Астане/.test(idx["Салтанат М."].txt) && /Караганд/.test(idx["Мейрам А."].txt) && /гарантия/i.test(idx["Данияр О."].txt) && /стекл/i.test(idx["Айгерим Ж."].txt));
+    ok("магазин: есть и закрытые чаты (бот ответил, никто не ждёт)", n - shopWait >= 5);
+    ok("/demo (магазин): нет ссылок tel: и номеров, похожих на настоящие (11 цифр подряд)", leak.length === 0, leak.join("; "));
+    // вкладки «Лиды», «Сводка», «Ещё» тоже считаются по выбранному бизнесу
+    await d.click("#nav a[data-v=summary]"); await d.waitForSelector("#v-summary .att");
+    ok("магазин: «Сводка» считает ждущих по магазину", new RegExp("Ждут ответа человека\\s*" + shopWait).test(await d.locator("#v-summary").innerText()));
+    await d.click("#nav a[data-v=leads]"); await d.waitForSelector("#v-leads .stages");
+    ok("магазин: «Лиды» — клиенты магазина, этап «Бронь»", /Бекзат/.test(await d.locator("#v-leads").innerText()) && /Бронь/.test(await d.locator("#v-leads .stages").innerText()) && !/Айдос/.test(await d.locator("#v-leads").innerText()));
+    await d.click("#nav a[data-v=more]"); await d.waitForSelector("#v-more .card");
+    ok("магазин: «Ещё» — название бизнеса и подписи магазина, без барбершопа", /Магазин телефонов/.test(await d.locator("#v-more").innerText()) && /Товары и услуги/.test(await d.locator("#v-more").innerText()) && !/Мастера и услуги|Altegio/.test(await d.locator("#v-more").innerText()));
+    await d.click("#nav a[data-v=chats]");
+    await d.locator("#rows a.row").first().click(); await d.waitForSelector("#msgs .m");
+    await calm(d); await shot(d, "demo-shop-chat-phone-dark");
+    await d.evaluate(() => window.__pult.setTheme("light", true)); await calm(d);
+    await shot(d, "demo-shop-chat-phone-light");
+    await d.click("#back");
+
+    // --- переключение обратно: прежний бизнес и его чаты на месте
+    await switchTo(d, "Барбершоп");
+    ok("переключение обратно: шапка «Барбершоп»", (await biz(d)) === "Барбершоп");
+    await allList(d);
+    ok("переключение обратно: чаты и счётчик барбершопа прежние, магазинных нет", (await d.locator("#rows a.row").count()) === barberRows && (await d.locator("#rows a.row.wait").count()) === barberWait && (await waitNum(d)) === barberChip && !/Бекзат|Алия/.test(await rowsText(d)) && /Айдос/.test(await rowsText(d)) && (await rowsText(d)) === barberText, `${barberRows}/${barberWait}/${barberChip}`);
+    await d.click("#nav a[data-v=more]"); await d.waitForSelector("#v-more .card");
+    ok("переключение обратно: «Ещё» снова барбершоп (Altegio, мастера)", /Мастера и услуги/.test(await d.locator("#v-more").innerText()) && /Altegio/.test(await d.locator("#v-more").innerText()));
+
+    // --- компьютер (1280): три колонки, открыт чат магазина
+    const w = await open({ width: 1280, height: 800 }, "light");
+    await switchTo(w, "Магазин телефонов");
+    await w.locator(".chip:text-is('Все')").click(); await w.waitForTimeout(200);
+    await w.locator("#rows a.row", { hasText: "Бекзат" }).click(); await w.waitForSelector("#msgs .m");
+    ok("компьютер: список магазина и открытый чат рядом, без горизонтальной прокрутки", (await w.locator("#rows a.row").count()) >= 8 && await w.locator("#msgs").isVisible() && await w.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await calm(w); await shot(w, "demo-shop-desktop");
+    await w.evaluate(() => window.__pult.setTheme("dark", true)); await calm(w);
+    await shot(w, "demo-shop-desktop-dark");
+    ok("демо с двумя бизнесами не обращается к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
+    await d.close(); await w.close();
+  }
+
   // ---- уведомления: новый чат, который ждёт ответа, — уведомление браузера (в программе для Windows — уведомление Windows)
   {
     const n = await newPage({ width: 1200, height: 800 });
