@@ -5,3 +5,4 @@ export { kvRetry } from "../../db/kv/retry.js";
 export { waErr } from "../integrations/meta/client.js";
 export { notify } from "../integrations/telegram/client.js";
 export { gaShared } from "../integrations/greenapi/webhook.js";
+export { gaRoute, gaHook } from "../integrations/greenapi/webhook.js";

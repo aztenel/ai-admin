@@ -175,7 +175,7 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
   } catch (e) { out.push("Пробная запись: ❌ " + err(e)); }
   return { text: out.join("\n"), token };
 }
-/** @param {any} body @param {string} cid @param {any} key @param {any} token @param {string} slug */
+/** @param {any} body @param {string} cid @param {any} key @param {any} [token] @param {string} [slug] */
 export function altUserPage(body, cid, key, token, slug) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}

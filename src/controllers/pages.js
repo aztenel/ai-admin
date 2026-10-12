@@ -6,7 +6,7 @@ import { CLIENTS } from "../config/builtin-clients.js";
 import { allLeads } from "../services/inbox/deps.js";
 /** @import { Env, Client } from "../lib/types.js" */
 
-/** @param {Env} env @param {any} only @param {any} s */
+/** @param {Env} env @param {any} only @param {any} [s] */
 export async function leadsPage(env, only, s) { // s — вошедший человек (cookie): ему показываем переходы в пульт и рассылки
   const ids = only ? [only] : Object.keys(CLIENTS);
   let total = 0, blocks = "", blind = false, part = false;
