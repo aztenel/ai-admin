@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Пульт чатов: HTTP-контроллер /api/inbox/* (список, чат, ответ, действия, файлы, заявки).
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { clean, snip } from "../lib/text.js";
@@ -15,12 +15,15 @@ import { sendWA } from "../services/channels/meta.js";
 import { waRoute } from "../services/channels/index.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
+/** @import { Env } from "../lib/types.js" */
 
 // ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
 // У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
 // Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.
+/** @param {Request} request @param {Env} env @param {URL} url @param {any} s */
 export async function inboxApi(request, env, url, s) {
   const P = url.pathname, M = request.method, q = url.searchParams;
+  /** @type {Record<string, any>} */
   let b = {};
   if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); try { b = (await request.json()) || {}; } catch (e) {} }
   const cid = String((M === "POST" ? b.c : q.get("c")) || "");
@@ -36,7 +39,7 @@ export async function inboxApi(request, env, url, s) {
         let r; try { r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) }); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
         for (const k of (r && r.keys) || []) {
           const m = k.metadata || {}, id = String(k.name).slice(prefix.length);
-          if (!CHAT_ID[ch].test(id)) continue;
+          if (!/** @type {any} */ (CHAT_ID)[ch].test(id)) continue;
           rows.push({ ch, id, t: m.t || 0, li: m.li || 0, s: m.s || "", d: m.d || "", nm: m.nm || "", ph: ch === "web" ? m.ph || "" : "+" + id, nd: m.nd || "", pu: m.pu > now ? m.pu : 0, st: m.st ? 1 : 0, bk: m.bk || 0 });
         }
         if (!r || r.list_complete || !r.cursor) break;
@@ -49,18 +52,21 @@ export async function inboxApi(request, env, url, s) {
   }
 
   if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)
+    /** @type {any} */
     let leads; try { leads = await allLeads(env, cid); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
-    return jsonP({ leads: leads.slice(-60).reverse().map(l => ({ id: l.id, name: l.name || "", phone: l.phone || "", service: l.service || "", time: l.time || "", note: l.note || "", status: l.status || "", kind: l.kind || "lead", source: l.source || "", ts: leadTs(l) })), partial: !!leads.unread });
+    return jsonP({ leads: leads.slice(-60).reverse().map((/** @type {any} */ l) => ({ id: l.id, name: l.name || "", phone: l.phone || "", service: l.service || "", time: l.time || "", note: l.note || "", status: l.status || "", kind: l.kind || "lead", source: l.source || "", ts: leadTs(l) })), partial: !!leads.unread });
   }
 
   const ch = String((M === "POST" ? b.ch : q.get("ch")) || ""), id = String((M === "POST" ? b.id : q.get("id")) || "");
-  if (!CHAT_ID[ch] || !CHAT_ID[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
+  if (!/** @type {any} */ (CHAT_ID)[ch] || !/** @type {any} */ (CHAT_ID)[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
+  /** @type {any} */
   let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте ещё раз." }, 503); }
   if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
   let p = h.profile || {};
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id;
+    /** @type {any[]} */
     let reqs = [];
     if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
     const open = ch === "ga" ? true : ch === "wa" ? !!p.li && now - p.li < 24 * 3600e3 : false;
@@ -68,16 +74,16 @@ export async function inboxApi(request, env, url, s) {
     if (ch !== "web") { try { const bl = JSON.parse((await env.KV.get("bclast:" + cid)) || "null"); if (bl && bl.text) promo = { at: bl.at, name: bl.name || "", text: bl.text }; } catch (e) {} }
     return {
       promo,
-      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map(t => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
-      bookings: (p.bookings || []).map(x => altLabel(x, "ru", now, true)), pend: (p.pend || []).map(x => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
-      need: p.need ? { why: p.need.why, text: NEED_TEXT[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
+      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
+      bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
+      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
       canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
 
   if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото. Отдаём только файл, который есть в этой переписке
-    const mid = q.get("mid"), t = mid ? (h.turns || []).find(x => x.m && x.m.id === mid) : (h.turns || [])[+q.get("n")];
+    const mid = q.get("mid"), t = mid ? (h.turns || []).find((/** @type {any} */ x) => x.m && x.m.id === mid) : (h.turns || [])[+(/** @type {any} */ (q.get("n")))];
     if (!t || !t.m || !(t.m.id || t.m.url)) return jsonP({ error: "Файл не найден." }, 404);
     try {
       if (t.m.url) { const u = new URL(t.m.url); if (u.protocol !== "https:") throw new Error("bad url"); const r = await fetch(u.href); if (!r.ok) throw new Error("media " + r.status); return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || t.m.mime || "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": "inline", "x-content-type-options": "nosniff" } }); }
@@ -95,6 +101,7 @@ export async function inboxApi(request, env, url, s) {
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
 
   // ответ администратора клиенту
+  /** @param {string} text */
   const sendTo = async text => {
     if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя — позвоните клиенту." };
     if (ch === "ga") { // номер Green-API клиента (или общий номер воркера, через который пришёл этот чат)
@@ -147,12 +154,12 @@ export async function inboxApi(request, env, url, s) {
       h = await logTurns(env.KV, hk, msg ? [{ role: "model", text: msg, t: now, by: "admin" }] : [], pr => {
         if (lead.kind === "cancel" || lead.kind === "change") {
           // запись в расписании изменил человек: бот больше не считает прежнюю запись действующей и знает, что сказал клиенту администратор
-          const had = (pr.bookings || []).some(x => x.rq);
-          if (pr.bookings) pr.bookings = pr.bookings.filter(x => had ? !x.rq : false);
+          const had = (pr.bookings || []).some((/** @type {any} */ x) => x.rq);
+          if (pr.bookings) pr.bookings = pr.bookings.filter((/** @type {any} */ x) => had ? !x.rq : false);
           delete pr.req;
           pr.adminDid = { at: now, kind: lead.kind, text: snip(msg || (lead.kind === "cancel" ? "запись отменена" : "запись перенесена"), 300) };
           if (pr.bookings && !pr.bookings.length) delete pr.bookings;
-          pr.booked = [(pr.bookings || []).map(x => altLabel(x, "ru", now, true)).join("; "), `администратор ${lead.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"}${msg ? ` и написал ему: «${snip(msg, 200)}»` : ""}`].filter(Boolean).join(". ");
+          pr.booked = [(pr.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)).join("; "), `администратор ${lead.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"}${msg ? ` и написал ему: «${snip(msg, 200)}»` : ""}`].filter(Boolean).join(". ");
         }
         if (msg) pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 10 * 60e3); // короткая пауза: клиент, скорее всего, ответит «спасибо»
         delete pr.need;

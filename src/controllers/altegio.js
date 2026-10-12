@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Служебные страницы Altegio для владельца: /altegio (проверка связи с расписанием) и /altegio/user (проверка ключа пользователя).
 import { esc, clean } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
@@ -10,9 +10,11 @@ import { ALT_DAYS, ALT_JOURNAL_DAYS } from "../config/constants.js";
 import { altSelfCancel, altLoc, thin } from "../services/booking/book.js";
 import { altUserKey } from "../services/booking/journal.js";
 import { altText, altCall, altCache, altBase, altDates, altDropTimes, altTimes, altRecord, altEmailErr, ALT_EMAIL_TIP } from "../services/diag/deps.js";
+/** @import { Env } from "../lib/types.js" */
 
 // /altegio — проверка связи с расписанием: что бот видит в Altegio.
 // Без телефона ничего не создаёт. С телефоном делает пробную запись на первое свободное время и сразу удаляет её.
+/** @param {Env} env @param {string} cid @param {any} locArg @param {any} bookPhone */
 export async function altDiag(env, cid, locArg, bookPhone) {
   const out = [], c = (hasClient(cid) && CLIENTS[cid]) || CLIENTS.alt, locStr = String(locArg || "").trim(), now = Date.now();
   out.push("Altegio: ключ разработчика " + (env.ALTEGIO_PARTNER ? "задан ✅" : "НЕ задан ❌ — Cloudflare → Settings → Variables and Secrets → Secret ALTEGIO_PARTNER"));
@@ -27,26 +29,30 @@ export async function altDiag(env, cid, locArg, bookPhone) {
     const ju = altUserKey(env, c), nm = "ALTEGIO_USER_" + String(c.id).toUpperCase();
     if (!ju) out.push(`Журнал записей: ключ ${nm} не задан — бот помнит записи сам и не видит, что администратор их удалил или перенёс (получить ключ — /altegio/user?c=${c.id})`);
     else if (loc > 0) { try { const d = await altCall(env, "GET", `/records/${loc}?start_date=${isoDay(now)}&end_date=${isoDay(now + ALT_JOURNAL_DAYS * 86400e3)}&count=200`, null, ju); out.push(`Журнал записей: читается ✅ (${Array.isArray(d) ? d.length : 0} записей на ${ALT_JOURNAL_DAYS} дней вперёд) — записи клиента бот берёт из CRM`); }
-      catch (e) { out.push(`Журнал записей: ❌ ключ ${nm} не подошёл (${e.status || ""} ${clean(e.message || "", 100)}) — получите новый на /altegio/user?c=${c.id}`); } }
+      catch (/** @type {any} */ e) { out.push(`Журнал записей: ❌ ключ ${nm} не подошёл (${e.status || ""} ${clean(e.message || "", 100)}) — получите новый на /altegio/user?c=${c.id}`); } }
   }
   if (!env.ALTEGIO_PARTNER || !loc) return out.join("\n");
+  /** @param {any} e @returns {string} */
   const hint = e => e.status === 401 ? " → ключ разработчика неверный или отозван" : e.status === 403 ? " → у ключа нет доступа к этой локации или онлайн-запись выключена"
     : e.status === 404 ? " → локация с таким номером не найдена" : e.status === 429 ? " → слишком много запросов, повторите через минуту" : "";
+  /** @type {any} */
   let lastErr = null;
-  const step = async (name, fn, tip = hint) => { try { return await fn(); } catch (e) { lastErr = e; out.push(`${name}: ❌ ${e.status || ""} ${e.message}${tip(e)}`); return null; } };
+  /** @param {string} name @param {() => Promise<any>} fn @param {(e: any) => string} [tip] */
+  const step = async (name, fn, tip = hint) => { try { return await fn(); } catch (/** @type {any} */ e) { lastErr = e; out.push(`${name}: ❌ ${e.status || ""} ${e.message}${tip(e)}`); return null; } };
   altCache.clear(); // проверка всегда по свежим данным
   const base = await step("Услуги и мастера", () => altBase(env, loc, now));
   if (!base) return out.join("\n");
+  /** @param {number} shown @param {number} total */
   const part = (shown, total) => total > shown ? ` (бот видит первые ${shown} из ${total})` : "";
   out.push("Услуги: " + (base.services.length ? "✅ " + base.services.length + part(base.services.length, base.total.services) : "❌ 0 — добавьте услуги и разрешите для них онлайн-запись"));
-  base.services.slice(0, 15).forEach(x => out.push(`  · ${x.title} — ${x.min ? "от " + money(x.min) + " ₸" : "цена не указана"}${x.minutes ? ", " + x.minutes + " мин" : ""}`));
-  out.push("Мастера: " + (base.staff.length ? "✅ " + base.staff.length + part(base.staff.length, base.total.staff) + " — " + base.staff.map(m => m.name + (m.busy ? " (сейчас без свободного времени)" : "")).join(", ") : "❌ 0 — добавьте сотрудника с графиком работы и разрешите к нему онлайн-запись"));
+  base.services.slice(0, 15).forEach((/** @type {any} */ x) => out.push(`  · ${x.title} — ${x.min ? "от " + money(x.min) + " ₸" : "цена не указана"}${x.minutes ? ", " + x.minutes + " мин" : ""}`));
+  out.push("Мастера: " + (base.staff.length ? "✅ " + base.staff.length + part(base.staff.length, base.total.staff) + " — " + base.staff.map((/** @type {any} */ m) => m.name + (m.busy ? " (сейчас без свободного времени)" : "")).join(", ") : "❌ 0 — добавьте сотрудника с графиком работы и разрешите к нему онлайн-запись"));
   const dates = (await step("Свободные даты", async () => altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${isoDay(now)}&date_to=${isoDay(now + 21 * 86400e3)}`), now).slice(0, ALT_DAYS))) || [];
   out.push("Ближайшие даты с записью: " + (dates.join(", ") || "нет ❌ — у мастеров нет рабочего графика на ближайшие 3 недели"));
   let first = null;
   for (const d of dates) {
     const t = await step("Время на " + d, () => altTimes(env, loc, 0, d, null, now, true));
-    if (t) { out.push(`  ${d}: ${thin(t.map(x => x.time)).join(", ") || "свободного времени нет"}`); if (!first && t[0]) first = { date: d, ...t[0], datetime: t[0].datetime || `${d}T${t[0].time.padStart(5, "0")}:00+0${TZ}:00` }; }
+    if (t) { out.push(`  ${d}: ${thin(t.map((/** @type {any} */ x) => x.time)).join(", ") || "свободного времени нет"}`); if (!first && t[0]) first = { date: d, ...t[0], datetime: t[0].datetime || `${d}T${t[0].time.padStart(5, "0")}:00+0${TZ}:00` }; }
   }
   if (first && base.services[0]) {
     const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: first.datetime }];
@@ -60,23 +66,25 @@ export async function altDiag(env, cid, locArg, bookPhone) {
     else if (!first || !base.services[0]) out.push("Пробная запись: ❌ нет свободного времени или услуг для записи");
     else {
       // мастер — конкретный, у которого это время свободно: так видно, как Altegio показывает время мастера с записью
+      /** @type {any} */
       let pick = null;
-      for (const m of base.staff.slice(0, 12)) { try { const t = await altTimes(env, loc, m.id, first.date, [base.services[0].id], now, true); if (t.some(x => x.time === first.time)) { pick = m; break; } } catch (e) {} }
+      for (const m of base.staff.slice(0, 12)) { try { const t = await altTimes(env, loc, m.id, first.date, [base.services[0].id], now, true); if (t.some((/** @type {any} */ x) => x.time === first.time)) { pick = m; break; } } catch (e) {} }
       const appointments = [{ id: 1, services: [base.services[0].id], staff_id: pick ? pick.id : 0, datetime: first.datetime }];
       const where = `${first.date} в ${first.time}${pick ? ", мастер " + pick.name : ""}, клиент «Проверка бота (можно удалить)»`;
       const body = { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Пробная запись AI-администратора: создаётся и сразу удаляется", appointments };
       lastErr = null;
+      /** @type {any} */
       let sent = null, needEmail = false;
       const rec = await step("Пробная запись", async () => {
         let r;
         try { r = await altRecord(env, loc, body); }
-        catch (e) { // пустой email не подошёл — пробуем с почтой владельца, чтобы понять, в email ли дело
+        catch (/** @type {any} */ e) { // пустой email не подошёл — пробуем с почтой владельца, чтобы понять, в email ли дело
           if (!altEmailErr(e) || !env.OWNER_EMAIL) throw e;
           needEmail = true; r = await altRecord(env, loc, { ...body, email: env.OWNER_EMAIL });
         }
         sent = r.sent;
         return (Array.isArray(r.data) ? r.data[0] : r.data) || {};
-      }, e => e.status === 404 ? " → услуга недоступна для онлайн-записи или локация не найдена" : altEmailErr(e) ? " → " + ALT_EMAIL_TIP : hint(e));
+      }, (/** @type {any} */ e) => e.status === 404 ? " → услуга недоступна для онлайн-записи или локация не найдена" : altEmailErr(e) ? " → " + ALT_EMAIL_TIP : hint(e));
       if (needEmail) out.push(`⚠️ ${ALT_EMAIL_TIP}. Пока это не сделано, бот будет передавать записи администратору заявками (для пробы взята почта OWNER_EMAIL).`);
       if (rec && rec.record_id) {
         out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${first.date} в ${first.time}`);
@@ -85,14 +93,14 @@ export async function altDiag(env, cid, locArg, bookPhone) {
         const seeTime = async () => {
           if (!pick) return "мастер не выбран";
           let a1, a2, a3;
-          try { a1 = (await altTimes(env, loc, pick.id, first.date, [], now, true)).some(x => x.time === first.time) ? "свободно" : "занято"; } catch (e) { a1 = "ошибка " + (e.status || ""); }
-          try { a2 = (await altTimes(env, loc, pick.id, first.date, [base.services[0].id], now, true)).some(x => x.time === first.time) ? "свободно" : "занято"; } catch (e) { a2 = "ошибка " + (e.status || ""); }
-          try { await altCall(env, "POST", `/book_check/${loc}`, { appointments }); a3 = "проходит"; } catch (e) { a3 = `не проходит (${e.code || e.status || ""} ${clean(e.message, 60)})`; }
+          try { a1 = (await altTimes(env, loc, pick.id, first.date, [], now, true)).some((/** @type {any} */ x) => x.time === first.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a1 = "ошибка " + (e.status || ""); }
+          try { a2 = (await altTimes(env, loc, pick.id, first.date, [base.services[0].id], now, true)).some((/** @type {any} */ x) => x.time === first.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a2 = "ошибка " + (e.status || ""); }
+          try { await altCall(env, "POST", `/book_check/${loc}`, { appointments }); a3 = "проходит"; } catch (/** @type {any} */ e) { a3 = `не проходит (${e.code || e.status || ""} ${clean(e.message, 60)})`; }
           return `время мастера: ${a1}; с услугой: ${a2}; проверка записи: ${a3}`;
         };
         if (pick) out.push(`С записью (мастер ${pick.name}, ${first.time}) — ${await seeTime()}`);
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
-          e => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
+          (/** @type {any} */ e) => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
         if (del && pick) out.push(`После удаления — ${await seeTime()}`);
       } else if (rec) out.push(`Пробная запись: ⚠️ Altegio ответил без номера записи — запись могла создаться. Проверьте журнал Altegio: ${where}`);
@@ -107,11 +115,13 @@ export async function altDiag(env, cid, locArg, bookPhone) {
 
 // Проверка ключа пользователя Altegio (вход логином и паролем салона): видит ли бот журнал записей.
 // Пароль никуда не сохраняется и не пишется в журнал; ключ пользователя на странице не показывается.
+/** @param {Env} env @param {string} cid @param {any} login @param {any} password @param {any} phone */
 export async function altUserProbe(env, cid, login, password, phone) { // → { text, token }
   const out = [], c = (hasClient(cid) && CLIENTS[cid]) || CLIENTS.alt, loc = altLoc(env, c), now = Date.now();
   if (!env.ALTEGIO_PARTNER) return { text: "Altegio: не задан ключ разработчика ALTEGIO_PARTNER" };
   if (!loc) return { text: `У бота «${c.name}» не задан номер локации Altegio` };
   out.push(`Локация: ${loc} (бот «${c.name}»)`);
+  /** @param {any} e */
   const err = e => `ошибка ${e.status || ""}${e.code ? " код " + e.code : ""} ${clean(e.message || "", 160)}`.trim();
   let token = "";
   try { const d = await altCall(env, "POST", "/auth", { login: clean(login, 120), password: String(password || "").slice(0, 200) }); token = (d && d.user_token) || ""; out.push(token ? `Вход в Altegio: ✅ ключ пользователя получен${d.name ? " (" + altText(d.name, 40) + ")" : ""}` : "Вход в Altegio: ⚠️ ответ без user_token, поля: " + Object.keys(d || {}).slice(0, 12).join(", ")); }
@@ -119,9 +129,13 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
   if (!token) return { text: out.join("\n"), token };
   const from = isoDay(now), to = isoDay(now + 14 * 86400e3), q = `start_date=${from}&end_date=${to}`;
   const ways = [["записи (records)", `/records/${loc}?${q}&count=200`], ["записи (appointments)", `/locations/${loc}/appointments?${q}`]];
+  /** @param {any} p */
   const mask = p => { const d = String(p || "").replace(/\D/g, ""); return d ? "…" + d.slice(-4) : "—"; };
+  /** @param {any} r */
   const recOf = r => ({ id: r.id || r.record_id, at: r.datetime || r.date || r.start_at || "", staff: altText((r.staff && r.staff.name) || r.staff_name || "", 40), phone: (r.client && r.client.phone) || r.phone || "", del: "deleted" in r ? JSON.stringify(r.deleted) : "нет поля", svc: altText(((r.services || [])[0] || {}).title || "", 40) });
+  /** @type {any} */
   let way = null;
+  /** @param {boolean} show */
   const list = async (show) => {
     for (const [name, path] of way ? [way] : ways) {
       try {
@@ -161,6 +175,7 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
   } catch (e) { out.push("Пробная запись: ❌ " + err(e)); }
   return { text: out.join("\n"), token };
 }
+/** @param {any} body @param {string} cid @param {any} key @param {any} token @param {string} slug */
 export function altUserPage(body, cid, key, token, slug) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
@@ -178,6 +193,7 @@ ${token ? `<details style="margin:0 0 14px"><summary style="cursor:pointer;font-
 <button>Проверить</button></form>
 <p>Логин и пароль нужны один раз, чтобы Altegio выдал боту ключ пользователя. Бот их не сохраняет. Пробная запись создаётся и сразу удаляется: так видно, показывает ли журнал запись и её удаление.</p></div></body></html>`;
 }
+/** @param {string} body @param {string} key @param {string} cid @param {any} loc */
 export function altPage(body, key, cid, loc) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка Altegio</title>
 <style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}

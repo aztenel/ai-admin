@@ -1,10 +1,11 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Страница автотеста /selftest (сами сценарии — в services/selftest).
 import { esc } from "../lib/text.js";
 import { BASE_CSS } from "../lib/css.js";
 import { CLIENTS } from "../config/builtin-clients.js";
 import { CASES } from "../services/selftest/cases.js";
 
+/** @param {string} key */
 export function selftestPage(key) {
   const list = JSON.stringify(CASES.map((k, i) => ({ i, c: CLIENTS[k.c].name, t: k.t }))).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Автотест бота</title>

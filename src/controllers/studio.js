@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // «Мои боты» (/studio, /api/studio/*): список паспортов, проверка, сохранение, ключи сотрудников, удаление.
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { ADMIN_CSS } from "../lib/css.js";
@@ -9,18 +9,22 @@ import { compileClient, syncClients } from "../services/tenants/passport.js";
 import { freeSlots } from "../services/schedule/slots.js";
 import { altLoc } from "../services/booking/book.js";
 import { kvRetry } from "../services/studio/deps.js";
+/** @import { Env, Client } from "../lib/types.js" */
 
 // ================= ПАСПОРТ БОТА: клиенты из хранилища, без правки кода =================
 // Настоящий клиент описывается данными («паспортом»): название, ниша, адрес, график, услуги и цены, способ записи.
 // Паспорта лежат в KV одним ключом cfg:all = { <id>: паспорт }. Из паспорта собирается такой же объект, как у демо-клиентов в CLIENTS,
 // поэтому весь движок (подсказка ИИ, защита ответа, запись, заявки) работает с ним без отдельных веток.
 // Секреты в паспорт не кладём: токен WhatsApp — секрет WA_TOKEN_<ID>, подпись Meta — APP_SECRET_<ID> в панели Cloudflare.
+/** @param {Env} env @returns {Promise<Record<string, any>>} */
 async function loadCfgs(env) { return JSON.parse((await env.KV.get("cfg:all")) || "{}") || {}; } // при сбое чтения бросает ошибку: нельзя сохранять поверх «пустого» списка
 
 // ================= «МОИ БОТЫ»: страница владельца =================
 const CFG_KEYS = ["name", "niche", "kind", "address", "phone", "schedule", "booking", "altegioLoc", "step", "bookDays", "services", "staff", "extra", "repairs", "pay", "upsell", "digest", "remind", "review", "greeting", "safe", "tg", "waPhoneId", "off"];
-const cfgIn = b => { const o = {}; for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, k === "repairs" ? 20000 : 8000); return o; };
+/** @param {any} b */
+const cfgIn = b => { const o = /** @type {Record<string, any>} */ ({}); for (const k of CFG_KEYS) if (b && b[k] !== undefined && b[k] !== null) o[k] = k === "off" ? !!b[k] : String(b[k]).slice(0, k === "repairs" ? 20000 : 8000); return o; };
 // что подключено у клиента: по этим отметкам владелец видит, чего не хватает до запуска
+/** @param {Env} env @param {Client} c */
 function clientState(env, c) {
   const up = c.id.toUpperCase();
   return {
@@ -31,6 +35,7 @@ function clientState(env, c) {
     waToken: !!env["WA_TOKEN_" + up], waSecret: !!env["APP_SECRET_" + up]
   };
 }
+/** @param {Request} request @param {Env} env @param {URL} url @param {any} s */
 export async function studioApi(request, env, url, s) {
   const P = url.pathname, M = request.method;
   if (s.role !== "owner") return jsonP({ error: "Эта страница — только для владельца сервиса." }, 403);
@@ -38,12 +43,13 @@ export async function studioApi(request, env, url, s) {
     return jsonP({ clients: Object.values(CLIENTS).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
   }
   if (M === "GET" && P === "/api/studio/get") {
-    const id = url.searchParams.get("c"), all = await loadCfgs(env);
+    const id = /** @type {any} */ (url.searchParams.get("c")), all = await loadCfgs(env);
     if (!Object.hasOwn(all, id)) return jsonP({ error: "Такого бота нет." }, 404);
     const { keyHash, ...cfg } = all[id];
     return jsonP({ cfg: { ...cfg, id }, hasKey: !!keyHash });
   }
   if (M !== "POST" || !sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403);
+  /** @type {Record<string, any>} */
   let b = {}; try { b = (await request.json()) || {}; } catch (e) {}
   const id = String(b.id || b.c || "").trim();
   if (P === "/api/studio/check" || P === "/api/studio/save") {

@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // /diag: проверка ключей и скорости моделей.
 import { CLIENTS } from "../config/builtin-clients.js";
 import { GRAPH } from "../config/constants.js";
@@ -6,12 +6,15 @@ import { askGemini } from "../services/ai/gemini.js";
 import { isClaude } from "../services/ai/claude.js";
 import { systemPrompt } from "../services/conversation/prompt.js";
 import { WA_HINT } from "../services/inbox/deps.js";
+/** @import { Env } from "../lib/types.js" */
 
+/** @param {Env} env */
 export async function diag(env) {
+  /** @type {string[]} */
   const out = [];
   // хранилище проверяем чтением: эта страница нужна как раз тогда, когда оно не работает, поэтому сбой — строка в отчёте, а не падение страницы
   let kvErr = "", waLast = null;
-  if (env.KV) { try { waLast = await env.KV.get("wa:lastErr"); } catch (e) { kvErr = String((e && e.message) || e).slice(0, 160); } }
+  if (env.KV) { try { waLast = await env.KV.get("wa:lastErr"); } catch (/** @type {any} */ e) { kvErr = String((e && e.message) || e).slice(0, 160); } }
   out.push(!env.KV ? "KV: НЕ подключено ❌ — Settings → Bindings → KV namespace, имя KV"
     : kvErr ? `Хранилище KV: ❌ не читается — ${kvErr}. Проверьте привязку KV (Settings → Bindings) и суточный лимит хранилища в панели Cloudflare. Пока оно не читается, бот не ведёт диалог и не показывает заявки`
     : "KV: подключено ✅");
@@ -39,7 +42,7 @@ export async function diag(env) {
     out.push("VERIFY_TOKEN: " + (env.VERIFY_TOKEN ? "задан ✅" : "НЕТ ❌ — без него Meta не подтвердит webhook"));
     out.push("Политика для Meta: /privacy · " + (env.OWNER_EMAIL ? "OWNER_EMAIL задан ✅" : "добавьте OWNER_EMAIL (почта для запросов об удалении данных) ⚠️"));
     try {
-      const get = f => fetch(`${GRAPH}/${env.PHONE_NUMBER_ID}?fields=${f}`, { headers: { authorization: "Bearer " + env.WA_TOKEN } });
+      const get = (/** @type {any} */ f) => fetch(`${GRAPH}/${env.PHONE_NUMBER_ID}?fields=${f}`, { headers: { authorization: "Bearer " + env.WA_TOKEN } });
       let r = await get("display_phone_number,verified_name,name_status,quality_rating,code_verification_status");
       let j = await r.json().catch(() => ({}));
       if (!r.ok && j?.error?.code === 100) { r = await get("display_phone_number,verified_name"); j = await r.json().catch(() => ({})); }
@@ -67,6 +70,7 @@ export async function diag(env) {
     const sysDemo = systemPrompt(CLIENTS.barber || Object.values(CLIENTS)[0], { nowMs: Date.now() });
     out.push(`Скорость на настоящей подсказке бота (${sysDemo.length} знаков), быстро — до 4000 мс:`);
     for (const mdl of [...new Set([env.MODEL || "gemini-flash-lite-latest", env.MODEL_FALLBACK || "gemini-flash-latest"])]) {
+      /** @type {Record<string, any>} */
       const info = {};
       try {
         await askGemini(env, sysDemo, [{ role: "user", text: "Здравствуйте, сколько стоит мужская стрижка и есть ли время завтра?" }], info, [mdl]);
@@ -76,7 +80,7 @@ export async function diag(env) {
   } catch (e) { out.push("Скорость моделей: не проверена — " + String(e).slice(0, 120)); }
   if (key) try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=200`);
-    if (r.ok) out.push("Доступные flash-модели: " + ((await r.json()).models || []).map(m => m.name.replace("models/", "")).filter(n => /flash/i.test(n) && !/tts|image|audio|live|embed/i.test(n)).join(", "));
+    if (r.ok) out.push("Доступные flash-модели: " + ((await r.json()).models || []).map((/** @type {any} */ m) => m.name.replace("models/", "")).filter((/** @type {any} */ n) => /flash/i.test(n) && !/tts|image|audio|live|embed/i.test(n)).join(", "));
   } catch (e) {}
   return out.join("\n");
 }

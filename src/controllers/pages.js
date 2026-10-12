@@ -1,19 +1,23 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Страницы: заявки /leads, политика /privacy, витрина демо /, веб-чат.
 import { esc } from "../lib/text.js";
 import { BASE_CSS } from "../lib/css.js";
 import { CLIENTS } from "../config/builtin-clients.js";
 import { allLeads } from "../services/inbox/deps.js";
+/** @import { Env, Client } from "../lib/types.js" */
 
+/** @param {Env} env @param {any} only @param {any} s */
 export async function leadsPage(env, only, s) { // s — вошедший человек (cookie): ему показываем переходы в пульт и рассылки
   const ids = only ? [only] : Object.keys(CLIENTS);
   let total = 0, blocks = "", blind = false, part = false;
   for (const id of ids) {
+    // у массива бывает пометка unread ("all" — хранилище не отвечает)
+    /** @type {any} */
     const leads = await allLeads(env, id);
     if (leads.unread === "all") blind = true; else if (leads.unread) part = true;
     total += leads.length;
     if (!leads.length && !only) continue;
-    blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map(l => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small>${s && l.phone ? `<br><a href="tel:${esc(l.phone)}">Позвонить</a>${/^WhatsApp/.test(l.source || "") ? ` · <a href="/inbox?c=${id}#wa:${esc(String(l.phone).replace(/\D/g, ""))}">Открыть чат</a>` : ""}` : ""}</div>`).join("");
+    blocks += `<h3>${esc(CLIENTS[id].name)} (${leads.length})</h3>` + leads.slice().reverse().map((/** @type {any} */ l) => `<div class="l${l.status ? " x" : ""}"><b>${esc(l.name || "имя не указано")}</b>${l.status ? ` <em>${esc(l.status)}</em>` : ""}<br>${esc(l.phone || "без телефона")} · ${esc(l.service)}<br>${esc(l.time)}${l.note ? `<br><small>${esc(l.note)}</small>` : ""}<br><small>${esc(l.source)} · ${esc(l.at)}</small>${s && l.phone ? `<br><a href="tel:${esc(l.phone)}">Позвонить</a>${/^WhatsApp/.test(l.source || "") ? ` · <a href="/inbox?c=${id}#wa:${esc(String(l.phone).replace(/\D/g, ""))}">Открыть чат</a>` : ""}` : ""}</div>`).join("");
   }
   // хранилище не читается — так и пишем: пустая страница выглядела бы как «заявок нет»
   const warn = !env.KV ? "Хранилище KV не подключено к воркеру — заявки негде хранить. Проверьте настройку на странице /diag."
@@ -25,6 +29,7 @@ ${s ? `<p style="display:flex;gap:14px;flex-wrap:wrap;margin:0 0 6px"><a href="/
 }
 
 // политика конфиденциальности — нужна Meta, чтобы опубликовать приложение (App settings → Basic → Privacy Policy URL)
+/** @param {Env} env */
 export function privacyPage(env) {
   const owner = esc(env.OWNER_NAME || "Владелец сервиса «AI-администратор»");
   const mail = env.OWNER_EMAIL ? `<a href="mailto:${esc(env.OWNER_EMAIL)}">${esc(env.OWNER_EMAIL)}</a>` : "контакт владельца сервиса";
@@ -53,6 +58,7 @@ export function portfolioPage() {
 <body><div class="w"><h1>AI-администратор для бизнеса</h1><p>Отвечает клиентам за секунды, 24/7, доводит до записи и сразу передаёт заявку владельцу. Выберите нишу и напишите как клиент.</p>${cards}</div></body></html>`;
 }
 
+/** @param {string} id @param {Client} c */
 export function chatPage(id, c) {
   const cfg = JSON.stringify({ id, name: c.name, greeting: c.greeting, chips: c.chips, real: !!c.real }).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8">

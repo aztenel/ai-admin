@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Рассылки (/broadcast, /api/bc/*): создание, проверка, пуск, пауза, отчёт.
 import { clean, snip } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
@@ -14,17 +14,22 @@ import { bcSeg, bcOptouts } from "../services/broadcast/segments.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcGaMsg, bcGaText, bcSendGa, bcRun, bcTick, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, bcParam, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
+/** @import { Env } from "../lib/types.js" */
 
 // вебхук не настроен — рассылку через Green-API не запускаем: бот не увидит, кто ответил «стоп»
 const GA_HOOK_WARN = "Вебхук Green-API не настроен: бот не увидит ответы клиентов, и тем, кто ответит «стоп», рассылка будет приходить дальше. Владелец сервиса настраивает его одной кнопкой: «Проверка запуска» → «Настроить Green-API».";
+/** @param {any} q @param {number} now */
 const bcUsed = (q, now) => { const slot = Math.floor(now / BC_SLOT); return Object.keys(q || {}).filter(k => +k > slot - BC_DAY).reduce((a, k) => a + (+q[k] || 0), 0); };
+/** @param {Request} request @param {Env} env @param {URL} url @param {any} s */
 export async function bcApi(request, env, url, s) {
   const P = url.pathname, M = request.method, q = url.searchParams;
+  /** @type {Record<string, any>} */
   let body = {};
   if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); try { body = (await request.json()) || {}; } catch (e) {} }
   const cid = String((M === "POST" ? body.c : q.get("c")) || "");
   if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
-  const c = CLIENTS[cid], now = Date.now(), route = bcRoute(env, cid);
+  const c = CLIENTS[cid], now = Date.now(), route = /** @type {any} */ (bcRoute)(env, cid);
+  /** @param {Record<string, any>} b */
   const pub = b => { const { bad, ...rest } = b; return { ...rest, fails: Object.entries(b.fails || {}).map(([code, n]) => ({ code: bcCode(code), n, hint: BC_HINT[code] || "" })), stalled: b.status === "running" && now - Math.max(b.last || 0, b.startedAt || 0, b.waitTill || 0, b.nextAt || 0) > BC_STALE }; }; // пауза между сообщениями Green-API — не молчание
   if (M === "GET" && P === "/api/bc/list") {
     const rows = [];
@@ -52,7 +57,7 @@ export async function bcApi(request, env, url, s) {
   if (M === "GET" && P === "/api/bc/get") {
     const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));
     if (!b) return jsonP({ error: "Рассылка не найдена." }, 404);
-    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map(([d, code]) => `+${d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
+    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map((/** @type {any[]} */ [d, code]) => `+${d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
@@ -74,12 +79,12 @@ export async function bcApi(request, env, url, s) {
   };
   const seg = ["idle", "bday"].includes(body.seg) ? body.seg : "", segDays = Math.round(+body.segDays || 0), segBad = seg && !(segDays >= 1 && segDays <= 365);
   if (P === "/api/bc/check") { // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим
-    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), r = { ...r0, list: sg.list }, f = fields(), first = (r.list.find(x => x[1]) || [])[1] || "";
+    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), r = { ...r0, list: sg.list }, f = fields(), first = (r.list.find((/** @type {any} */ x) => x[1]) || [])[1] || "";
     if (segBad) f.errors.push("сегмент: число дней — от 1 до 365");
     let stop = new Set(); try { stop = await bcOptouts(env, cid); } catch (e) {}
-    return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter(x => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter(x => stop.has(x[0])).length,
+    return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter((/** @type {any} */ x) => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter((/** @type {any} */ x) => stop.has(x[0])).length,
       ...(seg ? { segOut: sg.out, noDate: sg.noDate, seg: sg.label } : {}),
-      sample: r.list.slice(0, 5).map(x => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: ga ? (f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) });
+      sample: r.list.slice(0, 5).map((/** @type {any} */ x) => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: ga ? (f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) });
   }
   if (P === "/api/bc/test") { // пробная отправка на один номер (себе)
     const f = fields(), to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
@@ -148,7 +153,7 @@ export async function bcApi(request, env, url, s) {
     return jsonP({ ok: true, b: pub(cur) });
   }
   if (P === "/api/bc/tick") { // порция вручную — когда фоновая отправка не работает
-    let r; try { r = await bcTick(env, cid, id); } catch (e) { console.log("bc tick", String((e && e.stack) || e)); return jsonP({ error: "Сбой при отправке порции — попробуйте ещё раз через минуту." }, 500); }
+    let r; try { r = await /** @type {any} */ (bcTick)(env, cid, id); } catch (/** @type {any} */ e) { console.log("bc tick", String((e && e.stack) || e)); return jsonP({ error: "Сбой при отправке порции — попробуйте ещё раз через минуту." }, 500); }
     if (r.error) return jsonP({ error: r.error }, 404);
     if (r.state === "running" || r.state === "wait") await bcRun(env, cid, id, true);
     return jsonP({ ok: true, b: pub(r.b), state: r.state });
