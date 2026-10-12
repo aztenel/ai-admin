@@ -132,7 +132,7 @@ create extension if not exists pgcrypto;
 -- ===== арендаторы и доступ =====
 create table workspaces (
   id            uuid primary key default gen_random_uuid(),
-  slug          text unique not null,                 -- бывший id паспорта: 'kairat', 'barber'
+  slug          text unique not null,                 -- бывший id паспорта: 'acme', 'barber'
   name          text not null,
   niche         text not null,                        -- dent | beauty | barber | repair | …
   timezone      text not null default 'Asia/Almaty',
@@ -413,7 +413,7 @@ alter publication supabase_realtime add table chats, messages, leads;
 | `dual` | KV (правда) | KV **и** Postgres | Проверка: ночной скрипт сравнивает KV и Postgres, расхождения — в отчёт |
 | `pg` | Postgres | Postgres (+ KV-кэш) | Цель |
 
-Порядок: демо-арендаторы → тестовый `kairat` (пробная локация, номер друга) → настоящие клиенты по одному. `db/storage.js` выбирает репозиторий по `workspaces.storage_mode`; интерфейсы репозиториев одинаковые (сделаны в фазе 1, шаг 4).
+Порядок: демо-арендаторы → тестовый `acme` (пробная локация, номер друга) → настоящие клиенты по одному. `db/storage.js` выбирает репозиторий по `workspaces.storage_mode`; интерфейсы репозиториев одинаковые (сделаны в фазе 1, шаг 4).
 
 ### 2.8. Вход через Supabase Auth
 

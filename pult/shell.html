@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>@@TITLE@@</title>
-<meta name="theme-color" id="tc-l" media="(prefers-color-scheme: light)" content="#F5F4F1">
-<meta name="theme-color" id="tc-d" media="(prefers-color-scheme: dark)" content="#121314">
+<meta name="theme-color" id="tc-l" media="(prefers-color-scheme: light)" content="#FFFFFF">
+<meta name="theme-color" id="tc-d" media="(prefers-color-scheme: dark)" content="#000000">
 <meta name="color-scheme" content="dark light">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -23,26 +23,25 @@
 <body>
 <div id="root">
 <div class="app" id="app" data-theme="auto">
-  <nav class="nav" id="nav" aria-label="Разделы"></nav>
-  <div class="fade"></div>
+  <nav class="nav glass" id="nav" aria-label="Разделы"></nav>
   <div class="views">
     <div class="ban" id="net" hidden role="status"><span>Нет связи с сервером — данные могут быть устаревшими. Страница попробует снова сама.</span></div>
     <div class="vwrap">
       <section class="view on" id="v-chats" aria-label="Чаты">
         <div class="lst" id="listp">
-          <div class="hdr"><span id="bizslot" style="display:contents"></span><span class="sp"></span>
-            <button type="button" class="ibtn" id="rfs" aria-label="Обновить"></button>
-            <button type="button" class="ibtn" id="bell" aria-label="Уведомления" hidden></button>
-            <button type="button" class="ibtn pri" id="plus" aria-label="Новый лид" hidden></button>
+          <div class="hdr" id="hdr"><span id="bizslot" style="display:contents"></span><span class="ctt" id="ctt" aria-hidden="true">Чаты</span><span class="sp"></span>
+            <button type="button" class="ibtn glass" id="bell" aria-label="Уведомления" hidden></button>
           </div>
-          <div class="ttl"><h1>Чаты</h1><span class="meta" id="meta"></span></div>
-          <label class="srch"><span id="srchic" style="display:flex"></span><input type="search" id="q" placeholder="Поиск по чатам" aria-label="Поиск по чатам" autocomplete="off" enterkeyhint="search"></label>
-          <div class="chips more" id="chips"></div>
-          <div class="scroll" id="rows"></div>
+          <div class="scroll" id="lscroll">
+            <div class="ttl"><h1>Чаты</h1></div>
+            <label class="srch"><span id="srchic" style="display:flex"></span><input type="search" id="q" placeholder="Поиск" aria-label="Поиск по чатам" autocomplete="off" enterkeyhint="search"></label>
+            <div class="chips more" id="chips"></div>
+            <div id="rows"></div>
+          </div>
           <noscript><div class="empty"><b>Нужен JavaScript</b><span>Откройте пульт в обычном браузере.</span></div></noscript>
         </div>
         <section class="cnv" id="chatp" aria-label="Переписка">
-          <div class="none"><b style="font-size:17px;color:var(--fg)">Выберите чат</b><span>Список слева — нажмите на любой чат, и здесь откроется переписка.</span></div>
+          <div class="none"><b>Выберите чат</b></div>
           <div class="cin">
             <div class="chdr">
               <button type="button" class="ibtn back" id="back" aria-label="Назад к списку"></button>
@@ -56,8 +55,8 @@
             <div class="msgs" id="msgs" role="log" aria-live="polite"></div>
             <div class="warnl" id="warn"></div>
             <div class="comp" id="comp">
-              <div class="inp"><textarea id="txt" rows="1" placeholder="Сообщение клиенту" aria-label="Сообщение клиенту"></textarea><button type="button" class="ibtn flat pay" id="pay" hidden aria-label="Вставить реквизиты для оплаты" title="Реквизиты для оплаты">₸</button><button type="button" class="ibtn flat" id="quick" aria-label="Быстрые ответы"></button></div>
-              <button type="button" class="ibtn pri" id="send" aria-label="Отправить"></button>
+              <button type="button" class="ibtn glass" id="quick" aria-label="Быстрые ответы и реквизиты"></button>
+              <div class="inp glass"><textarea id="txt" rows="1" placeholder="Сообщение" aria-label="Сообщение клиенту"></textarea><button type="button" class="ibtn pri" id="send" aria-label="Отправить"></button></div>
             </div>
           </div>
         </section>
@@ -67,8 +66,7 @@
           <div class="if" id="cardfoot" hidden></div>
         </aside>
       </section>
-      <section class="view" id="v-leads" aria-label="Лиды"></section>
-      <section class="view" id="v-summary" aria-label="Сводка"></section>
+      <section class="view" id="v-summary" aria-label="Итоги"></section>
       <section class="view" id="v-broadcast" aria-label="Рассылки"></section>
       <section class="view" id="v-more" aria-label="Ещё"></section>
     </div>

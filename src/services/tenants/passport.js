@@ -32,7 +32,7 @@ const facts0Len = /** @param {any} F */ F => F.join("\n").length; // длина 
 export function compileClient(cfg) {
   const errors = [], warnings = [], str = /** @param {any} k */ (k) => String(cfg[k] ?? "").replace(/\r/g, "").trim().slice(0, CFG_TEXT[k] || 200);
   const id = String(cfg.id || "").trim();
-  if (!ID_RE.test(id)) errors.push("идентификатор: латинские буквы и цифры, от 2 до 16 знаков, начинается с буквы (например, kairat)");
+  if (!ID_RE.test(id)) errors.push("идентификатор: латинские буквы и цифры, от 2 до 16 знаков, начинается с буквы (например, acme)");
   else if (BUILTIN.has(id)) errors.push(`идентификатор «${id}» занят демо-ботом — выберите другой`);
   const name = clean(str("name"), 60);
   if (name.length < 2) errors.push("название компании не указано");

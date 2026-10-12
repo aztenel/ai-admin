@@ -1,125 +1,119 @@
 /* ===== оболочка приложения: один код для телефона, планшета и компьютера ===== */
-html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#121314;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
-html[data-theme="light"],html[data-theme="light"] body{background:#F5F4F1}
-@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#F5F4F1}}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#000000;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+html[data-theme="light"],html[data-theme="light"] body{background:#FFFFFF}
+@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#FFFFFF}}
 [hidden]{display:none!important}
 #root{position:fixed;left:0;top:0;right:0;height:var(--appH,100%);container-type:inline-size}
+.app{--sc:#2C2C2E}
+.app[data-theme="light"]{--sc:#FFFFFF}
+@media (prefers-color-scheme:light){.app[data-theme="auto"]{--sc:#FFFFFF}}
 .app.kb{--sab:0px;--navb:8px}
 .views{flex:1;min-width:0;min-height:0;position:relative;display:flex;flex-direction:column}
 .vwrap{flex:1;min-height:0;position:relative}
 .nav .sp-flex,.nav .me{display:none}
-.who{text-align:left;color:inherit}
 .view{position:absolute;inset:0;display:none;flex-direction:column;min-height:0}
 .view.on{display:flex}
+#v-summary,#v-broadcast,#v-more{background:var(--gbg)}
+.view>.ttl.top{padding-top:calc(var(--sat) + 14px)}
+.view>.ttl.top.bk2{display:flex;align-items:center;gap:4px;padding-left:max(4px,var(--sal))}
 .nav a{border:0;font:inherit}
-button.chip,button.stg,button.ibtn,button.row{font:inherit}
-/* телефон: список и переписка сменяют друг друга, нижняя панель прячется в переписке */
+button.chip,button.ibtn,button.row{font:inherit}
+/* список и переписка (на телефоне сменяют друг друга; чат выезжает поверх списка) */
 #v-chats .cnv .none{display:none}
 #v-chats .cnv,#v-chats .inf{display:none}
-.lst{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
-.lst .scroll{padding-bottom:calc(var(--navh) + var(--navb) + 20px)}
+.lst{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;background:var(--bg)}
 .cnv{flex-direction:column;min-width:0;min-height:0;flex:1}
-.cnv .cin{display:flex;flex-direction:column;min-height:0;flex:1}
+.cnv .cin{display:flex;flex-direction:column;min-height:0;flex:1;position:relative}
 .inf{flex-direction:column;min-width:0;min-height:0;overflow:hidden;background:var(--bg)}
 .inf .ih{flex:none;display:flex;align-items:center;gap:6px;padding:calc(var(--sat) + 6px) max(10px,var(--sar)) 4px max(4px,var(--sal))}
 .inf .ib{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:8px max(16px,var(--sar)) 16px max(16px,var(--sal));scrollbar-width:none}
 .inf .ib::-webkit-scrollbar{display:none}
 .inf .ib>*{flex:none}
 .inf .if{flex:none;padding:12px max(16px,var(--sar)) calc(var(--sab) + 12px) max(16px,var(--sal));border-top:1px solid var(--line)}
-.inf .who0{display:flex;flex-direction:column;align-items:center;gap:2px;text-align:center}
-.inf .who0 .sub{font-size:14px;color:var(--fg2)}
+.inf .who0{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.inf .who0 .sub{font-size:15px;color:var(--fg2)}
 .ibtn.info{display:none}
-.scrim{position:absolute;inset:0;z-index:40;background:rgba(0,0,0,.5)}
+.scrim{position:absolute;inset:0;z-index:40;background:rgba(0,0,0,.4)}
 .scrim.cs{display:none;z-index:29}
-.sheet{position:absolute;z-index:41;left:0;right:0;bottom:0;max-height:82%;background:var(--s1);border-radius:24px 24px 0 0;padding:6px 0 calc(var(--sab) + 12px);display:flex;flex-direction:column;box-shadow:0 -8px 32px rgba(0,0,0,.35)}
-.sheet .grab{flex:none;width:36px;height:5px;border-radius:3px;background:var(--s2);margin:4px auto 6px}
-.sheet h2{flex:none;font-size:17px;font-weight:600;letter-spacing:-.02em;padding:6px max(20px,var(--sar)) 10px max(20px,var(--sal))}
+.sheet{--cell:var(--sc);position:absolute;z-index:41;left:0;right:0;bottom:0;max-height:82%;background:var(--sheetbg);border-radius:20px 20px 0 0;padding:6px 0 calc(var(--sab) + 12px);display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.sheet .grab{flex:none;width:36px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 6px}
+.sheet h2{flex:none;font-size:17px;font-weight:600;padding:6px max(20px,var(--sar)) 10px max(20px,var(--sal))}
 .sheet .sbody{overflow-y:auto;overscroll-behavior:contain;padding:0 max(8px,var(--sar)) 0 max(8px,var(--sal))}
-.sheet .opt{display:flex;align-items:center;gap:14px;width:100%;min-height:52px;padding:6px 12px;border-radius:14px;font-size:16px;text-align:left;color:var(--fg)}
+.sheet .opt{display:flex;align-items:center;gap:14px;width:100%;min-height:52px;padding:6px 12px;border-radius:12px;font-size:17px;text-align:left;color:var(--fg)}
 .sheet .opt small{display:block;font-size:13px;color:var(--fg2);line-height:1.35}
 .sheet .opt svg{color:var(--fg2)}
 .sheet .opt.bad{color:var(--red)}
-.sheet .opt.sel{background:var(--s2)}
-.sheet .note{padding:4px 20px 8px;font-size:13px;line-height:1.45;color:var(--fg2)}
-.sheet .kv2{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:15px}
+.sheet .opt.bad svg{color:var(--red)}
+.sheet .opt.sel{background:var(--cell);color:var(--ac)}
+.sheet .note{padding:4px 20px 8px;font-size:15px;line-height:1.4;color:var(--fg2)}
+.sheet .kv2{display:flex;justify-content:space-between;gap:12px;padding:12px 12px;border-bottom:1px solid var(--line);font-size:17px}
 .sheet .kv2:last-child{border-bottom:none}
 .sheet .kv2 span:last-child{color:var(--fg2);text-align:right}
-.toast{position:absolute;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(var(--navb) + var(--navh) + 18px);max-width:min(92%,420px);padding:12px 16px;border-radius:16px;background:var(--fg);color:var(--bg);font-size:14px;font-weight:500;line-height:1.35;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.toast{position:absolute;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(var(--navb) + var(--navh) + 18px);max-width:min(92%,420px);padding:12px 16px;border-radius:14px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;line-height:1.3;text-align:center;box-shadow:var(--shadow)}
 .app.chat .toast{bottom:calc(var(--sab) + 84px)}
 .toast.act{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 16px;text-align:left}
 .toast .tt{min-width:0;overflow-wrap:anywhere}
-.toast .tb{flex:none;min-width:44px;height:44px;padding:0 16px;border-radius:12px;background:var(--acbg);color:var(--acfg);font-size:14px;font-weight:600}
-/* свайп по строке чата: цветная подсказка лежит под строкой и открывается по мере сдвига */
-.sw{position:relative;overflow:hidden;overflow:clip visible}
-.sw>.row{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-.sw.on>.row{background:var(--bg)}
-.sw.on>.row.sel{background:var(--s1)}
-.sw.drag>.row{transition:none!important}
+.toast .tb{flex:none;min-width:44px;height:44px;padding:0 16px;border-radius:12px;background:var(--acf);color:var(--acfg);font-size:15px;font-weight:600}
+/* свайп по строке чата: подсказка лежит под строкой и открывается по мере сдвига */
+.sw{position:relative;overflow:hidden;height:72px;contain:layout paint style;content-visibility:auto;contain-intrinsic-size:auto 72px}
+.sw:last-child .rb{border-bottom-color:transparent}
+.sw>.row{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;background:var(--bg)}
+.sw>.row.sel{background:var(--s1)}
+.sw.drag>.row,.sw.snap>.row{will-change:transform}
 .swb{position:absolute;inset:0;display:flex;align-items:center;padding:0 6px;pointer-events:none}
-.sw[data-d="l"] .swb{justify-content:flex-end;background:var(--acbg);color:var(--acfg)}
-.sw[data-d="r"] .swb{justify-content:flex-start;background:var(--chipbg);color:var(--chipfg)}
+.sw[data-d="l"] .swb{justify-content:flex-end;background:var(--acf);color:var(--acfg)}
+.sw[data-d="r"] .swb{justify-content:flex-start;background:var(--s2);color:var(--fg)}
 .sw:not([data-d]) .swb{visibility:hidden}
-.swh{display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:76px;font-size:12px;font-weight:600;line-height:1.15;text-align:center;opacity:.65}
+.swh{display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:76px;font-size:13px;font-weight:600;line-height:1.15;text-align:center;opacity:.7}
 .sw[data-d="l"] .swh.l,.sw[data-d="r"] .swh.r{display:flex}
 .sw.go .swh{opacity:1}
-/* поле ввода сообщения */
-.inp{height:auto;min-height:44px;align-items:flex-end;border-radius:22px}
-.inp textarea{flex:1;min-width:0;border:0;outline:0;background:transparent;resize:none;font:inherit;font-size:16px;line-height:22px;max-height:120px;padding:11px 0;color:inherit}
-.inp textarea::placeholder{color:var(--fg2);opacity:1}
-.inp .ibtn{align-self:flex-end}
-.comp .ibtn.pri[disabled],.inp textarea[disabled]{opacity:.5}
-.warnl{flex:none;padding:0 max(16px,var(--sar)) 8px max(16px,var(--sal));font-size:12px;line-height:1.4;color:var(--fg2)}
-.warnl:empty{display:none}
-.strip.solo{justify-content:flex-end}
-.warnl.amb{margin:0 max(12px,var(--sar)) 8px max(12px,var(--sal));padding:10px 14px;border-radius:14px;background:var(--amb);color:var(--ambfg);font-size:13px}
 /* просьбы клиента */
 #cards{flex:none;max-height:44%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
-.rq{margin:8px max(12px,var(--sar)) 0 max(12px,var(--sal));padding:12px 14px;border-radius:16px;background:var(--amb);color:var(--fg);display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45}
-.rq b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.rq{margin:8px max(12px,var(--sar)) 0 max(12px,var(--sal));padding:12px 14px;border-radius:14px;background:var(--s1);color:var(--fg);display:flex;flex-direction:column;gap:8px;font-size:15px;line-height:1.35}
+.rq b{font-size:17px;font-weight:600}
 .rq .mut{color:var(--fg2);font-size:13px}
-.rq textarea{width:100%;min-height:72px;border-radius:12px;background:var(--bg);border:1px solid var(--line);padding:10px 12px;font:inherit;font-size:16px;color:var(--fg);outline:0;resize:vertical}
+.rq textarea{width:100%;min-height:72px;border-radius:12px;background:var(--bg);border:1px solid var(--line);padding:10px 12px;font:inherit;font-size:17px;color:var(--fg);outline:0;resize:vertical}
 .rq .row2{display:flex;gap:8px;flex-wrap:wrap}
 .rq .btn{height:44px;font-size:15px;flex:1 1 auto}
 .rq .btn.pri{color:var(--acfg)}
-/* списки, пустые состояния */
-.tag.ok{color:var(--ac)}
-.tag.mut{color:var(--fg2)}
-.row{width:100%;text-align:left}
+/* заготовки строк и пустые состояния */
+.row{width:100%;text-align:left;font:inherit}
 a.row,button.row{color:inherit}
 .stack>.card{padding:16px}
 .big.xl{font-size:40px}
 .lnk.wide{display:block;width:100%;text-align:left}
-.ttl .meta{max-width:60%}
-.empty{padding:40px 24px}
-.empty b{font-size:17px;font-weight:600;color:var(--fg)}
-.empty span{font-size:14px;color:var(--fg2);line-height:1.5;max-width:320px}
-.sk-row{display:flex;gap:14px;align-items:center;padding:12px max(16px,var(--sar)) 12px max(16px,var(--sal))}
-.sk-row .sk-av{width:48px;height:48px;border-radius:50%;background:var(--s2);flex:none}
+.sk-row{display:flex;gap:12px;align-items:center;height:72px;padding:0 max(16px,var(--sar)) 0 max(16px,var(--sal))}
+.sk-row .sk-av{width:52px;height:52px;border-radius:50%;background:var(--s2);flex:none}
 .sk-row .sk-t{flex:1;display:flex;flex-direction:column;gap:8px}
 .wrap{width:100%;max-width:720px;margin:0 auto}
+.row:active,.sheet .opt:active,.li.tap:active{background:var(--pressed)}
 @media (hover:hover){.row:hover,.li.tap:hover,.sheet .opt:hover{background:var(--s1)}.row.sel:hover{background:var(--s1)}}
 .li.tap{cursor:pointer;width:100%;text-align:left}
-.li.tap .t small{display:block;font-size:12px;color:var(--fg2)}
+.li.tap .t small{display:block;font-size:13px;color:var(--fg2)}
 .sp-flex{flex:1}
-@media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}.toast{animation:fi .15s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}@keyframes fi{from{opacity:0}}}
+.qlist{display:flex;flex-direction:column;gap:8px;padding:0 12px 4px}
+.qc{display:flex;flex-direction:column;justify-content:center;gap:3px;width:100%;min-height:64px;padding:12px 14px;border-radius:14px;background:var(--cell);color:var(--fg);text-align:left}
+.qc .qt{font-size:17px;font-weight:600;line-height:1.25;overflow-wrap:anywhere}
+.qc .qx{font-size:15px;line-height:1.3;color:var(--fg2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
+button.qc{cursor:pointer}
+button.qc:active{background:var(--pressed)}
 /* ===== телефон ===== */
 @container (max-width:719px){
   /* чат — отдельный экран поверх списка: стоит за правым краем и выезжает (движение — в motion.css), нижнее меню он закрывает собой */
   #v-chats .cnv{display:flex;position:absolute;inset:0;z-index:20;background:var(--bg);transform:translate3d(100%,0,0);visibility:hidden;box-shadow:-12px 0 32px rgba(0,0,0,.2)}
   .app.chat #v-chats .cnv{transform:none;visibility:visible}
-  .app.chat #v-chats .lst,.app.chat .nav,.app.chat .fade{visibility:hidden}
+  .app.chat #v-chats .lst,.app.chat .nav{visibility:hidden}
   .app.card #v-chats .inf{display:flex;position:absolute;inset:0;z-index:30}
-  .app.card .nav,.app.card .fade{display:none}
+  .app.card .nav{display:none}
 }
 /* ===== планшет и компьютер ===== */
 @container (min-width:720px){
   .app{flex-direction:row}
-  .nav{position:static;flex:none;width:calc(76px + var(--sal));height:auto;padding:calc(var(--sat) + 12px) 0 calc(var(--sab) + 12px) var(--sal);border-radius:0;border:0;border-right:1px solid var(--line);flex-direction:column;align-items:center;gap:4px;overflow-y:auto;scrollbar-width:none;background:var(--s1);z-index:1}
+  .nav{position:static;flex:none;width:calc(76px + var(--sal));height:auto;padding:calc(var(--sat) + 12px) 0 calc(var(--sab) + 12px) var(--sal);border-radius:0;border:0;border-right:1px solid var(--line);flex-direction:column;align-items:center;gap:4px;overflow-y:auto;scrollbar-width:none;background:var(--s1);box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;z-index:1}
   .nav a{flex:none;width:60px;height:56px;margin:0;border-radius:16px}
   .nav .bdg{top:2px;left:calc(50% + 4px)}
   .nav .sp-flex{display:block;flex:1}
-  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:#8A5A3C;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:15px;margin-top:6px;flex:none}
-  .fade{display:none}
+  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:var(--av);color:#fff;align-items:center;justify-content:center;font-weight:600;font-size:15px;margin-top:6px;flex:none}
   .lst .scroll{padding-bottom:calc(var(--sab) + 12px)}
   .scroll{padding-bottom:calc(var(--sab) + 24px);scrollbar-width:thin}
   .scroll.nonav{padding-bottom:calc(var(--sab) + 16px)}
@@ -128,6 +122,7 @@ a.row,button.row{color:inherit}
   #v-chats .lst{border-right:1px solid var(--line);--sal:0px;--sar:0px}
   #v-chats .cnv{display:flex;--sal:0px}
   #v-chats .cnv .none{display:flex;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--fg2);text-align:center;padding:24px}
+  #v-chats .cnv .none b{font-size:17px;font-weight:600;color:var(--fg2)}
   #v-chats .cnv .cin{display:none}
   .app.chat #v-chats .cnv .none{display:none}
   .app.chat #v-chats .cnv .cin{display:flex}
@@ -137,60 +132,43 @@ a.row,button.row{color:inherit}
   .inf .ih{display:none}
   .inf .ib{padding-top:calc(var(--sat) + 20px);padding-left:20px;padding-right:max(20px,var(--sar))}
   .inf .if{padding-left:20px;padding-right:max(20px,var(--sar))}
-  .view:not(#v-chats)>:is(.hdr,.ttl,.chips,.stages){width:100%;max-width:720px;margin-left:auto;margin-right:auto}
-  .view:not(#v-chats) .scroll>.pad,.view:not(#v-chats) .scroll>.row,.view:not(#v-chats) .scroll>.rq{max-width:720px;margin-left:auto;margin-right:auto}
+  .view:not(#v-chats)>:is(.ttl,.chips){width:100%;max-width:720px;margin-left:auto;margin-right:auto}
+  .view:not(#v-chats) .scroll>.pad,.view:not(#v-chats) .scroll>.row{max-width:720px;margin-left:auto;margin-right:auto}
   .cnv .chdr{padding-left:max(12px,var(--sal));padding-top:calc(var(--sat) + 8px)}
   .cnv .m{max-width:min(78%,560px)}
+  .sheet{left:50%;right:auto;top:50%;bottom:auto;width:min(460px,calc(100% - 48px));max-height:min(78%,640px);border-radius:20px;padding:10px 0 14px;transform:translate(-50%,-50%)}
+  .sheet .grab{display:none}
 }
 @container (min-width:1180px){.cnv{--sar:0px}}
 @container (min-width:720px) and (max-width:1179px){
   #v-chats.on{grid-template-columns:320px minmax(0,1fr)}
   .ibtn.info{display:flex}
   #v-chats .inf{display:none;visibility:visible}
-  .app.card #v-chats .inf{display:flex;position:absolute;right:0;top:0;bottom:0;width:min(380px,100%);z-index:30;border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.35)}
+  .app.card #v-chats .inf{display:flex;position:absolute;right:0;top:0;bottom:0;width:min(380px,100%);z-index:30;border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.3)}
   .app.card .scrim.cs{display:block}
   .inf .ih{display:flex}
   .app.card .inf .ib{padding-top:8px}
+  .cnv .chdr{padding-right:max(10px,var(--sar))}
 }
 @container (min-width:720px) and (max-width:899px){
   #v-chats.on{grid-template-columns:304px minmax(0,1fr)}
   .nav{width:calc(72px + var(--sal))}
   .lst .hdr{gap:8px;padding-left:12px;padding-right:12px}
-  .lst .biz{gap:6px;padding-right:8px}
 }
 @container (min-width:1700px){#v-chats.on{grid-template-columns:400px minmax(0,1fr) 360px}}
 @container (max-width:430px){.cnv .chdr .ibtn.s{display:none}}
-@container (min-width:720px) and (max-width:1179px){.cnv .chdr{padding-right:max(10px,var(--sar))}}
-
-.msgs{overflow-y:auto;overscroll-behavior:contain;justify-content:flex-start;scrollbar-width:none}
-.msgs::-webkit-scrollbar{display:none}
-.msgs>:first-child{margin-top:auto}
-.m .tx{white-space:pre-wrap}
-.m.pend{opacity:.55}
-.m img,.m audio{display:block;max-width:100%;margin-top:6px;border-radius:10px}
+.m img,.m audio{display:block;max-width:100%;margin-top:6px;border-radius:12px}
 .m a{text-decoration:underline}
-.li .av svg,.av svg{color:#fff}
-
+.comp .inp textarea[disabled],.inp .ibtn[disabled]{opacity:.45}
 /* Телефон «на боку» и вообще низкое окно: убираем лишнюю высоту, чтобы переписке хватало места */
 @media (max-height:520px){
-  .strip{min-height:44px;padding-top:4px;padding-bottom:4px}
+  .strip{min-height:44px}
   .ban{min-height:36px;padding-top:4px;padding-bottom:4px}
   .warnl:not(.amb){display:none}
   .cnv .chdr{padding-top:calc(var(--sat) + 4px);padding-bottom:4px}
 }
-
 /* Самые узкие экраны (320–359): подписи нижнего меню не должны слипаться */
 @container (max-width:359px){
   .nav{left:8px;right:8px;padding:4px}
   .nav a{font-size:10px;margin:0}
 }
-.ibtn.pay{font-size:20px;font-weight:700;color:var(--ac)}
-.ibtn.pay[hidden]{display:none}
-
-/* быстрые ответы: карточка = короткое название сверху + превью текста в 3 строки; вся карточка — кнопка не ниже 44 px */
-.qlist{display:flex;flex-direction:column;gap:8px;padding:0 12px 4px}
-.qc{display:flex;flex-direction:column;gap:3px;width:100%;min-height:64px;padding:12px 14px;border-radius:16px;background:var(--s2);color:var(--fg);text-align:left}
-.qc .qt{font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.3;overflow-wrap:anywhere}
-.qc .qx{font-size:14px;line-height:1.4;color:var(--fg2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
-button.qc{cursor:pointer}
-@media (hover:hover){button.qc:hover{background:var(--chipbg)}}

@@ -9,7 +9,7 @@ export function pultIcon(n, icons) { // иконка приложения для
 }
 /** @param {boolean} demo */
 export function pultManifest(demo) { // чтобы пульт ставился на экран «Домой» как приложение (iPhone, Android, компьютер)
-  const m = { id: demo ? "/demo" : "/inbox", name: demo ? "Пульт чатов — демо" : "Пульт чатов", short_name: demo ? "Пульт демо" : "Пульт", start_url: demo ? "/demo" : "/inbox", scope: demo ? "/demo" : "/", display: "standalone", theme_color: "#121314", background_color: "#121314", orientation: "any", lang: "ru",
+  const m = { id: demo ? "/demo" : "/inbox", name: demo ? "Пульт чатов — демо" : "Пульт чатов", short_name: demo ? "Пульт демо" : "Пульт", start_url: demo ? "/demo" : "/inbox", scope: demo ? "/demo" : "/", display: "standalone", theme_color: "#000000", background_color: "#000000", orientation: "any", lang: "ru",
     icons: [{ src: "/pult/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" }, { src: "/pult/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] };
   return new Response(JSON.stringify(m), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "public, max-age=3600" } });
 }
