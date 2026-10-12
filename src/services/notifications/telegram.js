@@ -1,5 +1,6 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Уведомления администратору в Telegram: «не чаще раза в 10 минут на повод» (noteDue, состояние lastNote живёт только здесь), notifyOnce и ежедневная резервная копия заявок.
+/** @import { Env } from "../../lib/types.js" */
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { local, isoDay } from "../../lib/time.js";
 import { allLeads } from "../../db/kv/leads.js";
@@ -7,10 +8,13 @@ import { notify, tgFile } from "../integrations/telegram/client.js";
 
 // уведомление администратору не чаще раза в 10 минут на один повод
 const lastNote = new Map();
+/** @param {string} key @returns {boolean} */
 export const noteDue = key => { const now = Date.now(); if (now - (lastNote.get(key) || 0) < 600e3) return false; if (lastNote.size > 500) lastNote.clear(); lastNote.set(key, now); return true; };
+/** @param {Env} env @param {string} key @param {string} msg @param {string=} clientId @returns {Promise<void>} */
 export async function notifyOnce(env, key, msg, clientId) { if (noteDue(key)) await notify(env, msg, clientId); }
 
 // Ежедневная резервная копия заявок: в 03:00 по времени клиентов файл с заявками за 30 дней уходит в Telegram администратора (в тот же чат, что и заявки)
+/** @param {Env} env @param {boolean=} force @returns {Promise<number>} */
 export async function backupRun(env, force) {
   const now = Date.now(), d = local(now);
   if (!force && !(d.getUTCHours() === 3 && d.getUTCMinutes() < 10)) return 0;

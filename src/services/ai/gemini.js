@@ -1,9 +1,10 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Поставщик ИИ Gemini (askGemini) с лесенкой «раздумий» THINK_LADDER; состояние THINK_STEP живёт только здесь. Выбор модели и цепочка основной → запасной — внутри askGemini, как раньше.
 import { askClaude, isClaude } from "./claude.js";
 
 // «Раздумья» модели перед ответом: на каждый вопрос это лишние секунды, а её «мысли» входят в лимит токенов ответа (ответ обрывается).
 // Поколения Gemini отключают их по-разному, поэтому у модели есть лесенка настроек: берём верхнюю, а если Gemini отвечает 400 про thinking — спускаемся на ступеньку ниже.
+/** @param {string} model @returns {(Record<string, any> | null)[]} */
 export const THINK_LADDER = model => /2\.5-flash/.test(model) ? [{ thinkingBudget: 0 }, null]
   : /gemini-(1\.5|2\.0)/.test(model) ? [null]
   : /pro/.test(model) ? [{ thinkingLevel: "low" }, { thinkingBudget: 128 }, null]
@@ -11,11 +12,20 @@ export const THINK_LADDER = model => /2\.5-flash/.test(model) ? [{ thinkingBudge
 const THINK_STEP = new Map(); // модель → ступенька, которую принял Gemini (помним, пока жив экземпляр воркера)
 
 // info — сюда пишем, что вышло (модель, миллисекунды, настройка «раздумий», токены «мыслей», чем кончился ответ): для /diag; only — список моделей вместо обычных
+/**
+ * @import { Env, Turn } from "../../lib/types.js"
+ * @param {Env} env
+ * @param {string} system
+ * @param {Turn[]} turns
+ * @param {Record<string, any>=} info
+ * @param {string[]=} only
+ * @returns {Promise<string>}
+ */
 export async function askGemini(env, system, turns, info, only) {
   const models = only || [env.MODEL || "gemini-flash-lite-latest", env.MODEL_FALLBACK || "gemini-flash-latest"];
   const payload = {
     systemInstruction: { parts: [{ text: system }] },
-    contents: turns.reduce((a, t) => { const l = a[a.length - 1]; if (l && l.role === t.role) l.parts[0].text += "\n" + t.text; else a.push({ role: t.role, parts: [{ text: t.text }] }); return a; }, []),
+    contents: turns.reduce((/** @type {any[]} */ a, /** @type {Turn} */ t) => { const l = a[a.length - 1]; if (l && l.role === t.role) l.parts[0].text += "\n" + t.text; else a.push({ role: t.role, parts: [{ text: t.text }] }); return a; }, []),
     generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }, // запас: если модель всё же «думает», её мысли не съедят ответ
     safetySettings: ["HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT", "DANGEROUS_CONTENT"].map(k => ({ category: "HARM_CATEGORY_" + k, threshold: "BLOCK_ONLY_HIGH" }))
   };
@@ -44,7 +54,7 @@ export async function askGemini(env, system, turns, info, only) {
         if (r.status === 429 || r.status >= 500) { lastErr = new Error("Gemini " + r.status + " " + tx.slice(0, 200)); break; }
         throw new Error("Gemini " + r.status + " " + tx);
       }
-      const out = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+      const out = (data?.candidates?.[0]?.content?.parts || []).map((/** @type {any} */ p) => p.text || "").join("").trim();
       const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || "";
       if (info) Object.assign(info, { reason, thoughts: data?.usageMetadata?.thoughtsTokenCount });
       if (ms > 8000) console.log("gemini slow", model, ms, JSON.stringify(ladder[step]), "thoughts", data?.usageMetadata?.thoughtsTokenCount, reason);

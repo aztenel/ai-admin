@@ -1,12 +1,15 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Прогон одного сценария автотеста: свой временный KV в памяти, ответы настоящего think() (/selftest, /api/launch/case).
+/** @import { Env } from "../../lib/types.js" */
+/** @import { Case } from "./cases.js" */
 import { think } from "../conversation/orchestrator.js";
 import { sundayNight, CASES, COMMON } from "./cases.js";
 
+/** @param {Env} env @param {number} i @param {Case[]=} list @returns {Promise<Record<string, any>>} */
 export async function runCase(env, i, list = CASES) {
   const k = list[i]; if (!k) return { error: "no case" };
   const mem = new Map();
-  const store = { get: async x => mem.get(x) ?? null, put: async (x, v) => { mem.set(x, v); }, delete: async x => { mem.delete(x); } };
+  const store = { get: async (/** @type {string} */ x) => mem.get(x) ?? null, put: async (/** @type {string} */ x, /** @type {string} */ v) => { mem.set(x, v); }, delete: async (/** @type {string} */ x) => { mem.delete(x); } };
   const nowMs = k.now === "sunday22" ? sundayNight(Date.now()) : Date.now();
   const all = [], transcript = [];
   let prev = null;

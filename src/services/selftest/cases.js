@@ -1,21 +1,33 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Сценарии автотеста на живой модели (CASES) и общие проверки; сам прогон — runCase в run.js.
 import { TZ, local } from "../../lib/time.js";
 
 // ================= автотест на живой модели =================
 // Каждый сценарий: ниша, сообщения клиента (строка или функция от прошлого ответа), проверки последнего/всех ответов.
+/** @param {number} nowMs @returns {number} */
 export function sundayNight(nowMs) { // ближайшее воскресенье 22:10 по Астане
   const n = local(nowMs); const add = (7 - n.getUTCDay()) % 7 || 7;
   return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + add, 22 - TZ, 10);
 }
+/** @param {RegExp} re @returns {(r: any) => boolean} */
 export const has = re => r => re.test(r.reply);
+/** @param {RegExp} re @returns {(r: any) => boolean} */
 export const hasnt = re => r => !re.test(r.reply);
+/** @param {any} r @returns {boolean} */
 export const noOffer = r => !(r.offer || []).length && !/\d{1,2}:\d{2}/.test(r.reply);
+/** @param {any} r @returns {string} */
 export const pickSlot = r => (r.offer && r.offer[0]) ? "давайте в " + r.offer[0] : "давайте в ближайшее свободное время";
 export const KZ = /[әғқңөұүһі]/i;
+/** @param {any} r @returns {string} */
 export const altSlot = r => "Запишите на первую услугу из списка, мастер любой, на ближайший день, когда это время свободно: " + pickSlot(r);
+/** @param {any} r @param {any[]} all @returns {boolean} */
 export const altMade = (r, all) => all.some(x => x.lead && x.lead.altegio); // запись дошла до проверки в Altegio (в автотесте она не создаётся)
 
+/**
+ * Сценарий автотеста: ниша, сообщения клиента (строка или функция от прошлого ответа), проверки.
+ * @typedef {{ c: string, t: string, now?: string, msgs: (string | ((prev: any) => string))[], checks: [string, (r: any, all: any[]) => any][] }} Case
+ */
+/** @type {Case[]} */
 export const CASES = [
   // ---- стоматология: факты
   { c: "dent", t: "Цена импланта", msgs: ["Сколько стоит имплант?"], checks: [["цена 300 000", has(/300\s?000/)], ["предложено время", r => r.offer.length > 0]] },
@@ -89,6 +101,7 @@ export const CASES = [
   { c: "alt", t: "Altegio: запись и отмена (без создания)", msgs: ["Хочу записаться", altSlot, "Меня зовут Азамат, мой номер +7 777 123 45 67. День — ближайший, когда это время свободно", "Отмените, пожалуйста, мою запись"], checks: [["запись была", altMade], ["отмена исполнена или передана администратору", r => (r.cancelDone === true && /Отменила вашу запись/.test(r.reply)) || (r.cancel === true && /администратор/i.test(r.reply))]] },
 ];
 
+/** @type {[string, (r: any) => boolean][]} */
 export const COMMON = [
   ["нет «администратор ответит» (сбой ИИ)", r => !/ответит вам в ближайшее время/.test(r.reply)],
   ["без markdown", r => !/\*\*|^#|^\s*[-•]\s/m.test(r.reply)],

@@ -1,11 +1,13 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Канал Green-API: отправка сообщения клиенту (sendGreen) с сигналом администратору в Telegram.
+/** @import { Env } from "../../lib/types.js" */
 import { clean } from "../../lib/text.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { gaShared } from "../integrations/greenapi/webhook.js";
 import { gaCall, gaCode, gaWhy } from "../integrations/greenapi/client.js";
 
 // → { ok, id } или { ok: false, status, code, error }. quiet — без сигнала администратору (рассылка и пульт сообщают о сбое сами)
+/** @param {Env} env @param {string} chatId @param {any} message @param {any=} r @param {boolean=} quiet @returns {Promise<Record<string, any>>} */
 export async function sendGreen(env, chatId, message, r, quiet) {
   r = r || gaShared(env);
   if (!r) return { ok: false, status: 0, code: "ga:off", error: "Green-API не настроен" };

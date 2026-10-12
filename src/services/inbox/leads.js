@@ -1,10 +1,12 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Пульт чатов: смена статуса заявки.
+/** @import { Env } from "../../lib/types.js" */
 import { clean } from "../../lib/text.js";
 import { LEAD_TTL } from "../../config/constants.js";
 import { kvRetry } from "../../db/kv/retry.js";
 import { leadTs, loadLeads, saveLeads, leadKey } from "../../db/kv/leads.js";
 
+/** @param {Env} env @param {string} cid @param {string} id @param {Record<string, any>} patch @returns {Promise<boolean>} */
 export async function leadPatch(env, cid, id, patch) { // статус заявки — в отдельном ключе (с метаданными) и в общем списке
   let ok = false;
   try {
