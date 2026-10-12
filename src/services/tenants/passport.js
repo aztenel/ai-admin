@@ -1,5 +1,6 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Паспорт бота: сборка клиента из паспорта (compileClient) и загрузка паспортов из KV (syncClients).
+/** @import { Env } from "../../lib/types.js" */
 import { money } from "../../lib/money.js";
 import { normPhone, fmtPhone } from "../../lib/phone.js";
 import { clean, lowE } from "../../lib/text.js";
@@ -13,27 +14,30 @@ import { parseRepairs } from "./parse-repairs.js";
 
 const ID_RE = /^[a-z][a-z0-9]{1,15}$/;
 
-const repairLine = r => `${r.model} | ${r.work} | ${r.min === null ? "цену назовёт мастер после диагностики" : r.min === 0 && r.max === 0 ? "бесплатно" : r.max > r.min ? `от ${money(r.min)} до ${money(r.max)} ₸` : `${r.from ? "от " : ""}${money(r.min)} ₸`}${r.term ? " | " + r.term : ""}`;
-const priceText = s => s.min === null ? "цену называет администратор" : s.min === 0 && s.max === 0 ? "бесплатно" : (s.max > s.min ? `от ${money(s.min)} до ${money(s.max)} ₸` : `${s.from ? "от " : ""}${money(s.min)} ₸`) + (s.unit ? " " + s.unit : "");
+const repairLine = /** @param {any} r */ r => `${r.model} | ${r.work} | ${r.min === null ? "цену назовёт мастер после диагностики" : r.min === 0 && r.max === 0 ? "бесплатно" : r.max > r.min ? `от ${money(r.min)} до ${money(r.max)} ₸` : `${r.from ? "от " : ""}${money(r.min)} ₸`}${r.term ? " | " + r.term : ""}`;
+const priceText = /** @param {any} s */ s => s.min === null ? "цену называет администратор" : s.min === 0 && s.max === 0 ? "бесплатно" : (s.max > s.min ? `от ${money(s.min)} до ${money(s.max)} ₸` : `${s.from ? "от " : ""}${money(s.min)} ₸`) + (s.unit ? " " + s.unit : "");
+/** @param {any} src */
 function parseStaff(src) {
   return String(src || "").replace(/\r/g, "").split("\n").map(x => x.replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, "").trim()).filter(Boolean).slice(0, 30).map(line => {
     const [n, ...r] = line.split(/\s+[—–-]\s+|\s*[:(]\s*/);
     return { name: altText(n, 40), role: altText(r.join(" ").replace(/\)\s*$/, ""), 60) };
   }).filter(m => m.name && /\p{L}/u.test(m.name));
 }
+/** @type {Record<string, number>} */
 const CFG_TEXT = { repairs: 20000, pay: 500, upsell: 1200, name: 60, address: 160, kind: 60, greeting: 300, safe: 200, extra: 3000, services: 6000, staff: 1500, schedule: 400, tg: 120 };
 
-const facts0Len = F => F.join("\n").length; // длина описания без прайса ремонта: у прайса свой предел (300 строк)
+const facts0Len = /** @param {any} F */ F => F.join("\n").length; // длина описания без прайса ремонта: у прайса свой предел (300 строк)
 // паспорт → { errors, warnings, client }: client — объект для движка (как запись в CLIENTS). С ошибками бот не сохраняется
+/** @param {Record<string, any>} cfg */
 export function compileClient(cfg) {
-  const errors = [], warnings = [], str = (k) => String(cfg[k] ?? "").replace(/\r/g, "").trim().slice(0, CFG_TEXT[k] || 200);
+  const errors = [], warnings = [], str = /** @param {any} k */ (k) => String(cfg[k] ?? "").replace(/\r/g, "").trim().slice(0, CFG_TEXT[k] || 200);
   const id = String(cfg.id || "").trim();
   if (!ID_RE.test(id)) errors.push("идентификатор: латинские буквы и цифры, от 2 до 16 знаков, начинается с буквы (например, kairat)");
   else if (BUILTIN.has(id)) errors.push(`идентификатор «${id}» занят демо-ботом — выберите другой`);
   const name = clean(str("name"), 60);
   if (name.length < 2) errors.push("название компании не указано");
   if (/[«»"<>\[\]{}]/.test(name)) errors.push("в названии не должно быть кавычек и скобок — они добавятся сами");
-  const nz = NICHES[cfg.niche] || null;
+  const nz = /** @type {Record<string, any>} */ (NICHES)[cfg.niche] || null;
   if (!nz) errors.push("ниша не выбрана");
   const N = nz || NICHES.other;
   const kind = cfg.niche === "other" && str("kind") ? clean(str("kind"), 60) : N.kind;
@@ -54,12 +58,12 @@ export function compileClient(cfg) {
   const rp = parseRepairs(String(cfg.repairs ?? "").slice(0, 20000));
   errors.push(...rp.errors);
   // допродажи: «Мужская стрижка → Оформление бороды». Без Altegio обе услуги должны быть в списке услуг паспорта
-  const upRaw = str("upsell").split("\n").map(x => x.replace(/^\s*(?:[•*·]|\d{1,2}[.)])\s+/, "").replace(/^\s*-\s+/, "").trim()).filter(Boolean), upsell = [];
+  const upRaw = str("upsell").split("\n").map(x => x.replace(/^\s*(?:[•*·]|\d{1,2}[.)])\s+/, "").replace(/^\s*-\s+/, "").trim()).filter(Boolean), /** @type {string[]} */ upsell = [];
   if (upRaw.length > 10) errors.push(`допродажи: ${upRaw.length} строк — оставьте не больше 10`);
   else upRaw.forEach((line, i) => {
     const m = line.split(/\s*(?:→|->|=>)\s*|\s+[—–-]\s+/);
     if (m.length !== 2 || !m[0].trim() || !m[1].trim()) { errors.push(`допродажи, строка ${i + 1}: напишите «Услуга → что предложить», например «Мужская стрижка → Оформление бороды»`); return; }
-    const fix = n => { const t = altText(n, 80); if (booking === "altegio") return t; const f = sv.list.find(x => lowE(x.name) === lowE(t)); return f ? f.name : null; };
+    const fix = /** @param {any} n */ n => { const t = altText(n, 80); if (booking === "altegio") return t; const f = sv.list.find(x => lowE(x.name) === lowE(t)); return f ? f.name : null; };
     const a = fix(m[0]), b = fix(m[1]);
     if (!a || !b) { errors.push(`допродажи, строка ${i + 1}: услуги «${(!a ? m[0] : m[1]).trim()}» нет в списке услуг`); return; }
     if (lowE(a) === lowE(b)) { errors.push(`допродажи, строка ${i + 1}: услуга предлагает сама себя`); return; }
@@ -122,7 +126,9 @@ export function compileClient(cfg) {
 }
 
 // загрузка паспортов: раз в минуту на экземпляр воркера — одно чтение KV. Паспорт с ошибкой не загружается (остаётся прежняя версия бота)
+/** @type {{ at: number, raw: string | null, ids: string[] }} */
 export const DYN = { at: 0, raw: null, ids: [] };
+/** @param {Env} env @param {boolean} [force] */
 export async function syncClients(env, force) {
   const now = Date.now();
   if (!force && DYN.at && Math.abs(now - DYN.at) < 60e3) return;

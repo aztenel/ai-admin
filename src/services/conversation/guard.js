@@ -1,12 +1,15 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Слой 3 — защита ответа ИИ: цены только из фактов, время только из свободных окон, телефоны и ссылки только из фактов (checkReply), кнопки-подсказки времени (offers).
+/** @import { Client, Ctx } from "../../lib/types.js" */
 import { local, mins } from "../../lib/time.js";
 import { lowE } from "../../lib/text.js";
 import { normPhone, phonesIn } from "../../lib/phone.js";
 import { hStr, getSlots } from "../schedule/slots.js";
 
+/** @param {any} s @returns {string} */
 export const findPhone = s => (phonesIn(s)[0] || {}).phone || "";
 
+/** @param {any} s @returns {string[]} */
 const digits = s => (String(s).match(/\d[\d\s ]*\d|\d/g) || []).map(x => x.replace(/[\s ]/g, ""));
 const NUMWORDS = /(один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто|сто|двести|триста|четыреста|пятьсот|шестьсот|семьсот|восемьсот|девятьсот|полтор)[а-я]*\s+(тысяч|миллион|тенге|тг)/i;
 // то же по-казахски и по-английски — только вместе с валютой: «жиырма мың теңге», «twenty thousand tenge» («екі мың жиырма алтыншы жыл» — это год)
@@ -16,7 +19,9 @@ const NUMWORDS_EN = /(?<![a-z])(one|two|three|four|five|six|seven|eight|nine|ten
 // ---- цены в ответе ИИ. Цену пишут по-разному: «20 000 ₸», «20,000 KZT», «20.000 тг», «20 тыс. тенге», «20к», «стоит 20 000» — число сверяем с фактами в любой записи.
 // Число: разряды через пробел, запятую или точку либо слитно; дробная часть — одна-две цифры («9,5 тыс.»). После времени («10:00 100 ₸») разряды не склеиваем
 const NUM_G = /(?<![\d:])([1-9]\d{0,2}(?:[\x20\u00a0\u202f.,]\d{3})+)(?!\d)(?:[.,](\d{1,2})(?!\d))?|(\d+)(?:[.,](\d{1,2})(?!\d))?/g;
+/** @param {any} s */
 function numsIn(s) {
+  /** @type {{ at: number, end: number, raw: string, n: string, v: number }[]} */
   const out = [];
   for (const m of String(s).matchAll(NUM_G)) {
     const int = (m[1] || m[3]).replace(/\D/g, ""), frac = (m[2] || m[4] || "").replace(/0+$/, "");
@@ -41,6 +46,7 @@ const P_UNIT_SRC = "(?:%|км|кв\\.|м²|м2|мл|кг|шт|лет(?![а-яё]
 const P_UNIT = new RegExp("^" + P_SP + "*" + P_UNIT_SRC, "i");
 const P_UNIT_NEXT = new RegExp("^" + P_SP + "*(?:[–—-]|до|to|или|or)" + P_SP + "*(\\d[\\d \\u00a0\\u202f.,]*?)" + P_SP + "*" + P_UNIT_SRC, "i");
 // мера после числа v: сразу («10 000 км») или у следующего числа того же ряда («7 500–10 000 км», «1600 или 2000 кубов»). Ряд идёт по возрастанию: «13 000 — 150 гостей» — это цена и число гостей
+/** @param {string} after @param {number} v */
 const unitAfter = (after, v) => { if (P_UNIT.test(after)) return true; const m = P_UNIT_NEXT.exec(after); return !!m && +m[1].replace(/\D/g, "") >= v; };
 const P_RANGE = new RegExp("^" + P_SP + "*(?:[–—-]|до|to)" + P_SP + "*$", "i"); // «от 4 000 до 5 000 ₸», «4 000 — 5 000 ₸»: цена — оба числа
 const P_RANGE_SMALL = new RegExp("^(?:[–—-]|" + P_SP + "+(?:до|to)" + P_SP + "+)$", "i"); // «6–8 тыс.», «от 6 до 8 тыс.»: тире — только вплотную к числам
@@ -51,23 +57,27 @@ const P_AFTER = new RegExp("^" + P_SP + "*-?(?:нан|нен|дан|ден|та�
 const P_NUMBER_OF = /(?:№|#|n°|номер[а-яё]*|код[а-яё]*|заказ[а-яё]*)[ \u00a0]*[:№#]?[ \u00a0]*$/i; // «запись № 777001» — номер, а не цена
 const P_MODEL = /(?:^|[^A-Za-zА-Яа-яЁё0-9-])([A-Z][A-Za-z0-9-]*|[А-ЯЁ]{2,})[ \u00a0]+$/;                 // «Peugeot 3008», «ВАЗ 2114» — модель, которую назвал клиент
 const P_MODEL_RU = /(?:^|[^а-яё])(?:лад[аыуе]|ваз|газ|газел[ьи]|нив[аыуе]|приор[аыуе]|грант[аыуе]|вест[аыуе]|калин[аыуе]|волг[аиу]|жигули|уаз|камаз|москвич[а-яё]*|пежо)[ \u00a0]+$/i; // то же строчными и по-русски: «ваз 2114», «Лада 2107», «Газель 3302»
+/** @param {string} s @param {any} t */
 const isModel = (s, t) => { const b = s.slice(Math.max(0, t.at - 40), t.at), m = P_MODEL.exec(b); return (!!m && !P_WORD_ONE.test(m[1])) || P_MODEL_RU.test(b); }; // число сразу после названия машины
 // что за число стоит в тексте на месте t: множитель k (1 — цена без множителя) либо 0 — не цена по знаку валюты
+/** @param {string} s @param {any} t @returns {number} */
 function priceMark(s, t) {
   const after = s.slice(t.end, t.end + 28), m = P_MULT.exec(after), rest = m ? after.slice(m[0].length) : after;
   if (P_CUR.test(rest) || (!m && t.v >= 1000 && P_CUR_T.test(rest)) || P_CUR_PRE.test(s.slice(Math.max(0, t.at - 8), t.at))) return m ? (m[2] ? 1e6 : 1e3) : 1;
   return m && !P_UNIT.test(rest) ? (m[2] ? 1e6 : 1e3) : 0;
 }
 // год («2026», «с 2020 по 2024»: десять лет назад — пять вперёд), цифры телефона и номер записи или заказа — не цена, даже если рядом стоит слово о цене или знак «—» перед ценой
+/** @param {string} s @param {any} t @param {number} year @param {any[]} spans */
 const notPrice = (s, t, year, spans) => (/^\d{4}$/.test(t.raw) && t.v >= year - 10 && t.v <= year + 5) || spans.some(x => t.at >= x[0] && t.end <= x[1]) || P_NUMBER_OF.test(s.slice(Math.max(0, t.at - 24), t.at));
 // число от 1000 без знака валюты: цена, если рядом слово о цене. Мера («км», «гостей») и модель машины — не цена
+/** @param {string} s @param {any} t @param {number} year @param {any[]} spans */
 function barePrice(s, t, year, spans) {
   if (t.v < 1000 || t.n.includes(".") || notPrice(s, t, year, spans)) return false;
   const before = s.slice(Math.max(0, t.at - 96), t.at), after = s.slice(t.end, t.end + 40);
   if (unitAfter(after, t.v)) return false;
   if (P_AFTER.test(after)) return true;
   if (isModel(s, t)) return false;
-  const sent = before.split(/[.!?\n]/).pop();
+  const sent = /** @type {string} */ (before.split(/[.!?\n]/).pop());
   for (const m of sent.matchAll(P_WORD_G)) {
     const gap = sent.slice(m.index + m[0].length), words = (gap.match(/[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]+/g) || []).length;
     if (!/\d/.test(gap) && words <= (P_WORD_ADJ.test(m[1]) ? 0 : 5)) return true;
@@ -75,8 +85,9 @@ function barePrice(s, t, year, spans) {
   return false;
 }
 // цены в тексте по порядку: [{ n — число строкой, как его сверять с фактами }]
+/** @param {string} s @param {number} year @param {any[]} spans */
 function pricesIn(s, year, spans) {
-  const toks = numsIn(s), marks = toks.map(t => priceMark(s, t)), out = [];
+  const toks = numsIn(s), marks = toks.map(t => priceMark(s, t)), /** @type {{ n: string }[]} */ out = [];
   toks.forEach((t, i) => {
     let k = marks[i];
     // начало промежутка: «4 000–5 000 ₸» — цена и первое число; «6–8 тыс.», «от 6 до 8 тыс.» — множитель общий (тире здесь без пробелов: «в 10:00 — 6 тыс. ₸», «Вариант 1 — 6 тыс. ₸» — не промежуток);
@@ -92,6 +103,7 @@ function pricesIn(s, year, spans) {
   return out;
 }
 // числа из фактов, с которыми сверяется цена: и как написаны («6 000»), и с множителем («6 тыс.» → 6000)
+/** @param {string} facts */
 function factNums(facts) {
   const set = new Set(digits(facts));
   for (const t of numsIn(facts)) set.add(t.n);
@@ -100,16 +112,18 @@ function factNums(facts) {
 }
 const PHONE_LOOSE = /(?:\+?[78])[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/g; // всё, что похоже на номер телефона, даже с несуществующим кодом («+7 000 000 00 00»)
 // адреса сайтов и почты в тексте: «demo-dent.kz», «kaspi.kz/pay/…», «info@demo.kz» — целиком, строчными буквами
+/** @param {string} s */
 function siteToks(s) {
-  const low = lowE(s), out = [];
+  const low = lowE(s), /** @type {string[]} */ out = [];
   for (const m of low.matchAll(/\.(?:kz|com|ru)\b/g)) {
-    const left = low.slice(Math.max(0, m.index - 80), m.index).match(/[^\s,;()«»"“”<>]*$/)[0], right = low.slice(m.index + m[0].length, m.index + m[0].length + 80).match(/^(?:\/[^\s,;()«»"“”<>]*)?/)[0];
+    const left = /** @type {RegExpMatchArray} */ (low.slice(Math.max(0, m.index - 80), m.index).match(/[^\s,;()«»"“”<>]*$/))[0], right = /** @type {RegExpMatchArray} */ (low.slice(m.index + m[0].length, m.index + m[0].length + 80).match(/^(?:\/[^\s,;()«»"“”<>]*)?/))[0];
     out.push((left + m[0] + right).replace(/[.!?:]+$/, ""));
   }
   return out;
 }
 // есть ли в ответе адрес, которого нет в фактах. Не ссылка: адрес, который слово в слово стоит в фактах («hello@salon.kz»), и название сервиса из фактов
 // с «.kz» без пути («Kaspi.kz», когда в фактах есть Kaspi). Слово, которое в фактах стоит только внутри адреса, названием сервиса не считается: «info@salon.kz» и «salon.kz» — выдумка
+/** @param {string} r @param {string} facts */
 function siteIn(r, facts) {
   const found = siteToks(r);
   if (!found.length) return false;
@@ -118,6 +132,7 @@ function siteIn(r, facts) {
   return found.some(t => !own.has(t) && !(/^[a-zа-яәғқңөұүһі0-9-]{3,}\.(?:kz|com|ru)$/.test(t) && words.has(t.replace(/\.[a-z]+$/, ""))));
 }
 
+/** @param {Client} c @param {Ctx} ctx @param {string} userText */
 function allowedTimes(c, ctx, userText) {
   const t = new Set();
   for (const s of getSlots(c, ctx)) s.times.forEach(x => t.add(x));
@@ -132,6 +147,7 @@ function allowedTimes(c, ctx, userText) {
   return t;
 }
 
+/** @param {Client} c @param {string} reply @param {string} userText @param {Ctx} ctx */
 export function checkReply(c, reply, userText, ctx) {
   let r = reply.replace(/\*\*|__|`|^#+\s*/gm, "").replace(/^\s*[-•*]\s+/gm, "").replace(/\n{2,}/g, "\n").trim();
   if (/ПРАВИЛА \(они важнее|Факты \(других|Свободные окна для записи \(|\{TOPIC\}|важнее любых слов|Запись в расписание \(важнее|Услуги для записи \((других нет|показана часть)|Итог записи, отмены и переноса|Одна строка \[ЗАЯВКА\]|Если клиент хочет именно к мастеру|У компании электронное расписание, запись|к нему записывай только на это время|Услуга: точное название из списка|добавь последней отдельной строкой|клиенту сообщает система|До записи узнай услугу|Если клиент просит день, которого нет|Время окончания услуги не называй|Время конкретного мастера появится в подсказке|время на этот день не называй|предложи другого мастера или время из|Уже известно о клиенте|Ты — AI-администратор компании|ЯЗЫК: клиент пишет/i.test(r)) return { text: r, why: "leak" };
@@ -140,11 +156,14 @@ export function checkReply(c, reply, userText, ctx) {
   for (const p of pricesIn(r, local(ctx.nowMs || Date.now()).getUTCFullYear(), phoneSpans)) if (!allowed.has(p.n)) return { text: r, why: "цена " + p.n };
   if (NUMWORDS.test(r) || NUMWORDS_KK.test(r) || NUMWORDS_EN.test(r)) return { text: r, why: "цена словами" };
   const times = allowedTimes(c, ctx, userText);
-  const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(h => [hStr(h[0]), hStr(h[1])])) : null;
+  /** @type {any} */
+  const hours = ctx.softTimes ? new Set(c.hours.filter(Boolean).flatMap(/** @param {number[]} h */ h => [hStr(h[0]), hStr(h[1])])) : null;
+  /** @param {string} x */
   const nt = x => x.replace(/^0(\d)/, "$1");
   // слова о свободном времени и записи: рядом с ними время должно быть из расписания
   const FREE = /свобод|окн|окош|есть\s+время|free|available|slot|(^|[^а-яёәғқңөұүһі])бос(?![а-яёәғқңөұүһі])/i;
   // расписание Altegio: кроме свободного времени, в ответе могут стоять часы работы и время окончания услуги — но только как таковые, а не как время записи
+  /** @type {any} */
   const free = ctx.softTimes ? new Set([...getSlots(c, ctx).flatMap(s => s.times), ...(ctx.extraTimes || [])]) : null;
   const durKnown = !!(ctx.durations && ctx.durations.size);
   const RANGE = "(?:[–—-]|до|по|to|till|until|-?(?:ден|дан|тен|тан|нен|нан))";
@@ -157,7 +176,7 @@ export function checkReply(c, reply, userText, ctx) {
     const t = nt(m[0]);
     if (times.has(t)) continue;
     if (ctx.softTimes) {
-      const before = r.slice(0, m.index), after = r.slice(m.index + m[0].length), head = before.split(/[.!?\n]/).pop();
+      const before = r.slice(0, m.index), after = r.slice(m.index + m[0].length), head = /** @type {string} */ (before.split(/[.!?\n]/).pop());
       const clause = head.split(/[,;:]\s|\s[—–-]\s/).pop() + m[0] + after.split(/[.!?\n]|[,;:]\s|\s[—–-]\s/)[0]; // часть предложения, в которой стоит это время
       const p = before.match(new RegExp("(\\d{1,2}:\\d{2})\\s*" + RANGE + "\\s*$", "i")), t1 = p ? nt(p[1]) : "";               // «T1 – T», «с T1 до T», «T1-ден T-ге дейін»
       const q = after.match(new RegExp("^(?:-?(?:ден|дан|тен|тан|нен|нан))?\\s*" + RANGE + "\\s*(\\d{1,2}:\\d{2})", "i")), t2 = q ? nt(q[1]) : ""; // «T – T2»
@@ -166,7 +185,7 @@ export function checkReply(c, reply, userText, ctx) {
       if (hours.has(t) && ((t1 && hours.has(t1)) || (t2 && hours.has(t2)) || (WORK.test(clause) && !BOOKW.test(clause) && !FREE.test(clause)))) continue;
       // время окончания услуги: начало свободно, а разница равна длительности услуги (если Altegio её не отдаёт — не больше четырёх часов).
       // «Свободно с 13:00 до 14:30», «есть 10:00–11:30», «в 10:00 или в 10:30» — это уже предложение времени, оно не проходит
-      const span = x => { const d = mins(t) - mins(x); return x !== t && free.has(x) && (durKnown ? ctx.durations.has(d) : d > 0 && d <= 240); };
+      const span = /** @param {string} x */ x => { const d = mins(t) - mins(x); return x !== t && free.has(x) && (durKnown ? ctx.durations.has(d) : d > 0 && d <= 240); };
       const offer = OFFER.test(clause.replace(/(будете|будешь|буду)\s+свободн\S*|освобод\S*|(you['’]ll|you\s+will)\s+be\s+free/gi, " "));
       if ((!durKnown || ctx.softTimes.has(t)) && !offer && ((t1 && !list && span(t1)) || (DURW.test(clause) && replyTimes.some(span)))) continue;
     }
@@ -182,6 +201,7 @@ export function checkReply(c, reply, userText, ctx) {
 }
 
 // какие из предложенных времён показать кнопками
+/** @param {Client} c @param {Ctx} ctx @param {string} reply */
 export function offers(c, ctx, reply) {
   const free = new Set([...getSlots(c, ctx).flatMap(s => s.times), ...(ctx.extraTimes || [])]);
   return [...new Set((reply.match(/\d{1,2}:\d{2}/g) || []).map(t => t.replace(/^0(\d)/, "$1")).filter(t => free.has(t) && !(ctx.noOffer && ctx.noOffer.has(t))))].slice(0, 3);

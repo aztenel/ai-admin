@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Паспорт бота: разбор прайса ремонта («Модель | работа | цена | срок»).
 import { REPAIR_MAX } from "../../config/constants.js";
 import { altText } from "../integrations/altegio/client.js";
@@ -6,8 +6,9 @@ import { numOf } from "./parse-services.js";
 
 // ---- прайс ремонта: «Модель | работа | цена | срок» по строке («iPhone 13 | замена экрана | 45000–60000 | 1 день»).
 // Отдельно от услуг: в названии модели есть числа («iPhone 13»), поэтому поля разделяются чертой «|», а строк может быть до 300
+/** @param {any} src */
 export function parseRepairs(src) {
-  const list = [], errors = [];
+  const /** @type {any[]} */ list = [], /** @type {string[]} */ errors = [];
   const lines = String(src || "").replace(/\r/g, "").split("\n").map(x => x.trim()).filter(Boolean);
   if (lines.length > REPAIR_MAX) return { list, errors: [`прайс ремонта: ${lines.length} строк — оставьте не больше ${REPAIR_MAX} (объедините похожие модели)`] };
   lines.forEach((line, i) => {

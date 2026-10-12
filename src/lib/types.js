@@ -27,4 +27,9 @@
  * @typedef {{ n?: number, turns: Turn[], profile: Profile }} Hist
  */
 
+/**
+ * Контекст одного ответа бота (окна записи, профиль, лимиты, подсказки): форма зависит от ветки, поэтому any.
+ * @typedef {Record<string, any>} Ctx
+ */
+
 export {};

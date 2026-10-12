@@ -1,13 +1,15 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Паспорт бота: разбор графика работы («Пн–Пт 10:00–20:00; Сб 10:00–18:00; Вс выходной»).
 import { lowE } from "../../lib/text.js";
 import { hStr } from "../schedule/slots.js";
 
 const DAY_KEYS = [["вс", "воскр", "sun"], ["пн", "понед", "mon"], ["вт", "вторн", "tue"], ["ср", "сред", "wed"], ["чт", "четв", "thu"], ["пт", "пятн", "fri"], ["сб", "субб", "sat"]];
 export const DAY_SHORT = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+/** @param {string} w */
 const dayIdx = w => { w = lowE(w).replace(/[^a-zа-я]/g, ""); return w ? DAY_KEYS.findIndex(ks => ks.some(k => w === k || (k.length > 2 && w.startsWith(k)))) : -1; };
+/** @param {any} src */
 export function parseSchedule(src) {
-  const hours = [undefined, undefined, undefined, undefined, undefined, undefined, undefined], errors = [];
+  const /** @type {(number[] | null | undefined)[]} */ hours = [undefined, undefined, undefined, undefined, undefined, undefined, undefined], errors = [];
   const T = "(\\d{1,2})(?:[:.](\\d{2}))?", RANGE = new RegExp("(?:(?<![а-яё])с\\s+)?" + T + "\\s*(?:[–—-]|до|по)\\s*" + T, "i");
   const text = String(src || "").replace(/\r/g, "").trim().replace(/(\d(?::\d{2})?)\s+(?=(?:пн|вт|ср|чт|пт|сб|вс|пон|втор|сред|четв|пятн|субб|воскр|будн|выходн)[а-яё]*(?![а-яё]))/gi, "$1; ");
   if (!text) return { hours: hours.map(() => null), text: "", errors: ["график работы не указан"], missing: [] };
@@ -59,9 +61,9 @@ export function parseSchedule(src) {
   const missing = hours.map((h, d) => h === undefined ? d : -1).filter(d => d >= 0);
   const out = hours.map(h => h || null);
   // обратно в текст — одинаковые дни подряд собираем: «Пн–Пт 10:00–20:00, Сб 10:00–18:00, Вс выходной»
-  const order = [1, 2, 3, 4, 5, 6, 0], same = (a, b) => JSON.stringify(a) === JSON.stringify(b), groups = [];
+  const order = [1, 2, 3, 4, 5, 6, 0], same = /** @param {any} a @param {any} b */ (a, b) => JSON.stringify(a) === JSON.stringify(b), groups = [];
   for (const d of order) { const g = groups[groups.length - 1]; if (g && same(g.h, out[d])) g.to = d; else groups.push({ from: d, to: d, h: out[d] }); }
-  const label = g => (g.from === g.to ? DAY_SHORT[g.from] : `${DAY_SHORT[g.from]}–${DAY_SHORT[g.to]}`) + " " + (g.h ? (g.h[0] === 0 && g.h[1] === 24 ? "круглосуточно" : `${hStr(g.h[0])}–${hStr(g.h[1])}`) : "выходной");
+  const label = /** @param {any} g */ g => (g.from === g.to ? DAY_SHORT[g.from] : `${DAY_SHORT[g.from]}–${DAY_SHORT[g.to]}`) + " " + (g.h ? (g.h[0] === 0 && g.h[1] === 24 ? "круглосуточно" : `${hStr(g.h[0])}–${hStr(g.h[1])}`) : "выходной");
   const txt = groups.length === 1 && groups[0].h ? "ежедневно " + label(groups[0]).replace(/^\S+\s/, "") : groups.map(label).join(", ");
   return { hours: out, text: txt, errors, missing };
 }

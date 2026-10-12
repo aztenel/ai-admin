@@ -1,8 +1,9 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // «Ложные» фразы ИИ: записал / отменил / перенёс без служебной строки (altClaims) и списки выражений для них.
 
 // ---- ИИ пишет, что записал клиента, отменил или перенёс запись. Без служебной строки это неправда: такие фразы до клиента не доходят
 const L0 = "(?<![а-яёәғқңөұүһіa-z])", L1 = "(?![а-яёәғқңөұүһіa-z])"; // границы слова
+/** @param {string[]} list @param {string} [flags] */
 const rx = (list, flags = "i") => new RegExp(list.join("|"), flags);
 const CLAIM_BOOK = rx([
   L0 + "(записал[аи]?|записано|забронировал[аи]?|зарезервировал[аи]?|оформил[аи]?|закрепил[аи]?|зафиксировал[аи]?|вписал[аи]?)" + L1,
@@ -58,6 +59,7 @@ const CL_OFFER = /свобод|окн|окош|есть\s+время|могу|м
 // вопрос ИИ о том, чего не хватает для записи: его оставляем клиенту, когда убираем ложное «записала»
 export const CL_DATA_Q = /зовут|имя|фамили|телефон|номер|как\s+к\s+вам|как(ую|ая|ие)\s+услуг|на\s+как(ую|ое|ой)|какое\s+время|во\s+сколько|в\s+какой\s+день|когда\s+вам|к\s+какому\s+мастеру|какой\s+мастер|к\s+кому|кого\s+запис|подтвержда|(^|[^a-z])(name|phone|number)(?![a-z])|which\s+(service|time|day)|what\s+time|атыңыз|есіміңіз|нөмір|қай\s+(уақыт|күн|қызмет|шебер)/i;
 // время визита в утверждении: «в 10:00», «завтра, 10:00». «С 9:00 до 21:00» и «свободно в 10:00» — не оно
+/** @param {string} stmt */
 function clPoint(stmt) {
   for (const cl of stmt.split(/[,;:]\s|\s[—–-]\s/)) {
     if (CL_OFFER.test(cl)) continue;
@@ -70,6 +72,7 @@ function clPoint(stmt) {
 }
 // что утверждает ответ ИИ: book — «записала», change — «отменила / перенесла»; keep — ответ без таких фраз, before — текст до первой из них;
 // soft — «записала» сказано только мягко («ждём вас завтра в 10:00»); times — время, названное в этих фразах
+/** @param {any} reply */
 export function altClaims(reply) {
   // длинные цепочки пробелов сначала сжимаем: иначе разбор на предложения на них работает медленно
   const parts = String(reply).replace(/[^\S\n]{2,}/g, " ").replace(/ ?\n[ \n]*/g, "\n").split(/(?<=[.!?…]) |\n| ?(?:[✅✔☑\u{1F44D}\u{1F44C}\u{1F389}]️?)+ ?/u).filter(s => s && s.trim());
@@ -81,7 +84,8 @@ export function altClaims(reply) {
   });
   const point = stmts.some(clPoint);
   let book = false, change = false, hard = false, first = -1;
-  const keep = [], times = [];
+  /** @type {string[]} */
+  const keep = [], /** @type {string[]} */ times = [];
   parts.forEach((s, i) => {
     const st = stmts[i];
     let b = false, c = false;

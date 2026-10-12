@@ -1,12 +1,14 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Паспорт бота: разбор списка услуг и цен («Мужская стрижка — 6000 — 60»).
 import { lowE } from "../../lib/text.js";
 import { altText } from "../integrations/altegio/client.js";
 
 // ---- разбор услуг: по строке на услугу — «Мужская стрижка — 6000 — 60», «Чистка от 20 000 ₸», «Окрашивание 15000-30000, 2 часа», «Консультация — бесплатно»
+/** @param {any} s */
 export const numOf = s => { let t = String(s || "").replace(/[\s ]/g, ""); const k = /(к|k|тыс\.?)$/i.test(t); t = t.replace(/(к|k|тыс\.?)$/i, "").replace(/[.,](?=\d{3}(\D|$))/g, ""); const f = parseFloat(t.replace(",", ".")); const n = Math.round(k ? f * 1000 : f); return isFinite(n) ? n : NaN; };
+/** @param {any} src */
 export function parseServices(src) {
-  const list = [], errors = [], seen = new Set();
+  const /** @type {any[]} */ list = [], /** @type {string[]} */ errors = [], seen = new Set();
   const lines = String(src || "").replace(/\r/g, "").split("\n").map(x => x.replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, "").trim()).filter(Boolean);
   lines.forEach((line, i) => {
     const no = i + 1;

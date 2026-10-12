@@ -1,16 +1,18 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Готовые фразы клиенту без ИИ (ru/kk/en): когда назвать запись, как её подписать, ответы расписания.
 import { isoDay } from "../../lib/time.js";
 import { dayLabel } from "../schedule/slots.js";
 import { clean } from "../../lib/text.js";
 
+/** @param {string} date @param {string[]} times @param {number} nowMs */
 export function altDay(date, times, nowMs) {
-  const d = new Date(date + "T00:00:00Z"), i = Math.round((d - new Date(isoDay(nowMs) + "T00:00:00Z")) / 86400e3);
+  const d = new Date(date + "T00:00:00Z"), i = Math.round((/** @type {any} */ (d) - /** @type {any} */ (new Date(isoDay(nowMs) + "T00:00:00Z"))) / 86400e3);
   return { date, rel: i === 0 ? "сегодня" : i === 1 ? "завтра" : i === 2 ? "послезавтра" : "", label: dayLabel(d), times };
 }
 // «завтра, воскресенье, 4 октября, в 10:00»; на казахском и английском — «04.10, 10:00»
+/** @param {any} date @param {any} time @param {string} lang @param {number} nowMs */
 export function altWhen(date, time, lang, nowMs) {
-  const good = /^\d{4}-\d{2}-\d{2}$/.test(date || "") && (d => !isNaN(d) && d.toISOString().slice(0, 10) === date)(new Date(date + "T00:00:00Z")); // «2026-11-31» — не дата
+  const good = /^\d{4}-\d{2}-\d{2}$/.test(date || "") && (/** @param {any} d */ d => !isNaN(d) && d.toISOString().slice(0, 10) === date)(new Date(date + "T00:00:00Z")); // «2026-11-31» — не дата
   if (!good) return [clean(date, 20), clean(time, 40)].filter(Boolean).join(", ");
   if (lang === "kk" || lang === "en") return `${date.slice(8, 10)}.${date.slice(5, 7)}${time ? ", " + time : ""}`;
   const d = altDay(date, [], nowMs);
@@ -18,6 +20,7 @@ export function altWhen(date, time, lang, nowMs) {
 }
 
 // как назвать запись клиенту: «Мужская стрижка, мастер Арман — завтра, воскресенье, 4 октября, в 11:00»
+/** @param {Record<string, any>} b @param {string} lang @param {number} nowMs @param {boolean} [abs] */
 export function altLabel(b, lang, nowMs, abs) {
   const ru = lang !== "kk" && lang !== "en", what = b.services + (b.staffName ? (ru ? ", мастер " : ", ") + b.staffName : "");
   if (!ru) return `${what} — ${b.date.slice(8, 10)}.${b.date.slice(5, 7)}, ${b.time}`;
@@ -26,6 +29,7 @@ export function altLabel(b, lang, nowMs, abs) {
 }
 
 // ответы, которые бот даёт сам, без ИИ: на русском, казахском и английском
+/** @param {string} lang @param {Record<string, any>} b */
 export function altSay(lang, b) {
   const L = lang === "kk" ? 1 : lang === "en" ? 2 : 0, free = (b.free || []).join(", ");
   if (b.reason === "service") return [`Уточните, пожалуйста, на какую услугу записать: ${b.list}.`, `Қай қызметке жазайын: ${b.list}?`, `Which service would you like to book: ${b.list}?`][L];

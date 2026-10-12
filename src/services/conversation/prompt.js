@@ -1,12 +1,14 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Подсказка для ИИ: systemPrompt и тексты правил (общие, медицинские, оплата, допродажа, прайс ремонта).
+/** @import { Client, Ctx } from "../../lib/types.js" */
 import { local, hhmm } from "../../lib/time.js";
 import { hash } from "../../lib/crypto.js";
 import { MON, DOW, getSlots, dayLabel, openNow } from "../schedule/slots.js";
 import { cleanName } from "../../lib/names.js";
 
+/** @param {Client} c @param {number} nowMs */
 function eventDates(c, nowMs) {
-  const n = local(nowMs), out = [];
+  const n = local(nowMs), /** @type {string[]} */ out = [];
   for (let i = 14; i < 120 && out.length < 6; i++) {
     const d = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + i));
     if (![5, 6, 0].includes(d.getUTCDay())) continue;
@@ -75,6 +77,7 @@ const UPSELL_RULE = `
 // у клиента с расписанием Altegio запись, отмена и перенос описаны в отдельном разделе: общие правила 12 и 14 ему противоречат («добавь [ОТМЕНА]» без подробностей, «оформи новую бронь»)
 const RULES_ALT = RULES.replace(/^12\. [\s\S]*?(?=^13\. )/m, "12. Запись оформляй по правилам раздела «Запись в расписание» ниже.\n").replace(/^14\. .*$/m, "14. Отмену и перенос оформляй по правилам раздела «Запись в расписание» ниже.");
 
+/** @param {Client} c @param {Ctx} ctx */
 export function systemPrompt(c, ctx) {
   // имя клиента пришло из строки ИИ с его слов: в подсказку идёт только само имя (cleanName), а не всё, что стояло в поле «Имя»
   if (ctx.profile && ctx.profile.name) ctx = { ...ctx, profile: { ...ctx.profile, name: cleanName(ctx.profile.name) } };
@@ -97,7 +100,7 @@ ${slots}${ctx.slotsNote || ""}${dates}${known ? `\n\nУже известно о 
 
 ${ctx.altPrompt ? RULES_ALT : RULES}${c.medical ? MED_RULES.replace("{FLAGS}", c.redFlags) : ""}${ctx.altPrompt || ""}`;
   if (c.repairs) p += REPAIR_RULE;
-  if (c.upsell && c.upsell.length) p += UPSELL_RULE + c.upsell.map(x => "\n- " + x).join("");
+  if (c.upsell && c.upsell.length) p += UPSELL_RULE + c.upsell.map(/** @param {string} x */ x => "\n- " + x).join("");
   if (c.pay) p += PAY_RULE;
   return p.replace("{TOPIC}", c.topic).replace("{PHONE_RULE}", phoneRule).replace("{PHONE_WORD}", ctx.phoneKnown || ctx.profile?.phone ? "" : "телефон и ");
 }

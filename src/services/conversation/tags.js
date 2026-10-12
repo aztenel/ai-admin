@@ -1,4 +1,4 @@
-// @ts-nocheck — перенесено из worker.js как есть (REFACTORING.md, фаза 1); типы добавим отдельным шагом
+// @ts-check
 // Служебные строки ИИ: разбор [ЗАЯВКА]/[ОТМЕНА] (tidyTags, tagFields, tagsOf), даты из них (altDateOf), метка реквизитов [РЕКВИЗИТЫ].
 // Чистые функции: время передаётся явно (nowMs).
 import { lowE } from "../../lib/text.js";
@@ -6,6 +6,7 @@ import { local, isoDay } from "../../lib/time.js";
 
 export const PAY_TAG = /\[\s*РЕКВИЗИТЫ\s*\]/i, PAY_TAG_G = /[ \t]*\[\s*РЕКВИЗИТЫ\s*\][ \t]*\n?/gi;
 // поля служебной строки: «Имя: …; Телефон: …; Услуга: …». ИИ пишет её по-разному: через «;», «,», «.», без знаков, с «—» или «=» вместо «:», с ключами на английском или казахском
+/** @type {Record<string, string>} */
 const TAG_KEYS = { "имя": "имя", "имя клиента": "имя", "клиент": "имя", "фио": "имя", "name": "имя", "client": "имя", "аты": "имя", "есімі": "имя",
   "телефон": "телефон", "телефоны": "телефон", "phone": "телефон",
   "услуга": "услуга", "услуги": "услуга", "service": "услуга", "services": "услуга", "қызмет": "услуга", "қызметі": "услуга",
@@ -13,12 +14,14 @@ const TAG_KEYS = { "имя": "имя", "имя клиента": "имя", "кл�
   "дата": "дата", "день": "дата", "date": "дата", "day": "дата", "күні": "дата",
   "комментарий": "заметка", "примечание": "заметка", "пожелание": "заметка", "пожелания": "заметка", "comment": "заметка", "note": "заметка",
   "время": "время", "когда": "время", "time": "время", "when": "время", "уақыты": "время", "уақыт": "время", "қашан": "время", "дата и время": "время", "день и время": "время", "date and time": "время" };
+/** @param {string} sep */
 const tagKeyRe = sep => new RegExp("(^[\\s:—–-]*|[;|]\\s*|[,.]\\s*|\\s)(" + Object.keys(TAG_KEYS).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|") + ")\\s*" + sep, "gi");
 const TAG_RE = tagKeyRe("[:=]"), TAG_RE2 = tagKeyRe("(?:[—–]|\\s-\\s)");
 // plain — заявка обычного клиента: «услуга, мастер: Арман» и «время, дата: 14 ноября» остаются частью услуги и времени, как их написал ИИ
+/** @param {any} line @param {boolean} [plain] @returns {Record<string, string>} */
 export function tagFields(line, plain) {
-  const s = String(line || "").replace(/：/g, ":").replace(/；/g, ";").replace(/，/g, ","), o = {}, labels = {};
-  const scan = re => [...s.matchAll(re)].map(m => ({ k: TAG_KEYS[m[2].toLowerCase().replace(/\s+/g, " ")], label: m[2], strong: m.index === 0 || /[;|]/.test(m[1]), at: m.index, from: m.index + m[0].length }));
+  const s = String(line || "").replace(/：/g, ":").replace(/；/g, ";").replace(/，/g, ","), /** @type {Record<string, string>} */ o = {}, /** @type {Record<string, string>} */ labels = {};
+  const scan = /** @param {RegExp} re */ re => [...s.matchAll(re)].map(m => ({ k: TAG_KEYS[m[2].toLowerCase().replace(/\s+/g, " ")], label: m[2], strong: m.index === 0 || /[;|]/.test(m[1]), at: m.index, from: m.index + m[0].length }));
   let marks = scan(TAG_RE);
   if (!marks.length) marks = scan(TAG_RE2); // «Имя — Тимур; Услуга — стрижка»
   if (plain) marks = marks.filter(x => x.strong || (x.k !== "мастер" && x.k !== "дата"));
@@ -34,6 +37,7 @@ export function tagFields(line, plain) {
   Object.defineProperty(o, "labels", { value: labels }); // как ключ назвал ИИ («Врач», «Master») — для заявки обычного клиента
   return o;
 }
+/** @param {any} line @param {string} k */
 export const tagField = (line, k) => tagFields(line)[k.toLowerCase()] || "";
 
 // дата из служебной строки: «2026-10-04», «04.10», «04/10/2026», «4 октября», «4 окт.», «4 қазан», «October 4», «завтра», «в воскресенье»
@@ -45,13 +49,16 @@ export const MON_KK = ["қаңтар", "ақпан", "наурыз", "сәуір
 // дни недели, названные в тексте: 0 — воскресенье
 const DOW_RE = ["воскресень|жексенбі|sunday", "понедельник|дүйсенбі|monday", "вторник|сейсенбі|tuesday", "сред[ауые]|сәрсенбі|wednesday", "четверг|бейсенбі|thursday", "пятниц|жұма|friday", "суббот|сенбі|saturday"]
   .map(x => new RegExp("(?<![а-яёәғқңөұүһіa-z])(" + x + ")", "i"));
+/** @param {string} s */
 export const dowsIn = s => DOW_RE.map((re, i) => re.test(s) ? i : -1).filter(i => i >= 0);
+/** @param {string} s */
 const relDay = s => /послезавтра|бүрсігүні|day after tomorrow/.test(s) ? 2 : /завтра|ертең|tomorrow/.test(s) ? 1 : /сегодня|бүгін|today/.test(s) ? 0 : -1;
+/** @param {any} s @param {number} nowMs */
 export function altDateOf(s, nowMs) {
   s = lowE(s);
-  const ok = (y, mo, d) => { const t = new Date(Date.UTC(y, mo - 1, d)); return mo >= 1 && mo <= 12 && d >= 1 && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? t.toISOString().slice(0, 10) : ""; };
+  const ok = /** @param {number} y @param {number} mo @param {number} d */ (y, mo, d) => { const t = new Date(Date.UTC(y, mo - 1, d)); return mo >= 1 && mo <= 12 && d >= 1 && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? t.toISOString().slice(0, 10) : ""; };
   const today = isoDay(nowMs), y = +today.slice(0, 4);
-  const near = (mo, d) => { const a = ok(y, mo, d); return a && a >= today ? a : ok(y + 1, mo, d); }; // день уже прошёл — значит, следующий год
+  const near = /** @param {number} mo @param {number} d */ (mo, d) => { const a = ok(y, mo, d); return a && a >= today ? a : ok(y + 1, mo, d); }; // день уже прошёл — значит, следующий год
   let m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/), r;
   if (m) return ok(+m[1], +m[2], +m[3]);
   if ((m = s.match(/(?:^|[^\d])(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4}|\d{2})(?!\d)/))) {
@@ -84,6 +91,7 @@ const TAGW_CANCEL = "ОТМЕН[АЫУ]?|ОТМЕНИТЬ|CANCEL|CANCELLATION|CA
 // без скобок «ОТМЕНИТЬ» и «CANCELLATION» меткой не были и раньше: это слова обычной фразы («Напишите одно слово: ПЕРЕНЕСТИ или ОТМЕНИТЬ»)
 const TAGW_BARE = TAGW_BOOK + "|ОТМЕН[АЫУ]?|CANCEL|БОЛДЫРМАУ";
 const TAGW = TAGW_BOOK + "|" + TAGW_CANCEL, TAG_LT = "A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі";
+/** @param {(k: string) => boolean} pick */
 const tagKeyAlt = pick => Object.keys(TAG_KEYS).filter(pick).sort((a, b) => b.length - a.length).map(k => k.replace(/ /g, "\\s+")).join("|");
 const TAG_KEY_ALT = tagKeyAlt(() => true), TAG_NAME_ALT = tagKeyAlt(k => TAG_KEYS[k] === "имя");
 const TAG_NUM = "(?:\\s*(?:(?:№|#|N)\\s*)?\\d{1,3})?";                                                 // номер после метки: «ЗАЯВКА 1», «ЗАЯВКА №2»
@@ -111,19 +119,22 @@ const TAG_HAS = /\[(?:ЗАЯВКА|ОТМЕНА)\]/, TAG_ONLY = /^\[(?:ЗАЯВ�
 const TAG_PLAIN = new RegExp("^[\\s*_`>-]*(?:" + TAGW_BARE + ")\\s*[:—–-]?\\s*$"), TAG_LINE_START = /^[\s*_`~>«"“„'-]*(?:\\?\[|\{)/; // «ОТМЕНА», «ЗАЯВКА:» — слово без разметки после него; строка, которая начинается со скобки
 const TAG_TRAIL = " \t\r*_`~\\", TAG_PAIRS = [["[", "]"], ["«", "»"], ["(", ")"], ["{", "}"], ["“", "”"]]; // разметка в конце служебной строки; скобки и кавычки, которые могут остаться без пары
 // знаки из набора в конце строки — без регулярного выражения: «[…]+$» на длинной строке работает за квадрат её длины
+/** @param {string} s @param {string} set */
 const rtrimSet = (s, set) => { let e = s.length; while (e > 0 && set.includes(s[e - 1])) e--; return e < s.length ? s.slice(0, e) : s; };
 // поля из JSON: «"Имя": "Азамат", "Время": "завтра, 12:00"» → «Имя: Азамат; Время: завтра, 12:00»
+/** @param {any} body */
 const tagJson = body => [...String(body).matchAll(/"([^"\n]{1,40})"\s*:\s*(?:"([^"]*)"|\[([^\]]*)\]|([^,"{}\n]+))/g)]
   .map(m => m[1].trim() + ": " + (m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3].replace(/"\s*,\s*"/g, " | ").replace(/"/g, "") : m[4]).trim().replace(/;/g, ",")).join("; ");
+/** @param {any} raw */
 export function tidyTags(raw) {
-  const canon = w => TAG_IS_CANCEL.test(w.trim()) ? "[ОТМЕНА]" : "[ЗАЯВКА]";
+  const canon = /** @param {string} w */ w => TAG_IS_CANCEL.test(w.trim()) ? "[ОТМЕНА]" : "[ЗАЯВКА]";
   const lines = String(raw || "").replace(/：/g, ":").replace(/；/g, ";")
     .replace(TAG_JSON, (m, w, body) => "\n" + canon(w) + " " + tagJson(body) + "\n")
     .replace(TAG_JSON_AFTER, (m, head, body) => /"\s*:/.test(body) ? head + tagJson(body) : m)
     .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, "") // границы блока кода клиенту не нужны
     .split("\n"), out = [];
-  const nextText = i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
-  const tagNext = i => { const nx = nextText(i); return !nx || TAG_KEY_START.test(nx) || TAG_LINE_START.test(nx); }; // дальше — конец ответа, поле («Имя: …») или другая служебная строка
+  const nextText = /** @param {number} i */ i => { let k = i + 1; while (k < lines.length && !lines[k].trim()) k++; return k < lines.length ? lines[k] : ""; };
+  const tagNext = /** @param {number} i */ i => { const nx = nextText(i); return !nx || TAG_KEY_START.test(nx) || TAG_LINE_START.test(nx); }; // дальше — конец ответа, поле («Имя: …») или другая служебная строка
   for (let i = 0; i < lines.length; i++) {
     let ln = lines[i];
     if (ln.includes("[")) ln = ln.replace(TAG_SQ, (m, w) => canon(w))
@@ -144,7 +155,7 @@ export function tidyTags(raw) {
       if (!head.replace(TAG_LABEL, "").replace(/[\s*_`~>«"“„'(\[{:.—–#•·\d)\\-]/g, "")) head = "";
       else { const h = rtrimSet(head, TAG_TRAIL + "«\"“„'([{"); if (h.length < head.length) head = h + " "; }
       // в конце строки — разметка и закрывающая скобка или кавычка без пары: они остались от «[ЗАЯВКА: …]», ««[ЗАЯВКА] …»», «**[ЗАЯВКА] …**»
-      const cnt = ch => tail.split(ch).length - 1, over = TAG_PAIRS.map(([o, c]) => cnt(c) - cnt(o));
+      const cnt = /** @param {string} ch */ ch => tail.split(ch).length - 1, over = TAG_PAIRS.map(([o, c]) => cnt(c) - cnt(o));
       let end = tail.length, odd = cnt('"') % 2;
       for (let go = true; go;) {
         while (end > 0 && TAG_TRAIL.includes(tail[end - 1])) end--;
@@ -157,7 +168,7 @@ export function tidyTags(raw) {
       // поля столбиком: за меткой идут строки «Ключ: значение» — с номерами, после пустой строки, с незнакомым полем между знакомыми
       let j = i + 1;
       if (TAG_ONLY.test(tail)) { let k = j; while (k < lines.length && !lines[k].trim()) k++; if (k < lines.length && TAG_KEY_START.test(lines[k])) j = k; }
-      const extra = [], isKey = x => TAG_KEY_START.test(x || ""), isField = x => TAG_FIELD_LINE.test(x || "");
+      const extra = [], isKey = /** @param {any} x */ x => TAG_KEY_START.test(x || ""), isField = /** @param {any} x */ x => TAG_FIELD_LINE.test(x || "");
       for (; j < lines.length; j++) {
         if (isKey(lines[j])) tail += (/\]$/.test(tail) ? " " : "; ") + lines[j].replace(TAG_ITEM_HEAD, "").trim();
         else if (isField(lines[j]) && (isKey(lines[j + 1]) || (isField(lines[j + 1]) && isKey(lines[j + 2])))) extra.push(lines[j].replace(TAG_ITEM_HEAD, "").trim());
@@ -178,4 +189,5 @@ export function tidyTags(raw) {
   return out.join("\n");
 }
 // служебные строки: от метки до конца строки или до следующей метки; пометки вида ** и ` не мешают
+/** @param {any} s @param {string} name */
 export const tagsOf = (s, name) => [...new Set([...String(s || "").replace(/\*\*|__|`/g, "").matchAll(new RegExp("\\[\\s*" + name + "\\s*\\]((?:(?!\\[\\s*(?:ЗАЯВКА|ОТМЕНА)\\s*\\])[^\\n])*)", "gi"))].map(m => m[1].trim()))];
