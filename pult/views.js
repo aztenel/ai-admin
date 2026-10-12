@@ -127,14 +127,14 @@ function more() {
   v.appendChild(h("div", "ttl", h("h1", "", "Ещё"), { style: "padding-top:calc(var(--sat) + 14px)" }));
   var sc = h("div", "scroll"); v.appendChild(sc);
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания"), pf = prof();
-  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? (S.client.color || "#B5652A") : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
+  var biz = h("div", "card", [h("span", "av", (nm[0] || "К").toUpperCase(), { style: "--c:" + (DEMO ? (S.client.color || "#8A5A3C") : P.colorOf(S.C)) + ";width:60px;height:60px;font-size:24px;font-weight:600" }),
     h("div", "", [h("span", "nm", nm, { style: "font-size:19px" }), DEMO ? tag("WhatsApp подключён", "ok") : null, h("span", "nx", DEMO ? pf.sub : S.C)], { style: "flex:1;min-width:0;display:flex;flex-direction:column;gap:2px" })], { style: "padding:14px 16px;display:flex;align-items:center;gap:14px" });
   if (S.owner || DEMO) { var cb = h("button", "ibtn", ic("chev"), { type: "button", style: "background:var(--s2)", "aria-label": "Сменить компанию" }); cb.onclick = P.bizSheet; biz.appendChild(cb); }
   var themes = h("div", "seg"); [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]].forEach(function (t) { var b = h("button", S.theme === t[0] ? "on" : "", t[1], { type: "button", style: "flex:1;height:40px;border-radius:20px;font-size:15px;font-weight:500;color:" + (S.theme === t[0] ? "var(--fg)" : "var(--fg2)") + ";background:" + (S.theme === t[0] ? "var(--bg)" : "transparent") }); b.onclick = function () { P.setTheme(t[0]); more(); }; themes.appendChild(b); });
   var kids = [biz, h("div", "", [h("span", "cap", "Тема оформления", { style: "padding:0 6px" }), themes], { style: "display:flex;flex-direction:column;gap:6px" })];
   if (DEMO) {
     kids.push(h("div", "grp", [
-      tapRow("bolt", "Быстрые ответы", String((window.__QUICK || []).length), function () { var b = h("div", ""); (window.__QUICK || []).forEach(function (q) { b.appendChild(h("div", "kv2", h("span", "", q))); }); P.sheet("Быстрые ответы", b); }),
+      tapRow("bolt", "Быстрые ответы", String((window.__QUICK || []).length), function () { var b = h("div", "qlist"); (window.__QUICK || []).forEach(function (q) { b.appendChild(P.quickCard(q)); }); P.sheet("Быстрые ответы", b); }),
       tapRow("book", "База знаний бота", "", function () { api().kb().then(function (k) { var b = h("div", ""); b.appendChild(h("div", "note", "Из этого бот берёт цены, мастеров и график. Если здесь написано неверно, бот ответит неверно.")); k.rows.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); P.sheet("База знаний бота", b); }); }),
       tapRow(pf.svc[0], pf.svc[1], pf.svc[2], function () { api().kb().then(function (k) { var b = h("div", ""); k.services.forEach(function (r) { b.appendChild(h("div", "kv2", [h("span", "", r[0]), h("span", "", r[1])])); }); b.appendChild(h("div", "note", pf.staff + ": " + k.masters)); P.sheet("Мастера и услуги", b); }); }),
       tapRow("clock", "График работы", pf.hours, function () { P.notice("График работы", pf.hoursText); })

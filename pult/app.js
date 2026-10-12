@@ -36,7 +36,7 @@ function dk(t) { var d = new Date(t); return d.getFullYear() + "-" + d.getMonth(
 var MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 function dayLabel(t) { var n = Date.now(); if (dk(t) === dk(n)) return "Сегодня"; if (dk(t) === dk(n - 864e5)) return "Вчера"; var d = new Date(t); return d.getDate() + " " + MON[d.getMonth()]; }
 function rowTime(t) { if (!t) return ""; var d = new Date(t); if (dk(t) === dk(Date.now())) return hm(t); if (dk(t) === dk(Date.now() - 864e5)) return "вчера"; return p2(d.getDate()) + "." + p2(d.getMonth() + 1); }
-var COLORS = ["#B5652A", "#3D6DB3", "#2E7A57", "#6A5AA6", "#1F7A80"];
+var COLORS = ["#8A5A3C", "#4F6A8F", "#4B7A62", "#7A6590", "#4A7679"]; // приглушённые тона: белая буква на каждом — контраст не ниже 4.5:1
 function hashOf(s) { var x = 0; s = String(s); for (var i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x; }
 function colorOf(id) { return COLORS[hashOf(id) % COLORS.length]; }
 function initials(name, ph) { var w = String(name || "").trim().split(/\s+/).filter(Boolean); if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase(); if (w.length === 1) return w[0].slice(0, 2).toUpperCase(); var d = String(ph || "").replace(/\D/g, ""); return d ? d.slice(-2) : "··"; }
@@ -69,7 +69,9 @@ function setTheme(t, keep) {
   S.theme = t; app.setAttribute("data-theme", t); document.documentElement.setAttribute("data-theme", t);
   if (!keep) { try { localStorage.setItem("pult.theme", t); } catch (e) {} }
   var dark = t === "dark" || (t === "auto" && !(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches));
-  var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", dark ? "#0F1419" : "#F7F8FA");
+  // цвет полосы браузера = цвет шапки пульта (--bg). «Авто» — по системной теме (media в meta), ручной выбор — один цвет в обеих
+  var tl = $("tc-l"), td = $("tc-d"), c = dark ? "#121314" : "#F5F4F1";
+  if (tl) tl.setAttribute("content", t === "auto" ? "#F5F4F1" : c); if (td) td.setAttribute("content", t === "auto" ? "#121314" : c);
 }
 function fitViewport() {
   var vv = window.visualViewport; if (!vv) return;
@@ -200,7 +202,7 @@ function setBadge() {
 /* ---------- шапка: переключатель компании ---------- */
 function bizBtn() {
   var nm = S.client.name || (DEMO ? "Барбершоп" : "Компания");
-  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? (S.client.color || "#B5652A") : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
+  var b = h("button", "biz", [h("span", "l", (nm[0] || "К").toUpperCase(), { style: "background:" + (DEMO ? (S.client.color || "#8A5A3C") : colorOf(S.C)) }), h("span", "n", nm), (S.owner || DEMO) ? ic("chev", 16) : null], { type: "button", "aria-label": "Компания: " + nm });
   b.onclick = bizSheet; return b;
 }
 function bizSheet() {
@@ -240,13 +242,12 @@ function rowEl(r, i) {
   var nm = r.nm || r.ph || "Гость сайта", sel = S.cur && S.cur.ch === r.ch && S.cur.id === r.id;
   var hot = !!r.nd;
   var prev = (r.d === "u" ? "" : r.d === "a" ? "Вы: " : "Бот: ") + (r.s || "");
-  var tag = r.nd ? h("span", "tag", r.why || NEED[r.nd] || "Нужен ответ") : r.pu ? h("span", "tag ok", "Бот молчит до " + hm(r.pu)) : r.st ? h("span", "tag mut", "Просил не писать") : null;
-  if (r.nd && r.pu) tag = h("div", "r3", [tag, h("span", "tag ok", "Бот молчит")]); // забрали чат у бота, а клиент всё ещё ждёт
+  var tag = r.nd ? h("span", "tag", r.why || NEED[r.nd] || "Нужен ответ") : r.st ? h("span", "tag mut", "Просил не писать") : null; // статус паузы бота в строке не пишем: он виден по фильтру «Бот молчит» и в самом чате кнопкой «Вернуть бота»
   var a = h("a", "row" + (sel ? " sel" : "") + (hot ? " wait" : ""), [
     h("span", "av", initials(r.nm, r.ph), { style: "--c:" + colorOf(r.id) }),
     h("div", "rb", [h("div", "r1", [h("span", "nm", nm), h("span", "tm2" + (hot || r.un ? " hot" : ""), rowTime(r.li || r.t))]),
       h("div", "r2", [h("span", "pv", prev), r.un ? h("span", "ub", r.un) : null]), tag])
-  ], { href: "#" + r.ch + ":" + r.id, style: "--i:" + Math.min(i || 0, 12) });
+  ], { href: "#" + r.ch + ":" + r.id, style: "--i:" + Math.min(i || 0, 12), "data-paused": r.pu ? "1" : null });
   a.onclick = function (e) { e.preventDefault(); if (SW.endRow === a && Date.now() - SW.endAt < 450) return; openChat(r.ch, r.id); }; // клик сразу после свайпа — не открытие чата
   var w = h("div", "sw", a); swBind(w, a, r); return w;
 }
@@ -378,7 +379,8 @@ function swUnpatch(p) {
   if (p.dec) S.need++;
 }
 function swTrigger(g) {
-  var r = g.r, A = SW_ACT[g.dir], k = keyOf(r), nm = r.nm || r.ph || "Гость сайта", dir = g.dir;
+  var A = SW_ACT[g.dir], k = keyOf(g.r), r = swFind(k) || g.r, // список мог обновиться, пока палец вёл строку: правим свежую строку, а не старую копию
+     nm = r.nm || r.ph || "Гость сайта", dir = g.dir;
   SW.drag = null; swFlush(); // предыдущее отложенное (если было) уходит сразу: окно «Отменить» одно
   var p = SW.pend = { k: k, a: A.a, ch: r.ch, id: r.id, was: { nd: r.nd, why: r.why, pu: r.pu }, dec: A.a === "resolve" && !!r.nd, sent: false, p: null, t: setTimeout(function () { swFlush(); }, SW.ms) };
   swPatchRow(r, A.a); if (p.dec) S.need = Math.max(0, S.need - 1);
@@ -407,20 +409,35 @@ function swFlush(key) {
 }
 
 /* ---------- переписка ---------- */
-function openChat(ch, id) {
+// quiet=true — открытие по ссылке (#wa:…) или кодом: запись в истории не добавляем.
+// На телефоне открытие чата из списка — новая запись истории: жест «назад» от левого края (iOS, Android) и кнопка «назад» закрывают чат, а не уводят со страницы
+function openChat(ch, id, quiet) {
   saveDraft(); S.cur = { ch: ch, id: id }; S.chat = null; S.card = false; app.classList.remove("card");
   $("txt").value = S.drafts[keyOf(S.cur)] || ""; fit();
-  try { history.replaceState(null, "", location.pathname + location.search + "#" + ch + ":" + id); } catch (e) {}
+  try {
+    var hash = location.pathname + location.search + "#" + ch + ":" + id;
+    if (!quiet && !S.pushed && swPhone()) { history.pushState({ pult: 1 }, "", hash); S.pushed = true; } else history.replaceState(S.pushed ? history.state : null, "", hash);
+  } catch (e) {}
   app.classList.add("chat"); replay($("chatp"), "enter"); clear($("msgs")); clear($("cards")); $("strip").hidden = true; $("cname").textContent = "…"; $("cst").textContent = "";
   renderList();
   var pw = swFlush(keyOf(S.cur)); // отложенное действие по этому чату уходит сразу, чтобы чат открылся уже с ним
   if (pw) pw.then(function () { loadChat(true); }); else loadChat(true);
   CP.sig = ""; chatPollArm(); // первый запрос — сразу, следующий — через POLL_CHAT_MS
 }
-function closeChat() {
+function closeChat(fromPop) {
   saveDraft(); S.cur = null; S.chat = null; S.card = false; app.classList.remove("chat", "card"); replay($("listp"), "enter");
-  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+  try {
+    if (S.pushed && !fromPop) { S.pushed = false; S.popSkip = (S.popSkip || 0) + 1; history.back(); } // вернуть запись истории, которую добавило открытие
+    else if (!fromPop) history.replaceState(null, "", location.pathname + location.search);
+  } catch (e) {}
   renderList(); loadList();
+}
+// «назад» системы (жест от левого края, кнопка Android): сначала закрывает карточку клиента, потом чат
+function onPop() {
+  if (S.popSkip > 0) { S.popSkip--; return; }
+  if (!S.pushed) return;
+  if (S.card) { closeCard(); try { history.pushState({ pult: 1 }, "", location.pathname + location.search + (S.cur ? "#" + S.cur.ch + ":" + S.cur.id : "")); } catch (e) { S.pushed = false; } return; }
+  S.pushed = false; if (S.cur) closeChat(true);
 }
 function saveDraft() { if (S.cur) { var v = $("txt").value; if (v) S.drafts[keyOf(S.cur)] = v; else delete S.drafts[keyOf(S.cur)]; } }
 // poll=true — запрос по таймеру: не накладывается на предыдущий (CP.req) и не перерисовывает экран, если ответ не изменился
@@ -443,7 +460,7 @@ function renderChat(d, scroll) {
   var first = !S.chat || S.chat.id !== d.id || S.chat.ch !== d.ch, grew = first || !S.chat || d.turns.length !== S.chat.turns.length || JSON.stringify(d.bookings) !== JSON.stringify(S.chat.bookings), toEnd = false;
   S.chat = d;
   var nm = d.name || d.waName || d.phone || "Гость сайта";
-  $("cname").textContent = nm; $("cst").textContent = [stateText(d).replace("Бот на паузе до", "Пауза до"), CHN[d.ch] || ""].filter(Boolean).join(" · ");
+  $("cname").textContent = nm; $("cst").textContent = [d.paused && !d.off && !d.stop ? "" : stateText(d), CHN[d.ch] || ""].filter(Boolean).join(" · ");
   $("cav").textContent = initials(d.name || d.waName, d.phone); $("cav").style.setProperty("--c", colorOf(d.id));
   var call = $("call"); if (d.phone) { call.href = telHref(d.phone); call.hidden = false; } else call.hidden = true;
   renderStrip(d);
@@ -471,7 +488,7 @@ function renderChat(d, scroll) {
   }
   var comp = $("comp"), wl = $("warn");
   comp.hidden = !d.canSend; wl.className = "warnl";
-  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? "Отправка не настроена: WhatsApp этой компании ещё не подключён." : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения." : "После вашего ответа бот молчит в этом чате 2 часа.";
+  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? "Отправка не настроена: WhatsApp этой компании ещё не подключён." : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым. Позвоните ему или дождитесь сообщения." : "";
   wl.textContent = w; if (d.ch === "web" || !d.canSend || !d.open) wl.classList.add("amb");
   $("send").disabled = !d.open; $("txt").disabled = !d.open;
   var pb = $("pay"); pb.hidden = !d.pay; pb.disabled = !d.open;
@@ -483,7 +500,7 @@ function renderStrip(d) {
   function act(label, a) { var b = h("button", "btn pri sm", label, { type: "button" }); b.onclick = function () { doAct(a); }; return b; }
   if (d.off) { s.className = "ban"; s.appendChild(h("span", "", "Бот в этой компании выключен — отвечаете вы.")); return; }
   if (d.stop) { s.className = "ban"; s.appendChild(h("span", "", "Клиент попросил не писать ему автоматически. Бот вернётся, когда он напишет «старт».")); return; }
-  if (d.paused) { s.classList.add("ok"); s.appendChild(h("span", "tag ok", "Бот молчит до " + hm(d.paused))); s.appendChild(act("Вернуть бота", "resume")); return; }
+  if (d.paused) { s.classList.add("ok", "solo"); s.appendChild(act("Вернуть бота", "resume")); return; }
   if (d.need) { var why = d.need.why, txt = (d.need.label || NEED[why] || d.need.text || "Нужен ответ"); s.appendChild(h("span", "tag", txt + (d.need.at ? " · " + hm(d.need.at) : ""))); s.appendChild(act("Забрать чат", "pause")); return; }
   s.hidden = true;
 }
@@ -526,10 +543,27 @@ function fit() { var t = $("txt"); t.style.height = "auto"; t.style.height = Mat
 var QUICK = (window.__QUICK || ["Здравствуйте! Чем могу помочь?", "Подскажите, пожалуйста, ваше имя и телефон.", "Ждём вас! Если планы изменятся — напишите заранее.", "Спасибо за обращение! Перезвоню вам в течение 10 минут."]);
 function addText(q) { var ta = $("txt"); if (ta.disabled) return; ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, "") + "\n\n" : "") + q; fit(); try { ta.focus(); } catch (e) {} }
 function insertPay() { if (S.chat && S.chat.pay) addText(S.chat.pay); } // реквизиты из паспорта — дословно; отправляет сам администратор
+// быстрый ответ — строка или { title, text }; без названия берём первые слова (до 4, не длиннее 30 знаков)
+function quickParts(q) {
+  var text = String(typeof q === "string" ? q : (q && q.text) || "").trim(), title = typeof q === "object" && q && q.title ? String(q.title).trim() : "";
+  if (!title) {
+    var w = text.replace(/\s+/g, " ").split(" "), t = "";
+    for (var i = 0; i < w.length && i < 4; i++) { if ((t + " " + w[i]).trim().length > 30 && t) break; t = (t + " " + w[i]).trim(); }
+    title = t.replace(/[\s,.;:!?—-]+$/, "") + (t.length < text.replace(/\s+/g, " ").length ? "…" : "");
+  }
+  return { title: title, text: text };
+}
+function quickCard(q, onPick) {
+  var p = quickParts(q), short = p.title.replace(/…$/, "") === p.text.replace(/[\s,.;:!?—-]+$/, ""); // короткая фраза целиком в названии — превью не повторяет её
+  var c = h(onPick ? "button" : "div", "qc", [h("span", "qt", p.title), short ? null : h("span", "qx", p.text)], onPick ? { type: "button" } : null);
+  if (onPick) c.onclick = function () { onPick(p.text); };
+  return c;
+}
 function quickSheet() {
   if ($("txt").disabled) return;
-  var body = h("div", "");
-  if (S.chat && S.chat.pay) { var po = h("button", "opt", h("span", "", "₸ Реквизиты для оплаты"), { type: "button" }); po.onclick = function () { closeSheet(); insertPay(); }; body.appendChild(po); } QUICK.forEach(function (q) { var o = h("button", "opt", h("span", "", q), { type: "button" }); o.onclick = function () { closeSheet(); var ta = $("txt"); ta.value = (ta.value ? ta.value + " " : "") + q; fit(); ta.focus(); }; body.appendChild(o); });
+  var body = h("div", "qlist");
+  if (S.chat && S.chat.pay) body.appendChild(quickCard({ title: "₸ Реквизиты для оплаты", text: S.chat.pay }, function () { closeSheet(); insertPay(); }));
+  QUICK.forEach(function (q) { body.appendChild(quickCard(q, function (text) { closeSheet(); var ta = $("txt"); ta.value = (ta.value ? ta.value + " " : "") + text; fit(); ta.focus(); })); });
   sheet("Быстрые ответы", body);
 }
 function menuSheet() {
@@ -591,22 +625,23 @@ function init() {
   $("rfs").onclick = function () { loadList(); if (S.cur) loadChat(false); };
   $("q").oninput = function () { S.q = this.value; renderList(); };
   $("txt").oninput = fit; $("txt").onkeydown = function (e) { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMsg(); };
-  $("send").onclick = sendMsg; $("quick").onclick = quickSheet; $("pay").onclick = insertPay; $("back").onclick = closeChat; $("menu").onclick = menuSheet; $("infobtn").onclick = openCard;
+  $("send").onclick = sendMsg; $("quick").onclick = quickSheet; $("pay").onclick = insertPay; $("back").onclick = function () { closeChat(); }; $("menu").onclick = menuSheet; $("infobtn").onclick = openCard;
   $("who").onclick = openCard; $("cback").onclick = closeCard; $("cs").onclick = closeCard;
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if ($("sheet")) closeSheet(); else if (S.card) closeCard(); } });
   document.addEventListener("visibilitychange", function () { if (document.hidden) swFlush(); });
   window.addEventListener("pagehide", function () { swFlush(); }); // закрыли вкладку — отложенное действие уходит сразу
-  window.addEventListener("hashchange", function () { var m = /^#(wa|ga|web):([\w-]+)$/.exec(location.hash); if (m && S.C && !same(S.cur, { ch: m[1], id: m[2] })) openChat(m[1], m[2]); });
+  window.addEventListener("popstate", onPop);
+  window.addEventListener("hashchange", function () { var m = /^#(wa|ga|web):([\w-]+)$/.exec(location.hash); if (m && S.C && !same(S.cur, { ch: m[1], id: m[2] })) openChat(m[1], m[2], true); });
   skeleton(); chipsEl();
   API.me().then(function (d) { S.owner = !!d.owner; if (d.c && !S.C) S.C = d.c; $("me").textContent = DEMO ? "А" : S.owner ? "В" : "А"; $("bizslot").replaceChildren(bizBtn()); }).catch(function () {}).then(function () {
     return loadList();
   }).then(function () {
     var m = /^#(wa|ga|web):([\w-]+)$/.exec(location.hash);
-    if (m && S.C) { if (m[1] === "web") S.f = "web"; openChat(m[1], m[2]); chipsEl(); }
+    if (m && S.C) { if (m[1] === "web") S.f = "web"; openChat(m[1], m[2], true); chipsEl(); }
   });
   setInterval(refresh, DEMO ? 8000 : POLL_LIST_MS); chatPollArm();
   go("chats");
 }
-window.__pult = { tel: telHref, S: S, go: go, h: h, ic: ic, add: add, clear: clear, money: money, hm: hm, dk: dk, rowTime: rowTime, colorOf: colorOf, initials: initials, sheet: sheet, closeSheet: closeSheet, opt: opt, toast: toast, notice: notice, headerEl: headerEl, ibtn: ibtn, titleEl: titleEl, setTheme: setTheme, openChat: openChat, loadList: loadList, SW: SW, API: function () { return API; }, DEMO: DEMO, enc: enc, bizSheet: bizSheet, NB: NB, ic_: IC };
+window.__pult = { quickCard: quickCard, tel: telHref, S: S, go: go, h: h, ic: ic, add: add, clear: clear, money: money, hm: hm, dk: dk, rowTime: rowTime, colorOf: colorOf, initials: initials, sheet: sheet, closeSheet: closeSheet, opt: opt, toast: toast, notice: notice, headerEl: headerEl, ibtn: ibtn, titleEl: titleEl, setTheme: setTheme, openChat: openChat, loadList: loadList, SW: SW, API: function () { return API; }, DEMO: DEMO, enc: enc, bizSheet: bizSheet, NB: NB, ic_: IC };
 window.__pultBoot = init;
 })();

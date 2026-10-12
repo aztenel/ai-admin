@@ -98,7 +98,7 @@ try {
   await st.waitForSelector("#msgs .m");
   ok("сотрудник после входа попадает сразу в чат из ссылки", /#wa:77051110001$/.test(st.url()) && /Данияр/.test(await st.locator("#cname").innerText()));
   const stateText = await st.locator("#cst").innerText();
-  ok("в шапке чата — состояние бота, а кнопка «Позвонить» ведёт на номер клиента", /Пауза до/.test(stateText) && (await st.locator("#call").getAttribute("href")) === "tel:+77051110001", stateText + " " + await st.locator("#call").getAttribute("href"));
+  ok("в шапке чата — канал без статуса паузы бота, а кнопка «Позвонить» ведёт на номер клиента", /WhatsApp/.test(stateText) && !/Пауза|молчит|паузе/.test(stateText) && (await st.locator("#call").getAttribute("href")) === "tel:+77051110001", stateText + " " + await st.locator("#call").getAttribute("href"));
   ok("в чате видны сообщения клиента, ответ бота и голосовое с проигрывателем", await st.locator("#msgs .m.in").count() >= 3 && await st.locator("#msgs .m.bot").count() >= 1 && await st.locator("#msgs audio").count() === 1);
   await shot(st, "07-inbox-chat");
   await st.fill("#txt", "Здравствуйте, Данияр! Это администратор, чем помочь?"); await st.click("#send");
@@ -363,7 +363,7 @@ try {
     await chip(d, "Ждут ответа").click(); await d.waitForTimeout(200);
     ok("магазин: фильтр «Ждут ответа» показывает ровно ждущие чаты", (await d.locator("#rows a.row").count()) === shopWait && (await d.locator("#rows a.row:not(.wait)").count()) === 0);
     await chip(d, "Бот молчит").click(); await d.waitForTimeout(200);
-    ok("магазин: «Бот молчит» — один чат с паузой бота", (await d.locator("#rows a.row").count()) === 1 && /Бот молчит до/.test(await rowsText(d)));
+    ok("магазин: «Бот молчит» — один чат с паузой бота", (await d.locator("#rows a.row").count()) === 1 && (await d.locator("#rows a.row[data-paused]").count()) === 1 && !/Бот молчит до/.test(await rowsText(d)));
     await allList(d);
     await calm(d); await shot(d, "demo-shop-phone-light");
     await d.evaluate(() => window.__pult.setTheme("dark", true)); await calm(d);
@@ -461,6 +461,7 @@ try {
       return kit;
     };
     const R = (pg, n) => pg.locator(`#rows a.row:has(.nm:text-is("${n}"))`);
+    const RP = (pg, n) => pg.locator(`#rows a.row[data-paused]:has(.nm:text-is("${n}"))`); // чат, у которого бот на паузе (подписи про паузу в строке нет)
     const rowsN = pg => pg.locator("#rows a.row").count();
     const needN = async pg => Number(/Ждут ответа\s*(\d+)/.exec(await pg.locator(".chip", { hasText: "Ждут ответа" }).first().innerText())?.[1] || 0);
     const track = pg => pg.evaluate(() => { const A = window.__pult.API(), o = A.act; window.__acts = []; A.act = function (ch, id, a) { window.__acts.push(ch + ":" + id + ":" + a); return o.apply(A, arguments); }; }); // какие действия реально ушли
@@ -472,7 +473,7 @@ try {
       const pg = await newPage(viewport, { hasTouch: true, ...opts });
       pg.on("request", r => { if (new URL(r.url()).pathname.startsWith("/api/")) api.push(r.url()); });
       await pg.goto(url + "/demo"); await pg.waitForSelector("#rows a.row");
-      await pg.evaluate(() => { window.__pult.setTheme("light", true); window.__pult.SW.ms = 1200; });
+      await pg.evaluate(() => { window.__pult.setTheme("light", true); window.__pult.SW.ms = 2200; });
       await track(pg); await settle(pg);
       return pg;
     };
@@ -501,7 +502,7 @@ try {
     await d.locator("#toast .tb").tap();
     await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length === 3);
     ok("«Отменить» возвращает чат в «Ждут ответа», счётчик снова 4", (await R(d, "Айдос Акберов").count()) === 1 && (await needN(d)) === 4 && (await R(d, "Айдос Акберов").evaluate(e => e.classList.contains("wait"))));
-    await d.waitForTimeout(1700);
+    await d.waitForTimeout(2700);
     ok("после «Отменить» действие так и не уходит (даже когда время вышло)", (await acts(d)).length === 0 && (await rowsN(d)) === 3);
     // не отменили — через паузу действие уходит
     await toastGone(d);
@@ -518,19 +519,19 @@ try {
 
     // --- вправо: «Забрать у бота»
     await d.locator(".chip:text-is('Все')").click(); await d.waitForFunction(() => document.querySelectorAll("#rows a.row").length >= 10); await settle(d);
-    const pausedBefore = await d.locator("#rows .tag.ok").count();
+    const pausedBefore = await d.locator("#rows a.row[data-paused]").count();
     const erl = R(d, "Ерлан Касымов");
     pt = await tk.begin(erl, 120);
     const hintR = await d.evaluate(() => { const s = document.querySelector(".sw.on"), v = s && s.querySelector(".swh.r"), cs = v && getComputedStyle(v); return { d: s && s.getAttribute("data-d"), go: s && s.classList.contains("go"), shown: !!cs && cs.display !== "none", text: v ? v.textContent : "", svg: v ? v.querySelectorAll("svg").length : 0, left: s.querySelector(".swh.l") ? getComputedStyle(s.querySelector(".swh.l")).display : "" }; });
     ok("свайп вправо: подсказка «Забрать у бота» со значком (а «Готово» скрыто)", hintR.d === "r" && hintR.go && hintR.shown && /^Забрать у бота$/.test(hintR.text) && hintR.svg === 1 && hintR.left === "none", JSON.stringify(hintR));
     await shot(d, "swipe-right-phone");
-    await tk.end(); await R(d, "Ерлан Касымов").locator(".tag.ok").waitFor({ timeout: 3000 }); // строка вернулась на место уже с пометкой
-    ok("свайп вправо за порогом: бот на паузе (метка «Бот молчит до …» в строке), тост «Отменить»", (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 1 && /Бот молчит до/.test(await R(d, "Ерлан Касымов").innerText()) && (await d.locator("#rows .tag.ok").count()) === pausedBefore + 1 && (await d.locator("#toast .tb").innerText()) === "Отменить" && (await acts(d)).length === 2, JSON.stringify([await R(d, "Ерлан Касымов").locator(".tag.ok").count(), await R(d, "Ерлан Касымов").innerText(), await d.locator("#rows .tag.ok").count(), pausedBefore, await acts(d)]));
+    await tk.end(); await RP(d, "Ерлан Касымов").waitFor({ timeout: 3000 }); // строка вернулась на место уже с пометкой
+    ok("свайп вправо за порогом: бот на паузе (строка помечена, текста про паузу в ней нет), тост «Отменить»", (await RP(d, "Ерлан Касымов").count()) === 1 && !/Бот молчит/.test(await R(d, "Ерлан Касымов").innerText()) && (await d.locator("#rows a.row[data-paused]").count()) === pausedBefore + 1 && (await d.locator("#toast .tb").innerText()) === "Отменить" && (await acts(d)).length === 2, JSON.stringify([await RP(d, "Ерлан Касымов").count(), await R(d, "Ерлан Касымов").innerText(), await d.locator("#rows a.row[data-paused]").count(), pausedBefore, await acts(d)]));
     await d.locator("#toast .tb").tap();
-    await d.waitForFunction(() => !document.querySelector("#rows a.row .tag.ok") || document.querySelectorAll("#rows .tag.ok").length === 1);
-    ok("«Отменить» после «Забрать у бота»: метки паузы в строке нет, на сервер ничего не ушло", (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 0 && (await acts(d)).length === 2);
-    await d.waitForTimeout(1700); await toastGone(d);
-    ok("…и через время тоже не уходит", (await acts(d)).length === 2 && (await R(d, "Ерлан Касымов").locator(".tag.ok").count()) === 0);
+    await d.waitForFunction(() => document.querySelectorAll("#rows a.row[data-paused]").length <= 1);
+    ok("«Отменить» после «Забрать у бота»: метки паузы в строке нет, на сервер ничего не ушло", (await RP(d, "Ерлан Касымов").count()) === 0 && (await acts(d)).length === 2);
+    await d.waitForTimeout(2700); await toastGone(d);
+    ok("…и через время тоже не уходит", (await acts(d)).length === 2 && (await RP(d, "Ерлан Касымов").count()) === 0);
     // недоступные направления: бот уже молчит — вправо нельзя; чат не ждёт — влево нельзя
     await tk.drag(R(d, "Алибек Н."), 160); await tk.drag(R(d, "Нурлан Б."), -160); await settle(d);
     ok("недоступное действие (бот уже молчит / чат не ждёт ответа) не срабатывает", (await acts(d)).length === 2 && await d.locator("#toast").isHidden());
@@ -547,9 +548,11 @@ try {
     pt = await tk.begin(R(d, "Мадина Темирова"), -120);
     await shot(d, "swipe-left-phone-dark");
     await tk.to(pt, 0); await tk.end(); await settle(d);
+    await R(d, "Ержан А.").evaluate(e => e.scrollIntoView({ block: "center" })); // строки стали ниже (без подписи паузы): по краю списка строку закрывает нижнее меню
     pt = await tk.begin(R(d, "Ержан А."), 120);
     await shot(d, "swipe-right-phone-dark");
-    ok("тёмная тема: подсказка видна (цвет фона подсказки отличается от фона строки)", await d.evaluate(() => { const s = document.querySelector(".sw.on"); return !!s && getComputedStyle(s.querySelector(".swb")).backgroundColor !== getComputedStyle(s.querySelector(".row")).backgroundColor; }));
+    const darkHint = await d.evaluate(pt0 => { const s = document.querySelector(".sw.on"); return s ? [s.dataset.d || "", getComputedStyle(s.querySelector(".swb")).backgroundColor, getComputedStyle(s.querySelector(".row")).backgroundColor, s.querySelector(".nm") && s.querySelector(".nm").textContent] : ["нет .sw.on", !!window.__pult.SW.drag, !!window.__pult.SW.pend, [...document.querySelectorAll("#rows a.row")].map(r => r.querySelector(".nm").textContent + (r.hasAttribute("data-paused") ? "(пауза)" : "") + (r.parentNode.className || "")).join("|"), window.__pult.S.f, (() => { const e = document.elementFromPoint(pt0.x - 120, pt0.y); return e ? e.tagName + "." + e.className + " @" + Math.round(pt0.x - 120) + "," + Math.round(pt0.y) + " nav:" + JSON.stringify(document.getElementById("nav").getBoundingClientRect().top) : "none"; })()]; }, pt);
+    ok("тёмная тема: подсказка видна (цвет фона подсказки отличается от фона строки)", darkHint[0] !== "нет .sw.on" && darkHint[1] !== darkHint[2], JSON.stringify(darkHint));
     await tk.to(pt, 0); await tk.end(); await settle(d);
     await d.evaluate(() => window.__pult.setTheme("light", true));
     ok("палец вернули в начало: ничего не сработало", (await acts(d)).length === 3 && await d.locator("#toast").isHidden());
@@ -577,12 +580,18 @@ try {
     const dt = Date.now() - t0;
     ok("через ~5 секунд действие уходит, тост убран", dt >= 4500 && dt <= 6500 && await d.locator("#toast").isHidden() && (await acts(d))[3] === "wa:demo-07:pause", String(dt));
     // два свайпа подряд: первое действие уходит сразу, окно «Отменить» — у последнего
-    await d.evaluate(() => { window.__pult.SW.ms = 1200; });
+    await d.evaluate(() => { window.__pult.SW.ms = 2200; });
     await tk.drag(R(d, "Ержан А."), 160); await d.waitForFunction(() => /Бот молчит: Ержан/.test(document.getElementById("toast").textContent));
     await tk.drag(R(d, "Санжар Ж."), 160); await d.waitForFunction(() => /Бот молчит: Санжар/.test(document.getElementById("toast").textContent));
     ok("два свайпа подряд: первое действие ушло сразу, у второго — свой «Отменить»", (await acts(d)).includes("wa:demo-10:pause") && !(await acts(d)).includes("wa:demo-06:pause"));
     await d.locator("#toast .tb").tap(); await d.waitForTimeout(300);
-    ok("«Отменить» отменяет только последнее", !(await acts(d)).includes("wa:demo-06:pause") && (await R(d, "Санжар Ж.").locator(".tag.ok").count()) === 0 && (await R(d, "Ержан А.").locator(".tag.ok").count()) === 1);
+    ok("«Отменить» отменяет только последнее", !(await acts(d)).includes("wa:demo-06:pause") && (await RP(d, "Санжар Ж.").count()) === 0 && (await RP(d, "Ержан А.").count()) === 1);
+    // список обновился, пока палец вёл строку (опрос раз в 15 с): действие применяется к свежей строке, а не к старой копии
+    await d.evaluate(() => { window.__pult.SW.ms = 3000; });
+    const waitName = await d.evaluate(() => (document.querySelector("#rows a.row.wait .nm") || {}).textContent);
+    await tk.begin(R(d, waitName), -100); await d.evaluate(() => window.__pult.loadList()); await d.waitForTimeout(400); await tk.end(); await d.waitForTimeout(700);
+    const stillWait = await R(d, waitName).evaluateAll(es => es.some(e => e.classList.contains("wait")));
+    ok("список обновился посреди свайпа: после отпускания чат всё равно уходит из «Ждут ответа» (строка без метки ожидания)", !!waitName && /Готово:/.test(await d.locator("#toast").innerText()) && !stillWait, waitName);
     ok("свайпы в демо не обращаются к настоящему серверу (/api/…)", api.length === 0, api.join(" "));
     await d.context().close();
 
@@ -613,6 +622,102 @@ try {
     ok("компьютер: обычный щелчок по строке открывает чат", /Айдос/.test(await wd.locator("#cname").innerText()));
     await wd.context().close();
 
+    // --- доработка вида по замечаниям с телефона: цвет полосы браузера, палитра, тексты, переход в чат, быстрые ответы
+    const lum = h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
+    const vp = await phoneDemo();
+    const metas = () => vp.evaluate(() => [...document.querySelectorAll('meta[name="theme-color"]')].map(m => [m.getAttribute("media") || "", m.getAttribute("content")]));
+    const tok = () => vp.evaluate(() => { const cs = getComputedStyle(document.getElementById("app")), g = n => cs.getPropertyValue(n).trim(); const o = {}; for (const n of ["bg", "s1", "s2", "fg", "fg2", "ac", "acbg", "acfg", "chipbg", "chipfg", "red", "ok", "warn", "adm", "admt", "amb", "ambfg"]) o[n] = g("--" + n).toUpperCase(); return o; });
+    await vp.evaluate(() => window.__pult.setTheme("auto")); await vp.waitForTimeout(100);
+    const mAuto = await metas();
+    ok("полоса браузера: в «Авто» два theme-color — светлый и тёмный (по системной теме)", mAuto.length === 2 && mAuto.some(m => /light/.test(m[0]) && m[1] === "#F5F4F1") && mAuto.some(m => /dark/.test(m[0]) && m[1] === "#121314"), JSON.stringify(mAuto));
+    for (const th of ["light", "dark"]) {
+      await vp.evaluate(t => window.__pult.setTheme(t), th); await vp.waitForTimeout(350);
+      const mm = await metas(), T = await tok(), bgCss = await vp.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      ok(`полоса браузера: ручная тема «${th}» — оба theme-color цвета шапки (--bg), как и фон страницы`, mm.every(m => m[1].toUpperCase() === T.bg) && bgCss === `rgb(${[1, 3, 5].map(i => parseInt(T.bg.slice(i, i + 2), 16)).join(", ")})`, JSON.stringify([mm, T.bg, bgCss]));
+      const pairs = [["fg", "bg"], ["fg", "s1"], ["fg2", "bg"], ["fg2", "s1"], ["fg2", "s2"], ["ac", "bg"], ["ac", "s1"], ["acfg", "acbg"], ["chipfg", "chipbg"], ["red", "bg"], ["red", "s1"], ["red", "warn"], ["ok", "bg"], ["ok", "s1"], ["admt", "adm"], ["ambfg", "amb"], ["fg", "adm"]];
+      const low = pairs.filter(([a, b]) => ratio(T[a], T[b]) < 4.5).map(([a, b]) => a + "/" + b + " " + ratio(T[a], T[b]).toFixed(2));
+      ok(`палитра «${th}»: контраст текста и статусных цветов не ниже 4.5:1 (AA)`, low.length === 0, low.join("; "));
+      const sat = x => { const c = [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)); return Math.max(...c) - Math.min(...c); };
+      ok(`палитра «${th}»: фоны нейтральные (разница каналов до 12), без синего фона`, ["bg", "s1", "s2"].every(n => sat(T[n]) <= 12), JSON.stringify([T.bg, T.s1, T.s2]));
+    }
+    const man = await vp.evaluate(() => fetch(document.querySelector('link[rel="manifest"]').href).then(r => r.json()));
+    ok("манифест приложения: theme_color и background_color — цвет шапки, а не прежний синий", man.theme_color === "#121314" && man.background_color === "#121314", JSON.stringify([man.theme_color, man.background_color]));
+    ok("шрифт: системный стек без внешних файлов, цифры времени табличные", await vp.evaluate(() => { const f = getComputedStyle(document.getElementById("app")).fontFamily, tm = document.querySelector(".tm2"); return /-apple-system/.test(f) && /Roboto/.test(f) && !!tm && getComputedStyle(tm).fontVariantNumeric.includes("tabular-nums"); }));
+    await vp.evaluate(() => window.__pult.setTheme("light", true)); await vp.waitForTimeout(300);
+
+    // тексты: статус паузы бота в списке, шапке и под перепиской не показываем; «Вернуть бота» остаётся
+    await vp.locator(".chip:text-is('Все')").click(); await vp.waitForTimeout(300);
+    ok("список: нет подписей «Бот молчит до …» ни у одной строки", !/Бот молчит до/.test(await vp.locator("#rows").innerText()));
+    const pausedName = await vp.evaluate(() => (document.querySelector("#rows a.row[data-paused] .nm") || {}).textContent);
+    ok("в демо есть чат с паузой бота (строка помечена атрибутом, текста про паузу в ней нет)", !!pausedName, String(pausedName));
+    await R(vp, pausedName).click(); await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(500);
+    const ps = await vp.evaluate(() => ({ cst: document.getElementById("cst").textContent, strip: document.getElementById("strip").innerText, warn: document.getElementById("warn").innerText, page: document.body.innerText }));
+    ok("чат с паузой: в шапке нет «Бот молчит/Пауза до», в полосе одна кнопка «Вернуть бота»", !/молчит|Пауза|паузе/.test(ps.cst) && ps.strip.trim() === "Вернуть бота", JSON.stringify([ps.cst, ps.strip]));
+    ok("под перепиской нет серой подписи про «бот молчит 2 часа»", !/бот молчит в этом чате|2 часа/.test(ps.warn) && !/бот молчит в этом чате/.test(ps.page), ps.warn);
+    await vp.locator("#back").click(); await vp.waitForTimeout(500);
+    await vp.locator(".chip:text-is('Бот молчит')").click(); await vp.waitForTimeout(300);
+    ok("фильтр «Бот молчит» показывает чаты с паузой бота", (await vp.locator("#rows a.row").count()) >= 1 && (await vp.locator("#rows a.row:not([data-paused])").count()) === 0);
+    await vp.locator(".chip:text-is('Все')").click(); await vp.waitForTimeout(300);
+
+    // переход в чат: выезжает справа на весь экран, нижнее меню закрыто, «назад» — обратно; только transform
+    const geo = () => vp.evaluate(() => { const c = document.getElementById("chatp").getBoundingClientRect(), n = document.getElementById("nav"), l = document.getElementById("listp"); return { left: Math.round(c.left), top: Math.round(c.top), w: Math.round(c.width), h: Math.round(c.height), nav: getComputedStyle(n).visibility, lst: getComputedStyle(l).visibility, W: innerWidth, H: innerHeight, cnv: getComputedStyle(document.getElementById("chatp")).visibility }; });
+    const g0 = await geo();
+    ok("до открытия чат стоит за правым краем и скрыт; список и меню на месте", g0.left >= g0.W && g0.cnv === "hidden" && g0.nav === "visible" && g0.lst === "visible", JSON.stringify(g0));
+    ok("переход анимирует только transform (и visibility без плавности), без left/top/width", await vp.evaluate(() => { const p = getComputedStyle(document.getElementById("chatp")).transitionProperty.split(",").map(x => x.trim()); return p.includes("transform") && p.every(x => x === "transform" || x === "visibility"); }));
+    await vp.locator("#rows a.row").first().click(); await vp.waitForTimeout(110);
+    const g1 = await geo();
+    ok("чат в пути: уже виден и ещё не на месте (выезжает справа налево)", g1.left > 0 && g1.left < g1.W && g1.cnv === "visible", JSON.stringify(g1));
+    await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(600);
+    const g2 = await geo();
+    ok("чат открыт на весь экран (0,0 — ширина и высота окна), нижнее меню и список скрыты — перекрытия нет", g2.left === 0 && g2.top === 0 && g2.w === g2.W && g2.h === g2.H && g2.nav === "hidden" && g2.lst === "hidden", JSON.stringify(g2));
+    await vp.locator("#back").click(); await vp.waitForTimeout(110);
+    const g3 = await geo();
+    ok("«назад»: чат уезжает вправо обратным движением, под ним уже видны список и меню", g3.left > 0 && g3.left < g3.W && g3.lst === "visible" && g3.nav === "visible", JSON.stringify(g3));
+    await vp.waitForTimeout(600);
+    const g4 = await geo();
+    ok("после «назад» чат снова за краем, список и меню на месте", g4.left >= g4.W && g4.cnv === "hidden" && g4.nav === "visible" && g4.lst === "visible", JSON.stringify(g4));
+    // жест/кнопка «назад» системы закрывает чат, а не уводит со страницы
+    const hist0 = await vp.evaluate(() => history.length); // длина истории после возврата не уменьшается, поэтому смотрим на метку записи
+    await vp.locator("#rows a.row").first().click(); await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(500);
+    ok("на телефоне открытие чата — новая запись истории (для жеста «назад» от края)", (await vp.evaluate(() => !!(history.state && history.state.pult))) === true, String(hist0));
+    await vp.goBack(); await vp.waitForTimeout(600);
+    const g5 = await geo();
+    ok("системное «назад» закрывает чат и остаётся в пульте", g5.left >= g5.W && /\/demo/.test(vp.url()) && !/#/.test(vp.url()) && (await vp.evaluate(() => window.__pult.S.cur)) === null, vp.url() + JSON.stringify(g5));
+    await vp.locator("#rows a.row").first().click(); await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(400);
+    await vp.locator("#back").click(); await vp.waitForTimeout(500);
+    ok("кнопка «назад» в шапке закрывает чат и убирает запись истории", (await vp.evaluate(() => window.__pult.S.cur)) === null && !/#/.test(vp.url()) && (await geo()).left >= g0.W);
+
+    // быстрые ответы: карточки с названием и превью, вставка в поле ответа
+    await vp.locator("#rows a.row").first().click(); await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(500);
+    await vp.locator("#quick").tap(); await vp.waitForSelector(".sheet .qc");
+    const qc = await vp.evaluate(() => [...document.querySelectorAll(".sheet .qc")].map(c => { const r = c.getBoundingClientRect(), t = c.querySelector(".qt"), x = c.querySelector(".qx"); return { h: Math.round(r.height), tag: c.tagName, title: t.textContent, text: x ? x.textContent : "", clamp: x ? getComputedStyle(x).webkitLineClamp : "3" }; }));
+    ok("быстрые ответы: карточки (название сверху + превью), не ниже 44 px, это кнопки", qc.length >= 3 && qc.every(c => c.h >= 44 && c.tag === "BUTTON" && c.title.length > 0 && c.title.length <= 34 && c.clamp === "3") && qc.filter(c => c.text.length > 0).length >= 2, JSON.stringify(qc.slice(0, 2)));
+    await vp.screenshot({ path: "/tmp/e2e/phone-quick-light.png" });
+    const qi = qc.findIndex(c => c.text.length > 0), q1 = qc[qi]; await vp.locator(".sheet .qc").nth(qi).tap(); await vp.waitForTimeout(300);
+    ok("нажатие на карточку вставляет её текст в поле ответа и закрывает список", (await vp.locator("#txt").inputValue()).includes(q1.text) && (await vp.locator(".sheet").count()) === 0, q1.text);
+    await vp.locator("#back").click(); await vp.waitForTimeout(500);
+    await vp.evaluate(() => window.__pult.go("more")); await vp.waitForTimeout(300);
+    await vp.locator(".li.tap", { hasText: "Быстрые ответы" }).first().tap(); await vp.waitForSelector(".sheet .qc");
+    ok("«Ещё → Быстрые ответы»: те же карточки, без вставки", (await vp.locator(".sheet .qc").count()) >= 3 && (await vp.locator(".sheet button.qc").count()) === 0);
+    await vp.evaluate(() => window.__pult.closeSheet()); await vp.waitForTimeout(200);
+    // тёмная тема на телефоне: снимки для глаз
+    await vp.evaluate(() => window.__pult.go("chats")); await vp.evaluate(() => window.__pult.setTheme("dark", true)); await vp.waitForTimeout(400);
+    await vp.screenshot({ path: "/tmp/e2e/phone-list-dark.png" });
+    await vp.locator("#rows a.row").first().click(); await vp.waitForSelector("#msgs .m"); await vp.waitForTimeout(600);
+    await vp.screenshot({ path: "/tmp/e2e/phone-chat-dark.png" });
+    await vp.locator("#quick").tap(); await vp.waitForSelector(".sheet .qc"); await vp.waitForTimeout(400); await vp.screenshot({ path: "/tmp/e2e/phone-quick-dark.png" });
+    await vp.evaluate(() => window.__pult.closeSheet()); await vp.locator("#back").click(); await vp.waitForTimeout(500);
+    await vp.evaluate(() => window.__pult.setTheme("light", true)); await vp.waitForTimeout(300);
+    await vp.screenshot({ path: "/tmp/e2e/phone-list-light.png" });
+    await vp.context().close();
+    // reduced motion: чат появляется сразу, без выезда
+    const vr = await phoneDemo({ reducedMotion: "reduce" });
+    await vr.locator("#rows a.row").first().click(); await vr.waitForTimeout(60);
+    const gr = await vr.evaluate(() => Math.round(document.getElementById("chatp").getBoundingClientRect().left));
+    ok("reduced motion: чат открывается сразу, без выезда", gr === 0, String(gr));
+    await vr.context().close();
+
     // --- живой /inbox на заглушках: «Готово» и «Забрать у бота» доходят до сервера; при уходе со страницы действие уходит сразу
     for (const [id, nm, tx] of [["77051118801", "Свайп Один", "Позовите администратора"], ["77051118802", "Свайп Два", "Добрый день"], ["77051118803", "Свайп Три", "Позовите администратора"]]) await wa({ c: "kairat", from: id, name: nm, text: tx });
     const prof = id => (S.kv.json("h:wa:kairat:" + id) || {}).profile || {};
@@ -631,11 +736,11 @@ try {
     await lk.drag(R(lv, "Свайп Два"), 170);
     await lv.waitForFunction(() => /Бот молчит: Свайп Два/.test(document.getElementById("toast").textContent));
     await lv.locator("#toast .tb").tap(); await lv.waitForTimeout(400);
-    ok("живой пульт: «Отменить» после свайпа вправо — на сервер ничего не ушло", (await acts(lv)).length === 1 && !(prof("77051118802").pausedUntil > Date.now()) && (await R(lv, "Свайп Два").locator(".tag.ok").count()) === 0);
+    ok("живой пульт: «Отменить» после свайпа вправо — на сервер ничего не ушло", (await acts(lv)).length === 1 && !(prof("77051118802").pausedUntil > Date.now()) && (await RP(lv, "Свайп Два").count()) === 0);
     await lv.evaluate(() => { window.__pult.SW.ms = 800; });
     await lk.drag(R(lv, "Свайп Два"), 170);
     await lv.waitForFunction(() => window.__acts.length === 2, null, { timeout: 4000 }); await lv.waitForTimeout(300);
-    ok("живой пульт: свайп вправо — бот в этом чате на паузе (на сервере и в строке)", prof("77051118802").pausedUntil > Date.now() && /Бот молчит до/.test(await R(lv, "Свайп Два").innerText()));
+    ok("живой пульт: свайп вправо — бот в этом чате на паузе (на сервере и в строке, без текста про паузу)", prof("77051118802").pausedUntil > Date.now() && (await RP(lv, "Свайп Два").count()) === 1 && !/Бот молчит до/.test(await R(lv, "Свайп Два").innerText()));
     await shot(lv, "swipe-live-inbox-phone");
     // закрыли страницу, не дождавшись пяти секунд: действие всё равно уходит
     await lv.evaluate(() => { window.__pult.SW.ms = 5000; });

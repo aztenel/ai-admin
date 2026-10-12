@@ -1,7 +1,7 @@
 /* ===== оболочка приложения: один код для телефона, планшета и компьютера ===== */
-html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#0F1419;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
-html[data-theme="light"],html[data-theme="light"] body{background:#F7F8FA}
-@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#F7F8FA}}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:#121314;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+html[data-theme="light"],html[data-theme="light"] body{background:#F5F4F1}
+@media (prefers-color-scheme:light){html[data-theme="auto"],html[data-theme="auto"] body{background:#F5F4F1}}
 [hidden]{display:none!important}
 #root{position:fixed;left:0;top:0;right:0;height:var(--appH,100%);container-type:inline-size}
 .app.kb{--sab:0px;--navb:8px}
@@ -69,6 +69,8 @@ button.chip,button.stg,button.ibtn,button.row{font:inherit}
 .inp .ibtn{align-self:flex-end}
 .comp .ibtn.pri[disabled],.inp textarea[disabled]{opacity:.5}
 .warnl{flex:none;padding:0 max(16px,var(--sar)) 8px max(16px,var(--sal));font-size:12px;line-height:1.4;color:var(--fg2)}
+.warnl:empty{display:none}
+.strip.solo{justify-content:flex-end}
 .warnl.amb{margin:0 max(12px,var(--sar)) 8px max(12px,var(--sal));padding:10px 14px;border-radius:14px;background:var(--amb);color:var(--ambfg);font-size:13px}
 /* просьбы клиента */
 #cards{flex:none;max-height:44%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
@@ -102,12 +104,12 @@ a.row,button.row{color:inherit}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}.toast{animation:fi .15s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}@keyframes fi{from{opacity:0}}}
 /* ===== телефон ===== */
 @container (max-width:719px){
-  .app.chat #v-chats .lst{display:none}
-  .app.chat #v-chats .cnv{display:flex}
-  .app.chat .nav,.app.chat .fade{display:none}
+  /* чат — отдельный экран поверх списка: стоит за правым краем и выезжает (движение — в motion.css), нижнее меню он закрывает собой */
+  #v-chats .cnv{display:flex;position:absolute;inset:0;z-index:20;background:var(--bg);transform:translate3d(100%,0,0);visibility:hidden;box-shadow:-12px 0 32px rgba(0,0,0,.2)}
+  .app.chat #v-chats .cnv{transform:none;visibility:visible}
+  .app.chat #v-chats .lst,.app.chat .nav,.app.chat .fade{visibility:hidden}
   .app.card #v-chats .inf{display:flex;position:absolute;inset:0;z-index:30}
   .app.card .nav,.app.card .fade{display:none}
-  .app.card #v-chats .cnv{display:none}
 }
 /* ===== планшет и компьютер ===== */
 @container (min-width:720px){
@@ -116,7 +118,7 @@ a.row,button.row{color:inherit}
   .nav a{flex:none;width:60px;height:56px;margin:0;border-radius:16px}
   .nav .bdg{top:2px;left:calc(50% + 4px)}
   .nav .sp-flex{display:block;flex:1}
-  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:#AF611C;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:15px;margin-top:6px;flex:none}
+  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:#8A5A3C;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:15px;margin-top:6px;flex:none}
   .fade{display:none}
   .lst .scroll{padding-bottom:calc(var(--sab) + 12px)}
   .scroll{padding-bottom:calc(var(--sab) + 24px);scrollbar-width:thin}
@@ -184,3 +186,11 @@ a.row,button.row{color:inherit}
 }
 .ibtn.pay{font-size:20px;font-weight:700;color:var(--ac)}
 .ibtn.pay[hidden]{display:none}
+
+/* быстрые ответы: карточка = короткое название сверху + превью текста в 3 строки; вся карточка — кнопка не ниже 44 px */
+.qlist{display:flex;flex-direction:column;gap:8px;padding:0 12px 4px}
+.qc{display:flex;flex-direction:column;gap:3px;width:100%;min-height:64px;padding:12px 14px;border-radius:16px;background:var(--s2);color:var(--fg);text-align:left}
+.qc .qt{font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.3;overflow-wrap:anywhere}
+.qc .qx{font-size:14px;line-height:1.4;color:var(--fg2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
+button.qc{cursor:pointer}
+@media (hover:hover){button.qc:hover{background:var(--chipbg)}}

@@ -3,10 +3,10 @@
    Анимации отвечают на действие (открыть чат, отправить, новое сообщение) и не мешают читать;
    постоянно движется одно — «лента внимания» у чатов, где клиент ждёт ответа. */
 
-/* шрифт заголовков и цифры */
-.ttl h1{font-family:'Segoe UI Variable Display','Segoe UI Variable','Segoe UI',-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-weight:700;letter-spacing:-.035em}
-.nm,.h3,.biz .n{letter-spacing:-.015em}
-.tm2,.ts,.ub,.bdg,.cnt,.big,.tile .v,.stg .v{font-variant-numeric:tabular-nums}
+/* шрифт заголовков и цифры: системный (SF на iPhone, Roboto на Android, Segoe на Windows), заголовки плотнее, цифры времени и счётчиков — табличные */
+.ttl h1{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI Variable Display','Segoe UI',Roboto,'Helvetica Neue',Arial,system-ui,sans-serif;font-weight:700;letter-spacing:-.03em}
+.nm,.h3,.biz .n{letter-spacing:-.012em}
+.tm2,.ts,.ub,.bdg,.cnt,.big,.tile .v,.stg .v,.amt,.dl,.task .tt,.dpill,.meta,.toast,.kv2 span:last-child{font-variant-numeric:tabular-nums}
 .app :is(a,button):focus-visible{outline:2px solid var(--ac);outline-offset:2px;box-shadow:0 0 0 5px var(--ring)}
 
 /* шапка и поиск */
@@ -18,8 +18,7 @@
 
 /* список чатов: ждущие — с «лентой внимания» слева */
 .row{position:relative}
-.row.wait::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:4px;border-radius:0 3px 3px 0;
-  background:linear-gradient(135deg,var(--acbg) 25%,transparent 25% 50%,var(--acbg) 50% 75%,transparent 75%) 0 0/8px 8px,color-mix(in srgb,var(--acbg) 35%,transparent)}
+.row.wait::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:var(--acbg)}
 .row.sel{background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
 .row.sel .rb{border-bottom-color:transparent}
 .tag{color:var(--ac)}
@@ -39,8 +38,7 @@
 .strip .tag{color:var(--chipfg);font-weight:600}
 .strip.ok{background:var(--s1)}
 .strip.ok .tag{color:var(--ok)}
-.msgs{background:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--fg) 5%,transparent) 1px,transparent 0) 0 0/22px 22px}
-.m{border-radius:18px;padding:8px 12px 6px;box-shadow:0 1px 0 color-mix(in srgb,#000 12%,transparent)}
+.m{border-radius:18px;padding:8px 12px 6px}
 .m.in{background:var(--s1);border:1px solid var(--line);border-bottom-left-radius:6px}
 .m.bot{background:var(--s2);border-bottom-right-radius:6px}
 .m.bot .by{color:var(--fg2)}
@@ -56,7 +54,7 @@
 .rq{background:var(--amb);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acbg) 30%,transparent)}
 
 /* окна-листы: на телефоне — снизу, на компьютере — по центру */
-.scrim{background:rgba(6,9,12,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.scrim{background:rgba(0,0,0,.5);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 .sheet{box-shadow:var(--shadow)}
 .sheet .opt.sel{background:var(--chipbg);color:var(--chipfg)}
 @container (min-width:720px){
@@ -69,7 +67,6 @@
 .sk,.sk-row .sk-av{background:linear-gradient(90deg,var(--s2) 0,var(--s1) 45%,var(--s2) 90%) 0 0/250% 100%}
 
 /* ===== движение ===== */
-@keyframes p-tape{to{background-position:0 8px,0 0}}
 @keyframes p-row{from{opacity:0;transform:translateY(8px)}}
 @keyframes p-pop{from{opacity:0;transform:translateY(8px) scale(.96)}}
 @keyframes p-chat-ph{from{opacity:0;transform:translateX(28px)}}
@@ -88,7 +85,7 @@
   .btn:active,.ibtn:active,.chip:active,.biz:active,.sheet .opt:active{transform:scale(.95)}
   .nav a:active{transform:scale(.92)}
   .row:active{transform:scale(.99)}
-  .row.wait::before{animation:p-tape .9s linear infinite}
+  button.qc:active{transform:scale(.98)}
   #rows.in .row{animation:p-row .38s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 40ms)}
   .m.new,.bk.new,.sys.new{animation:p-pop .26s cubic-bezier(.2,.9,.3,1.2) both}
   .m.in.new{transform-origin:0 100%}
@@ -104,6 +101,15 @@
   .bump{animation:p-bump .42s cubic-bezier(.3,.7,.4,1)}
   .sk,.sk-row .sk-av{animation:p-shine 1.4s ease-in-out infinite}
   .app.card #v-chats .inf{animation:p-side .26s cubic-bezier(.2,.8,.2,1)}
+  /* телефон: чат выезжает справа поверх списка (как «вперёд» в мессенджерах), список чуть сдвигается и темнеет; «назад» — то же в обратную сторону */
+  @container (max-width:719px){
+    .cnv.enter .cin,.lst.enter{animation:none}
+    #v-chats .cnv{transition:transform .34s cubic-bezier(.2,.8,.2,1),visibility 0s linear .34s}
+    .app.chat #v-chats .cnv{transition:transform .34s cubic-bezier(.2,.8,.2,1),visibility 0s}
+    #v-chats .lst{transition:transform .34s cubic-bezier(.2,.8,.2,1),opacity .34s ease,visibility 0s}
+    .app.chat #v-chats .lst{transform:translate3d(-22%,0,0);opacity:.5;transition:transform .34s cubic-bezier(.2,.8,.2,1),opacity .34s ease,visibility 0s linear .34s}
+    .app.chat .nav,.app.chat .fade{transition:visibility 0s linear .34s}
+  }
   @container (min-width:720px){
     .cnv.enter .cin{animation:p-chat-pc .22s cubic-bezier(.2,.8,.2,1)}
     .lst.enter{animation:none}
