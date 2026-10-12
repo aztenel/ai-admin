@@ -6,3 +6,6 @@ desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/icons/
 desktop/package-lock.json
+
+# Списки бизнесов для продаж (данные, не коммитить)
+scripts/leads/out/
