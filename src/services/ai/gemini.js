@@ -30,8 +30,12 @@ export async function askGemini(env, system, turns, info, only) {
     safetySettings: ["HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT", "DANGEROUS_CONTENT"].map(k => ({ category: "HARM_CATEGORY_" + k, threshold: "BLOCK_ONLY_HIGH" }))
   };
   let lastErr;
+  // Ошибки Claude: если запасная модель тоже откажет, в ошибке остаётся и первая причина. Раньше был виден только последний отказ:
+  // 14.10.2026 на черновике «Gemini 400 API key not valid» скрывал настоящий сбой Claude, и причину пришлось гадать.
+  /** @type {string[]} */ const errs = [];
+  const fail = (/** @type {string} */ m) => new Error(errs.length ? errs.join(" | ") + " | " + m : m);
   for (const [mi, model] of models.entries()) {
-    if (isClaude(model)) { try { return await askClaude(env, system, turns, model, info); } catch (e) { lastErr = e; continue; } } // Claude отказал — следующая модель из списка (запасная)
+    if (isClaude(model)) { try { return await askClaude(env, system, turns, model, info); } catch (e) { lastErr = e; errs.push(String((e && e.message) || e).slice(0, 150)); continue; } } // Claude отказал — следующая модель из списка (запасная)
     const ladder = THINK_LADDER(model);
     let step = Math.min(THINK_STEP.get(model) || 0, ladder.length - 1);
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -52,7 +56,7 @@ export async function askGemini(env, system, turns, info, only) {
         if ((r.status === 429 || r.status >= 500) && attempt === 0) { await new Promise(s => setTimeout(s, 1200)); continue; }
         if (r.status === 404 || r.status === 400 && mi === 0 && models[1] !== model) { lastErr = new Error("Gemini " + r.status + " " + tx.slice(0, 200)); break; }
         if (r.status === 429 || r.status >= 500) { lastErr = new Error("Gemini " + r.status + " " + tx.slice(0, 200)); break; }
-        throw new Error("Gemini " + r.status + " " + tx);
+        throw fail("Gemini " + r.status + " " + tx);
       }
       const out = (data?.candidates?.[0]?.content?.parts || []).map((/** @type {any} */ p) => p.text || "").join("").trim();
       const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || "";
@@ -63,5 +67,6 @@ export async function askGemini(env, system, turns, info, only) {
       return out;
     }
   }
+  if (lastErr && errs.length && !errs.includes(String(lastErr.message).slice(0, 150))) throw fail(String(lastErr.message));
   throw lastErr || new Error("Gemini failed");
 }
