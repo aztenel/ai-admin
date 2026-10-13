@@ -37,7 +37,7 @@ button.chip,button.ibtn,button.row{font:inherit}
 .scrim.cs{display:none;z-index:29}
 .sheet{--cell:var(--sc);position:absolute;z-index:41;left:0;right:0;bottom:0;max-height:82%;background:var(--sheetbg);border-radius:20px 20px 0 0;padding:6px 0 calc(var(--sab) + 12px);display:flex;flex-direction:column;box-shadow:var(--shadow)}
 .sheet .grab{flex:none;width:36px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 6px}
-.sheet h2{flex:none;font-size:17px;font-weight:600;padding:6px max(20px,var(--sar)) 10px max(20px,var(--sal))}
+.sheet h2{flex:none;font-size:17px;font-weight:500;padding:6px max(20px,var(--sar)) 10px max(20px,var(--sal))}
 .sheet .sbody{overflow-y:auto;overscroll-behavior:contain;padding:0 max(8px,var(--sar)) 0 max(8px,var(--sal))}
 .sheet .opt{display:flex;align-items:center;gap:14px;width:100%;min-height:52px;padding:6px 12px;border-radius:12px;font-size:17px;text-align:left;color:var(--fg)}
 .sheet .opt small{display:block;font-size:13px;color:var(--fg2);line-height:1.35}
@@ -49,11 +49,11 @@ button.chip,button.ibtn,button.row{font:inherit}
 .sheet .kv2{display:flex;justify-content:space-between;gap:12px;padding:12px 12px;border-bottom:1px solid var(--line);font-size:17px}
 .sheet .kv2:last-child{border-bottom:none}
 .sheet .kv2 span:last-child{color:var(--fg2);text-align:right}
-.toast{position:absolute;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(var(--navb) + var(--navh) + 18px);max-width:min(92%,420px);padding:12px 16px;border-radius:14px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;line-height:1.3;text-align:center;box-shadow:var(--shadow)}
+.toast{position:absolute;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(var(--navb) + var(--navh) + 18px);max-width:min(92%,420px);padding:12px 16px;border-radius:14px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:400;line-height:1.3;text-align:center;box-shadow:var(--shadow)}
 .app.chat .toast{bottom:calc(var(--sab) + 84px)}
 .toast.act{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 16px;text-align:left}
 .toast .tt{min-width:0;overflow-wrap:anywhere}
-.toast .tb{flex:none;min-width:44px;height:44px;padding:0 16px;border-radius:12px;background:var(--acf);color:var(--acfg);font-size:15px;font-weight:600}
+.toast .tb{flex:none;min-width:44px;height:44px;padding:0 16px;border-radius:12px;background:var(--acf);color:var(--acfg);font-size:15px;font-weight:500}
 /* свайп по строке чата: подсказка лежит под строкой и открывается по мере сдвига */
 .sw{position:relative;overflow:hidden;height:72px;contain:layout paint style;content-visibility:auto;contain-intrinsic-size:auto 72px}
 .sw:last-child .rb{border-bottom-color:transparent}
@@ -64,13 +64,13 @@ button.chip,button.ibtn,button.row{font:inherit}
 .sw[data-d="l"] .swb{justify-content:flex-end;background:var(--acf);color:var(--acfg)}
 .sw[data-d="r"] .swb{justify-content:flex-start;background:var(--s2);color:var(--fg)}
 .sw:not([data-d]) .swb{visibility:hidden}
-.swh{display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:76px;font-size:13px;font-weight:600;line-height:1.15;text-align:center;opacity:.7}
+.swh{display:none;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:76px;font-size:13px;font-weight:500;line-height:1.15;text-align:center;opacity:.7}
 .sw[data-d="l"] .swh.l,.sw[data-d="r"] .swh.r{display:flex}
 .sw.go .swh{opacity:1}
 /* просьбы клиента */
 #cards{flex:none;max-height:44%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
 .rq{margin:8px max(12px,var(--sar)) 0 max(12px,var(--sal));padding:12px 14px;border-radius:14px;background:var(--s1);color:var(--fg);display:flex;flex-direction:column;gap:8px;font-size:15px;line-height:1.35}
-.rq b{font-size:17px;font-weight:600}
+.rq b{font-size:17px;font-weight:500}
 .rq .mut{color:var(--fg2);font-size:13px}
 .rq textarea{width:100%;min-height:72px;border-radius:12px;background:var(--bg);border:1px solid var(--line);padding:10px 12px;font:inherit;font-size:17px;color:var(--fg);outline:0;resize:vertical}
 .rq .row2{display:flex;gap:8px;flex-wrap:wrap}
@@ -93,7 +93,7 @@ a.row,button.row{color:inherit}
 .sp-flex{flex:1}
 .qlist{display:flex;flex-direction:column;gap:8px;padding:0 12px 4px}
 .qc{display:flex;flex-direction:column;justify-content:center;gap:3px;width:100%;min-height:64px;padding:12px 14px;border-radius:14px;background:var(--cell);color:var(--fg);text-align:left}
-.qc .qt{font-size:17px;font-weight:600;line-height:1.25;overflow-wrap:anywhere}
+.qc .qt{font-size:17px;font-weight:500;line-height:1.25;overflow-wrap:anywhere}
 .qc .qx{font-size:15px;line-height:1.3;color:var(--fg2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
 button.qc{cursor:pointer}
 button.qc:active{background:var(--pressed)}
@@ -113,7 +113,7 @@ button.qc:active{background:var(--pressed)}
   .nav a{flex:none;width:60px;height:56px;margin:0;border-radius:16px}
   .nav .bdg{top:2px;left:calc(50% + 4px)}
   .nav .sp-flex{display:block;flex:1}
-  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:var(--av);color:#fff;align-items:center;justify-content:center;font-weight:600;font-size:15px;margin-top:6px;flex:none}
+  .nav .me{display:flex;width:40px;height:40px;border-radius:50%;background:var(--av);color:#fff;align-items:center;justify-content:center;font-weight:500;font-size:15px;margin-top:6px;flex:none}
   .lst .scroll{padding-bottom:calc(var(--sab) + 12px)}
   .scroll{padding-bottom:calc(var(--sab) + 24px);scrollbar-width:thin}
   .scroll.nonav{padding-bottom:calc(var(--sab) + 16px)}
@@ -122,7 +122,7 @@ button.qc:active{background:var(--pressed)}
   #v-chats .lst{border-right:1px solid var(--line);--sal:0px;--sar:0px}
   #v-chats .cnv{display:flex;--sal:0px}
   #v-chats .cnv .none{display:flex;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--fg2);text-align:center;padding:24px}
-  #v-chats .cnv .none b{font-size:17px;font-weight:600;color:var(--fg2)}
+  #v-chats .cnv .none b{font-size:17px;font-weight:500;color:var(--fg2)}
   #v-chats .cnv .cin{display:none}
   .app.chat #v-chats .cnv .none{display:none}
   .app.chat #v-chats .cnv .cin{display:flex}
