@@ -6,7 +6,7 @@ import { ALT_TTL, ALT_DAYS } from "../../config/constants.js";
 import { altCall } from "../integrations/altegio/client.js";
 import { isoDay, mins, hm, TZ } from "../../lib/time.js";
 import { altDay } from "./replies.js";
-import { altNamed, altPickServices, altPickStaff } from "./pick.js";
+import { altNamed, altPickServices, altPickStaff, altServicesIn } from "./pick.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
@@ -56,8 +56,12 @@ export async function altSnapshot(env, c, nowMs, userText) {
     dates = altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${isoDay(nowMs)}&date_to=${isoDay(nowMs + 21 * 86400e3)}`), nowMs).slice(0, ALT_DAYS);
     altCache.set(dk, { at: nowMs, v: dates });
   }
+  // услуга уже названа — время спрашиваем с ней (Altegio тогда учитывает её длительность); не вышло или пусто — как раньше, без услуги
+  const svIds = altServicesIn(base.services, userText).map(/** @param {any} x */ x => x.id);
   const read = async (/** @type {any} */ staffId, /** @type {string[]} */ list) => {
-    const rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
+    const ask = (/** @type {any} */ ids) => Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, ids, nowMs)));
+    let rs = await ask(svIds.length ? svIds : null);
+    if (svIds.length && (rs.some(r => r.status === "rejected") || rs.every(r => r.status === "fulfilled" && !r.value.length))) rs = await ask(null);
     return { days: rs.map((r, i) => r.status === "fulfilled" ? altDay(list[i], r.value.map(/** @param {any} x */ x => x.time), nowMs) : null).filter(d => d && d.times.length),
       failed: list.filter((d, i) => rs[i].status === "rejected"), error: (rs.find(r => r.status === "rejected") || {}).reason };
   };
