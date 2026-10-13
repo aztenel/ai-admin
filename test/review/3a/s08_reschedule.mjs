@@ -1,6 +1,7 @@
 // Перенос: сбои на каждом шаге. Что сказано клиенту, что — администратору, что осталось в чате и в Altegio.
-import { chat, showState, tag, title, check, summary, ALT, TG, days, prof, leads, env } from "./harness.mjs";
+import { chat, showState, tag, title, check, summary, ALT, TG, days, iso, prof, leads, env } from "./harness.mjs";
 const { D1, D2 } = days();
+const FAR = iso(Date.now() + 40 * 86400e3); // день заведомо вне ближайших дат расписания; раньше стояло «15 октября», а 14.10.2026 это уже «завтра» и сценарий перестал проверять своё
 let loc = 3800, n = 0;
 async function setup(name) {
   env.ALTEGIO_LOC_ALT = String(++loc); ALT.records.length = 0; ALT.deleted.length = 0; n++;
@@ -73,7 +74,7 @@ showState(sid);
 check("перенос при 4 записях выполняется автоматически (число записей не растёт)", ALT.deleted.length === 1, "перенос ушёл администратору: «" + d.reply + "»");
 
 sid = await setup("Марат"); title("9. перенос на другой день, которого нет в ближайших датах");
-d = await chat(sid, "Перенесите на 15 октября", "Перенесла.\n[ОТМЕНА]\n" + tag("Марат", "11:00", { date: "2026-10-15" }));
+d = await chat(sid, "Перенесите на " + FAR.slice(8) + "." + FAR.slice(5, 7), "Перенесла.\n[ОТМЕНА]\n" + tag("Марат", "11:00", { date: FAR }));
 check("старая цела, клиенту предложены доступные дни и сказано, что прежняя остаётся", ALT.deleted.length === 0 && /ближайшие дни/.test(d.reply) && /Прежняя запись остаётся/.test(d.reply));
 
 sid = await setup("Марат"); title("10. [ОТМЕНА] + [ЗАЯВКА] без имени/с шуточным именем");
