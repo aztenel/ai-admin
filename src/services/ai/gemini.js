@@ -29,13 +29,13 @@ export async function askGemini(env, system, turns, info, only) {
     generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }, // запас: если модель всё же «думает», её мысли не съедят ответ
     safetySettings: ["HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT", "DANGEROUS_CONTENT"].map(k => ({ category: "HARM_CATEGORY_" + k, threshold: "BLOCK_ONLY_HIGH" }))
   };
-  let lastErr;
+  /** @type {any} */ let lastErr;
   // Ошибки Claude: если запасная модель тоже откажет, в ошибке остаётся и первая причина. Раньше был виден только последний отказ:
   // 14.10.2026 на черновике «Gemini 400 API key not valid» скрывал настоящий сбой Claude, и причину пришлось гадать.
   /** @type {string[]} */ const errs = [];
   const fail = (/** @type {string} */ m) => new Error(errs.length ? errs.join(" | ") + " | " + m : m);
   for (const [mi, model] of models.entries()) {
-    if (isClaude(model)) { try { return await askClaude(env, system, turns, model, info); } catch (e) { lastErr = e; errs.push(String((e && e.message) || e).slice(0, 150)); continue; } } // Claude отказал — следующая модель из списка (запасная)
+    if (isClaude(model)) { try { return await askClaude(env, system, turns, model, info); } catch (e) { lastErr = e; errs.push(String(e instanceof Error ? e.message : e).slice(0, 150)); continue; } } // Claude отказал — следующая модель из списка (запасная)
     const ladder = THINK_LADDER(model);
     let step = Math.min(THINK_STEP.get(model) || 0, ladder.length - 1);
     for (let attempt = 0; attempt < 2; attempt++) {
