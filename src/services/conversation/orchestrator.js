@@ -14,7 +14,7 @@ import { redact, phonesIn, maskPhones, normPhone } from "../../lib/phone.js";
 import { mergeProfile, putHist } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
 import { notify } from "../integrations/telegram/client.js";
-import { altLoc, altSnapshot, altSelfCancel, altBook } from "../booking/book.js";
+import { altLoc, altSnapshot, altSelfCancel, altBook, altDry } from "../booking/book.js";
 import { altJournal } from "../integrations/altegio/journal-api.js";
 import { altFromJournal, altPrune, altIsGone, altUserKey } from "../booking/journal.js";
 import { notifyOnce, noteDue } from "../notifications/telegram.js";
@@ -635,13 +635,13 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       const free = mode === "swap" && !saved.profile.delFails; // перенос записи из этого чата лимиты не тратит — пока старые записи действительно удаляются
       let over = false;
       if (!free) { try { over = books.length - (mode === "swap" ? 1 : 0) >= ALT_MAX_ACTIVE || await altOverLimit(store, alt.loc, ids, nowMs); } catch (e) { console.log("limit", String(e)); } }
-      const tryBook = staff => altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff, date, time: l.time, fixedPhone: !!opts.phone || saved.profile.phoneBad === l.phone }, nowMs, opts.test);
+      const tryBook = staff => altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff, date, time: l.time, fixedPhone: !!opts.phone || saved.profile.phoneBad === l.phone }, nowMs, opts.test || altDry(env, c));
       let r = opts.untrusted ? { ok: false, reason: "limit", error: "сообщение WhatsApp пришло без подписи Meta (не задан APP_SECRET) — автоматическая запись выключена" }
         : over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку" }
         : await tryBook(staffRaw);
       if (!r.ok && r.soft && softStaff && (r.reason === "taken" || r.reason === "staffService")) r = await tryBook(f["мастер"]); // у мастера из прошлого сообщения на это время занято — к свободному, как и написал ИИ
       if (r.ok) {
-        const made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, at: nowMs }, kin = kinOfNew(l.name);
+        const made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, at: nowMs, ...(r.dry && !opts.test ? { dry: true } : {}) }, kin = kinOfNew(l.name); // dry — режим показа: в журнал ничего не записано, клиенту об этом говорим
         if (kin.length) made.kin = kin;
         made.leadId = addLead({ ...l, service: r.services + (r.staffName ? " · " + r.staffName : ""), time: `${r.label}, в ${r.time}` },
           { altegio: { loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, date: r.date, time: r.time, services: r.services, staffName: r.staffName }, note: r.dry ? "проверка без записи" : "записан в Altegio, № " + r.record_id }, "✅ Новая запись в Altegio", true).id;
@@ -802,7 +802,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       // клиент снова записывается на то же время, по которому просил отмену или перенос: второй записи не создаём и сами ничего не решаем — напоминаем о просьбе и подсказываем, как её снять
       const again = req0 ? haves.filter(x => x.rq && books.includes(x)) : [];
       const undo = !!req0 && undoNow;
-      if (madeNow.length) { const others = books.filter(x => !madeNow.includes(x)); outs.unshift(madeNow.map(m => say("booked", { what: label(m) })).join(" ") + (others.length ? " " + say("also", { list: listOf(others) }) : "")); }
+      if (madeNow.length) { const others = books.filter(x => !madeNow.includes(x)); outs.unshift(madeNow.map(m => say("booked", { what: label(m) }) + (m.dry ? " " + say("dryNote") : "")).join(" ") + (others.length ? " " + say("also", { list: listOf(others) }) : "")); }
       else if (haves.length && !undo) outs.unshift(haves.map(x => again.includes(x) ? say("rqAgain", { what: altLabel(x, lang, nowMs) + (manyNames() ? ` (${x.name})` : "") }) : say("have", { what: label(x) })).join(" "));
       if (allBook.length > 3) outs.push(say("more"));
       const old = before.filter(x => books.includes(x));
@@ -914,7 +914,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       }
       if (madeNow.length) { // прежние записи чата перечисляем один раз — в «также есть запись»
         const others = books.filter(x => !madeNow.includes(x));
-        outs.unshift(madeNow.map(m => say("booked", { what: label(m) })).join(" ") + (others.length ? " " + say("also", { list: listOf(others) }) : ""));
+        outs.unshift(madeNow.map(m => say("booked", { what: label(m) }) + (m.dry ? " " + say("dryNote") : "")).join(" ") + (others.length ? " " + say("also", { list: listOf(others) }) : ""));
       } else if (haves.length) outs.unshift(haves.map(x => say("have", { what: label(x) })).join(" "));
       if (allBook.length > 3) outs.push(say("more"));
       for (const line of confirmed ? [] : cancelLines) {

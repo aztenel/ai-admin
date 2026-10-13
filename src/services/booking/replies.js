@@ -46,6 +46,7 @@ export function altSay(lang, b) {
   if (b.reason === "onePerson") return ["Запишу каждого отдельно. На кого оформить первую запись: имя, услуга и время?", "Әрқайсысын бөлек жазамын. Алдымен кімді жазайын: аты, қызметі және уақыты?", "I'll book each person separately. Who should I book first: name, service and time?"][L];
   if (b.reason === "more") return ["Остальное сделаю следующим сообщением — напишите, что ещё изменить.", "Қалғанын келесі хабарламада жасаймын — тағы не өзгерту керегін жазыңыз.", "I'll do the rest in the next message — tell me what else to change."][L];
   if (b.reason === "booked") return [`Записала вас: ${b.what}.`, `Сізді жаздым: ${b.what}.`, `You're booked: ${b.what}.`][L];
+  if (b.reason === "dryNote") return ["(Это показ: в журнал барбершопа запись пока не создаётся.)", "(Бұл көрсетілім: жазба әзірге журналға түспейді.)", "(This is a demo: nothing is written to the shop's calendar yet.)"][L];
   if (b.reason === "also") return [`У вас также есть запись: ${b.list}.`, `Сізде тағы жазба бар: ${b.list}.`, `You also have a booking: ${b.list}.`][L];
   if (b.reason === "have") return [`Вы уже записаны: ${b.what}.`, `Сіз жазылып қойғансыз: ${b.what}.`, `You're already booked: ${b.what}.`][L];
   if (b.reason === "moved") return [`Перенесла вашу запись. Было: ${b.old}. Теперь вы записаны: ${b.what}.`, `Жазбаңызды ауыстырдым. Бұрын: ${b.old}. Енді: ${b.what}.`, `I've moved your booking. Before: ${b.old}. You're now booked: ${b.what}.`][L];

@@ -3480,6 +3480,146 @@
    "altDeleted": 0
   }
  },
+ "winchester-book-dry": {
+  "title": "Winchester: режим «без записи» — окно проверяется, но запись в журнал Altegio НЕ создаётся (altRecords 0)",
+  "steps": [
+   {
+    "in": "Тимур, +7 700 000 00 92, мужская стрижка завтра в 10:00",
+    "out": [
+     "Записала вас: Мужская стрижка, мастер Ерлан — завтра, воскресенье, 4 октября, в 10:00. (Это показ: в журнал барбершопа запись пока не создаётся.)"
+    ],
+    "flags": {
+     "cancel": false,
+     "cancelDone": false,
+     "guard": null,
+     "lead": "altegio,at,id,name,phone,service,source,time,ts",
+     "kind": "",
+     "offer": []
+    },
+    "ai": 1,
+    "altegio": [
+     "POST /book_check/<n>"
+    ],
+    "tg": [
+     "✅ Новая запись в Altegio (Winchester)\nТимур · +77000000092\nМужская стрижка · Ерлан\nзавтра, воскресенье, 4 октября, в 10:00\nпроверка без записи"
+    ],
+    "state": {
+     "paused": false,
+     "need": "lead",
+     "stop": false
+    }
+   }
+  ],
+  "end": {
+   "leads": [
+    {
+     "name": "Тимур",
+     "service": "Мужская стрижка · Ерлан",
+     "time": "завтра, воскресенье, 4 октября, в 10:00",
+     "phone": "+77000000092",
+     "altegio": {
+      "loc": "<loc>",
+      "record_id": 0,
+      "record_hash": "",
+      "date": "<D1>",
+      "time": "10:00",
+      "services": "Мужская стрижка",
+      "staffName": "Ерлан"
+     },
+     "note": "проверка без записи",
+     "source": "Winchester · веб-чат",
+     "at": "<время> <D0>"
+    }
+   ],
+   "bookings": [
+    {
+     "name": "Тимур",
+     "services": "Мужская стрижка",
+     "staffName": "Ерлан",
+     "date": "<D1>",
+     "time": "10:00"
+    }
+   ],
+   "pend": 0,
+   "req": null,
+   "paused": false,
+   "need": "lead",
+   "stop": false,
+   "turns": 2,
+   "altRecords": 0,
+   "altDeleted": 0
+  }
+ },
+ "winchester-book-live": {
+  "title": "Winchester: ALTEGIO_DRY_WINCHESTER=0 — запись создаётся по-настоящему (переключатель работает)",
+  "steps": [
+   {
+    "in": "Тимур, +7 700 000 00 93, мужская стрижка завтра в 10:00",
+    "out": [
+     "Записала вас: Мужская стрижка, мастер Ерлан — завтра, воскресенье, 4 октября, в 10:00."
+    ],
+    "flags": {
+     "cancel": false,
+     "cancelDone": false,
+     "guard": null,
+     "lead": "altegio,at,id,name,phone,service,source,time,ts",
+     "kind": "",
+     "offer": []
+    },
+    "ai": 1,
+    "altegio": [
+     "POST /book_record/<n>"
+    ],
+    "tg": [
+     "✅ Новая запись в Altegio (Winchester)\nТимур · +77000000093\nМужская стрижка · Ерлан\nзавтра, воскресенье, 4 октября, в 10:00\nзаписан в Altegio, № 777001"
+    ],
+    "state": {
+     "paused": false,
+     "need": null,
+     "stop": false
+    }
+   }
+  ],
+  "end": {
+   "leads": [
+    {
+     "name": "Тимур",
+     "service": "Мужская стрижка · Ерлан",
+     "time": "завтра, воскресенье, 4 октября, в 10:00",
+     "phone": "+77000000093",
+     "altegio": {
+      "loc": "<loc>",
+      "record_id": 777001,
+      "record_hash": "hash777001",
+      "date": "<D1>",
+      "time": "10:00",
+      "services": "Мужская стрижка",
+      "staffName": "Ерлан"
+     },
+     "note": "записан в Altegio, № 777001",
+     "source": "Winchester · веб-чат",
+     "at": "<время> <D0>"
+    }
+   ],
+   "bookings": [
+    {
+     "name": "Тимур",
+     "services": "Мужская стрижка",
+     "staffName": "Ерлан",
+     "date": "<D1>",
+     "time": "10:00"
+    }
+   ],
+   "pend": 0,
+   "req": null,
+   "paused": false,
+   "need": null,
+   "stop": false,
+   "turns": 2,
+   "altRecords": 1,
+   "altDeleted": 0
+  }
+ },
  "winchester-pay": {
   "title": "Winchester: метка [РЕКВИЗИТЫ] заменяется ссылкой Kaspi дословно",
   "steps": [

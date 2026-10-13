@@ -95,5 +95,7 @@ export const CASES = [
   // ---- показ барбершопа Winchester (14.10.2026): их прайс в фактах, реквизиты Kaspi дословно
   { id: "winchester-price", title: "Winchester: цена из фактов (линия барберов и шеф-барбера) проходит защиту", c: "winchester", steps: [{ in: "Сколько стоит мужская стрижка?", ai: "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸ ✂️ Записать вас?" }] },
   { id: "winchester-wrong-price", title: "Winchester: 8 000 ₸ (цена из старой сторис) нет в фактах — защита отклоняет, ИИ спрашивают ещё раз", c: "winchester", steps: [{ in: "Сколько стоит стрижка?", ai: ["Мужская стрижка — 8 000 ₸.", "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸."] }] },
+  { id: "winchester-book-dry", title: "Winchester: режим «без записи» — окно проверяется, но запись в журнал Altegio НЕ создаётся (altRecords 0)", c: "winchester", steps: [book("Тимур", "+7 700 000 00 92")] },
+  { id: "winchester-book-live", title: "Winchester: ALTEGIO_DRY_WINCHESTER=0 — запись создаётся по-настоящему (переключатель работает)", c: "winchester", env: { ALTEGIO_DRY_WINCHESTER: "0" }, steps: [book("Тимур", "+7 700 000 00 93")] },
   { id: "winchester-pay", title: "Winchester: метка [РЕКВИЗИТЫ] заменяется ссылкой Kaspi дословно", c: "winchester", steps: [{ in: "Можно оплатить заранее, как?", ai: "Конечно, реквизиты для оплаты ниже 🙌\n[РЕКВИЗИТЫ]" }] }
 ];

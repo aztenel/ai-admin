@@ -19,6 +19,14 @@ export const altSelfCancel = (env, c) => {
   const v = env["ALTEGIO_SELF_CANCEL_" + String(c.id).toUpperCase()] ?? env.ALTEGIO_SELF_CANCEL;
   return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.selfCancel);
 };
+// Режим «проверка без записи»: бот находит окно и проверяет запись через book_check, но в журнал Altegio ничего не пишет.
+// Нужен для показов на настоящих данных чужого бизнеса (Winchester, 14.10.2026), чтобы чат не занимал им живые окна.
+// Включается altegio.dry в блоке клиента; для одного клиента переопределяется Text ALTEGIO_DRY_<ID> = 1 или 0.
+/** @param {Env} env @param {Client} c */
+export const altDry = (env, c) => {
+  const v = env["ALTEGIO_DRY_" + String(c.id).toUpperCase()];
+  return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.dry);
+};
 /** @param {Env} env @param {Client} c @returns {number} */
 export const altLoc = (env, c) => {
   const v = env["ALTEGIO_LOC_" + String(c.id).toUpperCase()];
