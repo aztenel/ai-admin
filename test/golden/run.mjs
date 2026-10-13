@@ -33,7 +33,8 @@ async function runCase(cs) {
   net.reset(); net.altGone = []; net.altBusy = false; net.altCheckBusy = false; net.altGetFail = 0; net.altGetPlain = false; net.altJournalFail = 0;
   net.altData = cs.alt ? (() => cs.alt(ALT_DEFAULT())) : null;
   const loc = String(3000 + CASES.indexOf(cs)); // своя локация Altegio у каждого сценария: кэш расписания и лимиты не переходят из сценария в сценарий
-  const env = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: loc, ...(cs.env || {}) };
+  // ALTEGIO_SELF_CANCEL "0": по умолчанию проверяем режим администратора (так работают настоящие клиенты), хотя у пробного клиента alt самоотмена включена в коде (14.10.2026); сценарии «бот отменяет сам» включают её своим env
+  const env = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: loc, ALTEGIO_SELF_CANCEL: "0", ...(cs.env || {}) };
   if (cs.ch === "wa") Object.assign(env, { ["WA_TOKEN_" + cs.c.toUpperCase()]: "tok-" + cs.c, ["APP_SECRET_" + cs.c.toUpperCase()]: "sec-" + cs.c });
   if (cs.ch === "ga") Object.assign(env, { ["GA_ID_" + cs.c.toUpperCase()]: "7105000001", ["GA_TOKEN_" + cs.c.toUpperCase()]: "ga-tok-" + cs.c, ["GA_URL_" + cs.c.toUpperCase()]: "https://7105.api.green-api.com" });
   const S = mk(env);
