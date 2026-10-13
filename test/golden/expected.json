@@ -3405,5 +3405,116 @@
    "altRecords": 0,
    "altDeleted": 0
   }
+ },
+ "winchester-price": {
+  "title": "Winchester: цена из фактов (линия барберов и шеф-барбера) проходит защиту",
+  "steps": [
+   {
+    "in": "Сколько стоит мужская стрижка?",
+    "out": [
+     "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸ ✂️ Записать вас?"
+    ],
+    "flags": {
+     "cancel": false,
+     "cancelDone": false,
+     "guard": null,
+     "offer": []
+    },
+    "ai": 1,
+    "altegio": [],
+    "tg": [],
+    "state": {
+     "paused": false,
+     "need": null,
+     "stop": false
+    }
+   }
+  ],
+  "end": {
+   "leads": [],
+   "bookings": [],
+   "pend": 0,
+   "req": null,
+   "paused": false,
+   "need": null,
+   "stop": false,
+   "turns": 2,
+   "altRecords": 0,
+   "altDeleted": 0
+  }
+ },
+ "winchester-wrong-price": {
+  "title": "Winchester: 8 000 ₸ (цена из старой сторис) нет в фактах — защита отклоняет, ИИ спрашивают ещё раз",
+  "steps": [
+   {
+    "in": "Сколько стоит стрижка?",
+    "out": [
+     "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸."
+    ],
+    "flags": {
+     "cancel": false,
+     "cancelDone": false,
+     "guard": "цена 8000 → исправлено",
+     "offer": []
+    },
+    "ai": 2,
+    "altegio": [],
+    "tg": [],
+    "state": {
+     "paused": false,
+     "need": null,
+     "stop": false
+    }
+   }
+  ],
+  "end": {
+   "leads": [],
+   "bookings": [],
+   "pend": 0,
+   "req": null,
+   "paused": false,
+   "need": null,
+   "stop": false,
+   "turns": 2,
+   "altRecords": 0,
+   "altDeleted": 0
+  }
+ },
+ "winchester-pay": {
+  "title": "Winchester: метка [РЕКВИЗИТЫ] заменяется ссылкой Kaspi дословно",
+  "steps": [
+   {
+    "in": "Можно оплатить заранее, как?",
+    "out": [
+     "Конечно, реквизиты для оплаты ниже 🙌\n\nОплатить можно по ссылке Kaspi: https://pay.kaspi.kz/pay/jttljufx\nОткройте ссылку, введите сумму и оплатите: можно внести предоплату за бронь или сразу оплатить услугу целиком. Пришлите скриншот чека, администратор подтвердит оплату и запись."
+    ],
+    "flags": {
+     "cancel": false,
+     "cancelDone": false,
+     "guard": null,
+     "offer": []
+    },
+    "ai": 1,
+    "altegio": [],
+    "tg": [],
+    "state": {
+     "paused": false,
+     "need": null,
+     "stop": false
+    }
+   }
+  ],
+  "end": {
+   "leads": [],
+   "bookings": [],
+   "pend": 0,
+   "req": null,
+   "paused": false,
+   "need": null,
+   "stop": false,
+   "turns": 2,
+   "altRecords": 0,
+   "altDeleted": 0
+  }
  }
 }
