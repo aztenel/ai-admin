@@ -23,6 +23,27 @@ test("не уверены — пусто: общее слово, две услу
   assert.deepEqual(ids(""), []);
 });
 
+test("две услуги с одним названием (барбер и шеф-барбер) — находятся обе; разные названия — пусто", () => {
+  const dup = [{ id: 201, title: "Мужская стрижка (Мужские стрижки — Барбер)" }, { id: 202, title: "Мужская стрижка (Мужские стрижки — Шеф-барбер)" }, { id: 203, title: "Детская стрижка" }];
+  assert.deepEqual(altServicesIn(dup, "хочу мужскую стрижку").map(x => x.id), [201, 202]);
+  assert.deepEqual(altServicesIn(dup, "мужскую стрижку и детскую стрижку").map(x => x.id), []);
+});
+
+test("altSnapshot: две услуги с одним названием — время спрашивается по каждой отдельно и объединяется", async () => {
+  const base = ALT_DEFAULT();
+  net.reset();
+  net.altData = () => ({ ...base, services: [
+    { id: 101, title: "Мужская стрижка", category_id: 1, price_min: 7000, price_max: 7000, active: 1, seance_length: 3600 },
+    { id: 104, title: "Мужская стрижка", category_id: 2, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 }],
+  category: [{ id: 1, title: "Барбер" }, { id: 2, title: "Шеф-барбер" }] });
+  const env = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "9103" };
+  await altSnapshot(env, /** @type {any} */ (CLIENTS.alt), Date.now(), "Хочу мужскую стрижку завтра");
+  const t = net.alt.filter(/** @param {string} p */ p => p.includes("/book_times/"));
+  assert.ok(t.some(/** @param {string} p */ p => p.includes("service_ids%5B%5D=101") && !p.includes("104")), t.join("\n"));
+  assert.ok(t.some(/** @param {string} p */ p => p.includes("service_ids%5B%5D=104") && !p.includes("101")), t.join("\n"));
+  net.altData = null;
+});
+
 test("altSnapshot: услуга названа — book_times идёт с ней, не названа — как раньше", async () => {
   const env = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_ALT: "9101" };
   net.reset();

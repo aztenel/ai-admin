@@ -57,11 +57,19 @@ export async function altSnapshot(env, c, nowMs, userText) {
     altCache.set(dk, { at: nowMs, v: dates });
   }
   // услуга уже названа — время спрашиваем с ней (Altegio тогда учитывает её длительность); не вышло или пусто — как раньше, без услуги
-  const svIds = altServicesIn(base.services, userText).map(/** @param {any} x */ x => x.id);
+  // Одно название у нескольких услуг (барбер и шеф-барбер) — спрашиваем по каждой отдельно и объединяем: мастеру, который эту услугу не оказывает, Altegio отвечает 404 (altTimes → пусто).
+  // Длительности у них должны совпадать, иначе не угадываем.
+  const svFound = altServicesIn(base.services, userText);
+  const svAsk = svFound.length && new Set(svFound.map(/** @param {any} x */ x => x.minutes || 0)).size === 1 ? svFound.map(/** @param {any} x */ x => [x.id]) : [];
   const read = async (/** @type {any} */ staffId, /** @type {string[]} */ list) => {
-    const ask = (/** @type {any} */ ids) => Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, ids, nowMs)));
-    let rs = await ask(svIds.length ? svIds : null);
-    if (svIds.length && (rs.some(r => r.status === "rejected") || rs.every(r => r.status === "fulfilled" && !r.value.length))) rs = await ask(null);
+    const one = async (/** @type {string} */ d) => {
+      if (!svAsk.length) return altTimes(env, loc, staffId, d, null, nowMs);
+      const parts = await Promise.all(svAsk.map(ids => altTimes(env, loc, staffId, d, ids, nowMs)));
+      const seen = new Set();
+      return parts.flat().filter(/** @param {any} x */ x => !seen.has(x.time) && seen.add(x.time)).sort(/** @param {any} a @param {any} b */ (a, b) => mins(a.time) - mins(b.time));
+    };
+    let rs = await Promise.allSettled(list.map(one));
+    if (svAsk.length && (rs.some(r => r.status === "rejected") || rs.every(r => r.status === "fulfilled" && !r.value.length))) rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
     return { days: rs.map((r, i) => r.status === "fulfilled" ? altDay(list[i], r.value.map(/** @param {any} x */ x => x.time), nowMs) : null).filter(d => d && d.times.length),
       failed: list.filter((d, i) => rs[i].status === "rejected"), error: (rs.find(r => r.status === "rejected") || {}).reason };
   };
