@@ -17,6 +17,7 @@ import { has, hasnt, KZ, altSlot, altMade, pickSlot } from "../services/selftest
 import { runCase } from "../services/selftest/run.js";
 import { altDiag } from "./altegio.js";
 import { altBase, tgProbe, gaRoute, gaSecret, gaHook, gaCall, gaCode, gaWhy, gaInfo, WA_HINT } from "../services/launch/deps.js";
+import { wzOn, wzHealth } from "../services/channels/wazzapo.js";
 /** @import { Env, Client } from "../lib/types.js" */
 
 // ================= ПРОВЕРКА ЗАПУСКА: автопроверка бота по его паспорту и чек-лист подключений =================
@@ -98,9 +99,15 @@ export async function launchApi(request, env, url, s) {
       if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
         gr.shared && !env.GA_HOOK ? "Задайте в Cloudflare секрет GA_HOOK (любой пароль), потом нажмите «Настроить Green-API»." : "Нажмите «Настроить Green-API» — бот сам впишет адрес вебхука и включит нужные уведомления. Green-API перезапустит инстанс, это до 5 минут.");
     }
-    if (!gr || tok || sec) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
-    if (!gr || tok || sec) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
-    if (tok) {
+    if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: те же имена секретов, другой смысл
+      const pn = env["PHONE_NUMBER_ID_" + up] || c.waPhoneId || "";
+      add("WhatsApp через Wazzapo: настройки", tok && sec && !!pn, `ключ API WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; секрет вебхука APP_SECRET_${up}: ${sec ? "задан" : "нет"}; номер PHONE_NUMBER_ID_${up}: ${pn ? "указан" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} — ключ API из кабинета Wazzapo (раздел API), секрет APP_SECRET_${up} — секрет вебхука (API → Вебхуки), переменная PHONE_NUMBER_ID_${up} — phone_number_id номера.`);
+      add("WhatsApp через Wazzapo: адрес вебхука", null, `${url.origin}/wz/${cid}\nСобытия: message.incoming, message.outgoing, message.status.`, "");
+      if (tok && pn) { const h = await wzHealth(env, env["WA_TOKEN_" + up], pn); add("WhatsApp через Wazzapo: номер", !h.error, h.error || `номер ${h.phone || "?"}${h.name ? ", имя «" + h.name + "»" : ""}${h.quality ? ", качество: " + h.quality : ""}`, "Проверьте ключ API и phone_number_id в кабинете Wazzapo."); }
+    }
+    if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
+    if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
+    if (tok && !wzOn(env, cid)) {
       const pn = env["PHONE_NUMBER_ID_" + up] || c.waPhoneId;
       if (!pn) add("WhatsApp: номер", null, "«Phone number ID» в паспорте не указан — бот ответит с того номера, на который напишут. Чтобы проверить номер здесь, впишите его ID в паспорт.", "");
       else {

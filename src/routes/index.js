@@ -18,6 +18,7 @@ import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/alte
 import { selftestPage } from "../controllers/selftest.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
+import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
 import { handleGreen } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest } from "../controllers/pult.js";
 
@@ -111,6 +112,9 @@ export async function route(request, env, ctx, pult) {
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
+    // ---- WhatsApp клиента через партнёра Meta Wazzapo: вебхук /wz/<id>
+    const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
+    if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? text(await diag(env)) : a || forbid(); }
     if (P === "/altegio/user" && (M === "GET" || M === "POST")) { // ключ пользователя Altegio: читается ли журнал записей
       // каждая причина отказа — своим текстом: вживую 10 октября форма ответила просто «Forbidden», и было непонятно почему

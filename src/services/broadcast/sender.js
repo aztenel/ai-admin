@@ -12,7 +12,8 @@ import { notify } from "../integrations/telegram/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaCall, gaCode, gaWhy, gaKind } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
-import { sendTemplate } from "../integrations/meta/templates.js";
+import { sendTemplate } from "../channels/templates.js";
+import { wzOn, wzHealth } from "../channels/wazzapo.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { BC_HINT, BC_TEMP, BC_ACCOUNT, BC_PARAM, bcWhy } from "./errors.js";
 import { bcOptouts } from "./segments.js";
@@ -63,6 +64,7 @@ export async function bcSendGa(env, digits, b, name, r) {
 /** @param {Env} env @param {any} route */
 export async function bcHealth(env, route) {
   const cr = waCreds(env, route);
+  if (route && wzOn(env, route.client)) return wzHealth(env, cr.token, cr.pnid); // номер через партнёра Meta Wazzapo
   const get = async (/** @type {string} */ f) => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = /** @type {any} */ ({}); try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
   try {
     let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле

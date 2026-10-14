@@ -48,7 +48,9 @@ export const net = {
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
-  reset() { this.ai = []; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; }
+  wz: [],                      // запросы к API Wazzapo (партнёр Meta): { url, path, method, key, body }
+  wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
+  reset() { this.ai = []; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -147,6 +149,14 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.op === "setSettings") { Object.assign(st, rec.body); return J({ saveSettings: true }); }
     if (rec.op === "sendMessage" || rec.op === "sendFileByUrl") return J({ idMessage: "GA" + net.ga.length });
     return J({ message: "unknown method" }, 404);
+  }
+  if (url.startsWith("https://wazzapo.kz/api/v2/external/")) { // Wazzapo: ключ в заголовке X-API-Key
+    const h = init.headers || {}, rec = { url, path: url.slice("https://wazzapo.kz/api/v2/external".length), method: init.method || "GET", key: h["x-api-key"] || "", body: init.body ? JSON.parse(init.body) : null }; net.wz.push(rec);
+    const own = net.wzReply && net.wzReply(rec);
+    if (own) return own;
+    if (rec.path === "/messages/send" && rec.method === "POST") return J({ message_id: "wzm-" + net.wz.length, provider_message_id: "wamid.wz." + net.wz.length, status: "accepted" });
+    if (rec.path.startsWith("/phone-numbers/")) return J({ data: { phone_number_id: rec.path.split("/")[2], display_phone_number: "+7 700 000 00 99", verified_name: "Тест", quality_rating: "GREEN", messaging_limit_tier: "TIER_250" } });
+    return J({ error: "not found" }, 404);
   }
   net.other.push(url);
   throw new Error("unexpected fetch " + url);

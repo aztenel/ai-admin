@@ -12,6 +12,7 @@ import { leadPatch } from "../services/inbox/leads.js";
 import { loadLeads, allLeads, leadTs, logTurns, gaShared, gaRoute, gaWhy, waCreds, WA_HINT } from "../services/inbox/deps.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
+import { wzOn, wzMedia } from "../services/channels/wazzapo.js";
 import { waRoute } from "../services/channels/index.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
@@ -89,6 +90,11 @@ export async function inboxApi(request, env, url, s) {
       if (t.m.url) { const u = new URL(t.m.url); if (u.protocol !== "https:") throw new Error("bad url"); const r = await fetch(u.href); if (!r.ok) throw new Error("media " + r.status); return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || t.m.mime || "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": "inline", "x-content-type-options": "nosniff" } }); }
       const route = waRoute(env, cid, p); if (!route) throw new Error("no route");
       const token = waCreds(env, route).token;
+      if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: файл отдаёт их API
+        const r = await wzMedia(env, token, t.m.id); if (!r) throw new Error("wz media");
+        const type = String(r.headers.get("content-type") || t.m.mime || "application/octet-stream");
+        return new Response(r.body, { headers: { "content-type": /^(audio|image|video)\/|^application\/pdf/.test(type) ? type : "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": /^(audio|image|video)\//.test(type) ? "inline" : "attachment", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } });
+      }
       const meta = await fetch(`${GRAPH}/${encodeURIComponent(t.m.id)}`, { headers: { authorization: "Bearer " + token } });
       if (!meta.ok) throw new Error("media meta " + meta.status);
       const mu = (await meta.json()).url; if (!/^https:\/\//.test(String(mu))) throw new Error("no url");
