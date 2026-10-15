@@ -105,3 +105,12 @@ export async function wzMedia(env, key, id) {
   const f = await fetch(u, { headers: { "x-api-key": key } });
   return f.ok ? f : null;
 }
+
+// номера в кабинете Wazzapo (GET /phone-numbers): чтобы владелец увидел phone_number_id на странице проверки запуска
+/** @param {Env} env @param {string} key @returns {Promise<{ id: string, phone: string }[] | null>} */
+export async function wzNumbers(env, key) {
+  const x = await wzCall(env, key, "GET", "/phone-numbers");
+  if (!x.ok) return null;
+  const list = (x.j && (x.j.data || x.j.phone_numbers || x.j)) || [];
+  return (Array.isArray(list) ? list : []).map((/** @type {any} */ n) => ({ id: String((n && (n.phone_number_id || n.id)) || ""), phone: String((n && (n.display_phone_number || n.phone)) || "") })).filter(n => n.id);
+}
