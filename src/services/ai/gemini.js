@@ -1,6 +1,6 @@
 // @ts-check
 // Поставщик ИИ Gemini (askGemini) с лесенкой «раздумий» THINK_LADDER; состояние THINK_STEP живёт только здесь. Выбор модели и цепочка основной → запасной — внутри askGemini, как раньше.
-import { askClaude, isClaude } from "./claude.js";
+import { askClaude, isClaude, waitMs, MIN_TRY_MS } from "./claude.js";
 
 // «Раздумья» модели перед ответом: на каждый вопрос это лишние секунды, а её «мысли» входят в лимит токенов ответа (ответ обрывается).
 // Поколения Gemini отключают их по-разному, поэтому у модели есть лесенка настроек: берём верхнюю, а если Gemini отвечает 400 про thinking — спускаемся на ступеньку ниже.
@@ -41,7 +41,9 @@ export async function askGemini(env, system, turns, info, only) {
     for (let attempt = 0; attempt < 2; attempt++) {
       const body = JSON.parse(JSON.stringify(payload));
       if (ladder[step]) body.generationConfig.thinkingConfig = ladder[step];
-      const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 9000), t0 = Date.now();
+      const ms0 = waitMs(info);
+      if (ms0 < MIN_TRY_MS) { lastErr = new Error("timeout " + model + " (время на ответ кончилось)"); break; }
+      const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), ms0), t0 = Date.now();
       let r, tx = "", data = null;
       try {
         r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_KEY}`,
@@ -53,14 +55,15 @@ export async function askGemini(env, system, turns, info, only) {
       if (info) Object.assign(info, { model, ms, think: JSON.stringify(ladder[step]) || "по умолчанию", status: r.status });
       if (!r.ok) {
         if (r.status === 400 && step < ladder.length - 1 && /think/i.test(tx)) { step++; THINK_STEP.set(model, step); attempt--; continue; } // модель не знает такой настройки: следующая ступенька, та же модель
-        if ((r.status === 429 || r.status >= 500) && attempt === 0) { await new Promise(s => setTimeout(s, 1200)); continue; }
+        if ((r.status === 429 || r.status >= 500) && attempt === 0 && waitMs(info) > 1200 + MIN_TRY_MS) { await new Promise(s => setTimeout(s, 1200)); continue; }
         if (r.status === 404 || r.status === 400 && mi === 0 && models[1] !== model) { lastErr = new Error("Gemini " + r.status + " " + tx.slice(0, 200)); break; }
         if (r.status === 429 || r.status >= 500) { lastErr = new Error("Gemini " + r.status + " " + tx.slice(0, 200)); break; }
         throw fail("Gemini " + r.status + " " + tx);
       }
       const out = (data?.candidates?.[0]?.content?.parts || []).map((/** @type {any} */ p) => p.text || "").join("").trim();
       const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || "";
-      if (info) Object.assign(info, { reason, thoughts: data?.usageMetadata?.thoughtsTokenCount });
+      const um = data?.usageMetadata || {};
+      if (info) Object.assign(info, { reason, thoughts: um.thoughtsTokenCount, inTok: um.promptTokenCount || 0, outTok: (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0) });
       if (ms > 8000) console.log("gemini slow", model, ms, JSON.stringify(ladder[step]), "thoughts", data?.usageMetadata?.thoughtsTokenCount, reason);
       if (!out) { lastErr = new Error("Gemini empty " + reason); break; }
       if (reason === "MAX_TOKENS" && !/[.!?…)»]\s*$/.test(out.replace(/\n?\[\s*(ЗАЯВКА|ОТМЕНА)\s*\][^\n]*/gi, "").trim())) { lastErr = new Error("Gemini cut off"); break; } // обрезок клиенту не отдаём: пробуем запасную модель

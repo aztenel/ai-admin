@@ -38,6 +38,7 @@ export function mkKV() {
 
 // ---- внешние сервисы
 export const net = {
+  aiUsage: null,               // usageMetadata в ответе Gemini (учёт расходов на ИИ); null — без него, как раньше
   ai: [],                      // очередь ответов ИИ: строка, число (код ошибки), Error или функция (тело запроса) → ответ. Последний ответ повторяется
   gemini: [], tg: [], graph: [], alt: [], other: [],
   tgStatus: 200,               // что отвечает Telegram
@@ -50,7 +51,7 @@ export const net = {
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
   wz: [],                      // запросы к API Wazzapo (партнёр Meta): { url, path, method, key, body }
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
-  reset() { this.ai = []; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; }
+  reset() { this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -121,10 +122,14 @@ globalThis.fetch = async (u, init = {}) => {
     const body = JSON.parse(init.body); net.gemini.push(body);
     let next = net.ai.length > 1 ? net.ai.shift() : net.ai[0];
     if (typeof next === "function") next = next(body);
+    if (next && typeof next.then === "function") { // ответ с задержкой (промис): как настоящий fetch, обрывается по AbortSignal
+      const p = next, sig = init.signal;
+      next = await new Promise((res, rej) => { p.then(res, rej); if (sig) sig.addEventListener("abort", () => rej(new DOMException("The operation was aborted", "AbortError"))); });
+    }
     if (next === undefined) next = "Хорошо.";
     if (next instanceof Error) throw next;
     if (typeof next === "number") return new Response("err", { status: next });
-    return J({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }] });
+    return J({ candidates: [{ content: { parts: [{ text: next }] }, finishReason: "STOP" }], ...(net.aiUsage ? { usageMetadata: net.aiUsage } : {}) });
   }
   if (url.includes("api.telegram.org")) {
     if (init.body && typeof init.body !== "string") { const f = init.body, doc = f.get && f.get("document"); net.tg.push({ url: url.replace(/bot[^/]+/, "bot***"), doc: true, chat_id: f.get("chat_id"), caption: f.get("caption"), name: doc && doc.name, text: doc ? await doc.text() : "" }); return J({ ok: true, result: {} }); }

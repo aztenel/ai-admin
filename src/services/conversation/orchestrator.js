@@ -8,7 +8,7 @@ import { CX_DO, CX_YES, altOther, CX_WORD, caseName, nameKey, samePerson, NOT_NA
 import { svWords, svTrim, svStem, nameToks, cleanName } from "../../lib/names.js";
 import { dowsIn, MON_RU, MON_KK, MON_EN_RE, altDateOf, tidyTags, PAY_TAG_G, PAY_TAG, tagsOf, tagFields } from "./tags.js";
 import { altWhen, altLabel, altSay } from "../booking/replies.js";
-import { PL_MAX, MAX_LEN, HIST_KEEP, MAX_MSGS_PER_SESSION, WA_MAX_DAY, PAUSE_MS, MAX_TURNS, ALT_MAX_ACTIVE, ALT_MAX_ADMIN_LEADS, LEAD_TTL } from "../../config/constants.js";
+import { AI_BUDGET_MS, PL_MAX, MAX_LEN, HIST_KEEP, MAX_MSGS_PER_SESSION, WA_MAX_DAY, PAUSE_MS, MAX_TURNS, ALT_MAX_ACTIVE, ALT_MAX_ADMIN_LEADS, LEAD_TTL } from "../../config/constants.js";
 import { hasClient, CLIENTS } from "../../config/builtin-clients.js";
 import { redact, phonesIn, maskPhones, normPhone } from "../../lib/phone.js";
 import { mergeProfile, putHist } from "../../db/kv/chats.js";
@@ -20,6 +20,7 @@ import { altJournal } from "../integrations/altegio/journal-api.js";
 import { altFromJournal, altPrune, altIsGone, altUserKey } from "../booking/journal.js";
 import { notifyOnce, noteDue } from "../notifications/telegram.js";
 import { askGemini } from "../ai/gemini.js";
+import { trackUsage } from "../ai/usage.js";
 import { checkReply, offers } from "./guard.js";
 import { money } from "../../lib/money.js";
 import { altClaims, CL_DATA_Q } from "./claims.js";
@@ -222,6 +223,8 @@ const plDay = (s, lang, nowMs) => {
 
 // store — KV или память (для автотеста); opts: { channel:'web'|'wa', phone, nowMs, test }
 export async function think(env, store, clientId, histKey, rawText, source, opts = {}) {
+  // общий предел времени на ИИ: ответ в WhatsApp готовится в фоне, а Cloudflare даёт фону около 30 секунд — после ИИ ещё нужно время на запись в Altegio и отправку
+  const aiDeadline = Date.now() + (+env.AI_BUDGET_MS || AI_BUDGET_MS);
   const c = (hasClient(clientId) && CLIENTS[clientId]) || CLIENTS.dent;
   const ctxT = { nowMs: opts.nowMs ?? Date.now() };
   const saved = JSON.parse((await store.get(histKey)) || '{"n":0,"turns":[],"profile":{}}');
@@ -402,8 +405,14 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
 
   const lang = detectLang(text, saved.profile.lang);
   if (lang !== "ru") saved.profile.lang = lang; else delete saved.profile.lang;
+  // каждый ответ ИИ — в учёт расходов (по бизнесу и дню); в WhatsApp запись учёта идёт после ответа клиенту
+  const askAndTrack = async system => {
+    const info = { deadline: aiDeadline }, out = await askGemini(env, system, turns, info);
+    if (!opts.test) { const job = () => trackUsage(env, c.id, info, nowMs); if (opts.defer) opts.defer(job); else await job(); }
+    return out;
+  };
   const sys = systemPrompt(cc, ctx) + (lang === "en" ? "\n\nЯЗЫК: клиент пишет по-английски — весь ответ только на английском языке. Служебные строки [ЗАЯВКА] и [ОТМЕНА] пиши как в правилах, по-русски." : lang === "kk" ? "\n\nЯЗЫК: клиент пишет по-казахски — весь ответ только на казахском языке (кириллицей). Служебные строки [ЗАЯВКА] и [ОТМЕНА] пиши как в правилах, по-русски." : "");
-  const ask = async extra => tidyTags(String(await askGemini(env, extra ? sys + extra : sys, turns)).replace(/[^\S\n]{2,}/g, " ").replace(/\n{3,}/g, "\n\n")); // цепочки пробелов и пустых строк в ответе ИИ сжимаем
+  const ask = async extra => tidyTags(String(await askAndTrack(extra ? sys + extra : sys)).replace(/[^\S\n]{2,}/g, " ").replace(/\n{3,}/g, "\n\n")); // цепочки пробелов и пустых строк в ответе ИИ сжимаем
   let raw;
   try { raw = await ask(); }
   catch (e) {

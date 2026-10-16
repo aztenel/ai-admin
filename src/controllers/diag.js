@@ -4,6 +4,7 @@ import { CLIENTS } from "../config/builtin-clients.js";
 import { GRAPH } from "../config/constants.js";
 import { askGemini } from "../services/ai/gemini.js";
 import { isClaude } from "../services/ai/claude.js";
+import { usageReport } from "../services/ai/usage.js";
 import { systemPrompt } from "../services/conversation/prompt.js";
 import { WA_HINT } from "../services/inbox/deps.js";
 /** @import { Env } from "../lib/types.js" */
@@ -55,6 +56,7 @@ export async function diag(env) {
   }
   out.push("Altegio: " + (env.ALTEGIO_PARTNER ? "ключ разработчика задан ✅ — проверка расписания: /altegio?key=…" : "не настроен (нужен Secret ALTEGIO_PARTNER)"));
   out.push("Модели: " + (env.MODEL || "gemini-flash-lite-latest") + " → запасная " + (env.MODEL_FALLBACK || "gemini-flash-latest"));
+  if (env.KV && !kvErr) out.push(...await usageReport(env, Date.now()));
   if (!key && !(useClaude && env.ANTHROPIC_KEY)) return out.join("\n");
   const t0 = Date.now(), lbl = isClaude(env.MODEL) ? "Тест Claude" : "Тест Gemini";
   try { const r = await askGemini(env, "Ответь одним словом.", [{ role: "user", text: "Скажи: работает" }]); out.push(`${lbl}: ✅ «${r.slice(0, 40)}» за ${Date.now() - t0} мс`); }
