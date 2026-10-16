@@ -2,10 +2,10 @@
 // «Мои боты» (/studio, /api/studio/*): список паспортов, проверка, сохранение, ключи сотрудников, удаление.
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { ADMIN_CSS } from "../lib/css.js";
-import { CLIENTS } from "../config/builtin-clients.js";
+import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { NICHES } from "../config/niches.js";
 import { sha256Hex } from "../services/auth/session.js";
-import { compileClient, syncClients } from "../services/tenants/passport.js";
+import { compileClient, syncClients, applyStaffKeys } from "../services/tenants/passport.js";
 import { freeSlots } from "../services/schedule/slots.js";
 import { altLoc } from "../services/booking/book.js";
 import { kvRetry } from "../services/studio/deps.js";
@@ -67,8 +67,13 @@ export async function studioApi(request, env, url, s) {
   }
   if (P === "/api/studio/key") { // новый ключ для сотрудников клиента: показываем один раз, в хранилище — только его хеш
     const all = await loadCfgs(env);
-    if (!Object.hasOwn(all, id)) return jsonP({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
     const raw = crypto.getRandomValues(new Uint8Array(15)), key = [...raw].map(x => "abcdefghjkmnpqrstuvwxyz23456789"[x % 31]).join("").replace(/(.{5})(?=.)/g, "$1-");
+    if (!Object.hasOwn(all, id) && hasClient(id) && !CLIENTS[id].dynamic) { // встроенный бот (Winchester до переноса в паспорт): отпечаток — в KV skeys
+      try { await kvRetry(async () => { const m = JSON.parse((await env.KV.get("skeys")) || "{}") || {}; m[id] = await sha256Hex(key); await env.KV.put("skeys", JSON.stringify(m)); applyStaffKeys(JSON.stringify(m)); }); }
+      catch (e) { return jsonP({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
+      return jsonP({ ok: true, key });
+    }
+    if (!Object.hasOwn(all, id)) return jsonP({ error: "Ключ можно выдать только боту, созданному на этой странице." }, 400);
     all[id].keyHash = await sha256Hex(key);
     try { await kvRetry(() => env.KV.put("cfg:all", JSON.stringify(all))); } catch (e) { return jsonP({ error: "не удалось сохранить — попробуйте ещё раз" }, 500); }
     await syncClients(env, true);
@@ -140,7 +145,9 @@ function card(c){var d=el('div','card');d.appendChild(el('b','',c.name));d.appen
  function a(h,x,p){var e=el('a','btn'+(p?' p':''),x);e.href=h;r.appendChild(e)}
  if(c.dynamic){var b=el('button','btn p','Изменить');b.onclick=function(){openEdit(c.id)};r.appendChild(b)}
  a('/?c='+c.id,'Чат');a('/inbox?c='+c.id,'Пульт чатов');a('/leads?c='+c.id,'Заявки');if(c.dynamic){a('/broadcast?c='+c.id,'Рассылки');a('/launch?c='+c.id,'Проверка запуска')}
- d.appendChild(r);return d}
+ d.appendChild(r);
+ if(!c.dynamic){var kb=el('button','btn',c.key?'Новый ключ сотрудника':'Ключ сотрудника');kb.onclick=function(){if(c.key&&!confirm('Выдать новый ключ? Прежний ключ сотрудников перестанет работать.'))return;api('/api/studio/key',{id:c.id}).then(function(x){var o=el('div','msg '+(x.error?'e':'g'));if(x.error)o.textContent=x.error;else{o.appendChild(el('div','','Ключ сотрудника «'+c.name+'» (сохраните сейчас — больше он не покажется):'));o.appendChild(el('pre','',x.key));o.appendChild(el('div','','Страница входа: '+location.origin+'/inbox?c='+c.id))}d.appendChild(o);c.key=true;kb.textContent='Новый ключ сотрудника'})};r.appendChild(kb)}
+ return d}
 function fill(cfg){FIELDS.forEach(function(k){var e=$('f_'+k);if(e)e.value=cfg[k]!==undefined&&cfg[k]!==null?cfg[k]:(k==='step'?60:k==='bookDays'?3:k==='booking'?'altegio':k==='niche'?'barber':'')});$('f_off').checked=!!cfg.off;rows()}
 function rows(){var b=$('f_booking').value;$('altrow').hidden=b!=='altegio';$('manrow').hidden=b==='altegio';$('steprow').hidden=b!=='manual';$('kindrow').hidden=$('f_niche').value!=='other'}
 function read(){var o={id:cur||$('f_id').value.trim().toLowerCase(),isNew:!cur,off:$('f_off').checked};FIELDS.forEach(function(k){o[k]=$('f_'+k).value});return o}

@@ -128,13 +128,25 @@ export function compileClient(cfg) {
 // загрузка паспортов: раз в минуту на экземпляр воркера — одно чтение KV. Паспорт с ошибкой не загружается (остаётся прежняя версия бота)
 /** @type {{ at: number, raw: string | null, ids: string[] }} */
 export const DYN = { at: 0, raw: null, ids: [] };
+// ключи сотрудников встроенных ботов (Winchester живёт в коде до переноса в паспорт): в KV skeys — только отпечатки { id: sha256 }.
+// У ботов из паспорта отпечаток лежит в самом паспорте (cfg:all)
+/** @type {Set<string>} */
+const SKEY_IDS = new Set();
+/** @param {string | null | undefined} raw */
+export function applyStaffKeys(raw) {
+  /** @type {Record<string, any>} */ let map = {};
+  try { map = raw ? JSON.parse(raw) || {} : {}; } catch (e) { console.log("skeys parse", String(e)); return; }
+  for (const id of [...SKEY_IDS]) if (!map[id] && CLIENTS[id]) { delete CLIENTS[id].keyHash; SKEY_IDS.delete(id); }
+  for (const [id, h] of Object.entries(map)) if (BUILTIN.has(id) && CLIENTS[id] && typeof h === "string") { CLIENTS[id].keyHash = h; SKEY_IDS.add(id); }
+}
 /** @param {Env} env @param {boolean} [force] */
 export async function syncClients(env, force) {
   const now = Date.now();
   if (!force && DYN.at && Math.abs(now - DYN.at) < 60e3) return;
-  let raw;
-  try { raw = (await env.KV.get("cfg:all")) || ""; } catch (e) { console.log("cfg read", String(e)); return; } // хранилище не читается — работаем с тем, что уже загружено
+  let raw, sk;
+  try { [raw, sk] = await Promise.all([env.KV.get("cfg:all"), env.KV.get("skeys")]); raw = raw || ""; } catch (e) { console.log("cfg read", String(e)); return; } // хранилище не читается — работаем с тем, что уже загружено
   DYN.at = now;
+  applyStaffKeys(sk);
   if (raw === DYN.raw) return;
   let all = {};
   try { all = raw ? JSON.parse(raw) || {} : {}; } catch (e) { console.log("cfg parse", String(e)); return; }
