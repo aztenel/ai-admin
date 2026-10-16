@@ -35,3 +35,16 @@ test("ключ демо-бота не выдаётся тому, кого нет
   const { b: own } = await login(s, "owner-key-123456");
   assert.equal((await own.post("/api/studio/key", { id: "nosuchbot" })).status, 400);
 });
+
+test("задан и секрет KEY_<ID>, и ключ со страницы: новый ключ со страницы закрывает прежние сессии (автопроверка безопасности, 16.10.2026)", async () => {
+  net.reset();
+  const s = mk({ KEY_WINCHESTER: "env-staff-key-abcdef" });
+  const { b: own } = await login(s, "owner-key-123456");
+  const d = await (await own.post("/api/studio/key", { id: "winchester" })).json();
+  const { b: st } = await login(s, d.key);
+  assert.equal((await st.go("/api/inbox/list?c=winchester")).status, 200);
+  await own.post("/api/studio/key", { id: "winchester" });
+  assert.notEqual((await st.go("/api/inbox/list?c=winchester")).status, 200, "сессия по прежнему ключу закрыта");
+  const { b: envSt } = await login(s, "env-staff-key-abcdef");
+  assert.equal((await envSt.go("/api/inbox/list?c=winchester")).status, 200, "ключ из Cloudflare по-прежнему работает");
+});

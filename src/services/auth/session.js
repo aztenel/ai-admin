@@ -19,6 +19,9 @@ export async function sha256Hex(s) { return [...new Uint8Array(await crypto.subt
 async function staffMark(env, cid) {
   if (!hasClient(cid)) return "";
   const ek = env["KEY_" + cid.toUpperCase()], kh = CLIENTS[cid].keyHash;
+  // заданы оба ключа (секрет KEY_<ID> и ключ со страницы «Мои боты»): отпечаток от обоих — смена любого закрывает прежние сессии.
+  // Один ключ — отпечаток прежний, уже открытые сессии не сбрасываются
+  if (ek && kh) return (await sha256Hex("k:" + ek + "|" + kh)).slice(0, 10);
   return ek ? (await sha256Hex("k:" + ek)).slice(0, 10) : kh ? String(kh).slice(0, 10) : "";
 }
 /** @param {Env} env @param {string} role @param {string} cid @returns {Promise<string>} */
