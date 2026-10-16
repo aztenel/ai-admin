@@ -55,3 +55,18 @@ test("расходы на ИИ копятся по бизнесу и дню и �
   const page = await (await s.call("/diag?key=owner-key-123456")).text();
   assert.ok(/Расходы на ИИ/.test(page) && /Демо Барбер/.test(page) && /6\s?000/.test(page), page.slice(-800));
 });
+
+test("модель не принимает temperature — бот запоминает это и не тратит лишний запрос на каждое сообщение", async () => {
+  const real = globalThis.fetch, bodies = [];
+  globalThis.fetch = /** @type {any} */ (async (_u, init) => {
+    const b = JSON.parse(init.body); bodies.push(b);
+    if ("temperature" in b) return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "temperature is not supported for this model" } }), { status: 400 });
+    return new Response(JSON.stringify({ content: [{ type: "text", text: "Здравствуйте!" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 2 } }), { status: 200 });
+  });
+  try {
+    const env = /** @type {any} */ ({ ANTHROPIC_KEY: "k" });
+    await askClaude(env, "sys", [{ role: "user", text: "Привет" }], "claude-test-notemp");
+    await askClaude(env, "sys", [{ role: "user", text: "Ещё" }], "claude-test-notemp");
+    assert.equal(bodies.length, 3, "первый раз — отказ и повтор, второй раз — сразу без temperature");
+  } finally { globalThis.fetch = real; }
+});

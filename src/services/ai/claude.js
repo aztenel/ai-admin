@@ -9,6 +9,7 @@ export const isClaude = model => /^claude-/i.test(String(model || ""));
 // Время на одну попытку: 9 с, но не дольше общего предела ответа (info.deadline — отметка времени, ставит think()).
 // Меньше MIN_TRY_MS не пробуем: ответ всё равно не успеет прийти
 export const MIN_TRY_MS = 800;
+const NO_TEMP = new Set(); // модели, которые отказали из-за temperature (помним, пока жив экземпляр воркера)
 /** @param {Record<string, any>=} info @returns {number} */
 export const waitMs = info => Math.min(9000, info && info.deadline ? info.deadline - Date.now() : 9000);
 /**
@@ -25,7 +26,7 @@ export async function askClaude(env, system, turns, model, info) {
   const messages = turns.reduce((/** @type {any[]} */ a, /** @type {Turn} */ t) => { const role = t.role === "model" ? "assistant" : "user", l = a[a.length - 1]; if (l && l.role === role) l.content += "\n" + t.text; else a.push({ role, content: t.text }); return a; }, []);
   if (!messages.length || messages[0].role !== "user") messages.unshift({ role: "user", content: "(клиент открыл чат)" }); // Claude требует, чтобы диалог начинался с клиента
   /** @type {Record<string, any>} */
-  const body = { model, max_tokens: 2048, temperature: 0.3, system, messages };
+  const body = { model, max_tokens: 2048, ...(NO_TEMP.has(model) ? {} : { temperature: 0.3 }), system, messages };
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     const ms0 = waitMs(info);
@@ -40,7 +41,7 @@ export async function askClaude(env, system, turns, model, info) {
     const ms = Date.now() - t0;
     if (info) Object.assign(info, { model, ms, think: "у Claude нет", status: r.status });
     if (!r.ok) {
-      if (r.status === 400 && "temperature" in body && /temperature/i.test(tx)) { delete body.temperature; attempt--; continue; } // эта модель не принимает temperature
+      if (r.status === 400 && "temperature" in body && /temperature/i.test(tx)) { delete body.temperature; NO_TEMP.add(model); attempt--; continue; } // эта модель не принимает temperature (Claude Haiku 5.5): запоминаем, чтобы не тратить лишний запрос на каждое сообщение
       if ((r.status === 429 || r.status >= 500) && attempt === 0 && waitMs(info) > 1200 + MIN_TRY_MS) { await new Promise(s => setTimeout(s, 1200)); lastErr = new Error("Claude " + r.status); continue; }
       throw new Error("Claude " + r.status + " " + tx.slice(0, 200));
     }
