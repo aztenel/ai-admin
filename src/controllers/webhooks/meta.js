@@ -10,14 +10,13 @@ import { fixedOf, nicheOf, seenBefore, waCoex, markOptout } from "../../services
 import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
-import { thinkSafe, dropAsk, FALLBACK, STOP } from "../../services/conversation/orchestrator.js";
+import { thinkSafe, dropAsk, STOP } from "../../services/conversation/orchestrator.js";
+import { consentText, fallbackText, mediaReply } from "../../services/conversation/fallbacks.js";
+import { detectLang } from "../../services/conversation/language.js";
 import { readHist, putHist, logTurns, waErr, notify } from "../../services/channels/deps.js";
 /** @import { Env } from "../../lib/types.js" */
 
-/** @param {Env} env @param {any} c */
-export function consentText(env, c) {
-  return (env.CONSENT_TEXT || "Вам отвечает AI-ассистент «{name}». Продолжая переписку, вы соглашаетесь на обработку ваших данных для записи. Позвать администратора — напишите «администратор».").replace("{name}", c.name);
-}
+export { consentText }; // текст согласия на трёх языках — services/conversation/fallbacks.js
 
 const hooks = new Map(); // вебхук без подписи: запросов в минуту с адреса
 /** @param {any} request */
@@ -57,7 +56,7 @@ export async function handleWAText(env, channel, fromDigits, text, send, wx) {
   try { return await waText(env, channel, fromDigits, text, say, phone, wx); }
   catch (/** @type {any} */ e) {
     console.log("wa text", String((e && e.stack) || e));
-    if (!sent) { try { await send(FALLBACK); } catch (e2) { console.log("wa send", String(e2)); } }
+    if (!sent) { try { await send(fallbackText(detectLang(text, ""))); } catch (e2) { console.log("wa send", String(e2)); } }
     try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }
@@ -104,7 +103,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     if (r.isNew) {
       let known = false; // сбой хранилища на отметке о согласии не должен оставить клиента без ответа
       try { known = !!(await env.KV.get(consentKey)); if (!known) await env.KV.put(consentKey, "1", { expirationTtl: 30 * 86400 }); } catch (e) { console.log("consent", String(e)); }
-      if (!known) await send(consentText(env, CLIENTS[niche]));
+      if (!known) await send(consentText(env, CLIENTS[niche], detectLang(text, ""))); // на языке первого сообщения клиента
     }
     if (r.reply) await send(r.reply);
   } finally { await Promise.allSettled(later.map(/** @param {any} f */ f => f())); } // уведомления администратору — после ответа клиенту
@@ -149,10 +148,7 @@ export async function handleWAMedia(env, channel, fromDigits, kind, link, captio
   };
   if (paused && !caption) return note("");
   if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, wx); }
-  const reply = kind === "audio" ? "Я пока не умею слушать голосовые — напишите, пожалуйста, текстом. Сообщение передала администратору."
-    : kind === "sticker" ? "Чем могу помочь? Напишите, пожалуйста, вопрос текстом."
-    : kind === "location" || kind === "contact" ? "Спасибо, передала администратору. Чем ещё могу помочь?"
-    : "Спасибо, файл получила и передала администратору. Напишите, пожалуйста, текстом, чем помочь?";
+  const reply = mediaReply(kind, (h && h.profile && h.profile.lang) || "ru"); // на языке чата
   if (kind === "sticker" && (h?.profile?.cxAsk || h?.profile?.mvAsk)) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }
   await note(reply);
   return send(reply);

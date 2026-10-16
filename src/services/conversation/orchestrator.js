@@ -13,6 +13,7 @@ import { hasClient, CLIENTS } from "../../config/builtin-clients.js";
 import { redact, phonesIn, maskPhones, normPhone } from "../../lib/phone.js";
 import { mergeProfile, putHist } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
+import { safeText, safeAsk, fallbackText, cutOffText } from "./fallbacks.js";
 import { notify } from "../integrations/telegram/client.js";
 import { altLoc, altSnapshot, altSelfCancel, altBook, altDry } from "../booking/book.js";
 import { altJournal } from "../integrations/altegio/journal-api.js";
@@ -46,7 +47,7 @@ export const ATTACK = new RegExp([
 const STAFF_W = "(?:человек|оператор|администратор|менеджер|сотрудник)";
 
 export const HANDOFF = new RegExp([
-  "^(администратор|админ|оператор|менеджер|человек|живой человек|әкімші|operator|human|manager)[\\s.!?]*$",
+  "^(администратор|админ|оператор|менеджер|человек|живой человек|әкімші|administrator|admin|operator|human|manager)[\\s.!?]*$", // administrator — так написано в согласии по-английски
   "(позов|позват|соедин|переключ|свяжите|пригласи)[а-яё]*[,\\s]+(\\S+\\s+){0,2}(с\\s+|на\\s+|к\\s+)?(жив|реальн|" + STAFF_W + ")", // «Позовите, пожалуйста, администратора» — с запятой после глагола
   STAFF_W + "[а-яё]*\\s+(позвать|позовите|пригласите|пригласить)(?![а-яё])",
   "жив(ой|ого|ым|ому|ая|ую)\\s+" + STAFF_W,
@@ -100,9 +101,8 @@ function nextOpen(c, nowMs) {
 }
 
 // запасной ответ, когда защита отклонила оба черновика ИИ: бот без записи предлагает оставить контакты, остальные — подобрать время
-const safeAsk = c => c.booking === "none" ? `${c.safe} Оставьте, пожалуйста, имя и телефон — администратор свяжется с вами.` : `${c.safe} Подобрать вам удобное время?`;
 
-export const FALLBACK = "Спасибо за сообщение! Администратор ответит вам в ближайшее время.";
+export const FALLBACK = fallbackText("ru");
 
 // ---- ответ на вопрос бота «Отменить вашу запись …?». Подтверждение — только когда всё сообщение целиком об этом: «да», «да, отменить», «+», «yes, cancel», «иә».
 // «Давайте оставим», «Ок, а во сколько она?», «да, но на 13:00» — не подтверждение: такое сообщение разбирает ИИ
@@ -409,7 +409,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   catch (e) {
     console.log("gemini", String(e));
     if (!opts.test) await notifyOnce(env, "ai:" + histKey, `⚠️ Бот не смог ответить клиенту (сбой ИИ) — ${c.name}\n${who}\nСообщение: «${text.slice(0, 200)}»\nОтветьте клиенту сами.${chatLink}`, c.id);
-    const reply = /cut off|timeout/.test(String(e)) ? "Извините, связь прервалась. Повторите, пожалуйста, вопрос?" : FALLBACK;
+    const reply = /cut off|timeout/.test(String(e)) ? cutOffText(lang) : fallbackText(lang);
     needs("ai");
     try { await save(text, reply); } catch (e2) { console.log("history", String(e2)); } // чат начат: следующее сообщение не должно считаться новым диалогом
     return { reply, lead: null, error: String(e).slice(0, 200), isNew };
@@ -418,7 +418,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const raw0 = raw; // первый ответ ИИ: при записи в Altegio служебные строки берём и из него — запись проверяет само расписание
   const strip = s => s.replace(/\n?\[\s*(ЗАЯВКА|ОТМЕНА)\s*\][^\n]*/gi, "").replace(PAY_TAG_G, "").trim();
   const payHead = { ru: "Реквизиты для оплаты:", kk: "Төлем деректемелері:", en: "Payment details:" }[lang] || "Реквизиты для оплаты:";
-  const body = s => strip(s) || (c.pay && PAY_TAG.test(s) ? payHead : c.safe); // ИИ ответил одной меткой реквизитов
+  const body = s => strip(s) || (c.pay && PAY_TAG.test(s) ? payHead : safeText(c, lang)); // ИИ ответил одной меткой реквизитов
   const hasTag = s => /\[\s*(ЗАЯВКА|ОТМЕНА)\s*\]/i.test(s);
   let checked = checkReply(cc, body(raw), userAll, ctx), guard = null;
   if (checked.why) {
@@ -433,10 +433,10 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       else {
         console.log("guard2", clientId, c2.why);
         const s = getSlots(cc, ctx)[0];
-        checked = { text: /время/.test(c2.why) && s ? `На это время записи нет. Ближайшее свободное — ${s.rel || s.label} в ${s.times.slice(0, 2).join(" или в ")}. Какое подойдёт?` : safeAsk(c), why: null };
+        checked = { text: /время/.test(c2.why) && s ? altSay(lang, { reason: "plNoTime", day: plDay(s, lang, nowMs), times: s.times.slice(0, 2) }) : safeAsk(c, lang), why: null };
         raw = ""; guard += " → заготовка";
       }
-    } catch (e) { checked = { text: safeAsk(c), why: null }; raw = ""; }
+    } catch (e) { checked = { text: safeAsk(c, lang), why: null }; raw = ""; }
   }
   // ИИ написал «записала», «отменила» или «перенесла», а служебной строки нет — значит, ничего не сделано. Один раз просим ответить заново: со строкой либо без таких слов
   if (raw && !hasTag(raw) && !altDown) {
@@ -481,7 +481,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const draftOnly = raw === "";                                    // защита заменила ответ ИИ заготовкой
   const leaked = draftOnly && /^leak/.test(guard || "");           // ИИ пересказывал инструкции — его служебным строкам не верим
   const aiSilent = !draftOnly && !strip(raw).replace(/\*\*|__|`|#/g, "").trim(); // ИИ не написал клиенту ничего, кроме служебных строк и разметки
-  if (!reply.trim()) reply = c.safe;                               // пустое сообщение клиенту не отправляем
+  if (!reply.trim()) reply = safeText(c, lang);                               // пустое сообщение клиенту не отправляем
   // состояние до разбора ответа: к нему возвращаемся, если заявка нигде не сохранилась (имя, подпись и список заявок — тоже, иначе повтор той же заявки сочтётся дублем)
   const prev = { leadId: saved.profile.leadId, booked: saved.profile.booked, cbAt: saved.profile.cbAt, adminLeads: saved.profile.adminLeads,
     ...(plain ? { leadSig: saved.profile.leadSig, name: saved.profile.name, lgone: saved.profile.lgone, leads: saved.profile.leads ? JSON.parse(JSON.stringify(saved.profile.leads)) : undefined } : {}) };
@@ -1318,7 +1318,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       } else if (!opts.test) notes.push(`⚠️ Заявка не сохранилась в списке заявок (сбой хранилища), все данные — в сообщениях выше — ${c.name}`);
     }
   }
-  reply = reply.replace(PAY_TAG_G, "").trim() || c.safe;
+  reply = reply.replace(PAY_TAG_G, "").trim() || safeText(c, lang);
   if (c.pay && !reply.includes(c.pay) && (PAY_TAG.test(raw0 || "") || PAY_TAG.test(raw || "") || PAY_Q.test(text))) reply = reply + "\n\n" + c.pay; // реквизиты — дословно из паспорта
   const botTurn = { role: "model", text: reply, t: nowMs };
   // чат требует внимания администратора: просьба об отмене или переносе, заявка, которую нужно подтвердить или записать вручную, звонок
@@ -1368,7 +1368,7 @@ export async function thinkSafe(env, store, clientId, histKey, rawText, source, 
     let msg = ""; try { msg = redact(String(rawText).replace(/[\u0000-\u001f]/g, " ")).slice(0, 200); } catch (e2) {}
     try { await notifyOnce(env, "err:" + histKey, `⚠️ Сбой бота — клиент мог не получить ответ, ответьте ему сами — ${c.name}\n${opts.phone || "веб-чат"}\nСообщение: «${msg}»\n${String(e).slice(0, 200)}`, c.id); } catch (e2) {}
     try { await dropAsk(store, histKey); } catch (e2) {} // вопрос «Отменить запись …?» после сбоя больше не действует
-    return { reply: FALLBACK, lead: null, error: String(e).slice(0, 200), offer: [] };
+    return { reply: fallbackText(detectLang(rawText, "")), lead: null, error: String(e).slice(0, 200), offer: [] };
   }
 }
 
