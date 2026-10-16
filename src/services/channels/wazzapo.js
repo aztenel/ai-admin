@@ -4,6 +4,7 @@
 // «стоп», пульт, напоминания и рассылки работают без отдельной ветки кода.
 /** @import { Env } from "../../lib/types.js" */
 import { wzOn, wzSend, wzCall, WZ_HINT } from "../integrations/wazzapo/client.js";
+import { hash } from "../../lib/crypto.js";
 
 export { wzOn };
 
@@ -14,12 +15,20 @@ export async function wzMarkOwn(env, ids) {
 }
 /** @param {Env} env @param {string} id @returns {Promise<boolean>} */
 async function isOwn(env, id) { try { return !!id && !!(await env.KV.get("wzout:" + id)); } catch (e) { return false; } }
+// отметка по тексту ставится ДО отправки: событие message.outgoing может прийти раньше, чем Wazzapo ответит на отправку,
+// и без id в ответе (или с другим id) бот принял бы свой ответ за ответ человека и замолчал на 2 часа
+/** @param {string} to @param {string} text */
+const ownKey = (to, text) => `wzt:${digits(to)}:${hash(String(text || "").trim())}`;
+/** @param {Env} env @param {string} to @param {string} text @returns {Promise<boolean>} */
+async function isOwnText(env, to, text) { try { return !!String(text || "").trim() && !!(await env.KV.get(ownKey(to, text))); } catch (e) { return false; } }
 
 /**
  * Отправка через Wazzapo с отметкой «это сообщение бота». payload — как в документации Wazzapo.
  * @param {Env} env @param {string} key @param {Record<string, any>} payload
  */
 export async function wzSendOwn(env, key, payload) {
+  const body = payload.text && payload.text.body;
+  if (body) { try { await env.KV.put(ownKey(payload.to, body), "1", { expirationTtl: 600 }); } catch (e) { console.log("wz own", String(e)); } }
   const r = await wzSend(env, key, payload);
   if (r.ok) await wzMarkOwn(env, r.ids || []);
   return r;
@@ -61,7 +70,7 @@ export async function wzToMeta(env, body) {
   if (ev === "message.incoming") {
     const m = d.message || {}, from = digits(m.from || (d.contact && d.contact.phone));
     if (!from) return null;
-    const msg = wzMsg(m, from);
+    const msg = wzMsg({ ...m, id: m.id || d.message_id || d.provider_message_id }, from); // где лежит id, документация не уточняет: без id сообщение терялось бы
     return msg ? wrap("messages", { contacts: [{ wa_id: from, profile: { name: String((d.contact && d.contact.name) || "") } }], messages: [msg] }) : null;
   }
   if (ev === "message.outgoing") { // ответ человека — с телефона или из кабинета Wazzapo: в чат как ответ администратора, бот замолкает
@@ -71,6 +80,7 @@ export async function wzToMeta(env, body) {
     const to = digits(m.to || (d.contact && d.contact.phone));
     if (!to) return null;
     const echo = wzMsg(m, digits(m.from)) || { type: "text", text: { body: "" } };
+    if (echo.type === "text" && await isOwnText(env, to, echo.text.body)) return null;
     return wrap("smb_message_echoes", { message_echoes: [{ ...echo, to, id }] });
   }
   if (ev === "message.status") { // недоставленные — как статус failed у Meta (пометка в рассылках и сигнал администратору)

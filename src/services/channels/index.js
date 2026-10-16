@@ -17,9 +17,18 @@ export async function nicheOf(env, channel, fromDigits, wx) {
   return hasClient(fixed) ? fixed : await env.KV.get(`wa:niche:${channel}:${fromDigits}`);
 }
 
-// сообщение уже обработано? Сбой хранилища на этой отметке не должен оставить клиента без ответа: тогда считаем сообщение новым
+// сообщение уже обработано? Сбой хранилища на этой отметке не должен оставить клиента без ответа: тогда считаем сообщение новым.
+// KV не атомарен: две одновременные доставки одного сообщения (вебхук добавлен в кабинете дважды, повтор провайдера) обе читают «не видели»
+// и бот отвечает дважды. Поэтому сначала — память экземпляра Worker (одновременные запросы обычно попадают в один экземпляр), потом KV
+/** @type {WeakMap<object, Map<string, number>>} */
+const recent = new WeakMap();
 /** @param {Env} env @param {string} id @returns {Promise<boolean>} */
 export async function seenBefore(env, id) {
+  const mem = recent.get(env.KV) || new Map(), now = Date.now();
+  if (!recent.has(env.KV)) recent.set(env.KV, mem);
+  if ((mem.get(id) || 0) > now - 600e3) return true;
+  if (mem.size > 5000) { for (const [k, t] of mem) if (t < now - 600e3) mem.delete(k); if (mem.size > 5000) mem.clear(); }
+  mem.set(id, now);
   try {
     if (await env.KV.get("seen:" + id)) return true;
     await env.KV.put("seen:" + id, "1", { expirationTtl: 86400 });

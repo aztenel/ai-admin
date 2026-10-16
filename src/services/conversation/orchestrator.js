@@ -1324,13 +1324,18 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   // чат требует внимания администратора: просьба об отмене или переносе, заявка, которую нужно подтвердить или записать вручную, звонок
   if (newLeads.length) { const k = newLeads[newLeads.length - 1]; if (k.kind === "cancel" || k.kind === "change") needs("req"); else if (k.kind === "callback") needs("call"); else if (!(k.altegio && k.altegio.record_id)) needs("lead"); }
   else if (guard && /сбой/.test(guard)) needs("ai");
+  let taken = false; // пока ИИ писал ответ, чат забрал человек (ответил с телефона или из пульта)
   const saveHist = async () => {
     let n = saved.n + 1, outTurns = saved.turns.concat([userTurn, botTurn]), prof = saved.profile, cur = null;
+    taken = false;
     try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) { console.log("history read", String(e)); } // не прочиталось — пишем без слияния
     if (cur && cur.n > saved.n) { // пока бот отвечал, в этот же чат пришло и обработалось другое сообщение — его не затираем
       n = cur.n + 1;
-      outTurns = (cur.turns || []).concat([userTurn, botTurn]);
+      // человек уже ответил клиенту — второй ответ бота поверх него не нужен. Если бот успел что-то сделать (запись, отмена, заявка), ответ уходит: клиент должен об этом знать
+      taken = wa && (cur.profile?.pausedUntil || 0) > nowMs && !((JSON.parse(base).pausedUntil || 0) > nowMs) && !added.length && !removed.length && !newLeads.length;
+      outTurns = (cur.turns || []).concat(taken ? [userTurn] : [userTurn, botTurn]);
       prof = mergeProfile(cur.profile || {}, saved.profile, JSON.parse(base), added, removed, droppedPend);
+      if (taken) { if (cur.profile.need) prof.need = cur.profile.need; else delete prof.need; } // человек уже ответил: «ждёт ответа» не поднимаем
       if (alt || altDown) prof.booked = bookedText((prof.bookings || []).filter(x => x.date >= today), prof.pend || [], prof.cbAt);
     }
     await putHist(store, histKey, { n, turns: outTurns.slice(-HIST_KEEP), profile: prof });
@@ -1350,6 +1355,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   if (added.length && !opts.test) { try { await remindPlan(env, c, histKey, added, nowMs); } catch (e) { console.log("remind plan", String(e)); } }
   // уведомления администратору: в веб-чате и WhatsApp — уже после ответа клиенту
   if (notes.length) { if (opts.defer) opts.defer(() => sendNotes(notes)); else await sendNotes(notes); }
+  if (taken) return { reply: "", paused: true, lead: null, isNew, offer: [] };
   return { reply, lead, leads: newLeads.length > 1 ? newLeads.slice() : undefined, cancel, cancelDone, offer: lead ? [] : offers(cc, ctx, reply), guard, isNew };
 }
 

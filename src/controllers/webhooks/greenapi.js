@@ -7,7 +7,7 @@ import { nicheOf, seenBefore } from "../../services/channels/index.js";
 import { sendGreen } from "../../services/channels/greenapi.js";
 import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/holds.js";
 import { readHist, putHist, kvRetry, gaShared } from "../../services/channels/deps.js";
-import { handleWAText, handleWAMedia } from "./meta.js";
+import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {any} md */
@@ -49,8 +49,7 @@ export async function handleGreen(body, env, origin, r) {
   const id = body.idMessage;
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
-  /** @param {any} t */
-  const send = t => sendGreen(env, chatId, t, r);
+  const send = watchSend(env, "ga", digitsId, gx, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
   if (text) return handleWAText(env, "ga", digitsId, text, send, gx);
   /** @type {Record<string, string>} */

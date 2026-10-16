@@ -27,10 +27,18 @@ export async function sendWA(env, to, t, wx) {
     await sendFailed(env, to, wx, `Wazzapo: ошибка ${r.status}`, WZ_HINT[r.status] || "");
     return r;
   }
-  const r = await fetch(`${GRAPH}/${cr.pnid}/messages`, {
-    method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: t.slice(0, 4000) } })
-  });
+  /** @type {Response} */ let r;
+  try {
+    r = await fetch(`${GRAPH}/${cr.pnid}/messages`, {
+      method: "POST", headers: { authorization: "Bearer " + cr.token, "content-type": "application/json" }, signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: t.slice(0, 4000) } })
+    });
+  } catch (e) { // связь с Meta оборвалась: дошло ли сообщение, неизвестно — повторять нельзя (будет дубль), сообщаем администратору
+    console.log("WA send", String(e).slice(0, 200));
+    await waErr(env, "отправка", 0, "Meta не ответила");
+    await sendFailed(env, to, wx, "Meta не ответила", "");
+    return { ok: false, status: 0, code: 0, error: "Meta не ответила" };
+  }
   if (!r.ok) {
     const t = await r.text(); console.log("WA send", r.status, t.slice(0, 300));
     /** @type {Record<string, any>} */

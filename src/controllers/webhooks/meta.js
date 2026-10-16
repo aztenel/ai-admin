@@ -33,6 +33,20 @@ export const MENU_TEXT = "Это демо AI-администратора. Вы�
 
 // Общая логика WhatsApp: channel = "wa" (Meta) или "ga" (Green-API). send(text) — отправка ответа.
 
+// Ответ бота не дошёл до клиента: сигнал в Telegram уходит раз в 10 минут на бизнес, поэтому каждый такой чат ещё и помечается в пульте —
+// иначе клиенты, которым ответ не дошёл после первого сигнала, остались бы без ответа и без пометки
+/** @param {Env} env @param {string} channel @param {string} fromDigits @param {any} wx @param {(t: string) => Promise<any>} send @returns {(t: string) => Promise<any>} */
+export const watchSend = (env, channel, fromDigits, wx, send) => async t => {
+  const r = await send(t);
+  if (r && r.ok === false) {
+    try {
+      const niche = await nicheOf(env, channel, fromDigits, wx);
+      if (niche) await logTurns(env.KV, `h:${channel}:${niche}:${fromDigits}`, [], p => { if (!p.stop) p.need = { at: Date.now(), why: "send" }; });
+    } catch (e) { console.log("unsent mark", String(e)); }
+  }
+  return r;
+};
+
 // Сбой хранилища или сети не должен оставить клиента WhatsApp без ответа, а администратора — без сигнала
 /** @param {Env} env @param {any} channel @param {any} fromDigits @param {any} text @param {any} send @param {any} wx */
 export async function handleWAText(env, channel, fromDigits, text, send, wx) {
@@ -199,7 +213,7 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
 /** @param {Env} env @param {any} msg @param {any} wx */
 export async function handleWAMessage(env, msg, wx) {
   if (await seenBefore(env, msg.id)) return;
-  const from = String(msg.from).replace(/\D/g, ""), send = /** @param {any} t */ t => sendWA(env, from, t, wx);
+  const from = String(msg.from).replace(/\D/g, ""), send = watchSend(env, "wa", from, wx, t => sendWA(env, from, t, wx));
   if (!from) return;
   if (msg.type === "text") return handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx);
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст

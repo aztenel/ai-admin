@@ -53,7 +53,7 @@ function whoOf(nm, ph) { return String(nm || "").trim() || fmtPhone(ph) || "Го
 function initials(name, ph) { var w = String(name || "").trim().split(/\s+/).filter(Boolean); return w.length ? w[0][0].toUpperCase() : ""; }
 function same(a, b) { return !!a && !!b && a.ch === b.ch && a.id === b.id; }
 function keyOf(x) { return x.ch + ":" + x.id; }
-var NEED = { human: "Просит человека", limit: "Бот не ответил", media: "Прислал файл", ai: "Сбой бота", req: "Просит отменить или перенести", lead: "Новая заявка", call: "Ждёт звонка", off: "Бот выключен" };
+var NEED = { human: "Просит человека", limit: "Бот не ответил", media: "Прислал файл", ai: "Сбой бота", req: "Просит отменить или перенести", lead: "Новая заявка", call: "Ждёт звонка", off: "Бот выключен", send: "Ответ не дошёл" };
 var CHN = { wa: "WhatsApp", ga: "WhatsApp", web: "Сайт" };
 
 /* ---------- слой данных ---------- */
