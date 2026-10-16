@@ -167,6 +167,14 @@ export async function inboxApi(request, env, url, s) {
           if (pr.bookings && !pr.bookings.length) delete pr.bookings;
           pr.booked = [(pr.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)).join("; "), `администратор ${lead.kind === "cancel" ? "отменил запись клиента" : "перенёс запись клиента"}${msg ? ` и написал ему: «${snip(msg, 200)}»` : ""}`].filter(Boolean).join(". ");
         }
+        else if ((pr.pend || []).some((/** @type {any} */ x) => x.leadId === lid)) {
+          // заявку на запись администратор выполнил сам (записал в Altegio вручную): она больше не «ждёт администратора» — иначе бот так и отвечал бы клиенту
+          // «Ваша заявка у администратора» (16.10.2026, режим «без записи» у Winchester). Номера записи в Altegio у бота нет — правду покажет журнал
+          pr.pend = pr.pend.filter((/** @type {any} */ x) => x.leadId !== lid);
+          if (!pr.pend.length) delete pr.pend;
+          pr.adminDid = { at: now, kind: "book", text: snip(msg || "запись подтверждена", 300) };
+          pr.booked = [(pr.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)).join("; "), `администратор записал клиента: ${snip(`${lead.service || ""}, ${lead.time || ""}`, 200)}${msg ? ` и написал ему: «${snip(msg, 200)}»` : ""}`].filter(Boolean).join(". ");
+        }
         if (msg) pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 10 * 60e3); // короткая пауза: клиент, скорее всего, ответит «спасибо»
         delete pr.need;
       });

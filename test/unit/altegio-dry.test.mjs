@@ -31,3 +31,21 @@ test("веб-чат, режим без записи: показ для влад�
   const r = await s.chat("winchester", "dry-web", "Тимур, +7 700 000 00 95, мужская стрижка завтра в 10:00");
   assert.ok(/Записала вас/.test(r.reply) && /Это показ/.test(r.reply), r.reply);
 });
+
+test("пульт: администратор записал клиента вручную и нажал «Сделано» — бот больше не считает заявку ждущей администратора", async () => {
+  reset(); net.ai = [AI];
+  const s = mk(ENV), from = "77000000096";
+  await s.waText("/wa/winchester", from, "Тимур, мужская стрижка завтра в 10:00", { secret: "sec-w" });
+  const lid = s.hist("wa", "winchester", from).profile.pend[0].leadId;
+  const own = s.browser();
+  await own.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" });
+  const r = await own.post("/api/inbox/act", { c: "winchester", ch: "wa", id: from, act: "done", lead: lid, text: "Тимур, записал вас на завтра в 10:00 ✂️" });
+  assert.equal(r.status, 200, await r.text());
+  const p = s.hist("wa", "winchester", from).profile;
+  assert.ok(!(p.pend || []).some(x => x.leadId === lid), "заявка больше не ждёт администратора: " + JSON.stringify(p.pend));
+  assert.ok(/подтвердил|записал/i.test(p.booked || "") && /10:00/.test(p.booked || ""), "бот знает, что администратор записал клиента: " + p.booked);
+  net.ai = ["Да, всё в силе 👌"];
+  await s.waText("/wa/winchester", from, "Я записан на завтра?", { secret: "sec-w" });
+  const last = s.sentTo(from).pop();
+  assert.ok(!/у администратора/.test(last), last);
+});

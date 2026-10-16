@@ -150,3 +150,17 @@ test("тот же короткий ответ клиента в разное в�
   await hook(s, "message.incoming", { contact: { phone: "77051113312" }, message: { id: "wamid.b2", from: "77051113312", type: "text", text: "да", timestamp: "1791010090" } });
   assert.ok(sends().length > one, "второе «да» — не повтор");
 });
+
+test("пульт: ответ администратора клиенту Wazzapo уходит через Wazzapo и не задваивается, когда Wazzapo присылает о нём message.outgoing", async () => {
+  net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
+  const s = mk(ENV), from = "77051113313";
+  await incoming(s, from, "Здравствуйте");
+  const own = s.browser();
+  await own.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" });
+  const r = await own.post("/api/inbox/send", { c: "barber", ch: "wa", id: from, text: "Это администратор, запишу вас сам" });
+  assert.equal(r.status, 200, await r.text());
+  assert.ok(sends().some(x => x.body.text && /запишу вас сам/.test(x.body.text.body)), "ушло через Wazzapo");
+  await hook(s, "message.outgoing", { sender: { type: "agent" }, contact: { phone: from }, message: { id: "wamid.pult1", to: from, type: "text", text: "Это администратор, запишу вас сам" } });
+  const turns = s.hist("wa", "barber", from).turns.filter(t => /запишу вас сам/.test(t.text));
+  assert.equal(turns.length, 1, JSON.stringify(turns));
+});
