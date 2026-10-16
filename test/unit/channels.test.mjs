@@ -101,3 +101,52 @@ test("одно сообщение пришло двумя доставками �
   await Promise.all([incoming(s, "77051113308", "Здравствуйте", "wamid.twice"), incoming(s, "77051113308", "Здравствуйте", "wamid.twice")]);
   assert.equal(sentText().filter(t => /Чем помочь/.test(t)).length, 1, JSON.stringify(sentText()));
 });
+
+// 16.10.2026, живой показ Winchester через Wazzapo: бот ответил дважды — второй раз «Ничего страшного, если сообщение удалили»,
+// и дважды «Передала администратору, он подтвердит отмену». Как Wazzapo присылает удаление и правку, в документации нет — проверяем все правдоподобные виды
+test("клиент удалил сообщение — бот не отвечает на уведомление об удалении (в любом виде)", async () => {
+  net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
+  const s = mk(ENV);
+  await incoming(s, "77051113309", "Хочу записаться на стрижку");
+  const before = sends().length;
+  net.ai = ["Ничего страшного, если сообщение удалили 👌"];
+  const cases = [
+    { type: "revoked", text: "" },
+    { type: "deleted" },
+    { type: "text", text: "This message was deleted" },
+    { type: "text", text: "🚫 Это сообщение удалено" },
+    { type: "text", text: "Отмените запись", deleted: true },
+    { type: "text", text: "Отмените запись", is_revoked: true },
+    { type: "unsupported", text: "" }
+  ];
+  for (const m of cases) await hook(s, "message.incoming", { contact: { phone: "77051113309" }, message: { id: "wamid.del" + (++n), from: "77051113309", ...m } });
+  assert.equal(sends().length, before, "ответов на удаление нет: " + JSON.stringify(sentText().slice(before)));
+});
+
+test("клиент исправил сообщение — бот второй раз не отвечает", async () => {
+  net.reset(); net.ai = ["Передала администратору, он подтвердит отмену."];
+  const s = mk(ENV);
+  await incoming(s, "77051113310", "Отмените мою запись");
+  const before = sends().length;
+  await hook(s, "message.incoming", { contact: { phone: "77051113310" }, message: { id: "wamid.ed" + (++n), from: "77051113310", type: "text", text: "Отмените мою запись, пожалуйста", edited: true } });
+  await hook(s, "message.incoming", { contact: { phone: "77051113310" }, message: { id: "wamid.ed" + (++n), from: "77051113310", type: "edited", text: "Отмените мою запись!" } });
+  assert.equal(sends().length, before, JSON.stringify(sentText().slice(before)));
+});
+
+test("то же сообщение (тот же текст и время отправки) пришло с другим id — ответ один", async () => {
+  net.reset(); net.ai = ["Передала администратору, он подтвердит отмену."];
+  const s = mk(ENV);
+  const msg = { from: "77051113311", type: "text", text: "Отмените запись на завтра", timestamp: "1791010000" };
+  await hook(s, "message.incoming", { contact: { phone: "77051113311" }, message: { id: "wamid.a1", ...msg } });
+  await hook(s, "message.incoming", { contact: { phone: "77051113311" }, message: { id: "wamid.a2", ...msg } });
+  assert.equal(sentText().filter(t => /подтвердит отмену/.test(t)).length, 1, JSON.stringify(sentText()));
+});
+
+test("тот же короткий ответ клиента в разное время — бот отвечает на оба", async () => {
+  net.reset(); net.ai = ["Хорошо 👌"];
+  const s = mk(ENV);
+  await hook(s, "message.incoming", { contact: { phone: "77051113312" }, message: { id: "wamid.b1", from: "77051113312", type: "text", text: "да", timestamp: "1791010000" } });
+  const one = sends().length;
+  await hook(s, "message.incoming", { contact: { phone: "77051113312" }, message: { id: "wamid.b2", from: "77051113312", type: "text", text: "да", timestamp: "1791010090" } });
+  assert.ok(sends().length > one, "второе «да» — не повтор");
+});

@@ -41,6 +41,33 @@ const BOT_SENDERS = /^(api|bot|integration|system|automation|workflow|broadcast|
 /** @param {any} v @returns {string} */
 const digits = v => String(v || "").replace(/\D/g, "");
 
+// Удаление и правка сообщения клиентом. 16.10.2026, живой показ Winchester: бот ответил дважды — второй раз «Ничего страшного,
+// если сообщение удалили» — и дважды «Передала администратору, он подтвердит отмену». Как Wazzapo присылает удаление и правку,
+// в документации нет, поэтому отсекаем все правдоподобные виды: тип, флаг, служебный текст WhatsApp. Ответ бота на исходное
+// сообщение уже ушёл; исправленный текст администратор видит в приложении WhatsApp Business на телефоне
+const GONE_TYPE = /^(revoked|revoke|deleted?|protocol|unsupported|system|notification|edit|edited|message_edit|message_changed|reaction|ephemeral)$/i;
+const GONE_TEXT = /^\W*(this message was deleted|you deleted this message|это сообщение (было )?удалено|сообщение (было )?удалено|вы удалили это сообщение|данное сообщение удалено|бұл хабарлама жойылды|хабарлама жойылды)\W*$/i;
+/** @param {any} m @param {any} d @returns {boolean} */
+const goneOrEdited = (m, d) => GONE_TYPE.test(String(m.type || "")) || !!(m.deleted || m.is_deleted || m.revoked || m.is_revoked || m.edited || m.is_edited || m.edited_at || d.deleted || d.edited)
+  || (typeof m.text === "string" ? GONE_TEXT.test(m.text) : !!(m.text && GONE_TEXT.test(String(m.text.body || ""))));
+
+// то же сообщение с другим id (тот же отправитель, тот же текст, то же время отправки): Wazzapo мог прислать его дважды — отвечаем один раз.
+// Тот же текст в другое время («да» на два разных вопроса) — не повтор
+/** @type {WeakMap<object, Map<string, number>>} */
+const twinsOf = new WeakMap(); // память экземпляра Worker — отдельно для каждого хранилища (как в seenBefore)
+/** @param {Env} env @param {any} m @param {string} from @returns {Promise<boolean>} */
+async function twin(env, m, from) {
+  const text = typeof m.text === "string" ? m.text : (m.text && m.text.body) || "";
+  if (!m.timestamp || !text) return false;
+  const k = `wzc:${from}:${String(m.timestamp).slice(0, 20)}:${hash(String(text))}`, now = Date.now(), twins = twinsOf.get(env.KV) || new Map();
+  twinsOf.set(env.KV, twins);
+  if ((twins.get(k) || 0) > now - 600e3) return true;
+  if (twins.size > 5000) twins.clear();
+  twins.set(k, now);
+  try { if (await env.KV.get(k)) return true; await env.KV.put(k, "1", { expirationTtl: 3600 }); } catch (e) { console.log("wz twin", String(e)); }
+  return false;
+}
+
 // сообщение Wazzapo → сообщение в формате Meta (как его ждёт handleWAMessage)
 /** @param {any} m @param {string} from @returns {Record<string, any> | null} */
 export function wzMsg(m, from) {
@@ -69,7 +96,7 @@ export async function wzToMeta(env, body) {
   const wrap = (/** @type {string} */ field, /** @type {any} */ value) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field, value: { messaging_product: "whatsapp", metadata: meta, ...value } }] }] });
   if (ev === "message.incoming") {
     const m = d.message || {}, from = digits(m.from || (d.contact && d.contact.phone));
-    if (!from) return null;
+    if (!from || goneOrEdited(m, d) || await twin(env, m, from)) return null;
     const msg = wzMsg({ ...m, id: m.id || d.message_id || d.provider_message_id }, from); // где лежит id, документация не уточняет: без id сообщение терялось бы
     return msg ? wrap("messages", { contacts: [{ wa_id: from, profile: { name: String((d.contact && d.contact.name) || "") } }], messages: [msg] }) : null;
   }
