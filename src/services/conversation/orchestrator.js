@@ -649,6 +649,17 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         : over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку" }
         : await tryBook(staffRaw);
       if (!r.ok && r.soft && softStaff && (r.reason === "taken" || r.reason === "staffService")) r = await tryBook(f["мастер"]); // у мастера из прошлого сообщения на это время занято — к свободному, как и написал ИИ
+      if (r.ok && r.dry && wa && !opts.test) {
+        // режим «проверка без записи» в WhatsApp: номер настоящий, и клиент, которому бот написал «Записала», пришёл бы без записи в журнале.
+        // Окно проверено в Altegio — запись передаём администратору со всеми данными (16.10.2026, Winchester). Показ «Записала (это показ)» — только в веб-чате
+        if (adminCap() >= ALT_MAX_ADMIN_LEADS) return { out: say("adminBusy") };
+        const p = { key, at: nowMs, name: l.name, maybe: false, service: r.services + (r.staffName ? " · " + r.staffName : ""), date: r.date, time: r.time, raw: raw1 }, kin = kinOfNew(l.name);
+        if (kin.length) p.kin = kin;
+        p.leadId = addLead({ ...l, service: p.service, time: `${r.label}, в ${r.time}` }, { note: "окно свободно в Altegio (проверено); бот в режиме «без записи» — запишите клиента вручную" },
+          "📝 Запись через бота — запишите в Altegio вручную (бот в режиме «без записи»)", true).id;
+        adminInc(); pend.push(p); pendNow.add(p);
+        return { out: say("admin", { what: pendText(p, lang) }) };
+      }
       if (r.ok) {
         const made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, at: nowMs, ...(r.dry && !opts.test ? { dry: true } : {}) }, kin = kinOfNew(l.name); // dry — режим показа: в журнал ничего не записано, клиенту об этом говорим
         if (kin.length) made.kin = kin;
