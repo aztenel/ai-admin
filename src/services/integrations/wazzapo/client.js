@@ -46,6 +46,20 @@ export const WZ_HINT = {
   502: "Meta не приняла сообщение (часто: клиент писал больше 24 часов назад — свободным текстом писать нельзя)"
 };
 
+// Код ошибки Meta внутри ошибки Wazzapo. От него зависит решение: 131050 — человек запретил рекламу (больше не писать),
+// 131031/131048 — ограничение номера (рассылки на паузу), 131047 — прошло 24 часа. Wazzapo может отдать свой код (502, «META_ERROR»),
+// а код Meta — в отдельном поле или только в тексте: «(#131050) …». Формат в документации не описан (16.10.2026) — ищем везде
+/** @param {any} e @param {any=} j @returns {number} */
+export function metaCode(e, j) {
+  const o = e && typeof e === "object" ? e : {}, top = j && typeof j === "object" ? j : {};
+  for (const v of [o.meta_code, o.provider_code, o.error_code, o.error_data && o.error_data.code, o.meta && o.meta.code, top.meta_code, top.provider_code, o.code, top.code]) {
+    const n = +(v || 0); if (Number.isInteger(n) && n >= 100 && n !== 400 && n !== 401 && n !== 403 && n !== 404 && n !== 429 && !(n >= 500 && n <= 599)) return n;
+  }
+  const t = [typeof e === "string" ? e : o.message || o.title || o.details || "", typeof top.error === "string" ? top.error : "", top.message || ""].join(" ");
+  const m = /\(#(\d{3,6})\)|#(\d{3,6})\b|\b(13\d{4})\b/.exec(t);
+  return m ? +(m[1] || m[2] || m[3]) : 0;
+}
+
 /**
  * Отправка сообщения: payload — как в документации Wazzapo (phone_number_id, to, type, text | template | image…).
  * → { ok, id, ids } или { ok: false, status, code, error }
@@ -61,6 +75,6 @@ export async function wzSend(env, key, payload) {
     return { ok: true, id: ids[0] || "", ids };
   }
   const e = j.error && typeof j.error === "object" ? j.error : {};
-  const code = +(e.code || j.code || x.status) || x.status;
+  const code = metaCode(typeof j.error === "string" ? j.error : e, j) || +(e.code || j.code || x.status) || x.status;
   return { ok: false, status: x.status, code, error: clean(String(e.message || (typeof j.error === "string" ? j.error : "") || j.message || j.detail || x.text || ""), 200) };
 }

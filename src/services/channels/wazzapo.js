@@ -3,7 +3,7 @@
 // вебхук Wazzapo перекладывается в формат вебхука Meta и идёт в общий обработчик — запись в Altegio, пауза бота,
 // «стоп», пульт, напоминания и рассылки работают без отдельной ветки кода.
 /** @import { Env } from "../../lib/types.js" */
-import { wzOn, wzSend, wzCall, WZ_HINT } from "../integrations/wazzapo/client.js";
+import { wzOn, wzSend, wzCall, WZ_HINT, metaCode } from "../integrations/wazzapo/client.js";
 import { hash } from "../../lib/crypto.js";
 
 export { wzOn };
@@ -114,7 +114,7 @@ export async function wzToMeta(env, body) {
     const st = String(d.status || "").toLowerCase();
     if (!/^(failed|error|undelivered)$/.test(st)) return null;
     const e = d.error && typeof d.error === "object" ? d.error : { message: d.error };
-    return wrap("messages", { statuses: [{ id: String(d.message_id || ""), status: "failed", recipient_id: digits(d.to || (d.contact && d.contact.phone)), errors: [{ code: +(e.code || 0), title: String(e.title || e.message || "не доставлено") }] }] });
+    return wrap("messages", { statuses: [{ id: String(d.message_id || ""), status: "failed", recipient_id: digits(d.to || (d.contact && d.contact.phone)), errors: [{ code: metaCode(d.error, d) || +(e.code || 0) || 0, title: String(e.title || e.message || "не доставлено") }] }] });
   }
   return null;
 }
