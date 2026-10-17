@@ -171,6 +171,7 @@
 | `WA_TOKEN_<ID>`, `APP_SECRET_<ID>`, `PHONE_NUMBER_ID_<ID>` | Secret/Secret/Text | Свой номер Meta (вебхук `/wa/<id>`) |
 | `GA_ID_<ID>`, `GA_TOKEN_<ID>`, `GA_URL_<ID>` | Text/Secret/Text | Свой номер Green-API (вебхук `/ga/<id>?t=…`) |
 | `WA_VIA_<ID>` = `wazzapo` | Text | Номер подключён через партнёра Meta **Wazzapo** (режим «сосуществование»: приложение WhatsApp Business на телефоне остаётся). Тогда `WA_TOKEN_<ID>` — ключ API Wazzapo, `APP_SECRET_<ID>` — секрет вебхука Wazzapo, `PHONE_NUMBER_ID_<ID>` — их `phone_number_id`; вебхук `/wz/<id>` (события `message.incoming`, `message.outgoing`, `message.status`). Для бота это тот же канал `wa`: пульт, рассылки, запись в Altegio без отдельной ветки (`src/services/channels/wazzapo.js`, `src/controllers/webhooks/wazzapo.js`, тесты `test/unit/wazzapo.test.mjs`). На заглушках по документации Wazzapo, вживую не проверено |
+| `TPL_REMIND_<ID>`, `TPL_REVIEW_<ID>` | Text | Шаблон Meta (имя, можно `имя:kk`) для напоминания о записи и просьбы об отзыве вне 24-часового окна WhatsApp (Meta, Wazzapo): без него они за окном не уходят. Подстановки: напоминание — {{1}} бизнес, {{2}} «завтра»/«сегодня», {{3}} время, {{4}} услуга и мастер; отзыв — {{1}} бизнес, {{2}} ссылка (`remindTpl` в `services/reminders/send.js`, 16.10.2026, `test/unit/remind-template.test.mjs`) |
 | `ALTEGIO_LOC_<ID>` | Text | Номер локации Altegio |
 | `ALTEGIO_USER_<ID>` | Secret | Ключ пользователя Altegio — чтение журнала записей (получают на `/altegio/user`) |
 | `ALTEGIO_SELF_CANCEL_<ID>` | Text | Самостоятельная отмена для одного клиента |

@@ -11,6 +11,18 @@ import { sendGreen } from "../channels/greenapi.js";
 import { sendWA } from "../channels/meta.js";
 import { waRoute } from "../channels/index.js";
 import { remindText } from "./plan.js";
+import { sendTemplate } from "../channels/templates.js";
+// шаблон Meta для напоминания или просьбы об отзыве (вне 24-часового окна). Имя — из Cloudflare: TPL_REMIND_<ID> (накануне и за 2 часа),
+// TPL_REVIEW_<ID> (отзыв); «имя:язык» — другой язык шаблона (по умолчанию ru). Подстановки по порядку, как в шаблоне в кабинете Meta:
+//   напоминание: {{1}} бизнес, {{2}} «завтра»/«сегодня», {{3}} время, {{4}} услуга и мастер;  отзыв: {{1}} бизнес, {{2}} ссылка на отзыв
+/** @param {Env} env @param {any} c @param {any} b @param {string} k @returns {{ tpl: string, lang: string, params: string[] } | null} */
+export function remindTpl(env, c, b, k) {
+  const raw = String(env[(k === "rv" ? "TPL_REVIEW_" : "TPL_REMIND_") + String(c.id).toUpperCase()] || "").trim();
+  if (!/^[a-z0-9_]{1,512}(:[a-z_A-Z]{2,5})?$/.test(raw)) return null;
+  const [tpl, lang = "ru"] = raw.split(":");
+  const svc = [b.services, b.staffName].filter(Boolean).join(" · ") || "—";
+  return { tpl, lang, params: k === "rv" ? [c.name, c.review] : [c.name, k === "d1" ? "завтра" : "сегодня", b.time, svc] };
+}
 /** @param {Env} env @param {string} cid @param {any} x @param {number} now */
 export async function remindSend(env, cid, x, now) {
   if (!hasClient(cid)) return false;
@@ -21,12 +33,15 @@ export async function remindSend(env, cid, x, now) {
   const hk = `h:${x.ch}:${cid}:${x.id}`, h = JSON.parse((await env.KV.get(hk)) || "null"), p = (h && h.profile) || {};
   const b = (p.bookings || []).find(/** @param {any} v */ v => String(v.record_id) === x.rec);
   if (!b || b.rq || b.date !== x.date || b.time !== x.time || p.stop) return false; // запись отменена, перенесена, по ней просьба — или клиент написал «стоп»
-  if (x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3)) return false;          // официальный WhatsApp: вне 24-часового окна писать можно только шаблоном
+  // официальный WhatsApp (Meta, Wazzapo): вне 24-часового окна — только одобренным шаблоном. Напоминание накануне и просьба об отзыве
+  // почти всегда за окном: без шаблона их не было бы вовсе (16.10.2026). Шаблон задаётся в Cloudflare: TPL_REMIND_<ID>, TPL_REVIEW_<ID>
+  const tpl = x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) ? remindTpl(env, c, b, x.k) : null;
+  if (x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) && !tpl) return false;
   const route = x.ch === "ga" ? gaRoute(env, cid) || gaShared(env) : waRoute(env, cid, p);
   if (!route) return false;
   const text = remindText(c, b, x.k, p.lang);
   await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 });
-  let r; try { r = x.ch === "ga" ? await sendGreen(env, x.id + "@c.us", text, route, true) : await sendWA(env, x.id, text, route); } catch (e) { r = { ok: false, error: String(e) }; }
+  let r; try { r = tpl ? await sendTemplate(env, x.id, tpl, "", route) : x.ch === "ga" ? await sendGreen(env, x.id + "@c.us", text, route, true) : await sendWA(env, x.id, text, route); } catch (e) { r = { ok: false, error: String(e) }; }
   if (!(r && r.ok)) { console.log("remind send", cid, x.k, JSON.stringify(r).slice(0, 200)); return false; }
   try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k }]); } catch (e) { console.log("remind log", String(e)); }
   return true;
