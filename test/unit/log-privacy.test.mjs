@@ -31,3 +31,12 @@ test("ошибка Meta с номером получателя — в журна
   assert.ok(!log.includes(NUM), log.split("\n").filter(l => l.includes(NUM)).join("\n"));
   assert.ok(!String(s.kv.mem.get("wa:lastErr") || "").includes(NUM), s.kv.mem.get("wa:lastErr"));
 });
+
+test("номер с пробелами, скобками и дефисами тоже скрыт (автопроверка безопасности, 17.10.2026)", async () => {
+  const { logSafe } = await import("../../src/lib/phone.js");
+  for (const s of ["to +7 (705) 111-77-01 failed", "8 705 111 77 01", "+7 705 111 77 01", "77051117701@c.us", "+998 90 123 45 67"]) {
+    const out = logSafe(s);
+    assert.ok(!/111.?77|123.?45/.test(out), s + " → " + out);
+  }
+  assert.equal(logSafe("заказ 12 в 10:00"), "заказ 12 в 10:00", "короткие числа не трогаем");
+});

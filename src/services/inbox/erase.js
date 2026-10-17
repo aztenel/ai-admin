@@ -9,7 +9,7 @@ import { allLeads, loadLeads, saveLeads, leadKey } from "../../db/kv/leads.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { isoDay } from "../../lib/time.js";
 
-/** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер в виде +7… (может быть пустым у веб-чата) @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
+/** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер чата WhatsApp в виде +7…; у веб-чата пусто: номер там набран посетителем, он мог быть чужим @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
 export async function eraseClient(env, cid, ch, id, phone, loc, now) {
   const hk = `h:${ch}:${cid}:${id}`, digits = phone.replace(/\D/g, "");
   const h = JSON.parse((await env.KV.get(hk)) || "null");

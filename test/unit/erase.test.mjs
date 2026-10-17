@@ -51,3 +51,16 @@ test("сотрудник удалить данные не может", async () 
   assert.equal((await st.post("/api/inbox/act", { c: "winchester", ch: "wa", id: from, act: "erase" })).status, 403);
   assert.ok(s.hist("wa", "winchester", from).turns.length, "переписка на месте");
 });
+
+test("веб-чат: посетитель указал чужой номер — удаление чата не трогает заявки и согласие этого номера (автопроверка безопасности, 17.10.2026)", async () => {
+  reset(); net.ai = [AI];
+  const s = mk(ENV), victim = "77000000091";
+  await s.waText("/wa/winchester", victim, "Тимур, мужская стрижка завтра в 10:00", { secret: "sec-w" });
+  const before = keysWith(s, victim.slice(1)).sort();
+  net.ai = ["Здравствуйте! Чем помочь?"];
+  await s.chat("winchester", "web-erase-1", "Здравствуйте, мой номер +7 700 000 00 91");
+  const own = await login(s, "owner-key-123456");
+  const r = await own.post("/api/inbox/act", { c: "winchester", ch: "web", id: "web-erase-1", act: "erase" });
+  assert.equal(r.status, 200, await r.text());
+  assert.deepEqual(keysWith(s, victim.slice(1)).filter(k => !k.startsWith("h:web:")).sort(), before.filter(k => !k.startsWith("h:web:")), "данные владельца номера на месте");
+});

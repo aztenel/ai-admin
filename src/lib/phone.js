@@ -52,7 +52,14 @@ export const fmtPhone = p => { const d = String(p || "").replace(/\D/g, ""); ret
 /** @param {any} s @returns {string} */
 export const maskPhones = s => { s = String(s); let out = "", at = 0; for (const p of phonesIn(s)) { if (p.at < at) continue; out += s.slice(at, p.at) + "[телефон указан]"; at = p.at + p.len; } return out + s.slice(at); };
 
-// для журнала сервера и служебных строк: любой номер из 10–15 цифр → «+7 705 *** ** 01» (CLAUDE.md §3.5). Ответы с ошибкой
-// от Meta, Green-API и Wazzapo часто содержат номер получателя — их пишем в журнал только через logSafe (16.10.2026)
+// для журнала сервера и служебных строк: номер → «+7 705 *** ** 01» (CLAUDE.md §3.5). Ответы с ошибкой от Meta, Green-API и Wazzapo
+// часто содержат номер получателя — их пишем в журнал только через logSafe (17.10.2026). Сначала номера, которые находит phonesIn
+// (в том числе с пробелами и скобками: «+7 (705) 111-77-01»), потом любые оставшиеся цепочки из 10–15 цифр
+/** @param {string} d */
+const maskDigits = d => `+${d.slice(0, 1)} ${d.slice(1, 4)} *** ** ${d.slice(-2)}`;
 /** @param {any} s @returns {string} */
-export const logSafe = s => String(s).replace(/\+?(?<!\d)(\d{10,15})(?!\d)/g, (_, d) => `+${d.slice(0, 1)} ${d.slice(1, 4)} *** ** ${d.slice(-2)}`);
+export const logSafe = s => {
+  s = String(s); let out = "", at = 0;
+  for (const p of phonesIn(s)) { if (p.at < at) continue; out += s.slice(at, p.at) + maskDigits(p.phone.replace(/\D/g, "")); at = p.at + p.len; }
+  return (out + s.slice(at)).replace(/\+?(?<!\d)(\d{10,15})(?!\d)/g, (_, d) => maskDigits(d));
+};

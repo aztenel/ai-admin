@@ -154,7 +154,8 @@ export async function inboxApi(request, env, url, s) {
     }
     else if (act === "erase") { // клиент попросил удалить его данные (/privacy): только владелец, отменить нельзя
       if (s.role !== "owner") return jsonP({ error: "Удалить данные клиента может только владелец." }, 403);
-      const ph = ch === "web" ? normPhone(p.phone || "") : normPhone("+" + id);
+      // веб-чат: номер набрал посетитель, он мог быть чужим — удаляем только сам чат, без заявок и согласий по этому номеру (автопроверка безопасности, 17.10.2026)
+      const ph = ch === "web" ? "" : normPhone("+" + id);
       try { const r = await eraseClient(env, cid, ch, id, ph, String(altLoc(env, c) || ""), now); return jsonP({ ok: true, erased: true, leads: r.leads }); }
       catch (e) { console.log("erase", String(e)); return jsonP({ error: "Хранилище не ответило — удалено не всё. Нажмите ещё раз через минуту." }, 503); }
     }
