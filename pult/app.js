@@ -71,6 +71,7 @@ var API = DEMO ? window.__DEMO_API : {
   act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; } return jf("/api/inbox/act", b); },
   me: function () { return jf("/api/inbox/me"); },
   leads: function () { return jf("/api/inbox/leads?c=" + enc(S.C)); },
+  report: function () { return jf("/api/inbox/report?c=" + enc(S.C)); },
   clients: function () { return jf("/api/studio/list"); }
 };
 

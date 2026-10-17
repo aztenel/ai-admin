@@ -27,6 +27,7 @@ function summary() {
       box.appendChild(h("div", "tiles", [tile(rows.length, "Чатов"), tile(need, "Ждут ответа"), tile(bk, "С записью")]));
       var g = h("div", "grp"); [["Ждут ответа человека", need, need > 0, "need"], ["Бот молчит", paused, false, "pause"]].forEach(function (a) { var b = h("button", "att", [h("span", "a", a[0]), h("span", "cnt" + (a[2] ? " hot" : ""), a[1])], { type: "button", style: "width:100%;text-align:left" }); b.onclick = function () { S.f = a[3]; S.ready = false; P.go("chats"); P.loadList(); }; g.appendChild(b); });
       box.appendChild(g);
+      if (api().report) api().report().then(function (r) { if (r && r.cur) box.appendChild(growth(r)); }).catch(function () {});
     }).catch(function (e) { if (e !== 0) box.appendChild(h("div", "empty", [h("b", "", "Нет связи")])); });
     return;
   }
@@ -38,6 +39,14 @@ function summary() {
     sc.appendChild(stack([h("div", "card hero", [h("span", "cap", "Выручка по записям из чатов"), h("div", "big", d.money), h("span", "dl", d.delta), bars]),
       h("div", "tiles", d.tiles.map(function (t) { return tile(t[0], t[1]); })), funnel, att]));
   });
+}
+/* итоги за 30 дней и сравнение с прошлыми 30 днями (прошлый период — когда накопятся дневные итоги) */
+function growth(r) {
+  var rows = [["Чатов", "chats"], ["Записей через бота", "alt"], ["Заявок администратору", "req"], ["Просят перезвонить", "cb"], ["Отмен и переносов", "cx"]];
+  return h("div", "card", [h("span", "h3", "За " + r.days + " дней")].concat(rows.map(function (x) {
+    var v = r.cur[x[1]], p = r.prev ? r.prev[x[1]] : null, d = p === null ? "" : v === p ? " · как раньше" : " · " + (v > p ? "+" : "−") + Math.abs(v - p) + " к прошлым " + r.days + " дн.";
+    return h("div", "", [h("span", "", x[0]), h("span", "", v + d, { style: "font-weight:500" })], { style: "display:flex;justify-content:space-between;gap:12px" });
+  })).concat(r.prev ? [] : [h("span", "dl", "Сравнение с прошлым месяцем появится, когда накопятся итоги за 20 дней.")]));
 }
 function tile(v, k) { return h("div", "tile", [h("span", "v", v), h("span", "k", k)]); }
 

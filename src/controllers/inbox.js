@@ -16,6 +16,7 @@ import { wzOn, wzMedia } from "../services/channels/wazzapo.js";
 import { waRoute } from "../services/channels/index.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
+import { growthReport } from "../services/digest.js";
 /** @import { Env } from "../lib/types.js" */
 
 // ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
@@ -31,6 +32,9 @@ export async function inboxApi(request, env, url, s) {
   if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
   const c = CLIENTS[cid], now = Date.now();
 
+  if (M === "GET" && P === "/api/inbox/report") { // итоги за 30 дней и сравнение с прошлыми 30 днями («Итоги» в пульте)
+    try { return jsonP(await growthReport(env, c, now)); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+  }
   if (M === "GET" && P === "/api/inbox/list") {
     const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID || gaRoute(env, cid) ? ["wa", "ga"] : ["wa"], rows = [];
     let more = false;
