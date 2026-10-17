@@ -2,6 +2,7 @@
 // Адаптер Meta Cloud API: токен и номер клиента (waCreds), подсказки по кодам ошибок (WA_HINT), запись последней ошибки (waErr).
 /** @import { Env } from "../../../lib/types.js" */
 import { hasClient, CLIENTS } from "../../../config/builtin-clients.js";
+import { logSafe } from "../../../lib/phone.js";
 
 // токен и номер, с которого отвечаем: у клиента со своим вебхуком (/wa/<id>) — его секрет WA_TOKEN_<ID> и номер, на который написали; иначе общие WA_TOKEN и PHONE_NUMBER_ID
 /** @param {Env} env @param {any} [wx] */
@@ -30,5 +31,5 @@ export const WA_HINT = {
 export async function waErr(env, where, code, msg, details) {
   const hint = WA_HINT[code] ? " → " + WA_HINT[code] : "";
   const line = `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC · ${where}: ${code || ""} ${msg || ""}${details ? " (" + String(details).slice(0, 150) + ")" : ""}${hint}`;
-  try { await env.KV.put("wa:lastErr", line, { expirationTtl: 7 * 86400 }); } catch (e) {}
+  try { await env.KV.put("wa:lastErr", logSafe(line), { expirationTtl: 7 * 86400 }); } catch (e) {} // строку видно на /diag: номер получателя скрыт
 }

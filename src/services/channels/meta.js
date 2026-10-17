@@ -3,6 +3,7 @@
 // Номер клиента может быть подключён напрямую к Meta или через партнёра Meta Wazzapo (WA_VIA_<ID>=wazzapo) — для бота это один канал.
 /** @import { Env } from "../../lib/types.js" */
 import { GRAPH } from "../../config/constants.js";
+import { logSafe } from "../../lib/phone.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { waCreds, waErr, WA_HINT } from "../integrations/meta/client.js";
 import { WZ_HINT } from "../integrations/wazzapo/client.js";
@@ -22,7 +23,7 @@ export async function sendWA(env, to, t, wx) {
   if (wx && wzOn(env, wx.client)) {
     const r = await wzSendOwn(env, cr.token, { phone_number_id: cr.pnid, to: String(to).replace(/\D/g, ""), type: "text", text: { body: t.slice(0, 4000) } });
     if (r.ok) return { ok: true, id: r.id };
-    console.log("WZ send", r.status, r.error);
+    console.log("WZ send", r.status, logSafe(r.error));
     await waErr(env, "отправка через Wazzapo " + r.status, r.code, r.error);
     await sendFailed(env, to, wx, `Wazzapo: ошибка ${r.status}`, WZ_HINT[r.status] || "");
     return r;
@@ -40,7 +41,7 @@ export async function sendWA(env, to, t, wx) {
     return { ok: false, status: 0, code: 0, error: "Meta не ответила" };
   }
   if (!r.ok) {
-    const t = await r.text(); console.log("WA send", r.status, t.slice(0, 300));
+    const t = await r.text(); console.log("WA send", r.status, logSafe(t.slice(0, 300)));
     /** @type {Record<string, any>} */
     let e = {}; try { e = JSON.parse(t).error || {}; } catch (x) {}
     await waErr(env, "отправка " + r.status, e.code, e.message || t.slice(0, 200), e.error_data?.details);

@@ -637,6 +637,7 @@ function done(d, tgt) {
   if (d.error) { notice("Не получилось", d.error); return; }
   if (d.warn) notice("Обратите внимание", d.warn);
   if (tgt && !same(S.cur, tgt)) { loadList(); return; }
+  if (d.erased) { closeChat(); notice("Данные удалены", "Переписка, заявки и согласие этого клиента удалены. Отметка «стоп», если была, осталась."); return; }
   clear($("cards")); renderChat(d.chat, true); loadList();
 }
 function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) { done(d, tgt); }).catch(oops); }
@@ -692,6 +693,7 @@ function menuSheet() {
   if (d.ch !== "web" && !d.off) { if (d.paused && !d.stop) body.appendChild(opt("refresh", "Вернуть бота", "", function () { doAct("resume"); })); else if (!d.paused) body.appendChild(opt("clock", "Остановить бота на 12 часов", "", function () { doAct("pause"); })); }
   body.appendChild(opt("info", "Карточка клиента", "", openCard));
   body.appendChild(opt("refresh", "Очистить память бота", "бот забудет эту переписку и записи", function () { ask("Очистить память бота?", "Бот забудет эту переписку, записи и просьбы клиента. Окно WhatsApp и «стоп» останутся.", "Очистить", function () { doAct("forget"); }); }, "bad"));
+  if (S.owner) body.appendChild(opt("close", "Удалить данные клиента", "по его просьбе: переписка, заявки, согласие", function () { ask("Удалить данные клиента?", "Удалятся переписка, заявки с этим номером, согласие и напоминания. Вернуть нельзя. Записи в Altegio и сообщения в Telegram удалите сами.", "Удалить", function () { doAct("erase"); }); }, "bad"));
   sheet(whoOf(d.name || d.waName, d.phone), body);
 }
 

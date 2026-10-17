@@ -11,6 +11,7 @@ import { sendGreen } from "../channels/greenapi.js";
 import { sendWA } from "../channels/meta.js";
 import { waRoute } from "../channels/index.js";
 import { remindText } from "./plan.js";
+import { logSafe } from "../../lib/phone.js";
 import { sendTemplate } from "../channels/templates.js";
 // шаблон Meta для напоминания или просьбы об отзыве (вне 24-часового окна). Имя — из Cloudflare: TPL_REMIND_<ID> (накануне и за 2 часа),
 // TPL_REVIEW_<ID> (отзыв); «имя:язык» — другой язык шаблона (по умолчанию ru). Подстановки по порядку, как в шаблоне в кабинете Meta:
@@ -42,7 +43,7 @@ export async function remindSend(env, cid, x, now) {
   const text = remindText(c, b, x.k, p.lang);
   await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 });
   let r; try { r = tpl ? await sendTemplate(env, x.id, tpl, "", route) : x.ch === "ga" ? await sendGreen(env, x.id + "@c.us", text, route, true) : await sendWA(env, x.id, text, route); } catch (e) { r = { ok: false, error: String(e) }; }
-  if (!(r && r.ok)) { console.log("remind send", cid, x.k, JSON.stringify(r).slice(0, 200)); return false; }
+  if (!(r && r.ok)) { console.log("remind send", cid, x.k, logSafe(JSON.stringify(r).slice(0, 200))); return false; }
   try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k }]); } catch (e) { console.log("remind log", String(e)); }
   return true;
 }

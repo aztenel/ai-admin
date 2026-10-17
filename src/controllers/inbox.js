@@ -9,6 +9,7 @@ import { PAUSE_MS, GRAPH } from "../config/constants.js";
 import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
+import { eraseClient } from "../services/inbox/erase.js";
 import { loadLeads, allLeads, leadTs, logTurns, gaShared, gaRoute, gaWhy, waCreds, WA_HINT } from "../services/inbox/deps.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
@@ -150,6 +151,12 @@ export async function inboxApi(request, env, url, s) {
       const ph0 = normPhone(p.phone || "") || (ch !== "web" ? normPhone("+" + id) : ""), L0 = altLoc(env, c);
       h = await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (!["li", "waName", "stop", "pn"].includes(k)) delete pr[k]; pr.forgot = Date.now(); }); // forgot: старые заявки этого чата бот в чат не возвращает
       if (L0 && ph0) try { await env.KV.delete(`bk:${L0}:${ph0}:${isoDay(Date.now())}`); } catch (e) { console.log("forget limit", String(e)); } // дневной предел записей этого номера — заново
+    }
+    else if (act === "erase") { // клиент попросил удалить его данные (/privacy): только владелец, отменить нельзя
+      if (s.role !== "owner") return jsonP({ error: "Удалить данные клиента может только владелец." }, 403);
+      const ph = ch === "web" ? normPhone(p.phone || "") : normPhone("+" + id);
+      try { const r = await eraseClient(env, cid, ch, id, ph, String(altLoc(env, c) || ""), now); return jsonP({ ok: true, erased: true, leads: r.leads }); }
+      catch (e) { console.log("erase", String(e)); return jsonP({ error: "Хранилище не ответило — удалено не всё. Нажмите ещё раз через минуту." }, 503); }
     }
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
