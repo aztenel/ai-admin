@@ -9,12 +9,13 @@ import { notify } from "./integrations/telegram/client.js";
 import { DYN, syncClients } from "./tenants/passport.js";
 import { dayLabel } from "./schedule/slots.js";
 // Дневная сводка в Telegram компании: раз в день, в час из паспорта (по умолчанию 21:00 по Астане; утром — за вчерашний день).
-// Только боты из паспортов (демо — без сводки). Отметка «отправлено» ставится до отправки: сводка не придёт дважды
+// Только боты из паспортов и встроенные боты со своим чатом TG_CHAT_<ID> (демо — без сводки). Отметка «отправлено» ставится до отправки: сводка не придёт дважды
 /** @param {Env} env @param {number} now @returns {Promise<number>} */
 export async function digestRun(env, now) {
   const d = local(now), h = d.getUTCHours();
   if (d.getUTCMinutes() >= 10 || !env.TG_TOKEN) return 0;
-  const due = (/** @type {Client} */ c) => c.dynamic && !c.off && c.digest !== "off" && (c.digest ? +c.digest : DIGEST_HOUR) === h;
+  // боты из паспорта и встроенные боты со своим чатом Telegram (Winchester до переноса в паспорт, 16.10.2026). Демо-ботам без своего чата сводку не шлём
+  const due = (/** @type {Client} */ c) => (c.dynamic || !!env["TG_CHAT_" + c.id.toUpperCase()]) && !c.off && c.digest !== "off" && (c.digest ? +c.digest : DIGEST_HOUR) === h;
   if (!DYN.at || Object.values(CLIENTS).some(due)) { try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } } // паспорта перечитываем, только если сейчас чей-то час сводки
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
