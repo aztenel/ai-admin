@@ -146,6 +146,9 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
           out.push(`${name}: ✅ ${arr.length} на ${from} … ${to}`);
           if (arr[0]) out.push("  поля записи: " + Object.keys(arr[0]).slice(0, 24).join(", "));
           for (const r of arr.slice(0, 5).map(recOf)) out.push(`  № ${r.id} — ${r.at}, ${r.svc || "?"}, мастер ${r.staff || "?"}, телефон ${mask(r.phone)}, deleted: ${r.del}`);
+          // номер должен приходить целиком: по нему бот находит записи клиента. Роль с «скрывать номера» отдаёт «+7 707 XXX-X7-44» (17.10.2026)
+          const ph = arr.map(recOf).filter(r => r.phone), full = ph.filter(r => normPhone(String(r.phone))).length;
+          if (ph.length) out.push(full === ph.length ? `  номера клиентов: ✅ приходят целиком (${full} из ${ph.length})` : `  номера клиентов: ❌ скрыты у ${ph.length - full} из ${ph.length} — включите сотруднику «Показывать номера телефонов» в правах Altegio`);
         }
         return arr;
       } catch (e) { if (show) out.push(`${name}: ❌ ${err(e)}`); }
