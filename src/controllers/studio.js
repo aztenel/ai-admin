@@ -92,7 +92,7 @@ export async function studioApi(request, env, url, s) {
 }
 export function studioPage() {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Мои боты — AI-администратор</title><style>${ADMIN_CSS}</style></head><body>
-<div class="top"><b>Мои боты</b><a href="/leads">Заявки</a><a href="/logout">Выйти</a></div><div class="w">
+<div class="top"><b>Мои боты</b><a href="/admin">Панель</a><a href="/leads">Заявки</a><a href="/logout">Выйти</a></div><div class="w">
 <div id="list"><p class="mut">Загрузка…</p></div>
 <div id="edit" hidden>
 <h2 id="etitle">Новый бот</h2><p class="mut">Заполните то, что знаете. Кнопка «Проверить» покажет ошибки и то, что бот будет знать о компании.</p>

@@ -1712,8 +1712,10 @@
  },
  "GET /diag [owner]": {
   "status": 200,
-  "type": "text/plain",
-  "text": "KV: подключено ✅\nGEMINI_KEY: есть ✅ (8 симв., stub…)\nLEADS_K"
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
  },
  "GET /diag [staff]": {
   "status": 403,
@@ -1727,8 +1729,10 @@
  },
  "GET /diag?key=wrong [owner]": {
   "status": 200,
-  "type": "text/plain",
-  "text": "KV: подключено ✅\nGEMINI_KEY: есть ✅ (8 симв., stub…)\nLEADS_K"
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
  },
  "GET /diag?key=wrong [staff]": {
   "status": 403,

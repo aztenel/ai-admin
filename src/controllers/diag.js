@@ -20,7 +20,7 @@ export async function diag(env) {
     : kvErr ? `Хранилище KV: ❌ не читается — ${kvErr}. Проверьте привязку KV (Settings → Bindings) и суточный лимит хранилища в панели Cloudflare. Пока оно не читается, бот не ведёт диалог и не показывает заявки`
     : "KV: подключено ✅");
   const key = env.GEMINI_KEY || "";
-  out.push("GEMINI_KEY: " + (key ? `есть ✅ (${key.length} симв., ${key.slice(0, 4)}…)` : "НЕТ ❌"));
+  out.push("GEMINI_KEY: " + (key ? `есть ✅ (${key.length} симв.)` : "НЕТ ❌")); // начало ключа не показываем: страницу видно на экране, снимки уходят в чаты
   const useClaude = isClaude(env.MODEL) || isClaude(env.MODEL_FALLBACK);
   if (useClaude) out.push("ANTHROPIC_KEY: " + (env.ANTHROPIC_KEY ? `есть ✅ (${env.ANTHROPIC_KEY.length} симв.)` : "НЕТ ❌ — секрет из console.anthropic.com"));
   out.push("LEADS_KEY: " + (env.LEADS_KEY ? "задан ✅" : "не задан — используется VERIFY_TOKEN (лучше задать отдельный)"));

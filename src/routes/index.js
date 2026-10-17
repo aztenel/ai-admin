@@ -16,6 +16,7 @@ import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/
 import { diag } from "../controllers/diag.js";
 import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/altegio.js";
 import { selftestPage } from "../controllers/selftest.js";
+import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
@@ -115,7 +116,12 @@ export async function route(request, env, ctx, pult) {
     // ---- WhatsApp клиента через партнёра Meta Wazzapo: вебхук /wz/<id>
     const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
-    if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? text(await diag(env)) : a || forbid(); }
+    if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? page(diagPage(await diag(env))) : a || forbid(); }
+    if (M === "GET" && P === "/admin") { // панель владельца: все служебные страницы в одном месте
+      const a = await enter(request, env, url);
+      if (a.res) return a.res;
+      return a.s.role === "owner" ? page(adminPage(env)) : new Response(null, { status: 303, headers: { location: "/inbox?c=" + a.s.cid } });
+    }
     if (P === "/altegio/user" && (M === "GET" || M === "POST")) { // ключ пользователя Altegio: читается ли журнал записей
       // каждая причина отказа — своим текстом: вживую 10 октября форма ответила просто «Forbidden», и было непонятно почему
       if (M === "POST" && !sameOrigin(request, url)) return new Response(`Forbidden: форма отправлена с другого адреса (${clean(request.headers.get("origin") || "", 80)} ≠ ${url.origin})`, { status: 403 });
