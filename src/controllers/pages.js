@@ -1,7 +1,7 @@
 // @ts-check
 // Страницы: заявки /leads, политика /privacy, витрина демо /, веб-чат.
 import { esc } from "../lib/text.js";
-import { BASE_CSS } from "../lib/css.js";
+import { BASE_CSS, OWNER_BASE } from "../lib/css.js";
 import { CLIENTS } from "../config/builtin-clients.js";
 import { allLeads } from "../services/inbox/deps.js";
 /** @import { Env, Client } from "../lib/types.js" */
@@ -24,8 +24,8 @@ export async function leadsPage(env, only, s) { // s — вошедший чел
     : blind ? `Хранилище не отвечает — ${blocks ? "часть заявок сейчас не видна" : "заявки сейчас не видны"}, попробуйте обновить страницу. Заявки не потеряны.`
     : part ? "Общий список заявок сейчас не читается — показаны последние заявки из запасных копий. Попробуйте обновить страницу." : "";
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Заявки</title>
-<style>${BASE_CSS}body{padding:16px;max-width:640px;margin:0 auto}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}a{color:var(--acc)}</style>
-${s ? `<p style="display:flex;gap:14px;flex-wrap:wrap;margin:0 0 6px"><a href="/inbox${only ? "?c=" + only : ""}">← Чаты</a>${only ? `<a href="/broadcast?c=${only}">Рассылки</a>` : ""}${s.role === "owner" ? `<a href="/studio">Боты</a>` : ""}<a href="/logout">Выйти</a></p>` : ""}<h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}`;
+<style>${OWNER_BASE}.w{max-width:900px}h3{margin:22px 0 4px}.l{background:var(--panel);border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--line);line-height:1.5}small{color:var(--muted)}.x{opacity:.55}.x b{text-decoration:line-through}em{color:var(--bad);font-style:normal;font-weight:700}a{color:var(--acc)}</style>
+<div class="top"><b>Заявки</b>${s ? `<a href="/inbox${only ? "?c=" + only : ""}">Чаты</a>${only ? `<a href="/broadcast?c=${only}">Рассылки</a>` : ""}${s.role === "owner" ? `<a href="/admin">Панель</a>` : ""}<a href="/logout">Выйти</a>` : ""}</div><div class="w"><h2>Заявки (${total})</h2>${warn ? `<p style="background:var(--lead);border:1px solid var(--leadl);border-radius:12px;padding:10px 14px;line-height:1.5">${warn}</p>` : ""}${blocks || (warn ? "" : "<p>Пока пусто</p>")}</div>`;
 }
 
 // политика конфиденциальности — нужна Meta, чтобы опубликовать приложение (App settings → Basic → Privacy Policy URL)

@@ -1,7 +1,7 @@
 // @ts-check
 // Страница автотеста /selftest (сами сценарии — в services/selftest).
 import { esc } from "../lib/text.js";
-import { BASE_CSS } from "../lib/css.js";
+import { OWNER_BASE } from "../lib/css.js";
 import { CLIENTS } from "../config/builtin-clients.js";
 import { CASES } from "../services/selftest/cases.js";
 
@@ -9,14 +9,14 @@ import { CASES } from "../services/selftest/cases.js";
 export function selftestPage(key) {
   const list = JSON.stringify(CASES.map((k, i) => ({ i, c: CLIENTS[k.c].name, t: k.t }))).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Автотест бота</title>
-<style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 4px}p{color:var(--muted);line-height:1.5;margin:4px 0 14px}
-button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:600 15px system-ui;cursor:pointer}button:disabled{opacity:.5}
+<style>${OWNER_BASE}.w{max-width:900px}h1{margin:0 0 4px}p{color:var(--muted);line-height:1.5;margin:4px 0 14px}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:600 15px inherit;cursor:pointer}button:disabled{opacity:.5}
 #sum{font-weight:700;margin:12px 0}.r{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:8px 0;padding:10px 12px}
 .r summary{cursor:pointer;display:flex;gap:8px;align-items:baseline;list-style:none}.r summary::-webkit-details-marker{display:none}
 .st{flex:none;width:22px}.nm{flex:1;min-width:0}.nm small{color:var(--muted)}.f{color:var(--bad);font-size:13.5px;margin:6px 0 0 30px}
 .tr{font-size:13.5px;line-height:1.45;margin:8px 0 0 30px}.tr div{margin:4px 0}.u{color:var(--muted)}.g{color:var(--bad);font-size:12px}
 .ok{color:var(--good)}.bad{color:var(--bad)}select{padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px}</style></head>
-<body><div class="w"><h1>Автотест AI-администратора</h1>
+<body><div class="top"><b>Автотест бота</b><a href="/admin">Панель</a><a href="/logout">Выйти</a></div><div class="w"><h1>Автотест AI-администратора</h1>
 <p>Прогоняет ${CASES.length} диалогов через живую модель и проверяет ответы. Бесплатный лимит Gemini небольшой, поэтому сценарии идут по одному: весь прогон — 3–8 минут. Заявки автотеста в реальный список не попадают.</p>
 <select id="only"><option value="">Все ниши</option>${Object.values(CLIENTS).filter(c => !c.hidden || CASES.some(k => k.c === c.id)).map(c => `<option>${esc(c.name)}</option>`).join("")}</select>
 <button id="go">Запустить</button><div id="sum"></div><div id="out"></div></div>

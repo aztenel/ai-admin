@@ -164,7 +164,7 @@ export function bcPage() {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Рассылки — AI-администратор</title><style>${ADMIN_CSS}
 .bar2{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:8px 0}.bar2 i{display:block;height:100%;background:var(--acc)}.two{display:flex;gap:10px;flex-wrap:wrap}.two>div{flex:1;min-width:92px}
 input[type=file]{font-size:14px;margin-top:6px}label.ck{font-weight:400;display:flex;gap:8px;align-items:flex-start}label.ck input{margin-top:4px;width:18px;height:18px}</style></head><body>
-<div class="top"><b id="ttl">Рассылки</b><a id="l_in" href="/inbox">Чаты</a><a id="l_st" href="/studio" hidden>Боты</a><a href="/logout">Выйти</a></div><div class="w">
+<div class="top"><b id="ttl">Рассылки</b><a id="l_in" href="/inbox">Чаты</a><a id="l_st" href="/admin" hidden>Панель</a><a href="/logout">Выйти</a></div><div class="w">
 <div id="info"></div>
 <div id="list"></div>
 <div class="row"><button class="btn p" id="b_new">+ Новая рассылка</button></div>

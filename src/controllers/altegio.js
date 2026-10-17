@@ -4,7 +4,7 @@ import { esc, clean } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
 import { money } from "../lib/money.js";
 import { TZ, isoDay } from "../lib/time.js";
-import { BASE_CSS } from "../lib/css.js";
+import { OWNER_BASE } from "../lib/css.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { ALT_DAYS, ALT_JOURNAL_DAYS } from "../config/constants.js";
 import { altSelfCancel, altLoc, thin } from "../services/booking/book.js";
@@ -178,11 +178,11 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
 /** @param {any} body @param {string} cid @param {any} key @param {any} [token] @param {string} [slug] */
 export function altUserPage(body, cid, key, token, slug) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Журнал Altegio</title>
-<style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
+<style>${OWNER_BASE}.w{max-width:900px}
 pre{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
 form{display:grid;gap:8px}input{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:11px 12px;font-size:16px}
-button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font:600 15px system-ui}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
-<body><div class="w"><h1>Журнал Altegio: проверка ключа пользователя</h1>${body ? `<pre>${esc(body)}</pre>` : ""}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font:600 15px inherit;cursor:pointer}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
+<body><div class="top"><b>Журнал Altegio</b><a href="/admin">Панель</a><a href="/logout">Выйти</a></div><div class="w"><h1>Проверка ключа пользователя</h1>${body ? `<pre>${esc(body)}</pre>` : ""}
 ${token ? `<details style="margin:0 0 14px"><summary style="cursor:pointer;font-weight:600">Ключ для Cloudflare — открыть, только чтобы скопировать (в чат не присылать)</summary>
 <p>Cloudflare → Workers → ai-admin → Settings → Variables and Secrets → Add: тип <b>Secret</b>, имя <b>${esc(slug)}</b>, значение — ключ ниже. Для черновиков — то же в разделе Previews. Ключ действует, пока не сменён пароль в Altegio.</p>
 <input readonly value="${esc(token)}" onfocus="this.select()" style="width:100%"></details>` : ""}
@@ -196,11 +196,11 @@ ${token ? `<details style="margin:0 0 14px"><summary style="cursor:pointer;font-
 /** @param {string} body @param {string} key @param {string} cid @param {any} loc */
 export function altPage(body, key, cid, loc) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка Altegio</title>
-<style>${BASE_CSS}.w{max-width:760px;margin:0 auto;padding:20px 16px}h1{font-size:21px;margin:0 0 10px}
+<style>${OWNER_BASE}.w{max-width:900px}
 pre{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
 form{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}input[type=tel]{flex:1;min-width:200px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:11px 12px;font-size:16px}
-button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:600 15px system-ui}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
-<body><div class="w"><h1>Проверка Altegio</h1><pre>${esc(body)}</pre>
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:600 15px inherit;cursor:pointer}p{color:var(--muted);line-height:1.5;font-size:14px}</style></head>
+<body><div class="top"><b>Расписание Altegio</b><a href="/admin">Панель</a><a href="/logout">Выйти</a></div><div class="w"><pre>${esc(body)}</pre>
 <form method="post" action="/altegio"><input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="c" value="${esc(cid)}"><input type="hidden" name="loc" value="${esc(loc)}">
 <input type="tel" name="phone" placeholder="Ваш телефон: +7 701 123 45 67" aria-label="Телефон для пробной записи" required><button>Пробная запись</button></form>
 <p>Пробная запись создаётся на первое свободное время и сразу удаляется. Так проверяется весь путь: телефон, запись, отмена. Укажите свой номер: Altegio может отправить на него уведомление.</p></div></body></html>`;

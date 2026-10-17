@@ -136,7 +136,7 @@ function load(){api('/api/studio/list').then(function(d){if(d.error){$('list').t
  if(!mine.length)L.appendChild(el('p','mut','Пока нет ни одного. Нажмите «Новый бот» и заполните паспорт компании.'));
  mine.forEach(function(c){L.appendChild(card(c))});
  var nb=el('button','btn p','+ Новый бот');nb.onclick=function(){openEdit(null)};L.appendChild(nb);
- L.appendChild(el('h2','','Демо-боты'));L.appendChild(el('p','mut','Встроенные примеры для показа. Меняются только в коде.'));
+ L.appendChild(el('h2','','Встроенные боты'));L.appendChild(el('p','mut','Заданы в коде (Winchester — до переноса в паспорт). Меняются только в коде.'));
  demo.forEach(function(c){L.appendChild(card(c))})})}
 function card(c){var d=el('div','card');d.appendChild(el('b','',c.name));d.appendChild(el('div','mut',c.kind+' · '+c.id+(c.off?' · выключен':'')));
  var t=el('div','tags');t.appendChild(tag(null,c.booking==='altegio'?'запись в Altegio':c.booking==='none'?'без записи':'заявки администратору'));

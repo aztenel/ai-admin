@@ -890,7 +890,7 @@ section("после проверки: безопасность");
   r = await b.go("/diag");
   ok("вошедшему владельцу /diag открывается без ключа в адресе", r.status === 200 && /LEADS_KEY|Ключ|ключ/i.test(await r.text()));
   r = await b.go("/leads"); const lp = await r.text();
-  ok("на странице заявок у вошедшего есть переходы в пульт и выход", r.status === 200 && /href="\/inbox"/.test(lp) && /href="\/logout"/.test(lp) && /href="\/studio"/.test(lp));
+  ok("на странице заявок у вошедшего есть переходы в пульт, панель владельца и выход", r.status === 200 && /href="\/inbox"/.test(lp) && /href="\/logout"/.test(lp) && /href="\/admin"/.test(lp)); // 17.10.2026: «Боты» → «Панель»
 
   // вебхук без подписи
   const S4 = mk({ WA_TOKEN_ACME: "tok", APP_SECRET_ACME: "sec" }); // клиенты только со своими номерами: общего номера нет

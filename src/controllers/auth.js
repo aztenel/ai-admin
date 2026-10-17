@@ -2,7 +2,7 @@
 // Страница входа /login, выход, вход по ключу в адресе (enter), ответ «слишком много неверных ключей».
 import { esc } from "../lib/text.js";
 import { page } from "../lib/http.js";
-import { BASE_CSS } from "../lib/css.js";
+import { OWNER_BASE } from "../lib/css.js";
 import { sessionMake, sessionRead, cookieSet, loginRole, loginBlocked } from "../services/auth/session.js";
 /** @import { Env } from "../lib/types.js" */
 
@@ -12,9 +12,9 @@ const safeNext = n => { n = String(n || ""); return /^\/[a-z]/.test(n) && !/[\\\
 /** @param {string} next @param {string} [msg] */
 export function loginPage(next, msg) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — AI-администратор</title>
-<style>${BASE_CSS}.w{max-width:380px;margin:0 auto;padding:48px 16px}h1{font-size:21px;margin:0 0 6px}p{color:var(--muted);margin:0 0 16px;line-height:1.5}
+<style>${OWNER_BASE}.w{max-width:420px;padding-top:48px}h1{margin:0 0 6px}p{color:var(--muted);margin:0 0 16px;line-height:1.5}
 input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;font-size:16px;background:var(--panel);color:var(--ink)}button{width:100%;margin-top:12px;padding:13px;border:0;border-radius:12px;background:var(--acc);color:#fff;font-size:16px;font-weight:600}
-.e{color:var(--bad);margin:0 0 12px}</style></head><body><div class="w"><h1>Вход</h1><p>Введите ключ доступа. Он нужен один раз — дальше это устройство запомнится на 30 дней.</p>
+.e{color:var(--bad);margin:0 0 12px}</style></head><body><div class="top"><b>AI-администратор</b></div><div class="w"><h1>Вход</h1><p>Введите ключ доступа. Он нужен один раз — дальше это устройство запомнится на 30 дней.</p>
 ${msg ? `<p class="e">${esc(msg)}</p>` : ""}<form method="post" action="/login"><input type="hidden" name="next" value="${esc(next)}"><input type="password" name="key" placeholder="Ключ доступа" autocomplete="current-password" autofocus required><button>Войти</button></form></div>
 <script>if(location.hash){var n=document.querySelector('[name=next]');n.value+=location.hash}</script></body></html>`; // ссылка на чат из Telegram ведёт сразу в него и после входа
 }
