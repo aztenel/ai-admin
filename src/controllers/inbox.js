@@ -14,7 +14,7 @@ import { loadLeads, allLeads, leadTs, logTurns, gaShared, gaRoute, gaWhy, waCred
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { wzOn, wzMedia } from "../services/channels/wazzapo.js";
-import { waRoute } from "../services/channels/index.js";
+import { waRoute, waBotOff } from "../services/channels/index.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
 import { growthReport } from "../services/digest.js";
@@ -54,7 +54,7 @@ export async function inboxApi(request, env, url, s) {
     }
     rows.sort((a, b2) => (b2.li || b2.t) - (a.li || a.t));
     const need = rows.filter(r => r.nd).length;
-    return jsonP({ client: { id: cid, name: c.name, off: !!c.off }, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
+    return jsonP({ client: { id: cid, name: c.name, off: waBotOff(env, c) }, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
 
   if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)

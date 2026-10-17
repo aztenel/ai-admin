@@ -179,6 +179,7 @@
 | `ALTEGIO_USER_<ID>` | Secret | Ключ пользователя Altegio — чтение журнала записей (получают на `/altegio/user`) |
 | `ALTEGIO_SELF_CANCEL_<ID>` | Text | Самостоятельная отмена для одного клиента |
 | `TG_CHAT_<ID>` | Text | Свой чат Telegram клиента |
+| `BOT_WA_<ID>` | Text | `1` — бот отвечает в WhatsApp, `0` — молчит (сообщения в пульт и Telegram, отвечает администратор; веб-чат работает). Без переменной — как в коде: у Winchester `waOff: true` — выключен, пока номер после блокировки «прогревается» живыми ответами (`waBotOff` в `services/channels/index.js`, 17.10.2026, `test/unit/wa-off.test.mjs`) |
 | `KEY_<ID>` | Secret | Старый ключ клиента к `/leads`. Встроенному боту (Winchester до переноса в паспорт) ключ сотрудника теперь выдаёт кнопка на `/studio` — отпечаток в KV `skeys` (`applyStaffKeys` в `services/tenants/passport.js`, 16.10.2026, `test/unit/staff-key.test.mjs`) |
 
 ### 3.3. Цель: добавляются
