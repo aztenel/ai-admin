@@ -112,7 +112,10 @@ const PASS = { id: "acme", isNew: true, name: "Barber House", niche: "barber", a
 
   // список: демо-боты есть, своих пока нет
   let d = await (await own.go("/api/studio/list")).json();
-  ok("в списке шесть демо, пробный Altegio и показ Winchester, ниши для выбора", d.clients.filter(c => !c.dynamic).length === 8 && d.clients.every(c => !c.dynamic) && d.niches.some(n => n.id === "barber"), JSON.stringify(d.clients.map(c => c.id)));
+  // демо-боты скрыты (17.10.2026, по просьбе владельца): в списке только показ Winchester; SHOW_DEMOS=1 — снова все восемь
+  ok("в списке только Winchester (демо скрыты), ниши для выбора", d.clients.map(c => c.id).join() === "winchester" && d.niches.some(n => n.id === "barber"), JSON.stringify(d.clients.map(c => c.id)));
+  { const SD = mk({ SHOW_DEMOS: "1" }), o = SD.browser(); await o.go("/studio?key=" + OWNER); const all = await (await o.go("/api/studio/list")).json();
+    ok("SHOW_DEMOS=1: в списке шесть демо, пробный Altegio и показ Winchester", all.clients.filter(c => !c.dynamic).length === 8, JSON.stringify(all.clients.map(c => c.id))); }
   // проверка паспорта: ошибки понятным языком
   d = await (await own.post("/api/studio/check", { id: "Acme!", name: "", niche: "barber", schedule: "как получится", booking: "manual", services: "Стрижка — 50", phone: "123" })).json();
   ok("паспорт с ошибками: перечислены все, ничего не сохранено", d.ok === false && d.errors.length >= 5 && d.errors.some(e => /идентификатор/.test(e)) && d.errors.some(e => /график/.test(e)) && d.errors.some(e => /цена 50/.test(e)) && !S.kv.mem.has("cfg:all"), JSON.stringify(d.errors));

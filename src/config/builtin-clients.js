@@ -6,6 +6,10 @@ export const W5 = t => [null, t, t, t, t, t, null]; // пн–пт одинак�
 /** @param {any} sun @param {any} weekdays @param {any} sat */
 export function week(sun, weekdays, sat) { const a = W5(weekdays); a[0] = sun; a[6] = sat; return a; }
 
+// демо-боты: витрина сайта (/), автотест и проверки кода держатся на них. Из «Мои боты» и выбора компании в пульте скрыты —
+// владелец видит только настоящих ботов (17.10.2026, по просьбе владельца). Показать снова — Text SHOW_DEMOS = 1 в Cloudflare
+export const DEMO_IDS = new Set(["dent", "beauty", "auto", "edu", "event", "barber", "alt"]);
+
 /** @type {Record<string, any>} */
 export const CLIENTS = {
   dent: {

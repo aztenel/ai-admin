@@ -40,7 +40,7 @@ try {
   await p.fill("input[name=key]", OWNER); await p.click("button");
   await p.waitForSelector("text=Боты клиентов");
   ok("после входа — «Мои боты», ключа в адресе нет", p.url().endsWith("/studio"));
-  ok("демо-боты перечислены", await p.locator(".card").count() >= 7);
+  ok("демо-боты скрыты, показ Winchester виден", await p.locator("text=Winchester").first().isVisible() && !(await p.locator("text=Демо Дент").count())); // демо скрыты по просьбе владельца, 17.10.2026
   await shot(p, "01-studio-list");
 
   // ---- новый бот: ошибки, проверка, сохранение

@@ -164,6 +164,7 @@
 | `SITE_URL` | Text | желательно | Адрес сайта для ссылок в Telegram (`https://ai-admin.azikonps4.workers.dev`) |
 | `OWNER_NAME`, `OWNER_EMAIL`, `CONSENT_TEXT` | Text | нет | Страница `/privacy`, текст согласия |
 | `SESSIONS_PER_IP`, `BC_BATCH` | Text | нет | Ограничения |
+| `SHOW_DEMOS` | Text | нет | `1` — показать демо-ботов (`DEMO_IDS` в `builtin-clients.js`) в «Мои боты» и выборе компании в пульте; по умолчанию скрыты (17.10.2026). Витрина `/` и автотест работают с ними всегда |
 
 ### 3.2. Сейчас: на каждого клиента (`<ID>` — id паспорта заглавными, например `ACME`)
 

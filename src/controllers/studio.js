@@ -2,7 +2,7 @@
 // «Мои боты» (/studio, /api/studio/*): список паспортов, проверка, сохранение, ключи сотрудников, удаление.
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { ADMIN_CSS } from "../lib/css.js";
-import { CLIENTS, hasClient } from "../config/builtin-clients.js";
+import { CLIENTS, DEMO_IDS, hasClient } from "../config/builtin-clients.js";
 import { NICHES } from "../config/niches.js";
 import { sha256Hex } from "../services/auth/session.js";
 import { compileClient, syncClients, applyStaffKeys } from "../services/tenants/passport.js";
@@ -40,7 +40,7 @@ export async function studioApi(request, env, url, s) {
   const P = url.pathname, M = request.method;
   if (s.role !== "owner") return jsonP({ error: "Эта страница — только для владельца сервиса." }, 403);
   if (M === "GET" && P === "/api/studio/list") {
-    return jsonP({ clients: Object.values(CLIENTS).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
+    return jsonP({ clients: Object.values(CLIENTS).filter(c => env.SHOW_DEMOS === "1" || !DEMO_IDS.has(c.id)).map(c => clientState(env, c)), niches: Object.entries(NICHES).map(([id, n]) => ({ id, title: n.title })) });
   }
   if (M === "GET" && P === "/api/studio/get") {
     const id = /** @type {any} */ (url.searchParams.get("c")), all = await loadCfgs(env);
