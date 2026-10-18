@@ -2,6 +2,7 @@
 // Altegio: онлайн-запись по HTTP — услуги и мастера, даты, свободное время, создание и отмена записи; кэш в памяти изолята.
 /** @import { Env } from "../../../lib/types.js" */
 import { isoDay, local, hm } from "../../../lib/time.js";
+import { money } from "../../../lib/money.js";
 import { nameToks, svTrim } from "../../../lib/names.js";
 import { ALT_TTL, ALT_BASE_TTL, ALT_MAX_SERVICES, ALT_MAX_STAFF } from "../../../config/constants.js";
 import { altCall, altText } from "./client.js";
@@ -15,12 +16,25 @@ export const altCache = new Map(); // память изолята: у Altegio л
  * @param {string} key
  * @param {(x: any) => any} hint
  * @param {(s: any) => any} norm
+ * @param {(x: any) => any} [hint2]
  */
-export function altUniq(list, key, hint, norm) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
+export function altUniq(list, key, hint, norm, hint2) { // norm — как названия сравниваются при подборе: «Стрижка» и «Стрижка.» для бота одно и то же
   /** @param {any} x */
   const k = x => norm(x[key]);
   const count = () => { const n = new Map(); for (const x of list) n.set(k(x), (n.get(k(x)) || 0) + 1); return n; };
   let n = count();
+  // вторая подпись (цена) — когда первая (категория) у одинаковых названий одна и та же: Winchester, 19.10.2026 — стрижка у шеф-барбера
+  // и у барберов в одной категории; «Мужская стрижка (9 000 ₸)» понятнее клиенту и ИИ, чем «… №1», и не мешает узнавать услугу по словам
+  /** @type {Map<string, any[]>} */
+  const groups = new Map();
+  for (const x of list) if (n.get(k(x)) > 1) groups.set(k(x), [...(groups.get(k(x)) || []), x]);
+  /** @param {any[]} g @param {(x: any) => any} h */
+  const distinct = (g, h) => g.every(h) && new Set(g.map(x => norm(String(h(x))))).size === g.length;
+  for (const g of groups.values()) {
+    if (distinct(g, hint)) continue;
+    if (hint2 && distinct(g, hint2)) for (const x of g) x[key] = `${x[key]} (${hint2(x)})`;
+  }
+  n = count();
   for (const x of list) if (n.get(k(x)) > 1 && hint(x)) x[key] = `${x[key]} (${hint(x)})`;
   n = count();
   const used = new Set(list.map(k)), seq = new Map();
@@ -46,7 +60,7 @@ export async function altBase(env, loc, nowMs) {
   const allSv = ((sv && Array.isArray(sv.services) && sv.services) || []).filter(/** @param {any} x */ x => x && x.id && altText(x.title) && x.active !== 0 && x.active !== false);
   const services = allSv.slice(0, ALT_MAX_SERVICES)
     .map(/** @param {any} x */ x => ({ id: x.id, title: altText(x.title, 90), min: +x.price_min || 0, max: +x.price_max || 0, minutes: Math.round((+x.seance_length || 0) / 60), cat: cats.get(x.category_id) || "" }));
-  altUniq(services, "title", /** @param {any} x */ x => x.cat, svTrim);
+  altUniq(services, "title", /** @param {any} x */ x => x.cat, svTrim, /** @param {any} x */ x => x.min ? money(x.min) + " ₸" : "");
   // bookable=false у Altegio значит «сейчас нет свободного времени», а не «мастера нет» — такого мастера оставляем в списке
   const allSt = (Array.isArray(st) ? st : []).filter(/** @param {any} m */ m => m && m.id && altText(m.name) && !+m.fired && !+m.hidden);
   const staff = allSt.slice(0, ALT_MAX_STAFF)

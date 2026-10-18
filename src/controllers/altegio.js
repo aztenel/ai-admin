@@ -7,7 +7,7 @@ import { TZ, isoDay } from "../lib/time.js";
 import { OWNER_BASE } from "../lib/css.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { ALT_DAYS, ALT_JOURNAL_DAYS } from "../config/constants.js";
-import { altSelfCancel, altLoc, thin } from "../services/booking/book.js";
+import { altSelfCancel, altLoc, thin, altTrial, altTrialDates } from "../services/booking/book.js";
 import { withDurations, gridStep, durGroups, fitStarts, durStr } from "../services/booking/fit.js";
 import { altUserKey } from "../services/booking/journal.js";
 import { altText, altCall, altCache, altBase, altDates, altDropTimes, altTimes, altRecord, altEmailErr, ALT_EMAIL_TIP } from "../services/diag/deps.js";
@@ -79,15 +79,25 @@ export async function altDiag(env, cid, locArg, bookPhone) {
   if (bookPhone) {
     const ph = normPhone(bookPhone);
     out.push("");
+    // пробная запись — в следующем месяце, в день без записей (altTrial): проба не занимает живые окна (условие владельца, 19.10.2026)
+    /** @type {any} */
+    let trial = first;
+    if (ph && altTrial(env, c)) {
+      trial = null;
+      const td = await step("Дни для пробной записи", () => altTrialDates(env, c, loc, now, 1));
+      const t = td && td[0] ? await step("Время на " + td[0], () => altTimes(env, loc, 0, td[0], null, now, true)) : null;
+      if (td && td[0] && t && t[0]) trial = { date: td[0], ...t[0], datetime: t[0].datetime || `${td[0]}T${t[0].time.padStart(5, "0")}:00+0${TZ}:00` };
+      else if (td) out.push("Пробная запись: ❌ в следующем месяце нет дня без записей, открытого для онлайн-записи, — пробу не делаю, чтобы не занять живые окна");
+    }
     if (!ph) out.push("Пробная запись: ❌ номер телефона не распознан — нужен казахстанский мобильный, например +7 701 123 45 67");
-    else if (!first || !base.services[0]) out.push("Пробная запись: ❌ нет свободного времени или услуг для записи");
+    else if (!trial || !base.services[0]) { if (!altTrial(env, c)) out.push("Пробная запись: ❌ нет свободного времени или услуг для записи"); }
     else {
       // мастер — конкретный, у которого это время свободно: так видно, как Altegio показывает время мастера с записью
       /** @type {any} */
       let pick = null;
-      for (const m of base.staff.slice(0, 12)) { try { const t = await altTimes(env, loc, m.id, first.date, [base.services[0].id], now, true); if (t.some((/** @type {any} */ x) => x.time === first.time)) { pick = m; break; } } catch (e) {} }
-      const appointments = [{ id: 1, services: [base.services[0].id], staff_id: pick ? pick.id : 0, datetime: first.datetime }];
-      const where = `${first.date} в ${first.time}${pick ? ", мастер " + pick.name : ""}, клиент «Проверка бота (можно удалить)»`;
+      for (const m of base.staff.slice(0, 12)) { try { const t = await altTimes(env, loc, m.id, trial.date, [base.services[0].id], now, true); if (t.some((/** @type {any} */ x) => x.time === trial.time)) { pick = m; break; } } catch (e) {} }
+      const appointments = [{ id: 1, services: [base.services[0].id], staff_id: pick ? pick.id : 0, datetime: trial.datetime }];
+      const where = `${trial.date} в ${trial.time}${pick ? ", мастер " + pick.name : ""}, клиент «Проверка бота (можно удалить)»`;
       const body = { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Пробная запись AI-администратора: создаётся и сразу удаляется", appointments };
       lastErr = null;
       /** @type {any} */
@@ -104,18 +114,18 @@ export async function altDiag(env, cid, locArg, bookPhone) {
       }, (/** @type {any} */ e) => e.status === 404 ? " → услуга недоступна для онлайн-записи или локация не найдена" : altEmailErr(e) ? " → " + ALT_EMAIL_TIP : hint(e));
       if (needEmail) out.push(`⚠️ ${ALT_EMAIL_TIP}. Пока это не сделано, бот будет передавать записи администратору заявками (для пробы взята почта OWNER_EMAIL).`);
       if (rec && rec.record_id) {
-        out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${first.date} в ${first.time}`);
+        out.push(`Пробная запись: создана ✅ № ${rec.record_id} — ${base.services[0].title}, ${trial.date} в ${trial.time}`);
         if (sent && !/^\+/.test(String(sent.phone))) out.push("  (номер телефона Altegio принял только цифрами, без «+» — бот это учитывает)");
         // занято ли время мастера, пока запись есть, и свободно ли после удаления — по этому бот может замечать записи, удалённые администратором
         const seeTime = async () => {
           if (!pick) return "мастер не выбран";
           let a1, a2, a3;
-          try { a1 = (await altTimes(env, loc, pick.id, first.date, [], now, true)).some((/** @type {any} */ x) => x.time === first.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a1 = "ошибка " + (e.status || ""); }
-          try { a2 = (await altTimes(env, loc, pick.id, first.date, [base.services[0].id], now, true)).some((/** @type {any} */ x) => x.time === first.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a2 = "ошибка " + (e.status || ""); }
+          try { a1 = (await altTimes(env, loc, pick.id, trial.date, [], now, true)).some((/** @type {any} */ x) => x.time === trial.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a1 = "ошибка " + (e.status || ""); }
+          try { a2 = (await altTimes(env, loc, pick.id, trial.date, [base.services[0].id], now, true)).some((/** @type {any} */ x) => x.time === trial.time) ? "свободно" : "занято"; } catch (/** @type {any} */ e) { a2 = "ошибка " + (e.status || ""); }
           try { await altCall(env, "POST", `/book_check/${loc}`, { appointments }); a3 = "проходит"; } catch (/** @type {any} */ e) { a3 = `не проходит (${e.code || e.status || ""} ${clean(e.message, 60)})`; }
           return `время мастера: ${a1}; с услугой: ${a2}; проверка записи: ${a3}`;
         };
-        if (pick) out.push(`С записью (мастер ${pick.name}, ${first.time}) — ${await seeTime()}`);
+        if (pick) out.push(`С записью (мастер ${pick.name}, ${trial.time}) — ${await seeTime()}`);
         const del = rec.record_hash ? await step("Удаление пробной записи", async () => { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); return true; },
           (/** @type {any} */ e) => e.status === 404 ? " → запись не найдена: возможно, её уже удалили" : hint(e)) : (out.push("Удаление пробной записи: ❌ Altegio не прислал код записи, без него бот не может её удалить"), null);
         out.push(del ? "Удаление пробной записи: ✅ — бот умеет и записывать, и отменять" : `⚠️ Пробную запись удалите вручную в журнале Altegio: ${where}`);
@@ -180,13 +190,14 @@ export async function altUserProbe(env, cid, login, password, phone) { // → { 
   try {
     const base = await altBase(env, loc, now), dates = altDates(await altCall(env, "GET", `/book_dates/${loc}`), now);
     let slot = null, day = "";
-    for (const d of dates.slice(0, 3)) { const t = await altTimes(env, loc, 0, d, null, now, true); if (t[0]) { slot = t[0]; day = d; break; } }
+    const pool = altTrial(env, c) ? await altTrialDates(env, c, loc, now, 1, token) : dates.slice(0, 3); // пробная запись — следующий месяц, день без записей
+    for (const d of pool) { const t = await altTimes(env, loc, 0, d, null, now, true); if (t[0]) { slot = t[0]; day = d; break; } }
     if (!slot || !base.services[0]) { out.push("", "Пробная запись: ❌ нет свободного времени"); return { text: out.join("\n"), token }; }
     const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: slot.datetime || `${day}T${slot.time.padStart(5, "0")}:00+0${TZ}:00` }];
     const rec = (x => (Array.isArray(x) ? x[0] : x) || {})((await altRecord(env, loc, { phone: ph, fullname: "Проверка бота (можно удалить)", comment: "Проверка журнала: создаётся и сразу удаляется", appointments })).data);
     if (!rec.record_id) { out.push("", "Пробная запись: ⚠️ Altegio не вернул номер записи — проверьте журнал"); return { text: out.join("\n"), token }; }
     out.push("", `Пробная запись: создана № ${rec.record_id} — ${day} в ${slot.time}`);
-    const find = async () => { const a = await list(false); if (!a) return "журнал не прочитан"; const r = a.find(x => String(x.id || x.record_id) === String(rec.record_id)); if (!r) return "в журнале её нет"; const v = recOf(r); return `в журнале есть: мастер ${v.staff || "?"}, телефон ${mask(v.phone)}, deleted: ${v.del}`; };
+    const find = async () => { let a = null; try { const d = await altCall(env, "GET", `/records/${loc}?start_date=${day}&end_date=${day}&count=200`, null, token); a = Array.isArray(d) ? d : null; } catch (e) {} if (!a) a = await list(false); if (!a) return "журнал не прочитан"; const r = a.find(x => String(x.id || x.record_id) === String(rec.record_id)); if (!r) return "в журнале её нет"; const v = recOf(r); return `в журнале есть: мастер ${v.staff || "?"}, телефон ${mask(v.phone)}, deleted: ${v.del}`; };
     const one = async () => { const res = []; for (const [n, p] of [["record", `/record/${loc}/${rec.record_id}`], ["appointments", `/locations/${loc}/appointments/${rec.record_id}`]]) { try { const d = await altCall(env, "GET", p, null, token); res.push(`${n}: ✅ deleted: ${d && "deleted" in d ? JSON.stringify(d.deleted) : "нет поля"}${d && d.staff && d.staff.name ? ", мастер " + altText(d.staff.name, 40) : ""}`); } catch (e) { res.push(`${n}: ${err(e)}`); } } return res.join("; "); };
     out.push(`  с записью — ${await find()}`, `  чтение одной записи — ${await one()}`);
     try { await altCall(env, "DELETE", `/user/records/${rec.record_id}/${rec.record_hash}`); altDropTimes(loc); out.push("  удалена ✅"); }

@@ -12,7 +12,7 @@ import { withDurations } from "../../src/services/booking/fit.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { altDiag } from "../../src/controllers/altegio.js";
 
-const ENV = { ALTEGIO_PARTNER: "partner-key" };
+const ENV = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_TRIAL_WINCHESTER: "0" }; // веб-чат с ближайшими днями (у Winchester веб-чат — пробный, следующий месяц)
 const FREE = {
   31: ["11:00", "12:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00"], // Тони
   32: ["10:00", "10:30", "11:00", "11:30", "12:00", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30"] // Айдос: занят 12:30–18:00
@@ -106,7 +106,7 @@ test("запись Premium к Тони на 16:00 проходит провер�
     [`Записала вас.\n[ЗАЯВКА] Имя: Азамат; Телефон: +77011234567; Услуга: Комплекс «Premium» (Шеф-барбер); Мастер: Тони; Дата: ${D1}; Время: 16:00`]);
   net.altData = null;
   assert.ok(!/не получится/.test(r.reply), r.reply);
-  assert.ok(net.alt.some(x => /^POST \/book_check\//.test(x)), "проверка записи в Altegio (режим «без записи»): " + net.alt.join(" | "));
+  assert.ok(net.alt.some(x => /^POST \/book_record\//.test(x)), "запись в Altegio создана (у Winchester с 19.10.2026 запись настоящая): " + net.alt.join(" | "));
 });
 
 test("ИИ назвал «16:30 свободно» на Premium — ответ переписывается; не исправил — бот отвечает сам с ближайшим временем", async () => {

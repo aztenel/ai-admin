@@ -15,7 +15,7 @@ import { mergeProfile, putHist } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
 import { safeText, safeAsk, fallbackText, cutOffText } from "./fallbacks.js";
 import { notify } from "../integrations/telegram/client.js";
-import { altLoc, altSnapshot, altSelfCancel, altBook, altDry } from "../booking/book.js";
+import { altLoc, altSnapshot, altSelfCancel, altBook, altDry, altTrial } from "../booking/book.js";
 import { altJournal } from "../integrations/altegio/journal-api.js";
 import { altFromJournal, altPrune, altIsGone, altUserKey } from "../booking/journal.js";
 import { notifyOnce, noteDue } from "../notifications/telegram.js";
@@ -27,7 +27,7 @@ import { altClaims, CL_DATA_Q } from "./claims.js";
 import { loadLeads, leadTs, leadKey, saveLeads } from "../../db/kv/leads.js";
 import { hash } from "../../lib/crypto.js";
 import { altStaffWish, altPickStaff, altPickServices } from "../booking/pick.js";
-import { ipKey, altOverLimit, altCount } from "../booking/limits.js";
+import { ipKey, altOverLimit, altCount, altLimits } from "../booking/limits.js";
 import { altCancel } from "../integrations/altegio/booking-api.js";
 import { remindPlan } from "../reminders/plan.js";
 import { systemPrompt } from "./prompt.js";
@@ -373,8 +373,10 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   let cc = c, alt = null, altDown = false, pruned = 0, journal = false; // journal — записи клиента прочитаны из журнала Altegio
   if (altLoc(env, c)) {
     try {
-      alt = await altSnapshot(env, c, nowMs, userAll);
-      const ju = altUserKey(env, c), jph = opts.phone || saved.profile.phone;
+      alt = await altSnapshot(env, c, nowMs, userAll, { trial: !opts.phone && !opts.test && altTrial(env, c) });
+      // записи клиента из журнала — только по номеру, который подтвердил сам канал (WhatsApp, Green-API). В веб-чате номер набирает
+      // посетитель: по чужому номеру он увидел бы чужие записи и мог бы просить их отменить (найдено при включении настоящей записи, 19.10.2026)
+      const ju = altUserKey(env, c), jph = opts.phone;
       if (ju && jph) { // записи клиента — из журнала Altegio (CRM — единственная правда о записях)
         try { const j = await altJournal(env, ju, altLoc(env, c), jph, nowMs); if (j) { altFromJournal(saved.profile, j, nowMs); pruned = 1; journal = true; } }
         catch (e) { console.log("alt journal", String(e)); if (!opts.test) await notifyOnce(env, "altj:" + c.id, `⚠️ Журнал Altegio не читается — ${c.name}\n${String(e.message || e).slice(0, 200)}\nБот отвечает о записях по своей памяти. Проверьте ключ ALTEGIO_USER_${String(c.id).toUpperCase()} (/altegio/user).`, c.id); }
@@ -531,6 +533,10 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     const draftCancel = draftOnly && !leaked && tagsOf(raw0, "ОТМЕНА").length > 0;
     const active = x => x.date > today || (x.date === today && mins(x.time) + 30 > nowMin);
     const books = saved.profile.bookings = (saved.profile.bookings || []).filter(active);            // активные записи этого чата
+    // чужая запись — пришла из журнала Altegio (j), а бот её не создавал: нет ни кода записи, ни заявки бота. Такие записи сделал администратор или мастер:
+    // бот их не отменяет и не переносит — только передаёт просьбу администратору (условие владельца и Кайрата, 19.10.2026)
+    const foreign = x => !!x && !!x.j && !!x.record_id && !x.record_hash && x.leadId == null, ownRec = x => !foreign(x);
+    const lim = altLimits(c), cxN = () => { const v = saved.profile.cxDay; return v && v.d === today ? v.n : 0; }; // отмен и переносов своих записей из чата за сегодня
     const pend = saved.profile.pend = (saved.profile.pend || []).filter(pendLive).slice(-5);           // заявки, которые ждут администратора
     const gone = saved.profile.gone = (saved.profile.gone || []).filter(g => nowMs - g.at < 6 * 3600e3).slice(-3); // недавно отменённые записи
     const manyNames = () => new Set([...books, ...pend].map(v => nameToks(v.name || "").join(" "))).size > 1;
@@ -643,7 +649,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       const ids = { ip: ipKey(opts.ip), phone: l.phone };
       const free = mode === "swap" && !saved.profile.delFails; // перенос записи из этого чата лимиты не тратит — пока старые записи действительно удаляются
       let over = false;
-      if (!free) { try { over = books.length - (mode === "swap" ? 1 : 0) >= ALT_MAX_ACTIVE || await altOverLimit(store, alt.loc, ids, nowMs); } catch (e) { console.log("limit", String(e)); } }
+      if (!free) { try { over = books.filter(ownRec).length - (mode === "swap" ? 1 : 0) >= lim.active || await altOverLimit(store, alt.loc, ids, nowMs, lim); } catch (e) { console.log("limit", String(e)); } }
       const tryBook = staff => altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff, date, time: l.time, fixedPhone: !!opts.phone || saved.profile.phoneBad === l.phone }, nowMs, opts.test || altDry(env, c));
       let r = opts.untrusted ? { ok: false, reason: "limit", error: "сообщение WhatsApp пришло без подписи Meta (не задан APP_SECRET) — автоматическая запись выключена" }
         : over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку" }
@@ -714,9 +720,28 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     };
     const askCx = rec => { saved.profile.cxAsk = { id: rec.leadId, at: nowMs }; return say("cancelAsk", { what: lab(rec) }); };
     let goneAll = true;
+    // просьба администратору вместо действия бота: запись сделал администратор (бот её не трогает) или из чата уже много отмен за сутки.
+    // Запись остаётся в чате и в журнале, пока администратор её не изменит; одна и та же просьба — одна заявка за сутки
+    const askAdmin = (rec, move, why, wantLine) => {
+      const key = (move ? "fmv|" : "fcx|") + (rec.record_id || rec.leadId || "") + "|" + (rec.date || "") + (rec.time || ""), r0 = saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? saved.profile.req : null;
+      if (!(r0 && r0.key === key)) {
+        if (adminCap() >= ALT_MAX_ADMIN_LEADS) return say("adminBusy");
+        const f = wantLine ? tagFields(wantLine) : null, want = f ? [clean(f["услуга"], 80), f["мастер"] && !altPickStaff(alt.staff, f["мастер"]).any ? "мастер " + clean(f["мастер"], 40) : "", [clean(f["дата"], 20), clean(f["время"], 40)].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
+        const id = addLead({ name: rec.name || saved.profile.name || "", service: (move ? "Перенести запись" : "Отменить запись") + (want ? " → " + want : ""), time: altLabel(rec, "ru", nowMs, true) + (rec.record_id ? ", № " + rec.record_id : ""), phone: ph0() },
+          { kind: move ? "change" : "cancel", note: `${why} — ${move ? "перенесите" : "отмените"} запись в Altegio и подтвердите клиенту. ${wish && wish.n ? `Сообщения клиента: «${wish.text.slice(0, 300)}»` : quote}` },
+          move ? "✏️ Клиент просит перенести запись — сделайте в Altegio" : "❌ Клиент просит отменить запись — сделайте в Altegio", true).id;
+        adminInc(); saved.profile.req = { key, at: nowMs, ids: [...((r0 && r0.ids) || []).slice(-5), id] };
+      }
+      rec.rq = nowMs; cancel = true; goneAll = false; acted = true;
+      return say(move ? "mvAdmin" : "cxAdmin", { list: label(rec) });
+    };
+    const whyAdmin = rec => foreign(rec) ? "эту запись делал администратор, бот чужие записи не отменяет и не переносит" : "из этого чата сегодня уже много отмен и переносов";
     const remove = async target => {
+      // чужую запись (её сделал администратор) бот не удаляет; свою — не больше lim.cx раз за сутки из одного чата
+      if (foreign(target) || (target.record_id && cxN() >= lim.cx)) { askAdmin(target, false, whyAdmin(target)); return false; }
       let ok = !target.record_id; // пробная запись автотеста в Altegio не создавалась
       if (!ok && target.record_hash) { try { await altCancel(env, target); ok = true; } catch (e) { console.log("altegio cancel", String(e)); if (e.status === 404) ok = true; } } // 404 — записи в Altegio уже нет
+      if (ok && target.record_id) saved.profile.cxDay = { d: today, n: cxN() + 1 };
       if (!ok) saved.profile.delFails = (saved.profile.delFails || 0) + 1;
       patchLead(target.leadId, { status: "отменена", note: ok ? "запись в Altegio удалена" : "в Altegio НЕ удалена — удалите вручную" });
       tell(`❌ Отмена: ${altLabel(target, "ru", nowMs, true)} (${c.name})\n${who}${target.record_id ? " · запись № " + target.record_id : ""}\n${ok ? "запись в Altegio удалена" : "⚠️ в Altegio НЕ удалена — удалите вручную"}`);
@@ -883,6 +908,11 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       if (statusQ && !wish) { // «Меня перенесли?» — вопрос, а не просьба: ничего не создаём и не удаляем. Если такая запись уже есть — так и отвечаем
         const bn = oEnv.booking[0], same = bn && bn.date && bn.time ? books.find(x => x.date === bn.date && x.time === bn.time && samePerson(x.name, bn.name)) : null;
         outs.push(same ? say("have", { what: label(same) }) + alsoText(books.filter(x => x !== same)) : books.length ? say("noop", { list: listOf(books) }) : say("noChange"));
+      }
+      else if (old0 && moveWish && (foreign(old0) || (old0.record_id && cxN() >= lim.cx)) && !altOther(old0, text, oEnv, "move")) {
+        // переносят запись, которую делал администратор (или из чата сегодня уже много переносов): новую запись не создаём — иначе были бы две записи,
+        // пока администратор не уберёт старую. Перенос целиком делает администратор
+        outs.push(askAdmin(old0, true, whyAdmin(old0), bookLines[0]));
       }
       else if (old0 && moveWish && altOther(old0, text, oEnv, "move")) {
         // клиент говорит о другой записи («перенесите запись жены», «с 15:00 на 13:00», а запись в чате на 10:00) — ничего не создаём и не удаляем

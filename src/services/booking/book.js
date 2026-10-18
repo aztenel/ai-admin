@@ -4,12 +4,14 @@
 import { altBase, altCache, altDates, altTimes, altDropTimes, altRecord } from "../integrations/altegio/booking-api.js";
 import { ALT_TTL, ALT_DAYS } from "../../config/constants.js";
 import { altCall } from "../integrations/altegio/client.js";
-import { isoDay, mins, hm, TZ } from "../../lib/time.js";
+import { isoDay, mins, hm, TZ, local } from "../../lib/time.js";
+import { altUserKey } from "./journal.js";
 import { altDay } from "./replies.js";
 import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike, altServiceHint } from "./pick.js";
 import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr, withDurations } from "./fit.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
+import { svTrim } from "../../lib/names.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
 
 // ================= Altegio: запись в расписание =================
@@ -28,6 +30,34 @@ export const altDry = (env, c) => {
   const v = env["ALTEGIO_DRY_" + String(c.id).toUpperCase()];
   return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.dry);
 };
+// Пробные записи — только в следующем месяце и только в дни, где в журнале нет ни одной записи: проба не занимает живые окна ближайших дней
+// (условие владельца при включении настоящей записи Winchester, 19.10.2026). Это веб-чат (его клиенты не видят: кнопки сайта ведут в WhatsApp)
+// и пробная запись на /altegio. Включается altegio.trialNextMonth; для одного клиента — Text ALTEGIO_TRIAL_<ID> = 1 или 0
+/** @param {Env} env @param {Client} c */
+export const altTrial = (env, c) => {
+  const v = env["ALTEGIO_TRIAL_" + String(c.id).toUpperCase()];
+  return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.trialNextMonth);
+};
+// дни следующего месяца, открытые для записи, без единой записи в журнале (журнал читается ключом пользователя; без ключа — просто дни месяца)
+// userKey — ключ пользователя, если его ещё нет в переменных (страница /altegio/user)
+/** @param {Env} env @param {Client} c @param {number} loc @param {number} nowMs @param {number} [max] @param {string} [userKey] @returns {Promise<string[]>} */
+export async function altTrialDates(env, c, loc, nowMs, max = ALT_DAYS, userKey = "") {
+  const k = "dt:" + loc + ":" + max, hit = userKey ? null : altCache.get(k);
+  if (hit && Math.abs(nowMs - hit.at) < ALT_TTL) return hit.v;
+  const t = local(nowMs), y = t.getUTCMonth() === 11 ? t.getUTCFullYear() + 1 : t.getUTCFullYear(), m = (t.getUTCMonth() + 1) % 12; // m — следующий месяц, с нуля
+  const mm = String(m + 1).padStart(2, "0"), from = `${y}-${mm}-01`, to = `${y}-${mm}-${String(new Date(Date.UTC(y, m + 1, 0)).getUTCDate()).padStart(2, "0")}`;
+  const dates = altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${from}&date_to=${to}`), nowMs).filter(/** @param {string} d */ d => d >= from && d <= to);
+  const user = userKey || altUserKey(env, c), busy = new Set();
+  if (user) for (let pg = 1; pg <= 10; pg++) {
+    const arr = await altCall(env, "GET", `/records/${loc}?start_date=${from}&end_date=${to}&count=200&page=${pg}`, null, user), list = Array.isArray(arr) ? arr : [];
+    for (const r of list) if (r && r.deleted !== true && r.deleted !== 1) busy.add(String(r.datetime || r.date || "").slice(0, 10));
+    if (list.length < 200) break;
+  }
+  const v = dates.filter(/** @param {string} d */ d => !busy.has(d)).slice(0, max);
+  altCache.set(k, { at: nowMs, v });
+  return v;
+}
+
 /** @param {Env} env @param {Client} c @returns {number} */
 export const altLoc = (env, c) => {
   const v = env["ALTEGIO_LOC_" + String(c.id).toUpperCase()];
@@ -69,13 +99,15 @@ export function thin(times, max = 16) {
 }
 
 // снимок расписания для одного сообщения: услуги, мастера, свободное время
-/** @param {Env} env @param {Client} c @param {number} nowMs @param {string} userText */
-export async function altSnapshot(env, c, nowMs, userText) {
+// mode.trial — пробный чат: дни следующего месяца без записей (altTrialDates)
+/** @param {Env} env @param {Client} c @param {number} nowMs @param {string} userText @param {{ trial?: boolean }} [mode] */
+export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
   const loc = altLoc(env, c);
   const base0 = await altBase(env, loc, nowMs), base = { ...base0, services: withDurations(base0.services, c.altegio && c.altegio.durations) }; // длительность — из кода, если задана
   const dk = "d:" + loc, hit = altCache.get(dk);
   let dates;
-  if (hit && Math.abs(nowMs - hit.at) < ALT_TTL) dates = hit.v;
+  if (mode.trial) dates = await altTrialDates(env, c, loc, nowMs);
+  else if (hit && Math.abs(nowMs - hit.at) < ALT_TTL) dates = hit.v;
   else {
     dates = altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${isoDay(nowMs)}&date_to=${isoDay(nowMs + 21 * 86400e3)}`), nowMs).slice(0, ALT_DAYS);
     altCache.set(dk, { at: nowMs, v: dates });
@@ -164,6 +196,7 @@ export async function altSnapshot(env, c, nowMs, userText) {
 Ж. Перенос записи — только когда клиент просит другое время вместо прежнего: подбери новое время и в одном ответе добавь две строки — [ОТМЕНА] с именем, днём и временем старой записи и [ЗАЯВКА] для новой на то же имя.${selfCx ? "" : " Перенос выполняет администратор: система передаст ему просьбу. Не пиши, что запись перенесена."} Если клиент хочет ещё одну запись (себе на другую услугу или другому человеку) — это не перенос: добавь только строку [ЗАЯВКА].
 З. Итог записи, отмены и переноса клиенту сообщает система по ответу расписания. Без строки [ЗАЯВКА] не пиши, что клиент записан, а без строки [ОТМЕНА] — что запись отменена или перенесена.
 И. Время окончания услуги не называй: говори, во сколько начало и сколько минут занимает услуга.`;
+  if (mode.trial) prompt += "\n\nЭто тестовый чат: запись открыта только на дни из «Свободных окон» — это дни следующего месяца, в которые нет других записей. Ближайшие дни и другие даты не предлагай; если клиент просит другой день, скажи, что в этом чате запись только на эти дни.";
   if (named && fit && fitDays.length) prompt += `\n\nКлиент хочет к мастеру ${named.name}: его время — в «Проверке длительности» ниже, к нему записывай только на это время.` + unread(own.failed);
   else if (named) prompt += `\n\nЕсли клиент хочет именно к мастеру ${named.name} — вот его свободное время (к нему записывай только на это время):\n` +
     (own.days.map(fmt).join("\n") || "- в ближайшие дни свободного времени нет — предложи другого мастера или время из «Свободных окон».") + unread(own.failed);
@@ -206,6 +239,12 @@ export async function altSnapshot(env, c, nowMs, userText) {
     slots: any.days.map(d => ({ ...d, times: show(d) })), slotsNote: unread(any.failed), extraTimes: all, softTimes: ends, durations, fit, fitBad };
 }
 
+// та же услуга под другим названием в прайсе: «Мужская стрижка (Барберы)» и «Мужская стрижка (Шеф-барбер)», «… №1» и «… №2»
+/** @param {string} t */
+const svBase = t => { let s = svTrim(t).replace(/\s*№\s*\d+\s*$/, ""); for (let i = 0; i < 3; i++) s = s.replace(/\s*\([^()]*\)\s*$/, ""); return s; };
+/** @param {any[]} all @param {any} x */
+export const svSiblings = (all, x) => all.filter(y => y.id !== x.id && svBase(y.title) === svBase(x.title));
+
 // создаёт запись в Altegio. Возвращает { ok } либо причину: soft — уточнить у клиента, иначе — передать администратору
 /** @param {Env} env @param {Record<string, any>} A @param {Record<string, any>} q @param {number} nowMs @param {boolean} [test] */
 export async function altBook(env, A, q, nowMs, test) {
@@ -215,7 +254,7 @@ export async function altBook(env, A, q, nowMs, test) {
   const sv = altPickServices(A.services, q.service);
   if (!sv.list) return A.cut && (!sv.ask.length || sv.weak) ? hard("бот видит только часть списка услуг и не нашёл в ней услугу «" + clean(q.service, 60) + "»", { services: clean(q.service, 80) })
     : { ok: false, soft: true, reason: "service", list: list((sv.ask.length ? sv.ask : A.services).map(/** @param {any} x */ x => x.title)) };
-  const svc = sv.list, names = svc.map(x => x.title).join(" + ");
+  let svc = sv.list, names = svc.map(x => x.title).join(" + ");
   const st = altPickStaff(A.staff, q.staff);
   if (st.ask && !A.staff.length) return hard("в Altegio нет мастеров, открытых для онлайн-записи", { services: names });
   if (st.ask) return A.cut && !st.ask.length ? hard("бот видит только часть списка мастеров и не нашёл в ней мастера «" + clean(q.staff, 40) + "»", { services: names })
@@ -227,7 +266,8 @@ export async function altBook(env, A, q, nowMs, test) {
   if (!(A.dates || []).length) return { ok: false, reason: "api", error: "в расписании нет свободного времени на ближайшие дни", ...info };
   if (!A.dates.includes(date)) return { ok: false, soft: true, reason: "date", list: A.dates.map(/** @param {any} d */ d => `${d.slice(8, 10)}.${d.slice(5, 7)}`).join(", "), ...info };
   info.label = (/** @param {any} d */ d => (d.rel ? d.rel + ", " : "") + d.label)(altDay(date, [], nowMs));
-  const ids = [...new Set(svc.map(x => x.id))], staffId = staff ? staff.id : 0;
+  let ids = [...new Set(svc.map(x => x.id))];
+  const staffId = staff ? staff.id : 0;
   // длительность услуги против свободного времени мастера (A.fit — см. altSnapshot): не помещается — «занято» с ближайшим временем,
   // когда поместится, ещё до Altegio (живой показ Winchester, 18.10.2026: Premium на 16:30 при записи у мастера в 17:30)
   const need = svc.reduce((n, x) => n + (+x.minutes || 0), 0), F = A.fit;
@@ -238,10 +278,22 @@ export async function altBook(env, A, q, nowMs, test) {
       if (!fits.includes(time)) return { ok: false, soft: true, reason: "taken", free: nearest(fits, time, 3), long: durStr(need), ...info };
     }
   }
+  /** @param {any[]} list @returns {Promise<any>} */
+  const timesOf = list => altTimes(env, A.loc, staffId, date, [...new Set(list.map(x => x.id))], nowMs, true).then(v => v, e => e instanceof Error ? e : new Error(String(e)));
   /** @type {any} */
-  let times;
-  try { times = await altTimes(env, A.loc, staffId, date, ids, nowMs, true); }
-  catch (/** @type {any} */ e) { return { ok: false, reason: "api", error: e.message, ...info }; }
+  let times = await timesOf(svc);
+  // одна услуга в двух строках прайса (у шеф-барбера и у барберов, Winchester): мастер оказывает только свою. ИИ мог взять строку другого
+  // мастера — берём строку того, к кому записываем, иначе Altegio не даст время и клиент услышит «у мастера нет времени» (19.10.2026)
+  if (staff && (times instanceof Error || !times.some(/** @param {any} t */ t => t.time === time))) {
+    const n = Math.min(3, Math.max(0, ...svc.map(x => svSiblings(A.services, x).length)));
+    for (let k = 0; k < n; k++) {
+      const alt2 = svc.map(x => svSiblings(A.services, x)[k] || x), t2 = await timesOf(alt2);
+      if (!(t2 instanceof Error) && t2.some(/** @param {any} t */ t => t.time === time)) {
+        svc = alt2; ids = [...new Set(svc.map(x => x.id))]; names = svc.map(x => x.title).join(" + "); info.services = names; times = t2; break;
+      }
+    }
+  }
+  if (times instanceof Error) return { ok: false, reason: "api", error: times.message, ...info };
   let slot = times.find(/** @param {any} t */ t => t.time === time), staffId2 = staffId;
   const others = () => F ? nearest(times.map(/** @param {any} t */ t => t.time), time, 3) : thin(times.filter(/** @param {any} t */ t => t.time !== time).map(/** @param {any} t */ t => t.time), 6); // с проверкой длительности — ближайшие к названному
   if (!slot) { altDropTimes(A.loc); return { ok: false, soft: true, reason: "taken", free: others(), ...info }; }
