@@ -27,7 +27,7 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
   const showBookings = !!detail && (detail.bookings.length > 0 || detail.pending.length > 0 || !!detail.bookedNote || !!ws.capabilities.booking);
 
   return (
-    <div className="flex min-h-full flex-col bg-canvas pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+    <div className="flex min-h-full flex-col bg-canvas pb-[max(1.25rem,var(--safe-b))]">
       {onClose && (
         <div className="flex h-12 shrink-0 items-center justify-end px-2 max-xl:hidden">
           <IconButton icon={X} label={closeLabel} onClick={onClose} />
@@ -35,7 +35,7 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
       )}
       <div className="flex flex-col items-center px-5 pb-6 pt-5 text-center xl:pt-0">
         <Avatar name={contact.name || contact.profileName} size="xl" />
-        <p className="mt-3 max-w-full break-words text-xl font-semibold tracking-[-0.015em]">{name}</p>
+        <p className="mt-3 max-w-full break-words text-[1.375rem] font-bold leading-7 tracking-[-0.02em] md:text-xl md:font-semibold">{name}</p>
         {contact.phone && name !== formatPhone(contact.phone) && <p className="tnum mt-0.5 text-[0.9375rem] text-fg-2">{formatPhone(contact.phone)}</p>}
         {contact.profileName && contact.profileName !== name && <p className="mt-0.5 text-sm text-fg-3">В WhatsApp: {contact.profileName}</p>}
         {contact.phone && <CallAction phone={contact.phone} />}
@@ -44,22 +44,29 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
       <div className="px-4">
         <InsetGroup title="Переписка">
           <dl>
-            <Field label="Номер">
-              <span className="inline-flex items-center gap-1.5">
-                {ch?.kind === "web" ? <Globe aria-hidden className="size-3.5 text-fg-3" strokeWidth={1.75} /> : <MessageCircle aria-hidden className="size-3.5 text-fg-3" strokeWidth={1.75} />}
-                {channelTitle(ch)}
+            <Field stacked label="Номер компании">
+              <span className="flex items-center gap-1.5">
+                {ch?.kind === "web" ? <Globe aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} /> : <MessageCircle aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />}
+                <span className="min-w-0 truncate">{channelTitle(ch)}</span>
               </span>
-              {ch && ch.kind !== "web" && (ch.name || ch.phone) && <span className="block text-xs text-fg-3">{[ch.name && ch.phone ? formatPhone(ch.phone) : "", KIND_SHORT[ch.kind]].filter(Boolean).join(", ")}</span>}
+              {ch && ch.kind !== "web" && (ch.name || ch.phone) && <span className="tnum mt-0.5 block text-sm text-fg-3">{[ch.name && ch.phone ? formatPhone(ch.phone) : "", KIND_SHORT[ch.kind]].filter(Boolean).join(" · ")}</span>}
             </Field>
           </dl>
           {bot && (
             <dl>
-              <Field label="Ведёт">{handling(null, bot, now).text.replace(/^Ведёт /, "")}</Field>
+              <Field stacked label="Кто ведёт">
+                {(() => {
+                  const t = handling(null, bot, now).text.replace(/^Ведёт /, "");
+                  return t.charAt(0).toUpperCase() + t.slice(1);
+                })()}
+              </Field>
             </dl>
           )}
           {reply && ch?.kind === "wa_cloud" && (
             <dl>
-              <Field label="Окно WhatsApp">{reply.allowed ? (reply.closesAt ? until(reply.closesAt, now) : "открыто") : reply.reason === "window" ? <span className="text-critical">закрыто</span> : "—"}</Field>
+              <Field stacked label="Окно WhatsApp для ответа">
+                {reply.allowed ? (reply.closesAt ? `Открыто ${until(reply.closesAt, now)}` : "Открыто") : reply.reason === "window" ? <span className="text-critical">Закрыто</span> : "—"}
+              </Field>
             </dl>
           )}
         </InsetGroup>

@@ -42,7 +42,7 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
 
   return (
     <div ref={setRoot} className="app-root flex bg-surface text-fg">
-      <nav aria-label="Разделы" className="hidden w-[4.5rem] shrink-0 flex-col items-center border-r border-line bg-canvas pb-3 pt-[max(0.875rem,env(safe-area-inset-top))] pl-safe md:flex">
+      <nav aria-label="Разделы" className="hidden w-[calc(4.5rem+var(--safe-l))] shrink-0 flex-col items-center border-r border-line bg-canvas pb-[max(0.75rem,var(--safe-b))] pt-[max(0.875rem,var(--safe-t))] pl-safe md:flex">
         <ul className="flex flex-col gap-2">
           {items.map((it) => (
             <li key={it.id}>
@@ -55,7 +55,8 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
         </div>
       </nav>
 
-      <main className="relative flex min-w-0 flex-1 flex-col">{children}</main>
+      {/* iPhone горизонтально: вырез экрана бывает и справа — содержимое не заходит под него */}
+      <main className="relative flex min-w-0 flex-1 flex-col md:pr-safe">{children}</main>
 
       {!inConversation && !deepSettings && (
         <nav aria-label="Разделы" className="pb-safe absolute inset-x-0 bottom-0 z-30 border-t border-line bg-surface md:hidden">
@@ -79,7 +80,7 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
       )}
 
       {offline && (
-        <div role="status" className="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top)+0.5rem)] z-50 inline-flex -translate-x-1/2 animate-pop-in items-center gap-2 rounded-full bg-fg px-3.5 py-1.5 text-sm text-surface shadow-pop">
+        <div role="status" className="pointer-events-none fixed left-1/2 top-[calc(var(--safe-t)+0.5rem)] z-50 inline-flex -translate-x-1/2 animate-pop-in items-center gap-2 rounded-full bg-fg px-3.5 py-1.5 text-sm text-surface shadow-pop">
           <WifiOff aria-hidden className="size-4" strokeWidth={2} />
           Нет связи — показаны последние данные
         </div>
@@ -117,7 +118,7 @@ function AccountMenu() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button ref={trigger} type="button" aria-label={`${role}: тема и выход`} title={role} className="grid size-9 place-items-center rounded-full bg-surface-3 text-fg-3 hover:text-fg">
+        <button ref={trigger} type="button" aria-label={`${role}: тема и выход`} title={role} className="grid size-9 place-items-center rounded-full bg-surface-3 text-fg-3 hover:text-fg pointer-coarse:size-11">
           <UserRound aria-hidden className="size-[1.125rem]" strokeWidth={1.75} />
         </button>
       </MenuTrigger>

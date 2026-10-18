@@ -125,7 +125,7 @@ export function InboxScreen({ route }: { route: Extract<Route, { name: "inbox" }
           <header className="shrink-0 pt-safe">
             <div className="relative flex h-[3.25rem] items-center px-0.5">
               <IconButton icon={ChevronLeft} label="Назад к переписке" onClick={() => back({ name: "inbox", conv })} className="text-accent hover:text-accent [&>svg]:size-7 [&>svg]:stroke-[2]" />
-              <h2 className="pointer-events-none absolute inset-x-14 text-center text-base font-semibold">Клиент</h2>
+              <h2 className="pointer-events-none absolute inset-x-14 text-center text-[1.0625rem] font-semibold">Клиент</h2>
             </div>
           </header>
           <div className="scroll-area min-h-0 flex-1">

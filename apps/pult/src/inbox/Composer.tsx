@@ -1,7 +1,7 @@
-// Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем, одной строкой.
+// Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем, мелко, по линии текста.
 // Кнопка «Отправить» — внутри поля и оживает, когда есть текст; слева — быстрые ответы и реквизиты.
 // Enter — отправить (на телефоне Enter — новая строка, отправка кнопкой). Черновик каждого чата сохраняется, пока открыт пульт.
-import { ArrowUp, Banknote, MessageCircle, Phone, Zap } from "lucide-react";
+import { ArrowUp, Banknote, Phone, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/components/overlay";
 import { dataMode } from "@/data/source";
@@ -54,19 +54,17 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
   return (
     <div className="@container pb-safe-kb shrink-0 border-t border-line bg-surface px-2 pt-1.5 md:px-4 md:pb-3 md:pt-2">
       {(from || botActive || closesSoon) && (
-        <p className="mx-auto flex max-w-[50rem] items-center gap-3 truncate px-2.5 pb-1.5 text-xs text-fg-3 md:pl-11">
+        // подпись выровнена по началу текста в поле: читается как подпись к полю, а не как ещё одна строка экрана
+        <p className="mx-auto flex max-w-[50rem] items-center gap-1 truncate pb-1 pl-[3.4375rem] pr-3 text-xs leading-4 text-fg-3 pointer-coarse:pl-[3.9375rem]">
           {from && (
-            <span className="flex min-w-0 items-center gap-1">
-              <MessageCircle aria-hidden className="size-3 shrink-0" strokeWidth={2} />
-              <span className="truncate">
-                С номера <span className="text-fg-2">{from}</span>
-              </span>
+            <span className="min-w-0 truncate">
+              С номера <span className="font-medium text-fg-2">{from}</span>
             </span>
           )}
           {closesSoon ? (
-            <span className="shrink-0 text-critical">окно WhatsApp {until(reply.closesAt!, now)}</span>
+            <span className="shrink-0 font-medium text-critical">{from ? "· " : ""}окно WhatsApp {until(reply.closesAt!, now)}</span>
           ) : botActive ? (
-            <span className="shrink-0 @max-[24rem]:hidden">бот замолчит на 2 ч</span>
+            <span className="shrink-0 @max-[24rem]:hidden">{from ? "· " : ""}бот замолчит на 2 ч</span>
           ) : null}
         </p>
       )}
@@ -96,7 +94,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             ))}
           </MenuContent>
         </Menu>
-        <label className="flex min-h-9 min-w-0 flex-1 items-end gap-1 rounded-[1.125rem] border border-line-strong bg-surface py-[3px] pl-3.5 pr-[3px] transition-colors focus-within:border-accent pointer-coarse:min-h-10 dark:bg-surface-2">
+        <label className="flex min-h-9 min-w-0 flex-1 items-end gap-1 rounded-[1.25rem] border border-line-strong bg-surface py-[3px] pl-3.5 pr-[3px] transition-colors focus-within:border-accent pointer-coarse:min-h-10 dark:bg-surface-2">
           <span className="sr-only">Ответ клиенту</span>
           <textarea
             ref={ta}
@@ -119,7 +117,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             onClick={submit}
             disabled={!text.trim()}
             aria-label="Отправить"
-            className="grid size-[1.875rem] shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] hover:brightness-95 disabled:bg-transparent disabled:text-fg-3 disabled:opacity-60 pointer-coarse:size-8"
+            className="relative grid size-[1.875rem] shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1.5 hover:brightness-95 disabled:bg-transparent disabled:text-fg-3 disabled:opacity-60 pointer-coarse:size-8"
           >
             <ArrowUp aria-hidden className="size-[1.125rem]" strokeWidth={2.4} />
           </button>

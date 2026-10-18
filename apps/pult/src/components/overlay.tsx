@@ -73,7 +73,7 @@ export function Sheet({ open, onOpenChange, title, description, side = "auto", c
         <D.Content
           className={cn(
             "fixed z-50 flex flex-col bg-surface text-fg shadow-pop outline-none",
-            kind === "bottom" && "inset-x-0 bottom-0 max-h-[min(88dvh,44rem)] rounded-t-[1.125rem] pb-[max(0.75rem,env(safe-area-inset-bottom))] data-[state=open]:animate-sheet-in",
+            kind === "bottom" && "inset-x-0 bottom-0 max-h-[min(88dvh,44rem)] rounded-t-[1.125rem] pb-[max(0.75rem,var(--safe-b))] data-[state=open]:animate-sheet-in",
             kind === "center" && "left-1/2 top-1/2 max-h-[min(80dvh,40rem)] w-[min(28rem,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[1.125rem] pb-3 data-[state=open]:animate-pop-in",
             kind === "right" && "inset-y-0 right-0 w-[min(25rem,100vw)] border-l border-line pb-safe pt-safe data-[state=open]:animate-drawer-in",
             className,
@@ -150,7 +150,7 @@ export function Toasts() {
     () => toasts,
   );
   return (
-    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-[60] flex flex-col items-center gap-2 px-4 md:bottom-6">
+    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--safe-b)+5rem)] z-[60] flex flex-col items-center gap-2 px-4 md:bottom-6">
       {list.map((t) => (
         <div
           key={t.id}

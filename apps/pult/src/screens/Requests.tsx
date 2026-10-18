@@ -55,7 +55,7 @@ export default function RequestsScreen() {
         <div className="space-y-4 pt-2">
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex gap-3">
-              <Skeleton className="size-9 rounded-lg" />
+              <Skeleton className="size-9 rounded-[0.625rem]" />
               <div className="flex-1 space-y-2 pt-1">
                 <Skeleton className="h-3.5 w-1/3" />
                 <Skeleton className="h-3 w-2/3" />
@@ -94,18 +94,20 @@ function Row({ l, now, done, badge, onOpen }: { l: Lead; now: number; done?: boo
   const what = [l.service, l.time].filter(Boolean).join(", ");
   return (
     <button type="button" onClick={onOpen} className="group -mx-4 flex w-[calc(100%+2rem)] items-start gap-3 px-4 py-3 text-left hover:bg-surface-2/60">
-      <Icon aria-hidden className={cn("mt-0.5 size-[1.125rem] shrink-0", done ? "text-fg-3" : "text-critical")} strokeWidth={1.75} />
+      <span className={cn("mt-px grid size-9 shrink-0 place-items-center rounded-[0.625rem]", done ? "bg-surface-2 text-fg-3" : "bg-critical-soft text-critical")}>
+        <Icon aria-hidden className="size-[1.125rem]" strokeWidth={1.9} />
+      </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className={cn("min-w-0 flex-1 truncate text-[0.9375rem] font-semibold md:text-base", done && "font-medium text-fg-2")}>
+          <span className={cn("min-w-0 flex-1 truncate text-[0.9375rem] font-semibold md:text-base", done && "text-fg-2")}>
             {label}
             {l.name ? `: ${l.name}` : ""}
           </span>
           {done && l.status && <span className="shrink-0 text-sm font-medium text-positive">{l.status}</span>}
         </span>
         {what && <span className="mt-0.5 block text-sm text-fg-2 md:text-ui">{what}</span>}
-        {l.note && <span className="mt-0.5 block text-sm text-fg-3">{l.note}</span>}
-        <span className="mt-1 flex items-center gap-3 text-sm text-fg-3 md:text-xs">
+        {l.note && <span className="mt-0.5 line-clamp-2 text-sm text-fg-3">{l.note}</span>}
+        <span className="mt-1 flex items-center gap-3 text-xs text-fg-3">
           <span className="tnum whitespace-nowrap">{shortDate(l.at, now)}</span>
           <span className="tnum whitespace-nowrap">{l.phone ? formatPhone(l.phone) : "без телефона"}</span>
           {badge && <span className="min-w-0 truncate max-sm:hidden">{badge}</span>}

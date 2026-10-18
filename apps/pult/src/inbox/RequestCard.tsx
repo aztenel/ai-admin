@@ -1,11 +1,11 @@
-// Невыполненная просьба клиента — над полем ответа. «Сделано» закрывает её и (если можно) сразу сообщает клиенту:
-// текст готов, его можно поправить. Тот же порядок, что в рабочем пульте: сервер сам отмечает заявку и снимает «ждёт ответа».
+// Невыполненная просьба клиента — карточкой-задачей над полем ответа (отдельный предмет, а не ещё одна полоса экрана).
+// «Сделано» закрывает её и (если можно) сразу сообщает клиенту: текст готов, его можно поправить.
+// Тот же порядок, что в рабочем пульте: сервер сам отмечает заявку и снимает «ждёт ответа».
 import { CalendarClock, ClipboardCheck, PhoneCall, Repeat } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui";
 import type { ChatRequest } from "@/model/types";
 import { waited } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 const TITLE: Record<ChatRequest["kind"], string> = { cancel: "Просит отменить запись", change: "Просит перенести запись", callback: "Просит перезвонить", lead: "Новая заявка" };
 const ICON = { cancel: CalendarClock, change: Repeat, callback: PhoneCall, lead: ClipboardCheck } as const;
@@ -33,17 +33,21 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
   };
   const details = [q.name, q.service].filter(Boolean).join(", ");
   return (
-    <div className="border-t border-line bg-canvas px-4 py-3">
-      <div className="mx-auto max-w-[50rem]">
+    <div className="shrink-0 px-2.5 pb-2 md:px-4">
+      <div className="mx-auto max-w-[50rem] rounded-2xl border border-line bg-surface p-3 shadow-card dark:bg-surface-2 md:p-3.5">
         <div className="flex items-start gap-3">
-          <Icon aria-hidden className="mt-[3px] size-[1.125rem] shrink-0 text-critical" strokeWidth={1.75} />
+          <span className="grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-critical-soft text-critical">
+            <Icon aria-hidden className="size-[1.125rem]" strokeWidth={1.9} />
+          </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[0.9375rem] font-semibold leading-5 md:text-base">{TITLE[q.kind]}</p>
-            {since ? <p className="mt-0.5 text-sm leading-5 text-critical">ждёт {waited(since, now)}</p> : null}
-            <div className="mt-1 space-y-px text-sm leading-5 text-fg-2 md:text-ui">
-              {details && <p>{details}</p>}
+            <p className="text-[0.9375rem] font-semibold leading-5 md:text-base">
+              {TITLE[q.kind]}
+              {since ? <span className="whitespace-nowrap font-medium text-critical"> · {waited(since, now)}</span> : null}
+            </p>
+            <div className="mt-0.5 text-sm leading-[1.125rem] text-fg-2 md:text-ui md:leading-5">
+              {details && <p className="line-clamp-2">{details}</p>}
               {q.time && <p>Время: {q.time}</p>}
-              {q.note && <p className="text-fg-3">{q.note}</p>}
+              {q.note && <p className="line-clamp-2 text-fg-3">{q.note}</p>}
             </div>
           </div>
           {!edit && (
@@ -52,21 +56,21 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
               variant="primary"
               busy={busy === "close"}
               onClick={() => (q.kind === "callback" || !canMessage ? run("close") : setEdit(true))}
-              className="shrink-0"
+              className="mt-px shrink-0"
             >
               {q.kind === "callback" ? "Перезвонил" : "Сделано"}
             </Button>
           )}
         </div>
         {edit && (
-          <div className="mt-3 md:pl-[1.875rem]">
+          <div className="mt-3">
             <label className="block">
-              <span className="mb-1 block text-xs text-fg-3">Сообщение клиенту</span>
+              <span className="mb-1 block text-xs font-medium text-fg-3">Сообщение клиенту</span>
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={3}
-                className="w-full resize-none rounded-[0.625rem] border border-line-strong bg-surface px-3 py-2 text-md text-fg outline-none focus:border-accent/60 md:text-base dark:bg-surface-2"
+                className="w-full resize-none rounded-[0.625rem] border border-line-strong bg-surface px-3 py-2 text-md text-fg outline-none focus:border-accent md:text-base dark:bg-surface"
               />
             </label>
             <div className="mt-2 grid grid-cols-[1fr_auto] gap-2 sm:flex sm:flex-wrap">
@@ -82,8 +86,8 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
             </div>
           </div>
         )}
-        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-1.5 text-xs text-fg-3 md:pl-[1.875rem]">Написать клиенту сейчас нельзя — сообщите ему по телефону.</p>}
-        {err && <p className={cn("mt-2 text-sm text-critical md:pl-[1.875rem]")}>{err}</p>}
+        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-2 text-xs text-fg-3 md:pl-12">Написать клиенту сейчас нельзя — сообщите ему по телефону.</p>}
+        {err && <p className="mt-2 text-sm text-critical md:pl-12">{err}</p>}
       </div>
     </div>
   );

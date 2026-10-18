@@ -24,7 +24,7 @@ function apply() {
   r.setAttribute("data-theme", dark ? "dark" : "light");
   r.style.colorScheme = dark ? "dark" : "light";
   // цвет полосы состояния и заголовка окна — как у панелей пульта
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#171b21" : "#ffffff");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#16191e" : "#ffffff");
 }
 
 export function setTheme(p: ThemePref) {

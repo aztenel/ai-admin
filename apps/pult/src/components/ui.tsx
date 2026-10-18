@@ -16,7 +16,8 @@ const VARIANT: Record<Variant, string> = {
   danger: "text-critical hover:bg-critical-soft",
 };
 const SIZE = {
-  sm: "h-8 gap-1.5 px-3 text-sm pointer-coarse:h-9",
+  // на телефоне зона нажатия маленькой кнопки — 44 px по высоте (невидимое расширение), вид не меняется
+  sm: "h-8 gap-1.5 px-3 text-sm pointer-coarse:relative pointer-coarse:h-9 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-1",
   md: "h-9 gap-2 px-3.5 text-ui pointer-coarse:h-11 pointer-coarse:px-4 pointer-coarse:text-base",
   lg: "h-11 gap-2 px-4 text-base",
 };
@@ -158,8 +159,16 @@ export function Segmented<T extends string>({ value, onChange, options, label, c
   );
 }
 
-/** Строка «подпись — значение» в сгруппированных списках (карточка клиента, настройки). */
-export function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+/** Строка «подпись — значение» в сгруппированных списках (настройки). stacked — подпись над значением, как в карточке
+ *  контакта iPhone: длинное значение («ИИ-администратор, +7 700 000 12 34») не ломается по правому краю. */
+export function Field({ label, children, className, stacked }: { label: string; children: ReactNode; className?: string; stacked?: boolean }) {
+  if (stacked)
+    return (
+      <div className={cn("min-w-0 py-2.5", className)}>
+        <dt className="text-sm text-fg-3">{label}</dt>
+        <dd className="mt-0.5 min-w-0 text-base text-fg pointer-coarse:text-md">{children}</dd>
+      </div>
+    );
   return (
     <div className={cn("flex min-h-11 min-w-0 items-baseline justify-between gap-4 py-2.5", className)}>
       <dt className="shrink-0 text-ui text-fg-2 pointer-coarse:text-base">{label}</dt>

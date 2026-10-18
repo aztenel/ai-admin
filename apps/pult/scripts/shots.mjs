@@ -1,4 +1,6 @@
 // Снимки пульта на телефонах, планшетах и компьютерах — светлая и тёмная тема. Для проверки вида глазами, не тест.
+// На телефонах изображены вырез экрана и «полоска Домой» (переменные --safe-t/--safe-b, src/index.css) и открытая
+// клавиатура: видимая часть экрана меньше на 336 px — так её отдаёт visualViewport на iPhone (lib/viewport.ts).
 // Запуск: npm run dev (демо) в другом окне, затем: node scripts/shots.mjs <папка> [адрес]
 // Playwright — тот же, что у test/e2e.mjs: PLAYWRIGHT_PATH или /opt/node-tools/node_modules/playwright/index.mjs.
 import { mkdirSync } from "node:fs";
@@ -31,6 +33,8 @@ for (const [name, w, h, touch] of SIZES) {
     page.on("pageerror", (e) => errors.push(`${name} ${theme}: ${e.message}`));
     page.on("console", (m) => m.type() === "error" && errors.push(`${name} ${theme}: ${m.text()}`));
     await page.goto(base + "#/inbox", { waitUntil: "networkidle" });
+    const phone = touch && w < 500;
+    if (phone) await page.addStyleTag({ content: ":root{--safe-t:47px;--safe-b:34px}" });
     await page.waitForSelector("ul a[href^='#/inbox/']", { timeout: 8000 });
     await page.screenshot({ path: `${out}/${name}-${theme}-1-list.png` });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth);
@@ -39,6 +43,17 @@ for (const [name, w, h, touch] of SIZES) {
     await page.waitForSelector("[role=log]");
     await page.waitForTimeout(450);
     await page.screenshot({ path: `${out}/${name}-${theme}-2-chat.png` });
+    if (phone) {
+      await page.getByLabel("Ответ клиенту").fill("Здравствуйте! Да, можем записать вас");
+      await page.setViewportSize({ width: w, height: h - 336 });
+      await page.waitForTimeout(150); // сначала отработает useVisualViewport, потом отмечаем клавиатуру
+      await page.evaluate(() => (document.querySelector(".app-root").dataset.kb = "1"));
+      await page.waitForTimeout(150);
+      await page.screenshot({ path: `${out}/${name}-${theme}-2b-keyboard.png` });
+      await page.getByLabel("Ответ клиенту").fill("");
+      await page.setViewportSize({ width: w, height: h });
+      await page.evaluate(() => (document.querySelector(".app-root").dataset.kb = "0"));
+    }
     // карточка клиента: на телефоне и планшете — отдельный экран/панель, на компьютере — колонка (уже видна)
     if (w < 1280) {
       await page.getByRole("button", { name: /карточка клиента/ }).first().click();

@@ -1,8 +1,9 @@
-// Лента переписки. Клиент — серый пузырь слева; справа бот (чуть холоднее серого) и человек (светло-синий):
-// кто ответил, видно по подписи над группой и по оттенку — без ярких заливок. Время — мелко внутри пузыря.
+// Лента переписки. Три голоса — три веса: клиент — нейтральный серый пузырь слева; справа бот — бледно-синий (наша
+// сторона, но тихо) и человек — сплошной синий (самое важное: это сказали вы). Подпись «Бот» / «Оператор» — только когда
+// отвечающий сменился. Время — мелко внутри пузыря.
 // Прокрутка: новое сообщение прокручивает вниз, только если вы и так внизу; иначе — кнопка «Новые сообщения».
 // Положение в каждом чате запоминается: вернулись в чат — та же точка ленты.
-import { ArrowDown, FileText, Image as ImageIcon, Megaphone, Mic, Phone, RotateCcw, Trash2, Video } from "lucide-react";
+import { ArrowDown, Bot, FileText, Image as ImageIcon, Megaphone, Mic, Phone, RotateCcw, Trash2, UserRound, Video } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui";
 import type { ConversationDetail, Message } from "@/model/types";
@@ -146,8 +147,8 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
 
 function DayMark({ at, now }: { at: number; now: number }) {
   return (
-    <div className="mb-1 mt-5 flex justify-center first:mt-2">
-      <span className="text-xs font-medium text-fg-3">{dayLabel(at, now)}</span>
+    <div className="mb-1 mt-5 flex justify-center first:mt-3">
+      <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-fg-3">{dayLabel(at, now)}</span>
     </div>
   );
 }
@@ -171,10 +172,15 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
   const who = m.from === "bot" ? "Бот" : m.from === "operator" ? (m.via === "phone" ? "Оператор, с телефона" : "Оператор") : "";
   return (
     <div className={cn("flex flex-col", out ? "items-end" : "items-start", first ? "mt-3" : "mt-[3px]", m.delivery === "sending" && "animate-msg-in")}>
-      {label && who && <span className="mb-1 mt-1 px-3 text-xs text-fg-3">{who}</span>}
+      {label && who && (
+        <span className="mb-1 mt-1.5 flex items-center gap-1 px-1 text-xs font-medium text-fg-3">
+          {m.from === "bot" ? <Bot aria-hidden className="size-3.5" strokeWidth={1.9} /> : <UserRound aria-hidden className="size-3.5" strokeWidth={1.9} />}
+          {who}
+        </span>
+      )}
       <div
         className={cn(
-          "relative max-w-[min(30rem,80%)] rounded-[1.125rem] px-3 py-[0.4375rem] text-md leading-[1.375rem] md:max-w-[min(34rem,70%)] md:text-base md:leading-[1.3125rem]",
+          "relative max-w-[min(30rem,82%)] rounded-[1.125rem] px-3 py-[0.4375rem] text-md leading-[1.375rem] md:max-w-[min(34rem,72%)] md:text-base md:leading-[1.3125rem]",
           m.from === "contact" && "bg-bubble-in text-fg",
           m.from === "bot" && "bg-bubble-bot text-fg",
           m.from === "operator" && "bg-bubble-op text-bubble-op-fg",
@@ -190,7 +196,7 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
             <span aria-hidden className="inline-block w-11" />
           </p>
         )}
-        <time className={cn("tnum text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 block text-right", m.from === "operator" ? "text-bubble-op-fg/65" : "text-fg-3")}>
+        <time className={cn("tnum text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 block text-right", m.from === "operator" ? "text-bubble-op-fg/80" : "text-fg-3")}>
           {m.delivery === "sending" ? "…" : timeHM(m.at)}
         </time>
       </div>

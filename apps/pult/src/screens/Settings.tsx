@@ -55,7 +55,9 @@ export default function SettingsScreen({ section }: { section?: string }) {
                     cur?.id === s.id ? "md:bg-selected md:font-medium md:text-selected-fg" : "md:text-fg-2 md:hover:bg-surface-3/60 md:hover:text-fg",
                   )}
                 >
-                  <s.icon aria-hidden className={cn("size-[1.125rem] shrink-0", cur?.id === s.id ? "text-fg-3 md:text-accent" : "text-fg-3")} strokeWidth={1.75} />
+                  <span className="grid size-[1.875rem] shrink-0 place-items-center rounded-lg bg-surface-2 md:contents">
+                    <s.icon aria-hidden className={cn("size-[1.125rem] shrink-0", cur?.id === s.id ? "text-fg-2 md:text-accent" : "text-fg-2 md:text-fg-3")} strokeWidth={1.75} />
+                  </span>
                   <span className="flex min-h-12 flex-1 items-center justify-between pr-4 md:min-h-0 md:pr-0">
                     {s.title}
                     <ChevronRight aria-hidden className="size-4 text-fg-3 md:hidden" />

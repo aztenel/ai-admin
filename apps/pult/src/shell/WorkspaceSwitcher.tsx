@@ -1,5 +1,6 @@
-// Компания, в которой работает пульт, — и под ней область (филиал или номер): иерархия «компания → номер» видна сразу.
-// Владелец сервиса переключается между компаниями; сотрудник видит только свою.
+// Компания, в которой работает пульт, — крупный заголовок экрана чатов (как «Входящие» в Почте iPhone).
+// Выбор номера или филиала стоит справа на той же строке (ScopePicker). Владелец сервиса переключается между компаниями;
+// сотрудник видит только свою.
 // Знак компании — первая буква названия: логотипов сервер пока не хранит.
 import { Check, ChevronDown } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -9,13 +10,13 @@ import { store, useStore } from "@/state/store";
 
 export function Monogram({ name, className }: { name: string; className?: string }) {
   return (
-    <span aria-hidden className={cn("grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-surface-3 text-ui font-semibold text-fg-2", className)}>
+    <span aria-hidden className={cn("grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-fg text-ui font-semibold text-surface", className)}>
       {(name.trim()[0] || "·").toUpperCase()}
     </span>
   );
 }
 
-export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNode; demo?: boolean; className?: string }) {
+export function WorkspaceSwitcher({ className }: { className?: string }) {
   const ws = useStore((s) => s.workspace);
   const list = useStore((s) => s.workspaces);
   const wsId = useStore((s) => s.wsId);
@@ -30,12 +31,11 @@ export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNod
 
   const label = (
     <>
-      <span className="truncate text-xl font-semibold leading-7 tracking-[-0.015em] md:text-lg md:leading-6">{name}</span>
-      {can && <ChevronDown aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={2} />}
-      {demo && <span className="ml-0.5 shrink-0 rounded-md border border-line-strong px-1.5 text-xs font-medium leading-[1.125rem] text-fg-3">демо</span>}
+      <span className="truncate text-[1.625rem] font-bold leading-8 tracking-[-0.022em] md:text-xl md:font-semibold md:leading-7 md:tracking-[-0.015em]">{name}</span>
+      {can && <ChevronDown aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg-3" strokeWidth={2.25} />}
     </>
   );
-  const nameCls = cn("-ml-1 flex max-w-full items-center gap-1.5 rounded-md px-1 text-left text-fg", can && "hover:bg-surface-2");
+  const nameCls = cn("relative -ml-1 flex max-w-full items-center gap-1 rounded-lg px-1 text-left text-fg after:absolute after:inset-x-0 after:-inset-y-2", can && "hover:bg-surface-2");
   let nameEl: ReactNode = (
     <div className={nameCls} title={name}>
       {label}
@@ -74,10 +74,7 @@ export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNod
 
   return (
     <div className={cn("flex min-w-0 items-center", className)}>
-      <div className="min-w-0 flex-1">
-        {nameEl}
-        {below}
-      </div>
+      <div className="min-w-0 flex-1">{nameEl}</div>
       {can && !wide && (
         <Sheet open={open} onOpenChange={setOpen} title="Компании">
           <div className="pb-2">

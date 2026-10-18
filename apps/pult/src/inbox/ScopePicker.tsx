@@ -1,4 +1,5 @@
-// Выбор области: все чаты, филиал или один номер. Иерархия «филиал → номера» видна прямо в списке выбора.
+// Выбор области: все чаты, филиал или один номер — кнопка-капсула справа от названия компании; выбран один номер —
+// капсула синяя, чтобы суженный список не принимали за весь. Иерархия «филиал → номера» видна прямо в списке выбора.
 // На телефоне — лист снизу (крупные строки под палец), на компьютере — выпадающее меню.
 import { Check, ChevronDown, Globe, MessageCircle } from "lucide-react";
 import { useState } from "react";
@@ -51,10 +52,14 @@ export function ScopePicker({ ws, list, scope, onChange }: { ws: Workspace; list
     <button
       type="button"
       onClick={wide ? undefined : () => setOpen(true)}
-      className="relative -ml-1 mt-px inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1 text-[0.9375rem] text-fg-2 after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:bg-surface-2 hover:text-fg md:text-sm"
+      aria-label={`Какие чаты показать: ${scopeTitle(ws, scope)}`}
+      className={cn(
+        "relative inline-flex h-8 min-w-0 max-w-[11rem] shrink items-center gap-1 rounded-full border px-3 text-sm font-medium transition-colors after:absolute after:-inset-y-2 after:inset-x-0 md:h-7 md:max-w-[9.5rem] md:px-2.5",
+        scope.kind === "all" ? "border-line-strong text-fg-2 hover:bg-surface-2 hover:text-fg" : "border-transparent bg-selected text-selected-fg",
+      )}
     >
       <span className="truncate">{scopeTitle(ws, scope)}</span>
-      <ChevronDown aria-hidden className="size-3.5 shrink-0 text-fg-3" strokeWidth={2.2} />
+      <ChevronDown aria-hidden className="size-3.5 shrink-0 opacity-70" strokeWidth={2.4} />
     </button>
   );
 
