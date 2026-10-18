@@ -11,7 +11,8 @@ const W = {
   services: [
     { id: 201, title: "Мужская стрижка", category_id: 1, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 },
     { id: 202, title: "Комплекс «Отец и сын»", category_id: 1, price_min: 10000, price_max: 10000, active: 1, seance_length: 5400 },
-    { id: 203, title: "Комплекс «Отец и сын»", category_id: 2, price_min: 14000, price_max: 14000, active: 1, seance_length: 5400 }],
+    { id: 203, title: "Комплекс «Отец и сын»", category_id: 2, price_min: 14000, price_max: 14000, active: 1, seance_length: 5400 },
+    { id: 204, title: "Мужская стрижка от шеф-барбера", category_id: 2, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 }],
   category: [{ id: 1, title: "Барберы" }, { id: 2, title: "Шеф-барбер" }],
   staff: [{ id: 31, name: "Тони", bookable: true, specialization: "шеф-барбер" }, { id: 32, name: "Айдос", bookable: true, specialization: "барбер" }],
   times: {},
@@ -20,10 +21,11 @@ const W = {
     if (staff === "31") {
       if (sids.includes("202")) return { error: 422 }; // услугу барберов шеф-барбер не оказывает
       if (sids.includes("203")) return ["14:00", "15:00", "16:00"];
-      if (sids.includes("201")) return ["14:00", "15:00", "16:00", "16:30"];
-      return ["11:00", "12:30", "14:00", "15:00", "16:00", "17:00"];
+      if (sids.includes("201")) return { error: 422 }; // стрижку барберов шеф-барбер не оказывает — у него своя, с другим названием
+      if (sids.includes("204")) return W.down204 ? { error: 500 } : ["14:00", "15:00", "16:00", "16:30"];
+      return ["11:00", "12:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00"];
     }
-    if (staff === "32") return sids.includes("203") ? { error: 422 } : ["10:00", "12:00"];
+    if (staff === "32") return sids.includes("203") || sids.includes("204") ? { error: 422 } : ["10:00", "12:00"];
     return sids.length ? ["10:00", "12:00", "14:00", "15:00", "16:00"] : ["10:00", "11:00", "12:00", "12:30", "14:00", "17:00"];
   }
 };
@@ -47,4 +49,13 @@ test("«Отец и сын» к Тони: ошибка по услуге бар�
   const t = toniLine();
   assert.ok(/14:00/.test(t) && !/17:00/.test(t), t);
   net.altData = null;
+});
+
+test("время по услуге не читается совсем — из «любого начала» остаются только окна на всю длительность", async () => {
+  net.reset(); W.down204 = true; net.altData = () => W;
+  const s = mk(ENV);
+  await s.chat("winchester", "len-3", "у Тони завтра в 12 свободно?", ["Подскажу время."]);
+  const t = toniLine();
+  W.down204 = false; net.altData = null;
+  assert.ok(/14:00/.test(t) && /16:30/.test(t) && !/11:00/.test(t) && !/12:30/.test(t) && !/17:00/.test(t), t);
 });

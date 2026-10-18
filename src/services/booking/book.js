@@ -6,7 +6,7 @@ import { ALT_TTL, ALT_DAYS } from "../../config/constants.js";
 import { altCall } from "../integrations/altegio/client.js";
 import { isoDay, mins, hm, TZ } from "../../lib/time.js";
 import { altDay } from "./replies.js";
-import { altNamed, altPickServices, altPickStaff, altServicesIn } from "./pick.js";
+import { altNamed, altPickServices, altPickStaff, altServicesIn, altServicesLike } from "./pick.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
@@ -33,6 +33,17 @@ export const altLoc = (env, c) => {
   if (v != null && String(v).trim() !== "") return /^\d{1,12}$/.test(String(v).trim()) && +v > 0 ? +v : -1; // опечатка в номере — это сбой настройки, а не «расписания нет»
   return +((c.altegio && c.altegio.location) || 0) || 0;
 };
+
+// Время без услуги — любое свободное начало. Если по услуге Altegio время не отдал, оставляем только начала, после которых мастер
+// свободен всю длительность услуги: следующие начала с шагом расписания идут подряд (11:00 при записи в 11:30 на час — не подходит)
+/** @param {any[]} v @param {number} m */
+export function altFits(v, m) {
+  if (!m || v.length < 2) return v;
+  const set = new Set(v.map(x => mins(x.time))), all = [...set].sort((a, b) => a - b);
+  let step = Infinity; for (let i = 1; i < all.length; i++) step = Math.min(step, all[i] - all[i - 1]);
+  if (!(step >= 5 && step < m)) return v;
+  return v.filter(x => { const t = mins(x.time); for (let k = step; k < m; k += step) if (!set.has(t + k)) return false; return true; });
+}
 
 // в подсказке ИИ хватает до 16 вариантов на день: ровные часы и половины, а если всё равно много — равномерно по всему дню
 /** @param {string[]} times @param {number} [max] */
@@ -63,7 +74,9 @@ export async function altSnapshot(env, c, nowMs, userText) {
   // Altegio отдаёт любое свободное начало, и бот предлагал 11:00 при записи у мастера в 11:30 (живой показ Winchester, 18.10.2026)
   let svFound = altServicesIn(base.services, userText), svMain = false;
   if (!svFound.length && c.altegio && c.altegio.mainService) { svFound = altServicesIn(base.services, c.altegio.mainService); svMain = svFound.length > 0; }
-  const svAsk = svFound.length && new Set(svFound.map(/** @param {any} x */ x => x.minutes || 0)).size === 1 ? svFound.map(/** @param {any} x */ x => [x.id]) : [];
+  // каждую подходящую услугу спрашиваем отдельно: у каждой своя длительность, у мастера — свои услуги; список времени — объединение
+  const svAsk = svFound.length ? altServicesLike(base.services, svFound).map(/** @param {any} x */ x => [x.id]) : [];
+  const svMin = Math.min(...svFound.map(/** @param {any} x */ x => x.minutes || 0).filter(Boolean)) || 0;
   const read = async (/** @type {any} */ staffId, /** @type {string[]} */ list) => {
     const one = async (/** @type {string} */ d) => {
       if (!svAsk.length) return altTimes(env, loc, staffId, d, null, nowMs);
@@ -78,7 +91,7 @@ export async function altSnapshot(env, c, nowMs, userText) {
     let rs = await Promise.allSettled(list.map(one));
     // время по услуге не читается совсем — как раньше, время без услуги (запись всё равно проверяется с услугой в altBook).
     // Пусто на все дни у выбранного мастера — это правда «нет окна на эту услугу», а не повод показать короткие промежутки
-    if (svAsk.length && (rs.every(r => r.status === "rejected") || (!staffId && rs.every(r => r.status === "fulfilled" && !r.value.length)))) rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
+    if (svAsk.length && (rs.every(r => r.status === "rejected") || (!staffId && rs.every(r => r.status === "fulfilled" && !r.value.length)))) rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs).then(v => altFits(v, svMin))));
     return { days: rs.map((r, i) => r.status === "fulfilled" ? altDay(list[i], r.value.map(/** @param {any} x */ x => x.time), nowMs) : null).filter(d => d && d.times.length),
       failed: list.filter((d, i) => rs[i].status === "rejected"), error: (rs.find(r => r.status === "rejected") || {}).reason };
   };
