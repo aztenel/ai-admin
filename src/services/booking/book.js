@@ -76,10 +76,12 @@ export async function altSnapshot(env, c, nowMs, userText) {
   if (!svFound.length && c.altegio && c.altegio.mainService) { svFound = altServicesIn(base.services, c.altegio.mainService); svMain = svFound.length > 0; }
   // каждую подходящую услугу спрашиваем отдельно: у каждой своя длительность, у мастера — свои услуги; список времени — объединение
   const svAsk = svFound.length ? altServicesLike(base.services, svFound).map(/** @param {any} x */ x => [x.id]) : [];
-  const svMin = Math.min(...svFound.map(/** @param {any} x */ x => x.minutes || 0).filter(Boolean)) || 0;
+  // самая короткая длительность названной услуги; услуга не узнана (название в Altegio другое) — основная длительность бизнеса (altegio.mainMinutes)
+  const svMins = svFound.map(/** @param {any} x */ x => x.minutes || 0).filter(Boolean);
+  const svMin = svMins.length ? Math.min(...svMins) : +((c.altegio && c.altegio.mainMinutes) || 0) || 0;
   const read = async (/** @type {any} */ staffId, /** @type {string[]} */ list) => {
     const one = async (/** @type {string} */ d) => {
-      if (!svAsk.length) return altTimes(env, loc, staffId, d, null, nowMs);
+      if (!svAsk.length) return altTimes(env, loc, staffId, d, null, nowMs).then(v => altFits(v, svMin)); // без услуги — только окна на всю длительность
       // одна и та же услуга у барберов и у шеф-барбера — разные услуги в Altegio; мастер, который одну из них не оказывает, может ответить
       // ошибкой — это не повод выбросить ответ по другой и показать время без учёта длительности (18.10.2026: «Отец и сын» к Тони в 17:00 при записи в 17:30)
       const parts = await Promise.allSettled(svAsk.map(ids => altTimes(env, loc, staffId, d, ids, nowMs)));
@@ -131,7 +133,8 @@ export async function altSnapshot(env, c, nowMs, userText) {
     (own.days.map(fmt).join("\n") || "- в ближайшие дни свободного времени нет — предложи другого мастера или время из «Свободных окон».") + unread(own.failed);
   else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови мастеров из списка или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
   if (base.staff.length > 1) prompt += "\nЛ. Если клиент выбрал «любого» мастера, мастера назначает система и сама называет его клиенту. Мастер записи указан в «Уже известно о клиенте» — называй его. Не говори, что мастер «не прикреплён» или «будет любой свободный», если запись уже создана.";
-  if (svMain && svAsk.length) prompt += `\nМ. Свободное время выше посчитано для услуги «${svFound[0].title}» (${svFound[0].minutes || "?"} мин): клиент услугу ещё не назвал. Если он хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу; время под неё появится в подсказке в следующем сообщении, до этого не обещай его.`;
+  if (!svAsk.length && svMin) prompt += `\nМ. Свободное время выше посчитано для услуги примерно на ${svMin} мин. Если клиент хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу, до этого не обещай время.`;
+  else if (svMain && svAsk.length) prompt += `\nМ. Свободное время выше посчитано для услуги «${svFound[0].title}» (${svFound[0].minutes || "?"} мин): клиент услугу ещё не назвал. Если он хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу; время под неё появится в подсказке в следующем сообщении, до этого не обещай его.`;
 
   // время окончания услуги («с 11:00 до 12:00») — не выдумка: защита пропускает его только как конец такого промежутка
   const all = new Set([...any.days, ...(own ? own.days : [])].flatMap(d => d.times)), /** @type {Set<string>} */ ends = new Set();

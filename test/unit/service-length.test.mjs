@@ -59,3 +59,15 @@ test("время по услуге не читается совсем — из �
   W.down204 = false; net.altData = null;
   assert.ok(/14:00/.test(t) && /16:30/.test(t) && !/11:00/.test(t) && !/12:30/.test(t) && !/17:00/.test(t), t);
 });
+
+test("основная услуга в Altegio называется иначе — время без услуги, но только окна на 60 мин подряд (вживую 18.10.2026, 20:27)", async () => {
+  net.reset();
+  const W2 = { ...W, services: W.services.map(x => x.id === 201 ? { ...x, title: "Стрижка классика" } : x.id === 204 ? { ...x, title: "Стрижка у шефа" } : x) };
+  net.altData = () => W2;
+  const s = mk(ENV);
+  await s.chat("winchester", "len-4", "завтра у тони свободно?", ["Подскажу время."]);
+  const t = toniLine();
+  net.altData = null;
+  assert.ok(/14:00/.test(t) && /16:30/.test(t) && !/11:00/.test(t) && !/12:30/.test(t) && !/17:00/.test(t), t);
+  assert.ok(/Свободное время выше посчитано для услуги/.test(JSON.stringify(net.gemini.at(-1))), "ИИ знает, на какую длительность посчитано время");
+});
