@@ -8,6 +8,9 @@ import assert from "node:assert/strict";
 import { net, mk, D1 } from "../harness.mjs";
 import { fitStarts, askedTimes, busyFrom, nearest, gridStep } from "../../src/services/booking/fit.js";
 import { altServiceWanted } from "../../src/services/booking/pick.js";
+import { withDurations } from "../../src/services/booking/fit.js";
+import { CLIENTS } from "../../src/config/builtin-clients.js";
+import { altDiag } from "../../src/controllers/altegio.js";
 
 const ENV = { ALTEGIO_PARTNER: "partner-key" };
 const FREE = {
@@ -148,4 +151,41 @@ test("«постричься» и время без услуги — тоже с
   net.altData = null;
   assert.ok(/^Да, в 12:30 у Тони можно/.test(r.reply), r.reply);
   assert.equal(net.gemini.length, 1, "ИИ спрошен один раз");
+});
+
+// Живая проверка 18.10.2026 21:30 после e54cc5b: «к тони на завтра премиум» → «с 14:00 до 16:30»; «в 16:30 запишите» → «в 16:30 у Тони
+// свободно». Длительность из Altegio не та (Premium как стрижка — 1 ч) или не приходит совсем — код считал Premium часовой услугой.
+// Теперь длительность — из кода (altegio.durations у Winchester), Altegio — только где у мастера занято.
+for (const [name, bad] of [["в Altegio у Premium 1 ч", x => x.id === 205 || x.id === 206 ? { ...x, seance_length: 3600 } : x], ["Altegio длительность не присылает", ({ seance_length, ...x }) => x]]) {
+  test(`${name}: «премиум к Тони на завтра» — без 16:30; «в 16:30 запишите» — не получится, ближайшее 15:30 или 16:00`, async () => {
+    net.reset(); const W2 = { ...W, services: SV.map(bad) }; net.altData = () => W2;
+    const s = mk(ENV);
+    await s.chat("winchester", "fit-live", "привет", ["Здравствуйте! Чем могу помочь?"]);
+    const r1 = await s.chat("winchester", "fit-live", "к тони на завтра премиум",
+      ["Комплекс «Premium» у Тони стоит 13 000 ₸ и занимает 1 ч 30 мин. Завтра у Тони есть свободное время с 14:00 до 16:30 ✂️ Какое время вам удобно?",
+       "Комплекс «Premium» у Тони стоит 13 000 ₸ и занимает 1 ч 30 мин. Завтра у Тони можно начать с 14:00 до 16:00 ✂️ Какое время вам удобно?"]);
+    assert.ok(/1 ч 30 мин \(Комплекс «Отец и сын».*?Premium.*?\)\): 14:00, 14:30, 15:00, 15:30, 16:00(?!,)/.test(JSON.stringify(net.gemini.at(-1))), "в подсказке Premium — 1 ч 30 мин");
+    assert.ok(/с 14:00 до 16:00/.test(r1.reply), r1.reply);
+    const r2 = await s.chat("winchester", "fit-live", "в 16:30 запишмте пожалуйста",
+      ["Завтра, в понедельник, в 16:30 у Тони свободно ✂️ Комплекс «Premium» занимает 1 ч 30 мин. На чьё имя оформить запись?",
+       "Завтра в 16:30 у Тони свободно. На чьё имя оформить запись?"]);
+    net.altData = null;
+    assert.equal(r2.reply, "На 16:30 не получится: услуга идёт 1 ч 30 мин, а дальше у мастера Тони уже занято. Ближайшее подходящее время: 15:30, 16:00. Какое подойдёт?");
+  });
+}
+
+test("длительность из кода: каждая услуга Winchester узнаётся по названию из Altegio; чего нет в таблице — как в Altegio", () => {
+  const T = CLIENTS.winchester.altegio.durations;
+  const want = { "Комплекс «Premium» (Шеф-барбер)": 90, "Премиум": 90, "Мужская стрижка (Барберы)": 60, "Детская стрижка": 30, "Моделирование бороды": 30,
+    "Комплекс «Отец и сын»": 90, "Химическая завивка": 60, "Перманентная укладка Down perm": 30, "Камуфляж седины Kondor": 30, "Камуфляж бороды Kondor": 30,
+    "Окантовка + укладка": 30, "SPA-процедура для лица": 30, "Восковое удаление лишних волос": 5, "Глиняная маска": 15, "Черная маска": 15, "Перкуссионный массаж": 10, "Стрижка машинкой": 45 };
+  for (const [title, m] of Object.entries(want)) assert.equal(withDurations([{ title, minutes: 45 }], T)[0].minutes, m, title);
+});
+
+test("/altegio: длительность из кода и из Altegio, время мастера по длительностям — как считает бот", async () => {
+  net.reset(); const W2 = { ...W, services: SV.map(x => x.id === 206 ? { ...x, seance_length: 3600 } : x) }; net.altData = () => W2;
+  const out = await altDiag(mk(ENV).env, "winchester", "", "");
+  net.altData = null;
+  assert.ok(/Комплекс «Premium» \(Шеф-барбер\) — от 13 000 ₸, 1 ч 30 мин \(из кода; в Altegio — 1 ч\)/.test(out), out);
+  assert.ok(/Тони: свободные начала — 11:00, 12:30, 14:00/.test(out) && /· 1 ч 30 мин \([^\n]*Premium[^\n]*\): 14:00, 14:30, 15:00, 15:30, 16:00\n/.test(out), out);
 });

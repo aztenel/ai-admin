@@ -284,7 +284,7 @@ ok("/altegio без ключа разработчика подсказывает
 
 env.ALTEGIO_PARTNER = "partner-key"; env.ALTEGIO_LOC_ALT = "2001";
 r = await call("/altegio?key=lk"); t = await r.text();
-ok("/altegio: услуги и мастера из Altegio", r.status === 200 && t.includes("Услуги: ✅ 3") && t.includes("Мужская стрижка — от 6 000 ₸, 60 мин") && t.includes("Мастера: ✅ 2 — Арман, Ерлан"), t);
+ok("/altegio: услуги и мастера из Altegio", r.status === 200 && t.includes("Услуги: ✅ 3") && t.includes("Мужская стрижка — от 6 000 ₸, 1 ч (из Altegio)") && t.includes("Мастера: ✅ 2 — Арман, Ерлан"), t);
 ok("/altegio: архивная услуга, уволенный и скрытый мастер не показаны", !t.includes("Архивная") && !t.includes("Уволенный") && !t.includes("Скрытый"));
 ok("/altegio: свободное время и пробная проверка записи", t.includes(`${D1}: 9:30, 10:00, 11:00, 13:00`) && t.includes("Пробная проверка записи (без создания): ✅"), t);
 ok("/altegio без телефона записей не создаёт и показывает кнопку пробной записи", ALT.records.length === 0 && t.includes('<form method="post" action="/altegio">'));

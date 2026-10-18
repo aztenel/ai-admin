@@ -8,6 +8,7 @@ import { OWNER_BASE } from "../lib/css.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { ALT_DAYS, ALT_JOURNAL_DAYS } from "../config/constants.js";
 import { altSelfCancel, altLoc, thin } from "../services/booking/book.js";
+import { withDurations, gridStep, durGroups, fitStarts, durStr } from "../services/booking/fit.js";
 import { altUserKey } from "../services/booking/journal.js";
 import { altText, altCall, altCache, altBase, altDates, altDropTimes, altTimes, altRecord, altEmailErr, ALT_EMAIL_TIP } from "../services/diag/deps.js";
 /** @import { Env } from "../lib/types.js" */
@@ -45,7 +46,11 @@ export async function altDiag(env, cid, locArg, bookPhone) {
   /** @param {number} shown @param {number} total */
   const part = (shown, total) => total > shown ? ` (бот видит первые ${shown} из ${total})` : "";
   out.push("Услуги: " + (base.services.length ? "✅ " + base.services.length + part(base.services.length, base.total.services) : "❌ 0 — добавьте услуги и разрешите для них онлайн-запись"));
-  base.services.slice(0, 15).forEach((/** @type {any} */ x) => out.push(`  · ${x.title} — ${x.min ? "от " + money(x.min) + " ₸" : "цена не указана"}${x.minutes ? ", " + x.minutes + " мин" : ""}`));
+  // длительность: из кода (altegio.durations клиента) или из Altegio — по ней бот считает, помещается ли услуга
+  const svs = withDurations(base.services, c.altegio && c.altegio.durations);
+  /** @param {any} x */
+  const lenOf = x => x.minutes ? ", " + durStr(x.minutes) + ("altMinutes" in x ? (x.altMinutes === x.minutes ? " (в коде и в Altegio)" : ` (из кода; в Altegio — ${x.altMinutes ? durStr(x.altMinutes) : "не указано"})`) : " (из Altegio)") : ", длительность не указана";
+  svs.slice(0, 40).forEach((/** @type {any} */ x) => out.push(`  · ${x.title} — ${x.min ? "от " + money(x.min) + " ₸" : "цена не указана"}${lenOf(x)}`));
   out.push("Мастера: " + (base.staff.length ? "✅ " + base.staff.length + part(base.staff.length, base.total.staff) + " — " + base.staff.map((/** @type {any} */ m) => m.name + (m.busy ? " (сейчас без свободного времени)" : "")).join(", ") : "❌ 0 — добавьте сотрудника с графиком работы и разрешите к нему онлайн-запись"));
   const dates = (await step("Свободные даты", async () => altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${isoDay(now)}&date_to=${isoDay(now + 21 * 86400e3)}`), now).slice(0, ALT_DAYS))) || [];
   out.push("Ближайшие даты с записью: " + (dates.join(", ") || "нет ❌ — у мастеров нет рабочего графика на ближайшие 3 недели"));
@@ -53,6 +58,18 @@ export async function altDiag(env, cid, locArg, bookPhone) {
   for (const d of dates) {
     const t = await step("Время на " + d, () => altTimes(env, loc, 0, d, null, now, true));
     if (t) { out.push(`  ${d}: ${thin(t.map((/** @type {any} */ x) => x.time)).join(", ") || "свободного времени нет"}`); if (!first && t[0]) first = { date: d, ...t[0], datetime: t[0].datetime || `${d}T${t[0].time.padStart(5, "0")}:00+0${TZ}:00` }; }
+  }
+  // как бот считает время мастеров (services/booking/fit.js): с какого времени можно начать услугу каждой длительности — завтра
+  // или в ближайший день. По этим спискам бот отвечает клиенту и проверяет запись. Мастера читаются по одному: у Altegio предел запросов
+  if (c.altegio && c.altegio.fitCheck && dates.length) {
+    const d = dates.find((/** @type {string} */ x) => x === isoDay(now + 86400e3)) || dates[0], lists = /** @type {{ name: string, t: string[] }[]} */ ([]);
+    for (const m of base.staff.slice(0, 8)) { const t = await step(`Время мастера ${m.name} на ${d}`, () => altTimes(env, loc, m.id, d, null, now, true)); if (t) lists.push({ name: m.name, t: t.map((/** @type {any} */ x) => x.time) }); }
+    const stp = gridStep(lists.map(x => x.t)), groups = durGroups(svs, stp).filter(g => g.m > stp);
+    out.push(`Как бот считает время на ${d} — с какого времени можно начать услугу (шаг расписания ${stp} мин):`);
+    for (const { name, t } of lists) {
+      out.push(`  ${name}: свободные начала — ${t.join(", ") || "нет"}`);
+      for (const g of groups) out.push(`    · ${g.label} (${g.titles.slice(0, 3).join(", ")}${g.titles.length > 3 ? ", …" : ""}): ${fitStarts(t, g.m, stp).join(", ") || "не помещается"}`);
+    }
   }
   if (first && base.services[0]) {
     const appointments = [{ id: 1, services: [base.services[0].id], staff_id: 0, datetime: first.datetime }];

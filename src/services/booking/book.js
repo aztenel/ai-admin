@@ -7,7 +7,7 @@ import { altCall } from "../integrations/altegio/client.js";
 import { isoDay, mins, hm, TZ } from "../../lib/time.js";
 import { altDay } from "./replies.js";
 import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike, altServiceHint } from "./pick.js";
-import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr } from "./fit.js";
+import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr, withDurations } from "./fit.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
@@ -72,7 +72,7 @@ export function thin(times, max = 16) {
 /** @param {Env} env @param {Client} c @param {number} nowMs @param {string} userText */
 export async function altSnapshot(env, c, nowMs, userText) {
   const loc = altLoc(env, c);
-  const base = await altBase(env, loc, nowMs);
+  const base0 = await altBase(env, loc, nowMs), base = { ...base0, services: withDurations(base0.services, c.altegio && c.altegio.durations) }; // длительность — из кода, если задана
   const dk = "d:" + loc, hit = altCache.get(dk);
   let dates;
   if (hit && Math.abs(nowMs - hit.at) < ALT_TTL) dates = hit.v;

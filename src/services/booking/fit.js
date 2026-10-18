@@ -5,6 +5,23 @@
 // у Тони 11:00, 12:30, 14:00 … 17:00 при записях 11:30, 13:00, 17:30). Начало подходит услуге на m минут, если следующие начала
 // сетки до конца услуги тоже свободны. ИИ получает готовые списки для каждой длительности и вывод по времени, которое назвал клиент.
 import { mins } from "../../lib/time.js";
+import { nameToks, svStem, SV_STOP } from "../../lib/names.js";
+
+// Длительность услуг из кода (altegio.durations клиента: { "название": минуты }) важнее Altegio. Живой показ Winchester, 18.10.2026:
+// бот четыре раза подряд называл Premium (1 ч 30 мин) на 16:30 у Тони свободным при записи в 17:30 — длительность из Altegio
+// не та или не приходит. Ключ подходит, если все его слова есть в названии (без пояснения в скобках); из нескольких — где слов больше.
+// Чего нет в таблице — как в Altegio. altMinutes — длительность из Altegio (для /altegio)
+/** @param {string} s @returns {string[]} */
+const durToks = s => nameToks(String(s).replace(/\([^()]*\)/g, " ")).flatMap(w => w.split("-")).filter(w => w.length >= 2 && !SV_STOP.has(w)).map(svStem);
+/** @param {any[]} services @param {Record<string, number> | undefined} table @returns {any[]} */
+export function withDurations(services, table) {
+  if (!table) return services;
+  const keys = Object.entries(table).map(([k, m]) => ({ w: durToks(k), m: +m })).filter(k => k.w.length && k.m > 0).sort((a, b) => b.w.length - a.w.length);
+  return services.map(x => {
+    const t = new Set(durToks(x.title)), k = keys.find(k => k.w.every(w => t.has(w)));
+    return k ? { ...x, minutes: k.m, altMinutes: +x.minutes || 0 } : x;
+  });
+}
 
 /** @param {number} m */
 export const tStr = m => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
