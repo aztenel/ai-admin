@@ -7,6 +7,8 @@ import { TZ } from "../lib/time.js";
 import { ipKey } from "../services/booking/limits.js";
 import { altLoc } from "../services/booking/book.js";
 import { thinkSafe } from "../services/conversation/orchestrator.js";
+import { sessionRead } from "../services/auth/session.js";
+import { canSee } from "../services/auth/access.js";
 /** @import { Env } from "../lib/types.js" */
 
 // ================= лимит сессий на IP =================
@@ -42,7 +44,10 @@ export async function handleWebChat(request, env, ctx) {
   if (limited) return json({ reply: "Слишком много сообщений. Попробуйте чуть позже или позвоните нам.", offer: [] });
   if (CLIENTS[c].off) return json({ reply: "Сейчас на сообщения отвечает администратор. Напишите нам, пожалуйста, в WhatsApp или позвоните.", offer: [] }); // бот выключен владельцем
   /** @type {any[]} */ const later = [];
-  const r = /** @type {any} */ (await thinkSafe(env, env.KV, c, `h:web:${c}:${sid}`, textIn, "веб-чат", { channel: "web", ip: request.headers.get("cf-connecting-ip") || "", defer: ctx && ctx.waitUntil ? /** @param {any} f */ f => later.push(f) : null }));
+  // владелец и сотрудники компании (вошли в пульт) в пробном веб-чате записывают по-настоящему; остальным посетителям — показ без записи
+  let staff = false;
+  try { staff = canSee(await sessionRead(env, request), c); } catch (e) { console.log("session", String(e)); }
+  const r = /** @type {any} */ (await thinkSafe(env, env.KV, c, `h:web:${c}:${sid}`, textIn, "веб-чат", { channel: "web", staff, ip: request.headers.get("cf-connecting-ip") || "", defer: ctx && ctx.waitUntil ? /** @param {any} f */ f => later.push(f) : null }));
   if (later.length) ctx.waitUntil(Promise.allSettled(later.map(/** @param {any} f */ f => f()))); // уведомления администратору не задерживают ответ клиенту
   // в браузер не уходят код записи Altegio и служебные пометки для администратора
   /** @param {any} l */ const pub = l => { const { note, altegio, ...rest } = l; return l.kind ? { id: l.id, kind: l.kind, phone: l.phone } : altegio ? { ...rest, altegio: { record_id: altegio.record_id } } : rest; };

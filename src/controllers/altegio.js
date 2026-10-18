@@ -87,6 +87,7 @@ export async function altDiag(env, cid, locArg, bookPhone) {
       const td = await step("Дни для пробной записи", () => altTrialDates(env, c, loc, now, 1));
       const t = td && td[0] ? await step("Время на " + td[0], () => altTimes(env, loc, 0, td[0], null, now, true)) : null;
       if (td && td[0] && t && t[0]) trial = { date: td[0], ...t[0], datetime: t[0].datetime || `${td[0]}T${t[0].time.padStart(5, "0")}:00+0${TZ}:00` };
+      else if (td && !altUserKey(env, c)) out.push(`Пробная запись: ❌ журнал записей не читается (нет ключа ALTEGIO_USER_${String(c.id).toUpperCase()}) — без него не видно, в какие дни есть записи, пробу не делаю`);
       else if (td) out.push("Пробная запись: ❌ в следующем месяце нет дня без записей, открытого для онлайн-записи, — пробу не делаю, чтобы не занять живые окна");
     }
     if (!ph) out.push("Пробная запись: ❌ номер телефона не распознан — нужен казахстанский мобильный, например +7 701 123 45 67");

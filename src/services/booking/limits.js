@@ -17,15 +17,26 @@ export const ipKey = ip => {
   return full.slice(0, 4).map(/** @param {string} x */ x => x.replace(/^0+(?=.)/, "")).join(":");
 };
 // пределы клиента (altegio.limits: { active, day, ip, locDay, cx }) важнее общих: у Winchester — строже (просьба владельца 19.10.2026: защита от спама записями).
-// cx — отмен и переносов своих записей из одного чата за сутки, сверх — просьба администратору; без настройки не ограничено (перенос лимиты не тратит)
-/** @param {any} c @returns {{ active: number, day: number, ip: number, locDay: number, cx: number }} */
+// cx — отмен и переносов своих записей с одного номера (в веб-чате — из одного чата) за сутки, сверх — просьба администратору; без настройки
+// не ограничено (перенос лимиты не тратит). trial — пробных записей (веб-чат в пробном режиме) на локацию за сутки
+/** @param {any} c @returns {{ active: number, day: number, ip: number, locDay: number, cx: number, trial: number }} */
 export const altLimits = c => {
   const l = (c && c.altegio && c.altegio.limits) || {}, n = /** @param {any} v @param {number} d */ (v, d) => +v > 0 ? +v : d;
-  return { active: n(l.active, ALT_MAX_ACTIVE), day: n(l.day, ALT_MAX_DAY), ip: n(l.ip, ALT_MAX_DAY_IP), locDay: n(l.locDay, ALT_MAX_LOC_DAY), cx: n(l.cx, Infinity) };
+  return { active: n(l.active, ALT_MAX_ACTIVE), day: n(l.day, ALT_MAX_DAY), ip: n(l.ip, ALT_MAX_DAY_IP), locDay: n(l.locDay, ALT_MAX_LOC_DAY), cx: n(l.cx, Infinity), trial: n(l.trial, 5) };
 };
+// пробные записи считаются отдельно: они не тратят пределы живых клиентов (номер в веб-чате набирает посетитель — по нему не считаем)
 /** @param {string} loc @param {Record<string, any>} ids @param {number} nowMs @param {any} [lim] */
-export const altLimKeys = (loc, ids, nowMs, lim) => { const L = lim || altLimits(null); return [[ids.ip, L.ip], [ids.phone, L.day], ["all", L.locDay]].filter(x => x[0]).map(([x, max]) => [`bk:${loc}:${x}:${isoDay(nowMs)}`, max]); };
+export const altLimKeys = (loc, ids, nowMs, lim) => {
+  const L = lim || altLimits(null);
+  if (ids.trial) return [[`bk:${loc}:trial:${isoDay(nowMs)}`, L.trial]];
+  return [[ids.ip, L.ip], [ids.phone, L.day], ["all", L.locDay]].filter(x => x[0]).map(([x, max]) => [`bk:${loc}:${x}:${isoDay(nowMs)}`, max]);
+};
 /** @param {any} store @param {string} loc @param {Record<string, any>} ids @param {number} nowMs @param {any} [lim] */
 export async function altOverLimit(store, loc, ids, nowMs, lim) { for (const [k, max] of altLimKeys(loc, ids, nowMs, lim)) if (+(await store.get(k) || 0) >= max) return true; return false; }
+// отмены и переносы своих записей за сутки — в хранилище, а не в профиле чата: «сброс» и новый чат счётчик не обнуляют (проверка 19.10.2026)
+/** @param {any} store @param {string} loc @param {string} who @param {number} nowMs */
+export async function altCxGet(store, loc, who, nowMs) { return +(await store.get(`bk:${loc}:cx:${who}:${isoDay(nowMs)}`) || 0); }
+/** @param {any} store @param {string} loc @param {string} who @param {number} nowMs @param {number} n */
+export async function altCxPut(store, loc, who, nowMs, n) { await store.put(`bk:${loc}:cx:${who}:${isoDay(nowMs)}`, String(n), { expirationTtl: 2 * 86400 }); }
 /** @param {any} store @param {string} loc @param {Record<string, any>} ids @param {number} nowMs */
 export async function altCount(store, loc, ids, nowMs) { for (const [k] of altLimKeys(loc, ids, nowMs)) await store.put(k, String(+(await store.get(k) || 0) + 1), { expirationTtl: 2 * 86400 }); }

@@ -160,3 +160,90 @@ test("/altegio: в следующем месяце нет дня без запи
   assert.equal(net.altRecords.length, before, out);
   assert.ok(/пробу не делаю/.test(out), out);
 });
+
+// ---- найдено проверкой 19.10.2026 (злоупотребления и логика) — каждое сначала повторено, потом исправлено
+const ownerChat = async (s, sid, text) => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" }); return (await b.post("/api/chat", { c: "winchester", sid, text })).json(); };
+
+test("«вместо Азамата запишите Ерлана» по кругу: перенос на другого человека — с обычными пределами, записей не больше трёх", async () => {
+  reset();
+  const s = mk(env()), from = "77000000301";
+  net.ai = [`Записала вас.\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", D1, "10:00")}`];
+  await s.gaText("winchester", INST, from, "Азамат, мужская стрижка к Айдосу завтра в 10:00");
+  for (const [n, t] of [["Ерлан", "11:00"], ["Данияр", "12:00"], ["Тимур", "13:00"], ["Серик", "14:00"], ["Бахыт", "15:00"]]) {
+    net.ai = [`Хорошо.\n[ОТМЕНА] Имя: Азамат; Дата: ${D1}; Время: 10:00\n${tag(n, "Мужская стрижка (7 000 ₸)", "Айдос", D1, t)}`];
+    await s.gaText("winchester", INST, from, `Вместо Азамата запишите ${n}а к Айдосу завтра в ${t}`);
+  }
+  assert.ok(net.alt.filter(x => /^POST \/book_record\//.test(x)).length <= 3, net.alt.join(" | "));
+  assert.ok(net.tg.some(m => /превышен лимит/.test(m.text)), JSON.stringify(net.tg.map(m => m.text)));
+});
+
+test("«сброс» не обнуляет предел переносов: счётчик — в хранилище по номеру", async () => {
+  reset();
+  const s = mk(env()), from = "77000000302", times = ["10:00", "11:00", "12:00", "13:00", "14:00"];
+  net.ai = [`Записала вас.\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", D1, times[0])}`];
+  await s.gaText("winchester", INST, from, `Азамат, мужская стрижка к Айдосу завтра в ${times[0]}`);
+  for (let i = 1; i < times.length; i++) {
+    if (i === 3) await s.gaText("winchester", INST, from, "сброс");
+    net.ai = [`Перенесла.\n[ОТМЕНА] Имя: Азамат; Дата: ${D1}; Время: ${times[i - 1]}\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", D1, times[i])}`];
+    await s.gaText("winchester", INST, from, `Перенесите мою запись с ${times[i - 1]} на ${times[i]}`);
+  }
+  assert.ok(net.alt.filter(x => /^DELETE /.test(x)).length <= 3, net.alt.join(" | "));
+});
+
+test("две записи администратора: «да» на «Отменить запись в 12:00?» передаёт администратору именно 12:00", async () => {
+  reset();
+  const s = mk(env()), from = "77000000303";
+  adminRecord(from, "10:00"); adminRecord(from, "12:00", 31);
+  net.ai = [`Отменю.\n[ОТМЕНА] Имя: Ерлан; Дата: ${D1}; Время: 12:00`];
+  await s.gaText("winchester", INST, from, "Отмените запись на 12:00");
+  net.ai = ["Хорошо."];
+  await s.gaText("winchester", INST, from, "Да");
+  const req = net.tg.filter(m => /Клиент просит отменить запись — сделайте в Altegio/.test(m.text));
+  assert.ok(req.length && req.every(m => /12:00/.test(m.text) && !/10:00/.test(m.text)), JSON.stringify(net.tg.map(m => m.text)));
+});
+
+test("пробный веб-чат: посетитель без входа — показ без записи; владелец — настоящая запись с пометкой «пробная», живые пределы не тратятся", async () => {
+  reset();
+  const s = mk(env());
+  net.ai = [`Записала вас.\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", NOV[0], "11:00")}`];
+  const r1 = await s.chat("winchester", "trial-anon", "Азамат, +7 701 555 44 33, стрижка к Айдосу 2 ноября в 11:00");
+  assert.ok(!net.alt.some(x => /^POST \/book_record\//.test(x)) && /показ/i.test(r1.reply), r1.reply);
+  net.ai = [`Записала вас.\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", NOV[0], "11:00")}`];
+  const r2 = await ownerChat(s, "trial-owner", "Азамат, +7 701 555 44 33, стрижка к Айдосу 2 ноября в 11:00");
+  const rec = net.altRecords.at(-1);
+  assert.ok(rec && /ПРОБНАЯ/.test(rec.comment), r2.reply + " " + JSON.stringify(rec));
+  assert.ok(net.tg.some(m => /Пробная запись в Altegio/.test(m.text)), JSON.stringify(net.tg.map(m => m.text)));
+  assert.equal(await s.env.KV.get(`bk:${LOC}:all:2026-10-03`), null, "живой предел локации не тронут");
+});
+
+test("перенос записи администратора, где имя в журнале другое: новой записи нет — просьба администратору", async () => {
+  reset();
+  const s = mk(env()), from = "77000000304";
+  net.altRecords.push({ phone: "+" + from, fullname: "Клиент Winchester", appointments: [{ id: 1, services: [201], staff_id: 32, datetime: `${D1}T12:00:00+05:00` }] });
+  const before = net.altRecords.length;
+  net.ai = [`Перенесла.\n[ОТМЕНА] Имя: Ерлан; Дата: ${D1}; Время: 12:30\n${tag("Ерлан", "Мужская стрижка (7 000 ₸)", "Айдос", D1, "14:00")}`];
+  await s.gaText("winchester", INST, from, "Меня зовут Ерлан, перенесите мою запись на 14:00");
+  assert.equal(net.altRecords.length, before, net.alt.join(" | "));
+  assert.ok(s.leads("winchester").some(l => /Перенести запись/.test(l.service)) || net.tg.some(m => /перенести запись/i.test(m.text)), JSON.stringify(net.tg.map(m => m.text)));
+});
+
+test("пробный режим без ключа журнала: дней для пробы нет — запись не создаётся ни на какой день", async () => {
+  reset();
+  const s = mk(env({ ALTEGIO_USER_WINCHESTER: "" }));
+  net.ai = [`Записала вас.\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", NOV[0], "11:00")}`];
+  const r = await ownerChat(s, "trial-nokey", "Азамат, +7 701 555 44 33, стрижка к Айдосу 2 ноября в 11:00");
+  assert.ok(!net.alt.some(x => /^POST \/book_(record|check)\//.test(x)), net.alt.join(" | "));
+  assert.ok(!net.tg.some(m => /запишите вручную/.test(m.text)), "и заявки «запишите вручную» тоже нет: " + r.reply);
+});
+
+test("просьба администратору о переносе: другое новое время — новая просьба, а не тихий повтор", async () => {
+  reset();
+  const s = mk(env()), from = "77000000305";
+  adminRecord(from, "12:00");
+  for (const t of ["14:00", "15:00"]) {
+    net.ai = [`Передала.\n[ОТМЕНА] Имя: Азамат; Дата: ${D1}; Время: 12:00\n${tag("Азамат", "Мужская стрижка (7 000 ₸)", "Айдос", D1, t)}`];
+    await s.gaText("winchester", INST, from, `Перенесите мою запись с 12:00 на ${t}`);
+  }
+  const reqs = net.tg.filter(m => /перенести запись — сделайте в Altegio/.test(m.text));
+  assert.ok(reqs.some(m => /14:00/.test(m.text)) && reqs.some(m => /15:00/.test(m.text)), JSON.stringify(net.tg.map(m => m.text)));
+});

@@ -38,7 +38,8 @@ export const altTrial = (env, c) => {
   const v = env["ALTEGIO_TRIAL_" + String(c.id).toUpperCase()];
   return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.trialNextMonth);
 };
-// дни следующего месяца, открытые для записи, без единой записи в журнале (журнал читается ключом пользователя; без ключа — просто дни месяца)
+// дни следующего месяца, открытые для записи, без единой записи в журнале. Без ключа пользователя журнал не прочитать — дней нет:
+// иначе проба легла бы на день с живыми записями (проверка 19.10.2026)
 // userKey — ключ пользователя, если его ещё нет в переменных (страница /altegio/user)
 /** @param {Env} env @param {Client} c @param {number} loc @param {number} nowMs @param {number} [max] @param {string} [userKey] @returns {Promise<string[]>} */
 export async function altTrialDates(env, c, loc, nowMs, max = ALT_DAYS, userKey = "") {
@@ -48,7 +49,8 @@ export async function altTrialDates(env, c, loc, nowMs, max = ALT_DAYS, userKey 
   const mm = String(m + 1).padStart(2, "0"), from = `${y}-${mm}-01`, to = `${y}-${mm}-${String(new Date(Date.UTC(y, m + 1, 0)).getUTCDate()).padStart(2, "0")}`;
   const dates = altDates(await altCall(env, "GET", `/book_dates/${loc}?date_from=${from}&date_to=${to}`), nowMs).filter(/** @param {string} d */ d => d >= from && d <= to);
   const user = userKey || altUserKey(env, c), busy = new Set();
-  if (user) for (let pg = 1; pg <= 10; pg++) {
+  if (!user) return [];
+  for (let pg = 1; pg <= 10; pg++) {
     const arr = await altCall(env, "GET", `/records/${loc}?start_date=${from}&end_date=${to}&count=200&page=${pg}`, null, user), list = Array.isArray(arr) ? arr : [];
     for (const r of list) if (r && r.deleted !== true && r.deleted !== 1) busy.add(String(r.datetime || r.date || "").slice(0, 10));
     if (list.length < 200) break;
@@ -235,7 +237,7 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
   const all = new Set([...any.days, ...(own ? own.days : [])].flatMap(d => d.times).concat(fitDays.flatMap(d => d.lists.flat()))), /** @type {Set<string>} */ ends = new Set();
   const durations = new Set(base.services.map(/** @param {any} x */ x => x.minutes).filter(Boolean));
   for (const m of durations) for (const t of all) { const e = mins(t) + m; if (e < 1440) ends.add(`${Math.floor(e / 60)}:${String(e % 60).padStart(2, "0")}`); }
-  return { loc, services: base.services, staff: base.staff, cut: base.cut, named, facts, prompt, dates, failed: [...new Set([...any.failed, ...ownFailed])],
+  return { loc, services: base.services, staff: base.staff, cut: base.cut, named, facts, prompt, dates, trial: !!mode.trial, failed: [...new Set([...any.failed, ...ownFailed])],
     slots: any.days.map(d => ({ ...d, times: show(d) })), slotsNote: unread(any.failed), extraTimes: all, softTimes: ends, durations, fit, fitBad };
 }
 
@@ -263,6 +265,7 @@ export async function altBook(env, A, q, nowMs, test) {
   /** @type {Record<string, any>} */
   const info = { services: names, staffName: staff ? staff.name : "", date, time };
   if (!date || !time) return { ok: false, reason: "format", error: "бот не передал дату и время в нужном виде", ...info };
+  if (A.trial && !A.dates.includes(date)) return { ok: false, soft: true, reason: A.dates.length ? "date" : "trialNone", list: A.dates.map(/** @param {any} d */ d => `${d.slice(8, 10)}.${d.slice(5, 7)}`).join(", "), ...info }; // пробный чат: другие дни — никогда, и заявкой администратору тоже
   if (!(A.dates || []).length) return { ok: false, reason: "api", error: "в расписании нет свободного времени на ближайшие дни", ...info };
   if (!A.dates.includes(date)) return { ok: false, soft: true, reason: "date", list: A.dates.map(/** @param {any} d */ d => `${d.slice(8, 10)}.${d.slice(5, 7)}`).join(", "), ...info };
   info.label = (/** @param {any} d */ d => (d.rel ? d.rel + ", " : "") + d.label)(altDay(date, [], nowMs));
@@ -307,7 +310,7 @@ export async function altBook(env, A, q, nowMs, test) {
   const appointments = [{ id: 1, services: ids, staff_id: staffId2, datetime: slot.datetime || `${date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
   try {
     if (test) { await altCall(env, "POST", `/book_check/${A.loc}`, { appointments }); return { ok: true, dry: true, record_id: 0, record_hash: "", ...info }; }
-    const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: "Запись через AI-администратора", appointments })).data;
+    const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: q.trial ? "ПРОБНАЯ запись (проверка AI-администратора) — можно удалить" : "Запись через AI-администратора", appointments })).data;
     altDropTimes(A.loc);
     const rec = (Array.isArray(d) ? d[0] : d) || {};
     if (!rec.record_id) return { ok: false, reason: "api", maybe: true, error: "Altegio не вернул номер записи", ...info };
