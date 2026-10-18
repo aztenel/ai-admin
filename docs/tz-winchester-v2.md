@@ -30,6 +30,8 @@ Green-API (`src/controllers/inbox.js`). Бонусы, подтверждение
 5. Не отвечать на «ок», «спасибо», эмодзи без вопроса (меньше лишних сообщений — меньше подозрений и шума).
 6. Основной номер **никогда** не подключается к Green-API.
 
+**Сделано 18.10.2026 (на заглушках, `test/unit/two-numbers.test.mjs`):** пункты 2–5 — флаги `gaOff`, `gaReplyOnly` у Winchester, `BOT_GA_WINCHESTER = 1` включает бота на этом номере (официальный номер остаётся выключенным), подписи номеров в пульте.
+
 Переменные (Cloudflare → Previews, потом Production): `GA_ID_WINCHESTER` (Text), `GA_TOKEN_WINCHESTER` (Secret),
 `GA_URL_WINCHESTER` (Text). Вебхук ставится кнопкой «Настроить Green-API» на `/launch?c=winchester`.
 

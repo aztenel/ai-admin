@@ -6,7 +6,7 @@ import { normPhone, redact, maskPhones } from "../../lib/phone.js";
 import { snip } from "../../lib/text.js";
 import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
-import { fixedOf, nicheOf, seenBefore, waCoex, markOptout, waBotOff } from "../../services/channels/index.js";
+import { fixedOf, nicheOf, seenBefore, waCoex, markOptout, botOff } from "../../services/channels/index.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
@@ -60,6 +60,7 @@ export async function handleWAText(env, channel, fromDigits, text, send, wx) {
     try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }
+export const THANKS = /^(?:спасибо(?: большое| вам)?|спс|благодарю|рахмет|рақмет|thanks|thank you|👍|🙏|🙂|😊|❤️)[\s!.)]*$/iu;
 /** @param {Env} env @param {any} channel @param {any} fromDigits @param {any} text @param {any} send @param {any} phone @param {any} wx */
 export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   const fixed = fixedOf(env, channel, wx);
@@ -68,7 +69,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   let niche = await nicheOf(env, channel, fromDigits, wx);
   const histKey = () => `h:${channel}:${niche}:${fromDigits}`;
 
-  if (niche && CLIENTS[niche] && waBotOff(env, CLIENTS[niche])) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего
+  if (niche && CLIENTS[niche] && botOff(env, CLIENTS[niche], channel)) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего
     const now = Date.now();
     if (STOP.test(text)) await markOptout(env, niche, fromDigits); // «стоп» на рассылку записываем и при выключенном боте
     await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
@@ -94,6 +95,16 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     await env.KV.put(nicheKey, pick.id, { expirationTtl: 30 * 86400 });
     await env.KV.put(consentKey, "1", { expirationTtl: 30 * 86400 });
     return send(`${pick.greeting}\n\n${consentText(env, pick)}`);
+  }
+  // номер Green-API: на «спасибо» и 👍 без вопроса бот не отвечает — лишние сообщения с неофициального номера ни к чему (18.10.2026).
+  // Сообщение остаётся в пульте. Если бот ждёт «да» на отмену или перенос — отвечает как обычно
+  if (channel === "ga" && THANKS.test(text.trim())) {
+    const p = ((await readHist(env, histKey())) || {}).profile || {};
+    if (!p.cxAsk && !p.mvAsk && !(p.pausedUntil > Date.now())) {
+      const now = Date.now();
+      await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], q => { q.li = now; if (!q.phone) q.phone = phone; });
+      return;
+    }
   }
   /** @type {any[]} */ const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
@@ -146,7 +157,7 @@ export async function handleWAMedia(env, channel, fromDigits, kind, link, captio
       });
     } catch (e) { console.log("history", String(e)); }
   };
-  if ((paused || waBotOff(env, c)) && !caption) return note(""); // бот выключен — файл виден в пульте, ответ не уходит
+  if ((paused || botOff(env, c, channel)) && !caption) return note(""); // бот выключен — файл виден в пульте, ответ не уходит
   if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, wx); }
   const reply = mediaReply(kind, (h && h.profile && h.profile.lang) || "ru"); // на языке чата
   if (kind === "sticker" && (h?.profile?.cxAsk || h?.profile?.mvAsk)) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }

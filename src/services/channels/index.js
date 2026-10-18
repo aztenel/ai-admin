@@ -11,14 +11,17 @@ import { PAUSE_MS, HIST_KEEP } from "../../config/constants.js";
 // wx — к какому клиенту и через какой номер пришло сообщение: { client, token, pnid, name }. Пусто — прежний режим: один номер на весь воркер (WA_CLIENT) или меню демо
 /** @param {Env} env @param {string} channel @param {Record<string, any>=} wx @returns {string} */
 export const fixedOf = (env, channel, wx) => (wx && wx.client) || (channel === "ga" ? env.GA_CLIENT : env.WA_CLIENT);
-// бот в WhatsApp выключен: паспорт «выключен» (off) или только WhatsApp (waOff у встроенного бота; Text BOT_WA_<ID> = 1/0 меняет)
-/** @param {Env} env @param {any} c @returns {boolean} */
-export const waBotOff = (env, c) => {
+// бот выключен на номере: паспорт «выключен» (off) или только этот номер. Официальный WhatsApp (wa) — waOff, Text BOT_WA_<ID> = 1/0;
+// номер Green-API (ga) — отдельно: gaOff, Text BOT_GA_<ID> = 1/0 (Winchester, 18.10.2026: бот на втором номере, основной — у администратора)
+/** @param {Env} env @param {any} c @param {string=} ch @returns {boolean} */
+export const botOff = (env, c, ch) => {
   if (!c) return false;
   if (c.off) return true;
-  const v = env["BOT_WA_" + String(c.id || "").toUpperCase()];
-  return v != null && String(v).trim() !== "" ? !/^(1|on|yes|true|да)$/i.test(String(v).trim()) : !!c.waOff;
+  const ga = ch === "ga", v = env[(ga ? "BOT_GA_" : "BOT_WA_") + String(c.id || "").toUpperCase()];
+  return v != null && String(v).trim() !== "" ? !/^(1|on|yes|true|да)$/i.test(String(v).trim()) : !!(ga ? c.gaOff : c.waOff);
 };
+/** @param {Env} env @param {any} c @returns {boolean} */
+export const waBotOff = (env, c) => botOff(env, c, "wa");
 /** @param {Env} env @param {string} channel @param {string} fromDigits @param {Record<string, any>=} wx @returns {Promise<string | null>} */
 export async function nicheOf(env, channel, fromDigits, wx) {
   const fixed = fixedOf(env, channel, wx);

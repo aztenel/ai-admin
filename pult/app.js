@@ -55,6 +55,8 @@ function same(a, b) { return !!a && !!b && a.ch === b.ch && a.id === b.id; }
 function keyOf(x) { return x.ch + ":" + x.id; }
 var NEED = { human: "Просит человека", limit: "Бот не ответил", media: "Прислал файл", ai: "Сбой бота", req: "Просит отменить или перенести", lead: "Новая заявка", call: "Ждёт звонка", off: "Бот выключен", send: "Ответ не дошёл" };
 var CHN = { wa: "WhatsApp", ga: "WhatsApp", web: "Сайт" };
+// два номера у одной компании (официальный и номер бота на Green-API, 18.10.2026): подписываем, с какого номера чат
+function chn(ch) { return S.client && S.client.two && ch !== "web" ? (ch === "ga" ? "WhatsApp · номер бота" : "WhatsApp · основной номер") : CHN[ch] || ""; }
 
 /* ---------- слой данных ---------- */
 function jf(p, b) {
@@ -367,7 +369,7 @@ var SW_ACT = { l: { a: "resolve", label: "Готово", icon: "check" }, r: { a
 function swPhone() { return root.clientWidth < 720; }
 function swReduce() { return !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches); }
 function swThr(w) { return Math.max(56, Math.min(80, w * 0.35)); } // ~35% ширины или 80 px — что меньше, но не менее 56
-function swCan(r, d) { return d === "l" ? !!r.nd : r.ch !== "web" && !r.pu && !r.st && !S.client.off; } // как пункты меню: «Готово» — ждущему, «Забрать» — тому, где бот ещё говорит
+function swCan(r, d) { return d === "l" ? !!r.nd : r.ch !== "web" && !r.pu && !r.st && !(r.ch === "ga" && S.client.two ? S.client.offGa : S.client.off); } // как пункты меню: «Готово» — ждущему, «Забрать» — тому, где бот ещё говорит
 function swHint(sw) {
   var b = sw.querySelector(".swb"); if (b) return b;
   b = h("div", "swb", ["l", "r"].map(function (d) { return h("span", "swh " + d, [ic(SW_ACT[d].icon, 22), h("span", "", SW_ACT[d].label)]); }), { "aria-hidden": "true" });
@@ -583,7 +585,7 @@ function renderChat(d, scroll) {
   CP.sig = "";
   var same0 = !!S.chat && S.chat.id === d.id && S.chat.ch === d.ch, prevN = same0 ? S.chat.turns.length : -1;
   S.chat = d; CC[keyOf(d)] = { d: d, at: Date.now() };
-  $("cname").textContent = whoOf(d.name || d.waName, d.phone); $("cst").textContent = [d.paused && !d.off && !d.stop ? "" : stateText(d), CHN[d.ch] || ""].filter(Boolean).join(" · ");
+  $("cname").textContent = whoOf(d.name || d.waName, d.phone); $("cst").textContent = [d.paused && !d.off && !d.stop ? "" : stateText(d), chn(d.ch)].filter(Boolean).join(" · ");
   var call = $("call"); if (d.phone) { call.href = telHref(d.phone); call.hidden = false; } else call.hidden = true;
   renderStrip(d);
   var K = $("cards"); if (!K.querySelector("textarea")) { clear(K); (d.reqs || []).forEach(function (q) { K.appendChild(reqCard(q, d.canSend && d.open && d.ch !== "web")); }); }
@@ -708,7 +710,7 @@ function renderCard(d) {
   var o = h("button", "btn onlyph", "Открыть чат", { type: "button", style: "flex:1" }); o.onclick = closeCard; acts.appendChild(o);
   if (d.phone) acts.appendChild(h("a", "btn", "Позвонить", { href: telHref(d.phone), style: "flex:1" }));
   ib.appendChild(acts);
-  var facts = c ? c.facts : [["Канал", CHN[d.ch] || ""], ["Бот", stateText(d)], ["Запись", (d.bookings || []).join("; ") || d.booked || "нет"]].concat((d.pend || []).length ? [["Заявка", d.pend.join("; ")]] : []);
+  var facts = c ? c.facts : [["Канал", chn(d.ch)], ["Бот", stateText(d)], ["Запись", (d.bookings || []).join("; ") || d.booked || "нет"]].concat((d.pend || []).length ? [["Заявка", d.pend.join("; ")]] : []);
   var g = h("div", "grp"); facts.forEach(function (f) { g.appendChild(h("div", "li", [h("span", "k", f[0]), h("span", "kv", f[1])])); }); ib.appendChild(g);
   if (c && c.tags && c.tags.length) ib.appendChild(h("div", "", c.tags.map(function (t) { return h("span", "pill", t); }), { style: "display:flex;gap:8px;flex-wrap:wrap" }));
   if (c && c.note) ib.appendChild(h("div", "card", [h("span", "cap", "Заметка"), h("span", "", c.note, { style: "font-size:15px;line-height:1.4" })], { style: "padding:14px 16px;display:flex;flex-direction:column;gap:6px" }));
