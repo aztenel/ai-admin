@@ -1,7 +1,7 @@
 # CLAUDE.md — системный контекст и правила репозитория `ai-admin`
 
 > Главный документ для Claude и любого разработчика. Читается первым.
-> Где остановились (Winchester, Meta, сайт winchester.kz) — `docs/handoff.md`.
+> Где остановились (Winchester, Meta, сайт winchester.kz) — `docs/handoff.md`; ТЗ «два номера, рассылки из Altegio» — `docs/tz-winchester-v2.md`.
 > План переезда — `REFACTORING.md`. Подробное поведение текущего монолита (Altegio, рассылки, Green-API, живые проверки) — `docs/legacy-context.md`.
 > При расхождении документа и кода верь коду и исправь документ в том же изменении.
 
