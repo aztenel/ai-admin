@@ -1,5 +1,5 @@
 // Winchester: два номера (18.10.2026, docs/tz-winchester-v2.md). Официальный (Wazzapo) — у администратора, бот там молчит;
-// второй номер на Green-API — бот, но до слова владельца тоже молчит (BOT_GA_WINCHESTER = 1 включает). С номера бота нет рассылок
+// второй номер на Green-API — бот (включён 18.10.2026; BOT_GA_WINCHESTER = 0 выключает). С номера бота нет рассылок
 // (главная причина блокировок неофициальных номеров); отвечает бот всем, напоминание и отзыв — по записям, сделанным в этом чате.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,18 +12,18 @@ const ENV = { ALTEGIO_PARTNER: "partner-key", WA_TOKEN_WINCHESTER: "tok-w", APP_
 const gaSent = to => net.ga.filter(x => x.op === "sendMessage" && x.body && x.body.chatId === to + "@c.us").map(x => x.body.message);
 const login = async s => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" }); return b; };
 
-test("номер бота: до слова владельца бот молчит, сообщение — в пульте", async () => {
+test("BOT_GA_WINCHESTER = 0: бот на номере молчит, сообщение — в пульте", async () => {
   net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
-  const s = mk(ENV), from = "77000000091";
+  const s = mk({ ...ENV, BOT_GA_WINCHESTER: "0" }), from = "77000000091";
   await s.gaText("winchester", INST, from, "Здравствуйте, хочу постричься");
   assert.deepEqual(gaSent(from), []);
   assert.equal(net.gemini.length, 0, "ИИ не вызывался");
   assert.ok(s.hist("ga", "winchester", from).turns.some(t => /постричься/.test(t.text)));
 });
 
-test("BOT_GA_WINCHESTER = 1: бот отвечает на номере бота, на официальном номере по-прежнему молчит", async () => {
+test("бот отвечает на номере бота, на официальном номере по-прежнему молчит", async () => {
   net.reset(); net.ai = ["Здравствуйте! Чем помочь?", "Здравствуйте! Чем помочь?"];
-  const s = mk({ ...ENV, BOT_GA_WINCHESTER: "1" }), from = "77000000092";
+  const s = mk(ENV), from = "77000000092";
   await s.gaText("winchester", INST, from, "Здравствуйте");
   assert.ok(gaSent(from).some(t => /Чем помочь/.test(t)), JSON.stringify(gaSent(from)));
   await s.waText("/wa/winchester", from, "Здравствуйте", { secret: "sec-w" });
@@ -54,15 +54,15 @@ test("напоминание о записи из этого чата уходи
 
 test("пульт: оба номера в одном списке, номера подписаны", async () => {
   net.reset();
-  const s = mk(ENV), own = await login(s);
+  const s = mk({ ...ENV, BOT_GA_WINCHESTER: "0" }), own = await login(s);
   const d = await (await own.go("/api/inbox/list?c=winchester")).json();
   assert.equal(d.client.two, true, JSON.stringify(d.client));
   assert.equal(d.client.off, true, "официальный номер: бот выключен");
-  assert.equal(d.client.offGa, true, "номер бота: до слова владельца выключен");
+  assert.equal(d.client.offGa, true, "номер бота выключен переменной");
   await s.gaText("winchester", INST, "77000000095", "привет");
   const c = await (await own.go("/api/inbox/chat?c=winchester&ch=ga&id=77000000095")).json();
   assert.equal(c.off, true, "в чате номера бота — «бот выключен», а не «ведёт бот»");
-  const s2 = mk({ ...ENV, BOT_GA_WINCHESTER: "1" }), own2 = await login(s2);
+  const s2 = mk(ENV), own2 = await login(s2);
   await s2.gaText("winchester", INST, "77000000096", "привет");
   assert.equal((await (await own2.go("/api/inbox/chat?c=winchester&ch=ga&id=77000000096")).json()).off, false);
 });
