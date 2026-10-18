@@ -76,7 +76,9 @@ function altStub(url, init) {
   if (/^\/book_staff\/\d+/.test(path)) return J({ success: true, data: D.staff, meta: [] });
   if (/^\/book_dates\/\d+/.test(path)) return J({ success: true, data: { booking_days: {}, booking_dates: D.dates || [D1, D2], working_days: {}, working_dates: D.dates || [D1, D2] }, meta: [] });
   if ((m = path.match(/^\/book_times\/\d+\/(\d+)\/(\d{4}-\d{2}-\d{2})/))) {
-    let t = (D.dates || [D1, D2]).includes(m[2]) ? D.times[m[1]] || [] : [];
+    const sids = [...new URL(url).searchParams.getAll("service_ids[]")]; // timesFor(мастер, день, услуги) — время с учётом длительности услуги, как в Altegio; ошибка — объект { error: код }
+    if (D.timesFor && (D.dates || [D1, D2]).includes(m[2])) { const r = D.timesFor(m[1], m[2], sids); if (r && r.error) return J({ success: false, data: null, meta: { message: "The service is not available" } }, r.error); }
+    let t = (D.dates || [D1, D2]).includes(m[2]) ? (D.timesFor ? D.timesFor(m[1], m[2], sids) : D.times[m[1]]) || [] : [];
     if (net.altBusy) { // занятое записями время у мастера не показываем (записи, удалённые администратором, время освобождают)
       const busy = net.altRecords.map((r, i) => ({ id: String(777001 + i), a: (r.appointments || [])[0] || {} })).filter(x => !net.altDeleted.includes(x.id) && !(net.altGone || []).includes(x.id) && String(x.a.staff_id) === m[1] && String(x.a.datetime || "").startsWith(m[2])).map(x => String(x.a.datetime).slice(11, 16));
       t = t.filter(x => !busy.includes(x));

@@ -155,7 +155,8 @@ export const CLIENTS = {
     hidden: true,
     // dry: бот проверяет окно, но запись в настоящий журнал Winchester НЕ создаёт (book_check вместо book_record).
     // Выключается только по слову владельца и с разрешения Кайрата: dry: false (или Text ALTEGIO_DRY_WINCHESTER = 0).
-    altegio: { location: 133486, dry: true },
+    // mainService: пока клиент не назвал услугу, свободное время считается по ней (иначе Altegio отдаёт любое свободное начало — 18.10.2026)
+    altegio: { location: 133486, dry: true, mainService: "Мужская стрижка" },
     // waOff: в WhatsApp бот молчит — сообщения ложатся в пульт, отвечает администратор (17.10.2026: номер после блокировки
     // подключается заново, первые дни — только живые ответы). Веб-чат работает. Включить — Text BOT_WA_WINCHESTER = 1
     waOff: true,

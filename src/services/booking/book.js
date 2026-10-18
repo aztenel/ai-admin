@@ -59,17 +59,26 @@ export async function altSnapshot(env, c, nowMs, userText) {
   // услуга уже названа — время спрашиваем с ней (Altegio тогда учитывает её длительность); не вышло или пусто — как раньше, без услуги
   // Одно название у нескольких услуг (барбер и шеф-барбер) — спрашиваем по каждой отдельно и объединяем: мастеру, который эту услугу не оказывает, Altegio отвечает 404 (altTimes → пусто).
   // Длительности у них должны совпадать, иначе не угадываем.
-  const svFound = altServicesIn(base.services, userText);
+  // Услуга не названа — время считаем по основной услуге бизнеса (altegio.mainService, у Winchester — «Мужская стрижка», 1 ч): без услуги
+  // Altegio отдаёт любое свободное начало, и бот предлагал 11:00 при записи у мастера в 11:30 (живой показ Winchester, 18.10.2026)
+  let svFound = altServicesIn(base.services, userText), svMain = false;
+  if (!svFound.length && c.altegio && c.altegio.mainService) { svFound = altServicesIn(base.services, c.altegio.mainService); svMain = svFound.length > 0; }
   const svAsk = svFound.length && new Set(svFound.map(/** @param {any} x */ x => x.minutes || 0)).size === 1 ? svFound.map(/** @param {any} x */ x => [x.id]) : [];
   const read = async (/** @type {any} */ staffId, /** @type {string[]} */ list) => {
     const one = async (/** @type {string} */ d) => {
       if (!svAsk.length) return altTimes(env, loc, staffId, d, null, nowMs);
-      const parts = await Promise.all(svAsk.map(ids => altTimes(env, loc, staffId, d, ids, nowMs)));
+      // одна и та же услуга у барберов и у шеф-барбера — разные услуги в Altegio; мастер, который одну из них не оказывает, может ответить
+      // ошибкой — это не повод выбросить ответ по другой и показать время без учёта длительности (18.10.2026: «Отец и сын» к Тони в 17:00 при записи в 17:30)
+      const parts = await Promise.allSettled(svAsk.map(ids => altTimes(env, loc, staffId, d, ids, nowMs)));
+      const ok = parts.filter(r => r.status === "fulfilled");
+      if (!ok.length) throw /** @type {any} */ (parts[0]).reason;
       const seen = new Set();
-      return parts.flat().filter(/** @param {any} x */ x => !seen.has(x.time) && seen.add(x.time)).sort(/** @param {any} a @param {any} b */ (a, b) => mins(a.time) - mins(b.time));
+      return ok.flatMap(r => /** @type {any} */ (r).value).filter(/** @param {any} x */ x => !seen.has(x.time) && seen.add(x.time)).sort(/** @param {any} a @param {any} b */ (a, b) => mins(a.time) - mins(b.time));
     };
     let rs = await Promise.allSettled(list.map(one));
-    if (svAsk.length && (rs.some(r => r.status === "rejected") || rs.every(r => r.status === "fulfilled" && !r.value.length))) rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
+    // время по услуге не читается совсем — как раньше, время без услуги (запись всё равно проверяется с услугой в altBook).
+    // Пусто на все дни у выбранного мастера — это правда «нет окна на эту услугу», а не повод показать короткие промежутки
+    if (svAsk.length && (rs.every(r => r.status === "rejected") || (!staffId && rs.every(r => r.status === "fulfilled" && !r.value.length)))) rs = await Promise.allSettled(list.map(d => altTimes(env, loc, staffId, d, null, nowMs)));
     return { days: rs.map((r, i) => r.status === "fulfilled" ? altDay(list[i], r.value.map(/** @param {any} x */ x => x.time), nowMs) : null).filter(d => d && d.times.length),
       failed: list.filter((d, i) => rs[i].status === "rejected"), error: (rs.find(r => r.status === "rejected") || {}).reason };
   };
@@ -109,6 +118,7 @@ export async function altSnapshot(env, c, nowMs, userText) {
     (own.days.map(fmt).join("\n") || "- в ближайшие дни свободного времени нет — предложи другого мастера или время из «Свободных окон».") + unread(own.failed);
   else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови мастеров из списка или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
   if (base.staff.length > 1) prompt += "\nЛ. Если клиент выбрал «любого» мастера, мастера назначает система и сама называет его клиенту. Мастер записи указан в «Уже известно о клиенте» — называй его. Не говори, что мастер «не прикреплён» или «будет любой свободный», если запись уже создана.";
+  if (svMain && svAsk.length) prompt += `\nМ. Свободное время выше посчитано для услуги «${svFound[0].title}» (${svFound[0].minutes || "?"} мин): клиент услугу ещё не назвал. Если он хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу; время под неё появится в подсказке в следующем сообщении, до этого не обещай его.`;
 
   // время окончания услуги («с 11:00 до 12:00») — не выдумка: защита пропускает его только как конец такого промежутка
   const all = new Set([...any.days, ...(own ? own.days : [])].flatMap(d => d.times)), /** @type {Set<string>} */ ends = new Set();
