@@ -57,6 +57,9 @@ export const maskPhones = s => { s = String(s); let out = "", at = 0; for (const
 // (в том числе с пробелами и скобками: «+7 (705) 111-77-01»), потом любые оставшиеся цепочки из 10–15 цифр
 /** @param {string} d */
 const maskDigits = d => `+${d.slice(0, 1)} ${d.slice(1, 4)} *** ** ${d.slice(-2)}`;
+// один номер маской («+7 707 *** ** 44»): так номера клиентов из базы Altegio видит браузер (/api/crm/list) — полные остаются на сервере
+/** @param {any} p @returns {string} */
+export const maskPhone = p => { const d = String(p || "").replace(/\D/g, ""); return d.length >= 10 && d.length <= 15 ? maskDigits(d) : ""; };
 /** @param {any} s @returns {string} */
 export const logSafe = s => {
   s = String(s); let out = "", at = 0;

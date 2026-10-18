@@ -12,6 +12,7 @@ import { studioApi, studioPage } from "../controllers/studio.js";
 import { inboxApi } from "../controllers/inbox.js";
 import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
+import { crmApi } from "../controllers/crm.js";
 import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/pages.js";
 import { diag } from "../controllers/diag.js";
 import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/altegio.js";
@@ -109,6 +110,11 @@ export async function route(request, env, ctx, pult) {
     if (P.startsWith("/api/bc/")) {
       const s = await sessionRead(env, request);
       return s ? bcApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
+    // ---- база клиентов из журнала Altegio: сегменты для рассылок (docs/tz-winchester-v2.md §5.1)
+    if (P.startsWith("/api/crm/")) {
+      const s = await sessionRead(env, request);
+      return s ? crmApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);

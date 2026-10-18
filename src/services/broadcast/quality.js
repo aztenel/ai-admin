@@ -37,3 +37,7 @@ export async function qualityRun(env, now) {
   }
   return n;
 }
+// последняя проверка номера (qual:<клиент>, пишет qualityRun в 10:00): { quality, limit, at } или null — не проверяли.
+// Сбой чтения — ошибка, а не «всё хорошо»: автосценарий в такой день лучше пропустить
+/** @param {Env} env @param {string} cid @returns {Promise<{ quality: string, limit: number, at: number } | null>} */
+export const qualityGet = async (env, cid) => JSON.parse((await env.KV.get(`qual:${cid}`)) || "null");

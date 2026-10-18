@@ -1,7 +1,7 @@
 // @ts-check
 // Рассылки (/broadcast, /api/bc/*): создание, проверка, пуск, пауза, отчёт.
-import { clean, snip } from "../lib/text.js";
-import { normPhone } from "../lib/phone.js";
+import { clean } from "../lib/text.js";
+import { normPhone, maskPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { ADMIN_CSS } from "../lib/css.js";
@@ -9,13 +9,15 @@ import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { BC_CHUNK, BC_STALE, BC_SLOT, BC_DAY } from "../config/constants.js";
 import { canSee } from "../services/auth/access.js";
 import { BC_HINT, bcCode, bcWhy } from "../services/broadcast/errors.js";
-import { bcParse } from "../services/broadcast/parse.js";
-import { bcSeg, bcOptouts } from "../services/broadcast/segments.js";
+import { bcOptouts } from "../services/broadcast/segments.js";
+import { bcFields, bcCheck, bcCreate, bcStarting, bcStarted, bcCrmStale } from "../services/broadcast/create.js";
+import { autoInfo, autoSet } from "../services/crm/auto.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
-import { bcRoute, bcHealth, bcGaMsg, bcGaText, bcSendGa, bcRun, bcTick, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "../services/broadcast/sender.js";
-import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, bcParam, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
+import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, GA_CAP } from "../services/broadcast/sender.js";
+import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
 /** @import { Env } from "../lib/types.js" */
 
+const BUSY = "Хранилище не отвечает — попробуйте через минуту.";
 // вебхук не настроен — рассылку через Green-API не запускаем: бот не увидит, кто ответил «стоп»
 const GA_HOOK_WARN = "Вебхук Green-API не настроен: бот не увидит ответы клиентов, и тем, кто ответит «стоп», рассылка будет приходить дальше. Владелец сервиса настраивает его одной кнопкой: «Проверка запуска» → «Настроить Green-API».";
 /** @param {any} q @param {number} now */
@@ -57,37 +59,24 @@ export async function bcApi(request, env, url, s) {
   if (M === "GET" && P === "/api/bc/get") {
     const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));
     if (!b) return jsonP({ error: "Рассылка не найдена." }, 404);
-    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map((/** @type {any[]} */ [d, code]) => `+${d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
+    // номера с ошибками рассылки по базе Altegio — только маской, как в /api/crm/list: полные номера базы браузеру не уходят (находка проверки 19.10.2026)
+    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map((/** @type {any[]} */ [d, code]) => `${b.src === "crm" ? maskPhone(d) : "+" + d} — ${BC_HINT[code] || "код " + code}`) } : {}) });
+  }
+  if (M === "GET" && P === "/api/bc/auto") { // автосценарий «Пора на стрижку»: настройки, кому он написал бы сегодня, почему недоступен
+    try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await autoInfo(env, c, now)) }); }
+    catch (e) { console.log("bc auto", String(e)); return jsonP({ error: BUSY }, 503); }
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
-  const fields = () => {
-    const errors = [], img = String(body.img || "").trim(), fallback = clean(body.fallback || "", 30);
-    if (ga) { // Green-API: обычный текст как написан (переводы строк сохраняются), в конце — «ответьте СТОП»
-      const msg = bcGaMsg(body.text);
-      if (!msg) errors.push("напишите текст сообщения");
-      else if (img ? msg.replace(/\{\s*(имя|name)\s*\}/gi, "x".repeat(30)).length > 1024 : msg.length > GA_MSG_MAX) errors.push(img ? `текст с картинкой — не длиннее ${GA_CAPTION_MAX} знаков (это подпись к картинке, у WhatsApp она короче обычного сообщения)` : `текст сообщения — не длиннее ${GA_MSG_MAX} знаков`); // подпись к картинке — до 1024 знаков вместе с самым длинным именем
-      if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка — ссылка, которая начинается с https://");
-      return { errors, ch: "ga", img, msg, params: [], text: clean(msg.replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
-    }
-    const tpl = String(body.tpl || "").trim(), lang = String(body.lang || "ru").trim();
-    if (!/^[a-z0-9_]{1,512}$/.test(tpl)) errors.push("название шаблона — как в кабинете Meta: строчные латинские буквы, цифры и «_» (например, promo_october)");
-    if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(lang)) errors.push("язык шаблона — код из кабинета Meta: ru, kk, en или en_US");
-    if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка — ссылка, которая начинается с https://");
-    const params = (Array.isArray(body.params) ? body.params : String(body.params || "").split("\n")).map(x => clean(x, 300)).filter(Boolean).slice(0, 10);
-    return { errors, tpl, lang, img, params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
-  };
-  const seg = ["idle", "bday"].includes(body.seg) ? body.seg : "", segDays = Math.round(+body.segDays || 0), segBad = seg && !(segDays >= 1 && segDays <= 365);
-  if (P === "/api/bc/check") { // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим
-    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), r = { ...r0, list: sg.list }, f = fields(), first = (r.list.find((/** @type {any} */ x) => x[1]) || [])[1] || "";
-    if (segBad) f.errors.push("сегмент: число дней — от 1 до 365");
-    let stop = new Set(); try { stop = await bcOptouts(env, cid); } catch (e) {}
-    return jsonP({ ok: r.list.length > 0 && !f.errors.length, valid: r.list.length, named: r.list.filter((/** @type {any} */ x) => x[1]).length, dup: r.dup, bad: r.bad, badN: r.badN, cut: r.cut, stopped: r.list.filter((/** @type {any} */ x) => stop.has(x[0])).length,
-      ...(seg ? { segOut: sg.out, noDate: sg.noDate, seg: sg.label } : {}),
-      sample: r.list.slice(0, 5).map((/** @type {any} */ x) => "+" + x[0] + " — " + (x[1] || "без имени")), errors: f.errors, preview: ga ? (f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) });
+  if (P === "/api/bc/auto") { // включить, выключить, изменить — только владелец: автосценарий пишет клиентам каждый день сам
+    if (s.role !== "owner") return jsonP({ error: "Настраивать автосценарий может только владелец." }, 403);
+    let r; try { r = await autoSet(env, c, body); } catch (e) { console.log("bc auto set", String(e)); return jsonP({ error: BUSY }, 503); }
+    return r.ok ? jsonP(r) : jsonP({ ok: false, errors: r.errors }, 400);
   }
+  // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим. segment — сегмент базы Altegio: номера строит сервер
+  if (P === "/api/bc/check") { try { return jsonP(await bcCheck(env, c, body, now)); } catch (e) { console.log("bc check", String(e)); return jsonP({ error: BUSY }, 503); } }
   if (P === "/api/bc/test") { // пробная отправка на один номер (себе)
-    const f = fields(), to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
+    const f = bcFields(body), to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
     if (f.errors.length) return jsonP({ error: f.errors.join("; ") }, 400);
     if (!to) return jsonP({ error: "Укажите свой номер полностью, например +7 701 123 45 67." }, 400);
     const rt = ga ? bcRoute(env, cid, "ga") : route;
@@ -99,27 +88,10 @@ export async function bcApi(request, env, url, s) {
     const r = await sendTemplate(env, to.slice(1), f, "Айгерим", rt);
     return r.ok ? jsonP({ ok: true, text: `Шаблон отправлен на ${to} — проверьте WhatsApp. Если сообщение не пришло за минуту, этот номер не принимает сообщения от компаний.` }) : jsonP({ error: `Meta не приняла шаблон (${bcWhy(r)}).` }, 409);
   }
-  if (P === "/api/bc/create") {
-    const r0 = bcParse(body.recipients), sg = bcSeg(r0, segBad ? "" : seg, segDays, now), f = fields(), r = { ...r0, list: sg.list }, errors = f.errors.slice();
-    if (segBad) errors.push("сегмент: число дней — от 1 до 365");
-    else if (seg && r0.list.length && !r.list.length) errors.push(`в сегменте «${sg.label}» никого нет${sg.noDate ? ` (без нужной даты в списке: ${sg.noDate})` : ""}`);
-    const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
-    if (name.length < 2) errors.push("дайте рассылке название — для себя");
-    if (!r0.list.length) errors.push("в списке нет ни одного номера");
-    if (ga && !(cap >= 1 && cap <= GA_CAP[1])) errors.push(`предел на 24 часа через Green-API — от 1 до ${GA_CAP[1]}: обычный WhatsApp блокируют за массовые рассылки`);
-    else if (!(cap >= 1 && cap <= 100000)) errors.push("предел на 24 часа — число от 1 до 100 000");
-    if (!(from >= 0 && to <= 24 && to > from)) errors.push("часы отправки: «с» должно быть раньше, чем «до»");
-    else if (from < 8 || to > 22) errors.push("часы отправки — не раньше 8:00 и не позже 22:00: ночные сообщения вызывают жалобы, а жалобы блокируют номер");
-    if (!ga && !f.text) errors.push("вставьте текст шаблона — его увидит администратор, а бот поймёт, на что отвечает клиент");
-    if (body.consent !== true) errors.push("подтвердите, что эти люди — клиенты компании и не просили им не писать");
-    if (errors.length) return jsonP({ ok: false, errors }, 400);
-    const base = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by: s.role, status: "ready", total: r.list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to, ...(sg.label ? { seg: sg.label } : {}) };
-    const b = ga ? { ...base, ch: "ga", msg: f.msg } : { ...base, tpl: f.tpl, lang: f.lang, params: f.params };
-    try {
-      for (let k = 0; k * BC_CHUNK < r.list.length; k++) await env.KV.put(bcChunkKey(cid, b.id, k), JSON.stringify(r.list.slice(k * BC_CHUNK, (k + 1) * BC_CHUNK)), { expirationTtl: 180 * 86400 });
-      await bcPut(env, cid, b);
-    } catch (e) { console.log("bc create", String(e)); return jsonP({ ok: false, errors: ["не удалось сохранить список — хранилище не отвечает, попробуйте ещё раз"] }, 500); }
-    return jsonP({ ok: true, b: pub(b), dup: r.dup, bad: r.badN, cut: r.cut });
+  if (P === "/api/bc/create") { // список из браузера или segment — сегмент базы клиентов Altegio (получателей сервер берёт из снимка сам)
+    let r; try { r = await bcCreate(env, c, body, now, s.role); } catch (e) { console.log("bc create", String(e)); return jsonP({ ok: false, errors: ["не удалось прочитать базу клиентов — хранилище не отвечает, попробуйте ещё раз"] }, 503); }
+    if (!r.ok) return jsonP({ ok: false, errors: r.errors }, r.status);
+    return jsonP({ ok: true, b: pub(r.b), dup: r.dup, bad: r.bad, cut: r.cut });
   }
   const cur = id ? await bcGet(env, cid, id) : null;
   if (!cur) return jsonP({ error: "Рассылка не найдена." }, 404);
@@ -129,6 +101,8 @@ export async function bcApi(request, env, url, s) {
       const rt = bcRoute(env, cid, cur.ch);
       if (rt.error) return jsonP({ error: rt.error }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
+      const stale = await bcCrmStale(env, c, cur, now);
+      if (stale) return jsonP({ error: stale }, 409);
       if (cur.ch === "ga") { // номер на связи и вебхук ведёт в этот бот — иначе «стоп» клиентов до бота не дойдёт
         const g = await gaInfo(env, rt.ga);
         if (g.error) return jsonP({ error: g.error }, 409);
@@ -138,10 +112,7 @@ export async function bcApi(request, env, url, s) {
       const hold = bcHoldFor(await bcHold(env, cid), cur);
       if (hold && body.force !== true) return jsonP({ confirm: `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
-      cur.status = "running"; cur.startedAt = now; cur.streak = 0; cur.tmp = 0;
-      for (const k of ["note", "retryAt", "retryWhy", "waitNote", "waitTill", "nextAt"]) delete cur[k];
-      await bcPut(env, cid, cur); await bcRun(env, cid, id, true);
-      try { await env.KV.put("bclast:" + cid, JSON.stringify({ at: now, name: cur.name, text: snip(cur.text, 600) }), { expirationTtl: 7 * 86400 }); } catch (e) { console.log("bclast", String(e)); } // текст рассылки увидят ИИ (клиент может ответить на неё) и администратор в пульте
+      bcStarting(cur, now); await bcPut(env, cid, cur); await bcStarted(env, cid, cur, now);
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "stop") { if (cur.status !== "done") { cur.status = "stopped"; delete cur.note; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "delete") { // вместе с рассылкой удаляется и список номеров
@@ -220,7 +191,7 @@ function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('i
 function refresh(id){return api('/api/bc/get?c='+C+'&id='+id).then(function(d){var c=$('bc'+id);if(!c||d.error)return;var was=live[id];fillCard(c,d.b);if(was&&!live[id])load()}).catch(function(){})}
 function watch(){clearTimeout(poll);if(!Object.keys(live).length)return;poll=setTimeout(function(){if(document.hidden){watch();return}Promise.all(Object.keys(live).map(refresh)).then(watch)},5000)}
 function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;else delete live[b.id];
- c.appendChild(el('b','',b.name));c.appendChild(el('div','mut',(b.ch==='ga'?'Green-API · ':'')+(ST[b.status]||b.status)+' · отправлено '+b.sent+' из '+b.total+(b.skipped?' · просили не писать: '+b.skipped:'')+(b.failed?' · ошибок: '+b.failed:'')+(b.unsure?' · неизвестно (сбой): до '+b.unsure:'')));
+ c.appendChild(el('b','',b.name));c.appendChild(el('div','mut',(b.ch==='ga'?'Green-API · ':'')+(ST[b.status]||b.status)+' · отправлено '+b.sent+' из '+b.total+(b.skipped?' · просили не писать: '+b.skipped:'')+(b.excl?' · уже записались или им уже писали: '+b.excl:'')+(b.failed?' · ошибок: '+b.failed:'')+(b.unsure?' · неизвестно (сбой): до '+b.unsure:'')));
  var bar=el('div','bar2'),i=el('i');i.style.width=Math.round(100*(b.pos||0)/Math.max(1,b.total))+'%';bar.appendChild(i);c.appendChild(bar);
  if(b.note&&b.status==='paused')c.appendChild(el('div','msg e',b.note));if(b.waitNote&&b.status==='running')c.appendChild(el('div','msg w',b.waitNote));
  if(b.fails&&b.fails.length)c.appendChild(el('div','mut','Ошибки: '+b.fails.map(function(x){return x.n+' — '+(x.hint||'код '+x.code)}).join('; ')));

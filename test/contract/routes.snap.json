@@ -1645,6 +1645,464 @@
    "error"
   ]
  },
+ "GET /api/crm/segments?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/segments?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "at",
+   "client",
+   "clients",
+   "excluded",
+   "info",
+   "ok",
+   "owner",
+   "segments",
+   "why"
+  ]
+ },
+ "GET /api/crm/segments?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "at",
+   "client",
+   "clients",
+   "excluded",
+   "info",
+   "ok",
+   "owner",
+   "segments",
+   "why"
+  ]
+ },
+ "GET /api/crm/segments?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/segments?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "at",
+   "client",
+   "clients",
+   "excluded",
+   "info",
+   "ok",
+   "owner",
+   "segments",
+   "why"
+  ]
+ },
+ "GET /api/crm/segments?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=pora [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=pora [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "list",
+   "page",
+   "pages",
+   "per",
+   "seg",
+   "total"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=pora [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "list",
+   "page",
+   "pages",
+   "per",
+   "seg",
+   "total"
+  ]
+ },
+ "GET /api/crm/list?c=dent&seg=pora [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=dent&seg=pora [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "list",
+   "page",
+   "pages",
+   "per",
+   "seg",
+   "total"
+  ]
+ },
+ "GET /api/crm/list?c=dent&seg=pora [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=nope [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=nope [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/list?c=barber&seg=nope [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"barber\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"dent\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/nope?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/nope?c=barber [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/crm/nope?c=barber [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"segment\":\"all\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"segment\":\"all\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "segment",
+   "stopped",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"segment\":\"all\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\",\"segment\":\"pora\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\",\"segment\":\"pora\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\",\"segment\":\"pora\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"dent\",\"segment\":\"all\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"dent\",\"segment\":\"all\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"dent\",\"segment\":\"all\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/auto?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/auto?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "available",
+   "client",
+   "crm",
+   "owner",
+   "today",
+   "why"
+  ]
+ },
+ "GET /api/bc/auto?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "available",
+   "client",
+   "crm",
+   "owner",
+   "today",
+   "why"
+  ]
+ },
+ "GET /api/bc/auto?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/auto?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "available",
+   "client",
+   "crm",
+   "owner",
+   "today",
+   "why"
+  ]
+ },
+ "GET /api/bc/auto?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "ok"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"dent\",\"on\":false} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"dent\",\"on\":false} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "ok"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"dent\",\"on\":false} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\",\"days\":3} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\",\"days\":3} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "errors",
+   "ok"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\",\"days\":3} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "GET /wa/barber [anon]": {
   "status": 200,
   "type": "text/plain",
@@ -2210,6 +2668,70 @@
   ]
  },
  "POST /api/bc/check {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/crm/refresh {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"segment\":\"all\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"barber\",\"segment\":\"pora\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/create {\"c\":\"dent\",\"segment\":\"all\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"dent\",\"on\":false} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/auto {\"c\":\"barber\",\"days\":3} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
   "cache": "no-store",

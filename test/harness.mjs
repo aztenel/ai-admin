@@ -45,13 +45,14 @@ export const net = {
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
+  altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
   wz: [],                      // запросы к API Wazzapo (партнёр Meta): { url, path, method, key, body }
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
-  reset() { this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; }
+  reset() { this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -92,6 +93,11 @@ function altStub(url, init) {
   if ((m = path.match(/^\/records\/(\d+)/)) && method === "GET") {
     if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
     if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
+    if (net.altJournal) { // журнал за период (база клиентов): записи с датой в [start_date, end_date], страница page по count штук
+      const q = new URL(url).searchParams, sd = q.get("start_date") || "", ed = q.get("end_date") || "", cnt = Math.max(1, +q.get("count") || 200), pg = Math.max(1, +q.get("page") || 1);
+      const all = net.altJournal.filter(r => { const d = String(r.datetime || "").slice(0, 10); return (!sd || d >= sd) && (!ed || d <= ed); });
+      return J({ success: true, data: all.slice((pg - 1) * cnt, pg * cnt), meta: { count: all.length } });
+    }
     // журнал как вживую: удалённая через API запись помечена deleted, удалённая администратором — пропадает из списка
     const data = net.altRecords.map((r, i) => { const a = (r.appointments || [])[0] || {}, st = D.staff.find(x => x.id === a.staff_id) || D.staff[0], id = String(777001 + i);
       return (net.altGone || []).includes(id) ? null : { id: +id, company_id: +m[1], staff_id: st.id, datetime: a.datetime, staff: { id: st.id, name: st.name }, client: { phone: r.phone, name: r.fullname },

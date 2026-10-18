@@ -48,6 +48,9 @@ const ROLES = { anon: null, owner, staff };
 const MARK = "Дентмаркер", now = Date.now();
 await S.kv.api.put("leads:dent", JSON.stringify([{ id: now.toString(36) + "abcd", ts: now, name: MARK, phone: "+77010000055", text: MARK + ": чистка зубов", source: "Стоматология · WhatsApp", status: "новая" }]));
 await S.kv.api.put("h:wa:dent:77010000055", JSON.stringify({ n: 1, turns: [{ role: "user", text: MARK + " хочет на чистку", t: now }], profile: { name: MARK, li: now } }), { metadata: { nm: MARK, s: MARK + " хочет на чистку", d: "u", t: now, li: now } });
+// база клиентов из Altegio у стоматологии (снимок с той же меткой): сотруднику барбершопа — ни сегментов, ни списка
+const d25 = new Date(now - 25 * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+await S.kv.api.put("crm:dent:snap", JSON.stringify({ at: now, from: d25, to: d25, records: 1, visits: 1, clients: 1, masked: 0, bad: 0, att: { 1: 1 }, cut: false, list: [{ p: "77010000055", n: MARK, last: d25, first: d25, v: 1, staff: MARK, svc: "Чистка" }] }));
 
 // что запоминаем о ответе: только то, что не меняется от запуска к запуску
 async function shape(r) {
@@ -85,6 +88,11 @@ const R = [
   ["GET", "/api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope"], ["POST", "/api/inbox/send", { c: "barber" }], ["POST", "/api/inbox/send", { c: "dent" }], ["POST", "/api/inbox/act", { c: "barber" }], ["POST", "/api/inbox/act", { c: "dent" }], ["GET", "/api/inbox/nope?c=barber"],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
+  ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],
+  ["POST", "/api/crm/refresh", { c: "barber" }], ["POST", "/api/crm/refresh", { c: "dent" }], ["GET", "/api/crm/nope?c=barber"],
+  // рассылка из сегмента базы (номера строит сервер, наружу — маской) и автосценарий «Пора на стрижку» (менять — только владелец)
+  ["POST", "/api/bc/check", { c: "dent", segment: "all" }], ["POST", "/api/bc/create", { c: "barber", segment: "pora" }], ["POST", "/api/bc/create", { c: "dent", segment: "all" }],
+  ["GET", "/api/bc/auto?c=barber"], ["GET", "/api/bc/auto?c=dent"], ["POST", "/api/bc/auto", { c: "barber" }], ["POST", "/api/bc/auto", { c: "dent", on: false }], ["POST", "/api/bc/auto", { c: "barber", days: 3 }],
   ["GET", "/wa/barber"], ["POST", "/wa/barber", META], ["POST", "/wa/barber", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/wa/nope", META],
   ["GET", "/diag"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
   ["GET", "/selftest"], ["POST", "/api/selftest", {}], ["GET", "/api/selftest"],
@@ -94,9 +102,10 @@ const R = [
 ];
 
 // страницы и данные, куда без входа нельзя; что можно только владельцу; что видно по клиенту (c=dent — чужой для сотрудника барбершопа)
-const PROTECTED = /^\/(leads|studio|inbox|launch|broadcast|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|inbox|launch|bc|selftest)\//;
+const PROTECTED = /^\/(leads|studio|inbox|launch|broadcast|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|inbox|launch|bc|selftest|crm)\//;
 const PROTECTED_EXACT = new Set(["/api/selftest"]);
-const OWNER_ONLY = /^\/(studio|launch|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|launch|selftest)(\/|$)/;
+const OWNER_ONLY = /^\/(studio|launch|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|launch|selftest)(\/|$)|^\/api\/crm\/refresh$/; // обновить базу клиентов — только владелец
+const OWNER_POST = /^\/api\/bc\/auto$/; // смотреть автосценарий может и сотрудник, менять — только владелец
 const FOREIGN = /[?&]c=dent\b|"c":"dent"/;
 const isProtected = p => PROTECTED.test(p) || PROTECTED_EXACT.has(p.split("?")[0]);
 
@@ -117,14 +126,14 @@ for (const [method, path, body, hd] of R) {
     // 1. гость не получает защищённых страниц и данных
     if (role === "anon" && isProtected(p) && !validKey(p)) ok(`гость: ${id} → не 200`, !data, JSON.stringify(o));
     // 2. сотрудник не получает страниц и данных владельца
-    if (role === "staff" && OWNER_ONLY.test(p)) ok(`сотрудник: ${id} → не 200`, !data, JSON.stringify(o));
+    if (role === "staff" && (OWNER_ONLY.test(p) || (method === "POST" && OWNER_POST.test(p)))) ok(`сотрудник: ${id} → не 200`, !data, JSON.stringify(o));
     // 3. сотрудник не видит чужого клиента: API с чужим c= отказывает, а страницы показывают только своего (метки чужих данных в ответе нет)
     if (role === "staff" && /^\/api\//.test(p) && isProtected(p) && FOREIGN.test(p + JSON.stringify(body || ""))) ok(`сотрудник, чужой клиент: ${id} → не 200`, !data, JSON.stringify(o));
     if (role !== "owner" && !hasKey(p, OWNER_KEY)) ok(`нет чужих данных в ответе: ${id}`, !o.body.includes(MARK), o.body.slice(0, 300));
     // 4. страницы с личными данными — без кэша, без встраивания, с CSP
     if (data && o.type === "text/html" && isProtected(p)) ok(`страница с данными без кэша и встраивания: ${id}`, o.cache === "no-store" && o.frame === "DENY" && o.csp, JSON.stringify(o));
     // 5. ответы API с данными не кэшируются
-    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
+    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history|crm)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
     // 6. неподписанный вебхук и вебхук без пароля не запускают бота
     if (/^\/(wa\/|ga\b|webhook|$)/.test(p) && method === "POST") ok(`вебхук без подписи/пароля не доходит до ИИ: ${id}`, o.status !== 200 && net.gemini.length === ai0, JSON.stringify(o));
   }
@@ -139,10 +148,14 @@ for (const [path, body, hd] of [["/wa/barber", META, { "x-hub-signature-256": si
 }
 
 // проверка утечек сама работает: владелец метку видит
-for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
+for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent", "/api/crm/segments?c=dent", "/api/crm/list?c=dent&seg=all"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
+{ // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
+  const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
+  ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+}
 
 // 7. изменяющие запросы с чужого сайта отклоняются даже с cookie владельца
-for (const [method, path, body, hd] of R.filter(([m, p]) => m === "POST" && /^\/(api\/(studio|inbox|launch|bc)\/|altegio)/.test(p))) {
+for (const [method, path, body, hd] of R.filter(([m, p]) => m === "POST" && /^\/(api\/(studio|inbox|launch|bc|crm)\/|altegio)/.test(p))) {
   const r = await go(owner, method, path, body, { origin: "https://evil.example" });
   const id = `${method} ${path}${label(body, hd)} [owner, чужой сайт]`;
   got[id] = await shape(r);

@@ -5,8 +5,9 @@ import { clean } from "../../lib/text.js";
 import { TZ, local, hhmm, isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
 import { bcChunkKey, bcPut, bcGet } from "../../db/kv/broadcasts.js";
+import { bcmAdd } from "../../db/kv/crm.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
-import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY } from "../../config/constants.js";
+import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/constants.js";
 import { hStr } from "../schedule/slots.js";
 import { notify } from "../integrations/telegram/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
@@ -17,6 +18,7 @@ import { wzOn, wzHealth } from "../channels/wazzapo.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { BC_HINT, BC_TEMP, BC_ACCOUNT, BC_PARAM, bcWhy } from "./errors.js";
 import { bcOptouts } from "./segments.js";
+import { crmView } from "../crm/segments.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "./holds.js";
 // ================= РАССЫЛКИ: шаблоны WhatsApp по списку клиентов =================
 // Написать клиенту первым официальный WhatsApp разрешает только шаблоном, который одобрила Meta. Рассылка = шаблон + список номеров.
@@ -29,7 +31,8 @@ import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } fr
 // Порция сначала отмечается отправленной и только потом уходит: при сбое часть клиентов не получит сообщение, зато никто не получит его дважды.
 // Ключи: bc:<клиент>:<id> — рассылка; bcr:<клиент>:<id>:<k> — получатели, по 250; bcrun — что сейчас идёт; bcq:<клиент> — сколько отправлено за сутки;
 // bchold:<клиент> — сигнал Meta «остановиться» (ga — сигнал Green-API: номер заблокирован или ограничен); bcf:<клиент>:<день> — недоставленные; bclast:<клиент> — текст последней рассылки (его видит ИИ и пульт);
-// bcq:<клиент>:ga — сколько отправлено за сутки с номера Green-API
+// bcq:<клиент>:ga — сколько отправлено за сутки с номера Green-API; bcm:<клиент>:<день> — кому в этот день ушёл шаблон Meta (сегменты базы клиентов
+// Altegio 14 дней таким не пишут, services/crm/segments.js)
 /** @param {number} ms @param {number} now */
 export const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
 /** @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
@@ -104,6 +107,14 @@ export async function bcTick(env, cid, id, gaBusy) {
   let b = await bcGet(env, cid, id);
   if (!b) return { error: "Рассылка не найдена." };
   if (b.status !== "running") return { b, state: b.status };
+  // рассылка автосценария «Пора на стрижку» — только в день создания: ждала предела номера за сутки и не успела — назавтра её получателям
+  // уже не «ровно N дней», а с новой рассылкой автосценария за день ушло бы больше его предела (находка проверки 19.10.2026)
+  if (b.by === "auto" && isoDay(b.created) < isoDay(now)) {
+    b.status = "stopped"; b.note = "Остановлена: не успела уйти в день создания — назавтра автосценарий собирает новый список."; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
+    await bcPut(env, cid, b); await bcRun(env, cid, id, false);
+    try { await notify(env, `⏹ Автосценарий «${b.name}» не успел отправить всем — ${CLIENTS[cid].name}\nОтправлено ${b.sent} из ${b.total}: предел номера за сутки был занят другими рассылками. Остальным — нет: им уже не «ровно N дней».`, cid); } catch (e) { console.log("bc tg", String(e)); }
+    return { b, state: "stopped" };
+  }
   const ga = b.ch === "ga";
   if (ga && gaBusy) return { b, state: "busy" };
   /** @param {string} text */
@@ -150,6 +161,7 @@ export async function bcTick(env, cid, id, gaBusy) {
   try { await env.KV.put(lk, token, { expirationTtl: 60 }); } catch (e) { return { b, state: "busy" }; } // замок только что ставили или снимали — значит, отправка шла секунду назад
   if ((await env.KV.get(lk)) !== token) return { b, state: "busy" };
   let sentNow = 0, did = false;
+  const marked = /** @type {string[]} */ ([]); // кому шаблон ушёл (или мог уйти) в этой порции — отметка «писали маркетинг»
   try {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
@@ -163,6 +175,16 @@ export async function bcTick(env, cid, id, gaBusy) {
     }
     if (take > 0 && !items.length) return await stopFor("Список получателей не читается из хранилища — попробуйте «Продолжить» через несколько минут.");
     const stop = take > 0 ? await bcOptouts(env, cid) : new Set();
+    // рассылка по базе Altegio: исключения — ещё раз перед отправкой, по свежему снимку и отметкам bcm:, а не только при создании (находка
+    // проверки 19.10.2026): две рассылки по пересекающимся сегментам или ручная «Пора на стрижку» и автосценарий иначе пишут одному
+    // человеку два платных шаблона; кто записался или пришёл после создания рассылки — тоже не получит. Старая база — пауза: не видно, кто записался
+    const no = new Set();
+    if (b.src === "crm" && take > 0) {
+      const view = await crmView(env, CLIENTS[cid], now);
+      if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return await stopFor("База клиентов из Altegio не обновлялась больше 3 дней — по ней не видно, кто уже записался. Обновите базу в разделе сегментов и нажмите «Продолжить».");
+      for (const x of view.rows) if (x.why && x.why !== "stop") no.add(x.p);
+      for (const p of view.marked || []) no.add(p);
+    }
     if (ga) { const j = items.findIndex(x => !stop.has(x[0])); if (j >= 0) items.length = j + 1; }
     // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт
     b.pos = from + items.length; b.last = now; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
@@ -172,9 +194,11 @@ export async function bcTick(env, cid, id, gaBusy) {
     for (const [digits, name] of items) {
       if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
       if (stop.has(digits)) { b.skipped++; done++; continue; }
+      if (no.has(digits)) { b.excl = (b.excl || 0) + 1; done++; continue; }
       did = true;
       const r = ga ? await bcSendGa(env, digits, b, name, route.ga) : await sendTemplate(env, digits, b, name, route);
-      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; continue; }
+      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga) marked.push(digits); continue; }
+      if (!ga && r.code === 0) marked.push(digits); // связь оборвалась — шаблон мог уйти: второй раз за 14 дней такому клиенту не пишем
       const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
       if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь
         if (!ga && BC_PARAM.has(r.code)) b.stuck = from + done;
@@ -194,6 +218,9 @@ export async function bcTick(env, cid, id, gaBusy) {
     if (sentNow) { // учёт отправленного за сутки
       try { const nq = /** @type {Record<string, any>} */ ({}); for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put(qk, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
     }
+    // отметка «писали маркетинг» — раз за порцию, а не за каждое сообщение (KV пишет ключ не чаще раза в секунду). Только шаблоны Meta и
+    // Wazzapo: с номера Green-API маркетинг по базе не уходит. Сбой отметки рассылку не останавливает — в журнал без номеров
+    if (marked.length) { try { await bcmAdd(env, cid, isoDay(now), marked); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
       const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);
       return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${why}).` : halt.kind === "temp" ? `${bcFrom(b)} больше часа не принимает сообщения (${why}).` : `${ga ? "Green-API отклонил" : "Meta отклонила"} отправку (${why}).`);
@@ -201,7 +228,7 @@ export async function bcTick(env, cid, id, gaBusy) {
     if (b.pos >= b.total) {
       b.status = "done"; b.doneAt = now;
       await bcPut(env, cid, b); await bcRun(env, cid, id, false);
-      await tell(`📣 Рассылка «${b.name}» завершена — ${CLIENTS[cid].name}\nОтправлено: ${b.sent} из ${b.total}.${b.skipped ? `\nПропущено (просили не писать): ${b.skipped}.` : ""}${b.failed ? `\nНе отправлено из-за ошибок: ${b.failed}.` : ""}${b.unsure ? `\nНеизвестно (сбой во время отправки): до ${b.unsure}.` : ""}`);
+      await tell(`📣 Рассылка «${b.name}» завершена — ${CLIENTS[cid].name}\nОтправлено: ${b.sent} из ${b.total}.${b.skipped ? `\nПропущено (просили не писать): ${b.skipped}.` : ""}${b.excl ? `\nПропущено (уже записались, были недавно или им уже писали): ${b.excl}.` : ""}${b.failed ? `\nНе отправлено из-за ошибок: ${b.failed}.` : ""}${b.unsure ? `\nНеизвестно (сбой во время отправки): до ${b.unsure}.` : ""}`);
       return { b, state: "done", did };
     }
     await bcPut(env, cid, b);
