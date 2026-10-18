@@ -57,6 +57,18 @@ export function altServiceWanted(services, userAll) {
   for (const m of String(userAll || "").split(" \n ").reverse()) { const f = svWanted1(services, m); if (f.length) return f; }
   return [];
 }
+// Услуга названа не целиком: услуги, хотя бы одно слово названия которых есть у клиента («на стрижку» — все стрижки, «борода» —
+// услуги с бородой). «Постричься», «подстричь», «стрижкой» — это стрижка. По последнему сообщению, где такое слово есть
+/** @param {any[]} services @param {string} userAll @returns {any[]} */
+export function altServiceHint(services, userAll) {
+  const st = /** @param {string} w */ w => /^(по|под)?стри[гчж]/.test(w) ? "стриж" : svStem(w);
+  for (const m of String(userAll || "").split(" \n ").reverse()) {
+    const said = new Set(nameToks(m).filter(w => w.length >= 3).map(st));
+    const hits = services.filter(x => nameToks(svTrim(x.title).replace(/\([^()]*\)/g, " ")).some(w => w.length >= 3 && !SV_STOP.has(w) && !SV_GEN.has(w) && said.has(st(w))));
+    if (hits.length) return hits;
+  }
+  return [];
+}
 
 // Та же услуга под другими названиями: у шеф-барбера она может называться длиннее («Мужская стрижка (шеф)», «Мужская стрижка — топ»)
 // и иметь другую длительность. Берём услуги, в названии которых есть все слова найденной; вариант, которого мастер не оказывает,

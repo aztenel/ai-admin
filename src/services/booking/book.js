@@ -6,7 +6,7 @@ import { ALT_TTL, ALT_DAYS } from "../../config/constants.js";
 import { altCall } from "../integrations/altegio/client.js";
 import { isoDay, mins, hm, TZ } from "../../lib/time.js";
 import { altDay } from "./replies.js";
-import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike } from "./pick.js";
+import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike, altServiceHint } from "./pick.js";
 import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr } from "./fit.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
@@ -44,6 +44,18 @@ export function altFits(v, m) {
   let step = Infinity; for (let i = 1; i < all.length; i++) step = Math.min(step, all[i] - all[i - 1]);
   if (!(step >= 5 && step < m)) return v;
   return v.filter(x => { const t = mins(x.time); for (let k = step; k < m; k += step) if (!set.has(t + k)) return false; return true; });
+}
+
+// задачи по n одновременно, результат — как у Promise.allSettled. Altegio принимает не больше 5 запросов в секунду с одного адреса
+// (developer.alteg.io): время каждого мастера на три дня одним залпом — это 20+ запросов и ответы 429
+/** @template T @param {(() => Promise<T>)[]} tasks @param {number} n @returns {Promise<PromiseSettledResult<T>[]>} */
+async function settledBy(tasks, n) {
+  /** @type {PromiseSettledResult<T>[]} */
+  const out = new Array(tasks.length);
+  let i = 0;
+  const run = async () => { while (i < tasks.length) { const k = i++; try { out[k] = { status: "fulfilled", value: await tasks[k]() }; } catch (e) { out[k] = { status: "rejected", reason: e }; } } };
+  await Promise.all(Array.from({ length: Math.min(n, tasks.length) }, run));
+  return out;
 }
 
 // в подсказке ИИ хватает до 16 вариантов на день: ровные часы и половины, а если всё равно много — равномерно по всему дню
@@ -105,20 +117,25 @@ export async function altSnapshot(env, c, nowMs, userText) {
   let ownFailed = [];
   if (named) { own = await read(named.id, dates); ownFailed = own.failed; if (own.failed.length && !own.days.length) { own = null; named = null; } } // время мастера не читается — не выдаём это за «у него занято»
 
+  // день, о котором речь («сегодня», «завтра», «послезавтра» в последних сообщениях клиента)
+  const msgs = String(userText || "").split(" \n ");
+  const relOf = /** @param {string} x */ x => /послезавтра|бүрсігүні|day after tomorrow/i.test(x) ? "послезавтра" : /завтра|ертең|tomorrow/i.test(x) ? "завтра" : /сегодня|бүгін|today/i.test(x) ? "сегодня" : "";
+  const rel = relOf(msgs[msgs.length - 1]) || relOf(msgs[msgs.length - 2] || "");
+
   // Проверка длительности (altegio.fitCheck): свободные начала без услуги — у названного мастера или у каждого мастера, если клиент
-  // мастера не назвал. По ним код считает, какие начала подходят услуге каждой длительности (fit.js). Нужно и для записи (altBook)
+  // мастера не назвал (тогда, если назван день, — только на этот день: у Altegio предел запросов). По ним код считает, какие начала
+  // подходят услуге каждой длительности (fit.js). Нужно и для записи (altBook)
   /** @type {{ step: number, staff: Record<string, Record<string, string[]>> } | null} */
   let fit = null; /** @type {any[]} */ let fitDays = []; /** @type {Map<string, any> | null} */ let fitBad = null;
   if (c.altegio && c.altegio.fitCheck && base.services.some(/** @param {any} x */ x => x.minutes)) {
     const who = named ? [named] : base.staff.length <= 8 ? base.staff : [];
+    const relDays = !named && rel ? dates.filter(/** @param {string} d */ d => altDay(d, [], nowMs).rel === rel) : [], days = relDays.length ? relDays : dates;
+    const jobs = /** @type {{ d: string, id: string }[]} */ (days.flatMap(/** @param {string} d */ d => who.map(/** @param {any} m */ m => ({ d, id: String(m.id) }))));
+    const rs = await settledBy(jobs.map(j => () => altTimes(env, loc, j.id, j.d, null, nowMs)), 3);
     /** @type {Record<string, Record<string, string[]>>} */
     const byStaff = {};
-    for (const d of dates) {
-      const rs = await Promise.allSettled(who.map(/** @param {any} m */ m => altTimes(env, loc, m.id, d, null, nowMs)));
-      const lists = /** @type {string[][]} */ ([]);
-      rs.forEach((r, i) => { if (r.status === "fulfilled") { const t = r.value.map(/** @param {any} x */ x => x.time); (byStaff[who[i].id] = byStaff[who[i].id] || {})[d] = t; lists.push(t); } });
-      if (lists.length && rs.every(r => r.status === "fulfilled")) fitDays.push({ ...altDay(d, [], nowMs), lists });
-    }
+    rs.forEach((r, i) => { if (r.status === "fulfilled") (byStaff[jobs[i].id] = byStaff[jobs[i].id] || {})[jobs[i].d] = r.value.map(/** @param {any} x */ x => x.time); });
+    for (const d of days) if (who.length && who.every(/** @param {any} m */ m => byStaff[String(m.id)] && byStaff[String(m.id)][d])) fitDays.push({ ...altDay(d, [], nowMs), lists: who.map(/** @param {any} m */ m => byStaff[String(m.id)][d]) });
     if (who.length) fit = { step: gridStep(Object.values(byStaff).flatMap(o => Object.values(o))), staff: byStaff };
   }
 
@@ -153,21 +170,30 @@ export async function altSnapshot(env, c, nowMs, userText) {
   else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови мастеров из списка или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
   if (base.staff.length > 1) prompt += "\nЛ. Если клиент выбрал «любого» мастера, мастера назначает система и сама называет его клиенту. Мастер записи указан в «Уже известно о клиенте» — называй его. Не говори, что мастер «не прикреплён» или «будет любой свободный», если запись уже создана.";
   if (fit && fitDays.length) {
-    const msgs = String(userText || "").split(" \n "), asked = askedTimes(msgs[msgs.length - 1]).length ? askedTimes(msgs[msgs.length - 1]) : askedTimes(msgs[msgs.length - 2] || "");
+    const asked = askedTimes(msgs[msgs.length - 1]).length ? askedTimes(msgs[msgs.length - 1]) : askedTimes(msgs[msgs.length - 2] || "");
+    // какую услугу проверять: названную. Не названа — основную (altegio.mainService, у Winchester стрижка), если клиент не говорил
+    // о другой услуге хотя бы словом её названия: «борода» короче — её время не запрещаем, «детскую» — у неё своя длительность
+    // название без пояснения категории: «Мужская стрижка (Барберы)» → «Мужская стрижка» (клиент мог выбрать шеф-барбера)
+    const dur = /** @param {any[]} l */ l => (ds => ds.length ? Math.min(...ds) : 0)(l.map(x => +x.minutes || 0).filter(Boolean)), bare = /** @param {any} x */ x => String(x.title).replace(/\s*\([^()]*\)\s*$/, "");
+    /** @type {{ need: number, name: string, said: boolean } | null} */
+    let want = null;
+    if (svFound.length && !svMain) want = { need: dur(svFound), name: bare(svFound[0]), said: true };
+    else {
+      const hint = altServiceHint(base.services, userText);
+      if (hint.length && !hint.some(/** @param {any} x */ x => svFound.includes(x))) want = { need: dur(hint), name: bare(hint[0]), said: false };
+      else if (svMain) want = { need: dur(svFound), name: bare(svFound[0]), said: false };
+      else if (c.altegio.mainService && +c.altegio.mainMinutes) want = { need: +c.altegio.mainMinutes, name: c.altegio.mainService, said: false };
+    }
     prompt += fitBlock({ who: named ? named.name : "Любой мастер (время, когда свободен хотя бы один)", one: !!named, days: fitDays, groups: durGroups(base.services, fit.step), step: fit.step, asked,
       show: (t, keep) => { const x = thin(t), extra = t.filter(v => keep.includes(v) && !x.includes(v)); return extra.length ? [...x, ...extra].sort((a, b) => mins(a) - mins(b)) : x; } });
-    // клиент назвал услугу: время, на которое она не помещается ни в один из дней, бот не должен называть свободным (проверяет guard)
-    if (svFound.length && !svMain) {
-      const need = Math.min(...svFound.map(/** @param {any} x */ x => +x.minutes || 0).filter(Boolean).concat([0]).filter(Boolean)) || 0;
-      if (need > fit.step) {
-        // день, о котором речь («сегодня», «завтра», «послезавтра» в последних сообщениях клиента); не назван — проверяем все дни
-        const relOf = /** @param {string} x */ x => /послезавтра|бүрсігүні|day after tomorrow/i.test(x) ? "послезавтра" : /завтра|ертең|tomorrow/i.test(x) ? "завтра" : /сегодня|бүгін|today/i.test(x) ? "сегодня" : "";
-        const rel = relOf(msgs[msgs.length - 1]) || relOf(msgs[msgs.length - 2] || ""), days = rel && fitDays.some(d => d.rel === rel) ? fitDays.filter(d => d.rel === rel) : fitDays;
-        const bad = /** @type {Map<string, any>} */ (new Map()), ok = days.map(d => [...new Set(d.lists.flatMap(/** @param {string[]} l */ l => fitStarts(l, need, fit.step)))].sort((a, b) => mins(a) - mins(b)));
-        const first = ok.find(l => l.length) || [];
-        for (const t of new Set([...days.flatMap(d => d.lists.flat()), ...asked])) if (!ok.some(l => l.includes(t))) bad.set(t, { time: t, long: durStr(need), free: nearest(first, t, 2), staff: named ? named.name : "", service: svFound[0].title });
-        if (bad.size) fitBad = bad;
-      }
+    if (want && !want.said && want.need > fit.step) prompt += `\nКлиент услугу точно не назвал — считай, что это «${want.name}» (${durStr(want.need)}): время бери из её строки. Назовёт другую услугу — из строки той услуги.`;
+    // время, на которое эта услуга не помещается ни в один из дней (день назван — в этот день), бот не должен называть свободным (проверяет guard)
+    if (want && want.need > fit.step) {
+      const need = want.need, days = rel && fitDays.some(d => d.rel === rel) ? fitDays.filter(d => d.rel === rel) : fitDays;
+      const bad = /** @type {Map<string, any>} */ (new Map()), ok = days.map(d => [...new Set(d.lists.flatMap(/** @param {string[]} l */ l => fitStarts(l, need, fit.step)))].sort((a, b) => mins(a) - mins(b)));
+      const first = ok.find(l => l.length) || [];
+      for (const t of new Set([...days.flatMap(d => d.lists.flat()), ...asked])) if (!ok.some(l => l.includes(t))) bad.set(t, { time: t, long: durStr(need), free: nearest(first, t, 2), staff: named ? named.name : "", service: want.name, svc: want.said ? "" : want.name });
+      if (bad.size) fitBad = bad;
     }
   } else if (!svAsk.length && svMin) prompt += `\nМ. Свободное время выше посчитано для услуги примерно на ${svMin} мин. Если клиент хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу, до этого не обещай время.`;
   else if (svMain && svAsk.length) prompt += `\nМ. Свободное время выше посчитано для услуги «${svFound[0].title}» (${svFound[0].minutes || "?"} мин): клиент услугу ещё не назвал. Если он хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу; время под неё появится в подсказке в следующем сообщении, до этого не обещай его.`;

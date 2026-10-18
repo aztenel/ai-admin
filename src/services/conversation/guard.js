@@ -193,14 +193,15 @@ export function checkReply(c, reply, userText, ctx) {
     }
     return { text: r, why: "время " + m[0] };
   }
-  // клиент назвал услугу, а ИИ называет свободным время, на которое она не помещается (дальше у мастера запись) — переписать ответ.
+  // клиент назвал услугу (или не назвал — тогда основную, стрижку), а ИИ называет свободным время, на которое она не помещается
+  // (дальше у мастера запись) — переписать ответ.
   // «В 16:30 не поместится», «занято» — можно (живой показ Winchester, 18.10.2026: Premium 1 ч 30 мин на 16:30 при записи в 17:30)
   if (ctx.fitBad && ctx.fitBad.size) for (const m of r.matchAll(/\d{1,2}:\d{2}/g)) {
     const t = nt(m[0]), bad = ctx.fitBad.get(t);
     if (!bad) continue;
     const sent = /** @type {string} */ (r.slice(0, m.index).split(/[.!?\n]/).pop()) + m[0] + r.slice((m.index || 0) + m[0].length).split(/[.!?\n]/)[0];
     if (FIT_NO.test(sent)) continue;
-    if (OFFER.test(sent) || FREE.test(sent) || BOOKW.test(sent)) return { text: r, why: `время ${t}: услуга «${bad.service}» идёт ${bad.long} и в ${t} не помещается — дальше у мастера занято${bad.free.length ? "; ближайшее подходящее время — " + bad.free.join(" или ") : ""}`, fit: bad };
+    if (OFFER.test(sent) || FREE.test(sent) || BOOKW.test(sent)) return { text: r, why: `время ${t}: услуга «${bad.service}» идёт ${bad.long} и в ${t} не помещается — дальше у мастера занято${bad.free.length ? "; ближайшее подходящее время — " + bad.free.join(" или ") : ""}${bad.svc ? ". Клиент услугу точно не назвал, обычно это она: не называй это время подходящим; нужна другая услуга — уточни какая" : ""}`, fit: bad };
   }
   // телефон — только из фактов. Номер в фактах и в ответе ищем одинаково (phonesIn): «8 (701) 123-45-67» и «+7-701-123-45-67» — тот же номер, что «+7 701 123 45 67»
   const factPhones = new Set([...phonesIn(c.facts).map(p => p.phone), ...(c.facts.match(/\+7[\d\s]{10,16}/g) || []).map(normPhone), findPhone(userText), ctx.phoneKnown].filter(Boolean));

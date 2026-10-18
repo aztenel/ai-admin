@@ -38,9 +38,11 @@ export function altSay(lang, b) {
   if (b.reason === "staffService") return [`Мастер ${b.staffName} эту услугу не оказывает. Записать к другому мастеру или к любому свободному?`, `${b.staffName} шебері бұл қызметті көрсетпейді. Басқа шеберге немесе кез келген бос шеберге жазайын ба?`, `${b.staffName} does not provide this service. Shall I book another specialist or anyone available?`][L];
   if (b.reason === "taken" && b.long) { // услуга не помещается: дальше у мастера занято — ближайшее время, когда поместится
     const who = b.staffName ? [" у мастера " + b.staffName, " " + b.staffName + " шеберінде", " with " + b.staffName][L] : "";
-    return free ? [`На ${b.time} не получится: услуга идёт ${b.long}, а дальше${who} уже занято. Ближайшее время, когда она поместится: ${free}. Какое подойдёт?`,
-      `Сағат ${b.time} болмайды: қызмет ${b.long} созылады, ал одан кейін${who} бос емес. Сыйятын ең жақын уақыт: ${free}. Қайсысы ыңғайлы?`,
-      `${b.time} won't work: the service takes ${b.long} and${who} the next slot is already booked. The nearest times it fits: ${free}. Which suits you?`][L]
+    // svc — услуга, которую бот предположил сам (клиент написал «в 12:30 можно?» без услуги): называем её, чтобы клиент мог поправить
+    const svc = String(b.svc || "").replace(/\s*\([^()]*\)\s*$/, "").replace(/[«»"]/g, "");
+    return free ? [`На ${b.time} не получится: ${svc ? `«${svc}»` : "услуга"} идёт ${b.long}, а дальше${who} уже занято. Ближайшее подходящее время: ${free}. Какое подойдёт?`,
+      `Сағат ${b.time} болмайды: ${svc ? `«${svc}»` : "қызмет"} ${b.long} созылады, ал одан кейін${who} бос емес. Сыйятын ең жақын уақыт: ${free}. Қайсысы ыңғайлы?`,
+      `${b.time} won't work: ${svc ? `"${svc}"` : "the service"} takes ${b.long} and${who} the next slot is already booked. The nearest times it fits: ${free}. Which suits you?`][L]
       : [`На этот день окна на ${b.long} подряд${who} нет. Посмотреть другой день${b.staffName ? " или другого мастера" : ""}?`,
         `Бұл күні${who} ${b.long} қатарынан бос уақыт жоқ. Басқа күнді${b.staffName ? " немесе басқа шеберді" : ""} қараймыз ба?`,
         `There is no ${b.long} window${who} that day. Shall I check another day${b.staffName ? " or another specialist" : ""}?`][L];
