@@ -65,6 +65,9 @@ export const ALT_DEFAULT = () => ({
   staff: [{ id: 11, name: "Арман", bookable: true, specialization: "топ-барбер" }, { id: 12, name: "Ерлан", bookable: true, specialization: "барбер" }],
   times: { 0: ["09:30", "10:00", "11:00", "13:00"], 11: ["11:00", "13:00"], 12: ["09:30", "10:00"] }
 });
+// Как настоящий Altegio без услуги: свободные начала мастера сеткой по 30 мин (у Ерлана свободно 9:30–11:30). Нужно клиентам с проверкой
+// длительности (altegio.fitCheck — Winchester): в общей заглушке у Ерлана только 9:30 и 10:00, а по сетке это «в 10:30 уже занято»
+export const ALT_GRID = () => { const d = ALT_DEFAULT(); return { ...d, times: { ...d.times, 12: ["09:30", "10:00", "10:30", "11:00"] } }; };
 function altStub(url, init) {
   const path = url.slice("https://api.alteg.io/api/v1".length), method = init.method || "GET";
   net.alt.push(method + " " + path);

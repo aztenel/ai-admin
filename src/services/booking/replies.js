@@ -36,6 +36,15 @@ export function altSay(lang, b) {
   if (b.reason === "staff") return b.noAny ? [`Уточните, пожалуйста, к какому мастеру записать: ${b.list}.`, `Қай шеберге жазайын: ${b.list}?`, `Which specialist would you like: ${b.list}?`][L]
     : [`Уточните, пожалуйста, к какому мастеру записать: ${b.list} или любой свободный.`, `Қай шеберге жазайын: ${b.list} немесе кез келген бос шебер?`, `Which specialist would you like: ${b.list}, or anyone available?`][L];
   if (b.reason === "staffService") return [`Мастер ${b.staffName} эту услугу не оказывает. Записать к другому мастеру или к любому свободному?`, `${b.staffName} шебері бұл қызметті көрсетпейді. Басқа шеберге немесе кез келген бос шеберге жазайын ба?`, `${b.staffName} does not provide this service. Shall I book another specialist or anyone available?`][L];
+  if (b.reason === "taken" && b.long) { // услуга не помещается: дальше у мастера занято — ближайшее время, когда поместится
+    const who = b.staffName ? [" у мастера " + b.staffName, " " + b.staffName + " шеберінде", " with " + b.staffName][L] : "";
+    return free ? [`На ${b.time} не получится: услуга идёт ${b.long}, а дальше${who} уже занято. Ближайшее время, когда она поместится: ${free}. Какое подойдёт?`,
+      `Сағат ${b.time} болмайды: қызмет ${b.long} созылады, ал одан кейін${who} бос емес. Сыйятын ең жақын уақыт: ${free}. Қайсысы ыңғайлы?`,
+      `${b.time} won't work: the service takes ${b.long} and${who} the next slot is already booked. The nearest times it fits: ${free}. Which suits you?`][L]
+      : [`На этот день окна на ${b.long} подряд${who} нет. Посмотреть другой день${b.staffName ? " или другого мастера" : ""}?`,
+        `Бұл күні${who} ${b.long} қатарынан бос уақыт жоқ. Басқа күнді${b.staffName ? " немесе басқа шеберді" : ""} қараймыз ба?`,
+        `There is no ${b.long} window${who} that day. Shall I check another day${b.staffName ? " or another specialist" : ""}?`][L];
+  }
   if (b.reason === "taken") return free
     ? [`К сожалению, на ${b.time} уже занято${b.staffName ? " у мастера " + b.staffName : ""}. В этот день свободно: ${free}. Какое время подойдёт?`, `Өкінішке қарай, сағат ${b.time} бос емес. Бұл күні бос уақыт: ${free}. Қай уақыт ыңғайлы?`, `Sorry, ${b.time} is no longer available. Free times that day: ${free}. Which one works for you?`][L]
     : [`К сожалению, на этот день свободного времени${b.staffName ? " у мастера " + b.staffName + " для этой услуги" : ""} нет. Посмотреть другой день${b.staffName ? " или другого мастера" : ""}?`, `Өкінішке қарай, бұл күні бос уақыт жоқ. Басқа күнді${b.staffName ? " немесе басқа шеберді" : ""} қарайық па?`, `Sorry, there is no free time that day. Shall we look at another day${b.staffName ? " or another specialist" : ""}?`][L];

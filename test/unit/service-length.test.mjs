@@ -1,73 +1,127 @@
-// Свободное время — с учётом длительности услуги (живой показ Winchester, 18.10.2026): у Тони записи в 11:30, 13:00 и 17:30,
-// а бот предлагал 11:00 и 12:30 на стрижку (1 ч) и 17:00 на «Отец и сын» (1 ч 30 мин). Без услуги Altegio отдаёт любое свободное начало.
-// Теперь: пока услуга не названа — время по основной услуге (altegio.mainService), «Отец и сын» у барберов и у шеф-барбера —
-// две услуги в Altegio, ошибка по одной не выбрасывает ответ по другой. Всё на заглушках.
+// Помещается ли услуга во время мастера (живой показ Winchester, 18.10.2026). Журнал Тони на завтра: записи 10:00–11:00,
+// 11:30–12:30, 13:00–14:00, 17:30–21:00. Бот предлагал 11:00 и 12:30 на стрижку (1 ч), 17:00 на «Отец и сын» (1 ч 30 мин) и
+// говорил «16:30 свободно» на Premium (1 ч 30 мин), а «премиум» в Altegio записан латиницей. Теперь код сам считает, с какого времени
+// помещается услуга каждой длительности, говорит, почему нельзя, и предлагает ближайшее время; запись на такое время не уходит в Altegio.
+// Заглушка Altegio — как настоящий: без услуги — свободные начала сеткой 30 мин, с услугой — только начала, где она помещается.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net, mk, D1, D2 } from "../harness.mjs";
+import { net, mk, D1 } from "../harness.mjs";
+import { fitStarts, askedTimes, busyFrom, nearest, gridStep } from "../../src/services/booking/fit.js";
+import { altServiceWanted } from "../../src/services/booking/pick.js";
 
 const ENV = { ALTEGIO_PARTNER: "partner-key" };
+const FREE = {
+  31: ["11:00", "12:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00"], // Тони
+  32: ["10:00", "10:30", "11:00", "11:30", "12:00", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30"] // Айдос: занят 12:30–18:00
+};
+const SV = [
+  { id: 201, title: "Мужская стрижка", category_id: 1, price_min: 7000, price_max: 7000, active: 1, seance_length: 3600 },
+  { id: 202, title: "Мужская стрижка", category_id: 2, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 },
+  { id: 203, title: "Комплекс «Отец и сын»", category_id: 1, price_min: 10000, price_max: 10000, active: 1, seance_length: 5400 },
+  { id: 204, title: "Комплекс «Отец и сын»", category_id: 2, price_min: 14000, price_max: 14000, active: 1, seance_length: 5400 },
+  { id: 205, title: "Комплекс «Premium»", category_id: 1, price_min: 12000, price_max: 12000, active: 1, seance_length: 5400 },
+  { id: 206, title: "Комплекс «Premium»", category_id: 2, price_min: 13000, price_max: 13000, active: 1, seance_length: 5400 },
+  { id: 207, title: "Моделирование бороды", category_id: 1, price_min: 4500, price_max: 4500, active: 1, seance_length: 1800 }];
+const CHEF = new Set(["202", "204", "206"]), LEN = Object.fromEntries(SV.map(x => [String(x.id), x.seance_length / 60]));
 const W = {
-  services: [
-    { id: 201, title: "Мужская стрижка", category_id: 1, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 },
-    { id: 202, title: "Комплекс «Отец и сын»", category_id: 1, price_min: 10000, price_max: 10000, active: 1, seance_length: 5400 },
-    { id: 203, title: "Комплекс «Отец и сын»", category_id: 2, price_min: 14000, price_max: 14000, active: 1, seance_length: 5400 },
-    { id: 204, title: "Мужская стрижка от шеф-барбера", category_id: 2, price_min: 9000, price_max: 9000, active: 1, seance_length: 3600 }],
-  category: [{ id: 1, title: "Барберы" }, { id: 2, title: "Шеф-барбер" }],
+  services: SV, category: [{ id: 1, title: "Барберы" }, { id: 2, title: "Шеф-барбер" }],
   staff: [{ id: 31, name: "Тони", bookable: true, specialization: "шеф-барбер" }, { id: 32, name: "Айдос", bookable: true, specialization: "барбер" }],
-  times: {},
-  // у Тони свободно 11:00–11:30, 12:30–13:00, 14:00–17:30: без услуги Altegio отдаёт любое начало
+  dates: [D1], times: {},
   timesFor: (staff, date, sids) => {
-    if (staff === "31") {
-      if (sids.includes("202")) return { error: 422 }; // услугу барберов шеф-барбер не оказывает
-      if (sids.includes("203")) return ["14:00", "15:00", "16:00"];
-      if (sids.includes("201")) return { error: 422 }; // стрижку барберов шеф-барбер не оказывает — у него своя, с другим названием
-      if (sids.includes("204")) return W.down204 ? { error: 500 } : ["14:00", "15:00", "16:00", "16:30"];
-      return ["11:00", "12:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00"];
-    }
-    if (staff === "32") return sids.includes("203") || sids.includes("204") ? { error: 422 } : ["10:00", "12:00"];
-    return sids.length ? ["10:00", "12:00", "14:00", "15:00", "16:00"] : ["10:00", "11:00", "12:00", "12:30", "14:00", "17:00"];
+    const who = staff === "0" ? ["31", "32"] : [staff];
+    const lists = who.map(id => {
+      const free = FREE[id] || [];
+      if (!sids.length) return free;
+      if (sids.some(s => CHEF.has(s) !== (id === "31"))) return null; // эту услугу мастер не оказывает
+      return fitStarts(free, Math.max(...sids.map(s => LEN[s])), 30);
+    });
+    if (staff !== "0" && lists[0] === null) return { error: 422 };
+    return [...new Set(lists.filter(Boolean).flat())].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
   }
 };
-const toniLine = () => { const p = JSON.stringify(net.gemini.at(-1)), i = p.indexOf("именно к мастеру Тони"); return i < 0 ? "" : p.slice(i, i + 400); };
+const prompt = () => JSON.stringify(net.gemini.at(-1));
 
-test("услуга не названа — время у Тони по основной услуге (стрижка 1 ч): 11:00 и 12:30 не предлагаются", async () => {
+test("помощники: сетка, помещается ли, с какого времени занято, ближайшее, время из сообщения", () => {
+  assert.equal(gridStep([FREE[31]]), 30);
+  assert.deepEqual(fitStarts(FREE[31], 90, 30), ["14:00", "14:30", "15:00", "15:30", "16:00"]);
+  assert.deepEqual(fitStarts(FREE[31], 60, 30), ["14:00", "14:30", "15:00", "15:30", "16:00", "16:30"]);
+  assert.equal(busyFrom(FREE[31], "16:30", 30), "17:30");
+  assert.deepEqual(nearest(fitStarts(FREE[31], 90, 30), "16:30", 2), ["15:30", "16:00"]);
+  for (const [t, want] of [["премиум в 16 30", "16:30"], ["в 12 30 запишу на отец и сын", "12:30"], ["16.30", "16:30"], ["в 5 вечера", "17:00"], ["в 17ч к нему", "17:00"], ["есть время завтра в 12?", "12:00"]])
+    assert.deepEqual(askedTimes(t), [want], t);
+  for (const t of ["19.10 можно?", "2 человека", "стоит 14 000 тг", "на 2 часа", "мне 25 лет"]) assert.deepEqual(askedTimes(t), [], t);
+});
+
+test("услуга узнаётся по-русски и латиницей, без слова «комплекс»; считается последняя названная", () => {
+  const base = [{ id: 1, title: "Мужская стрижка" }, { id: 2, title: "Комплекс «Premium»" }, { id: 3, title: "Комплекс «Отец и сын»" }];
+  assert.deepEqual(altServiceWanted(base, "премиум в 16 30").map(x => x.id), [2]);
+  assert.deepEqual(altServiceWanted(base, "отец и сын стрижка").map(x => x.id), [3]);
+  assert.deepEqual(altServiceWanted(base, "сколько стоит мужская стрижка \n а теперь premium").map(x => x.id), [2]);
+});
+
+test("Premium к Тони на 16:30: не помещается — в 17:30 занято, ближайшее 15:30 или 16:00", async () => {
   net.reset(); net.altData = () => W;
   const s = mk(ENV);
-  await s.chat("winchester", "len-1", "сколько стоит стрижка?", ["Стрижка у шеф-барбера Тони — 9 000 ₸."]);
-  await s.chat("winchester", "len-1", "у Тони завтра в 12 свободно?", ["Подскажу время."]);
-  const t = toniLine();
-  assert.ok(/14:00/.test(t) && !/11:00/.test(t) && !/12:30/.test(t), t);
-  assert.ok(/посчитано для услуги «Мужская стрижка» \(60 мин\)/.test(JSON.stringify(net.gemini.at(-1))), "ИИ знает, для какой услуги это время");
-  net.altData = null;
+  await s.chat("winchester", "fit-1", "премиум к тони завтра в 16 30", ["Подскажу."]);
+  const p = prompt(); net.altData = null;
+  assert.ok(/1 ч 30 мин — нельзя: в 17:30 у мастера уже занято; ближайшее подходящее — 15:30 или 16:00/.test(p), p.slice(p.indexOf("Проверка длительности"), p.indexOf("Проверка длительности") + 1500));
+  assert.ok(/1 ч — можно/.test(p), "на часовую стрижку 16:30 подходит");
 });
 
-test("«Отец и сын» к Тони: ошибка по услуге барберов не подменяет время на «любое начало» — 17:00 не предлагается", async () => {
+test("стрижка у Тони: 11:00 и 12:30 не предлагаются (через полчаса — запись), 17:00 — тоже", async () => {
   net.reset(); net.altData = () => W;
   const s = mk(ENV);
-  await s.chat("winchester", "len-2", "а в 17ч можно на комплекс отец и сын к Тони?", ["Подскажу время."]);
-  const t = toniLine();
-  assert.ok(/14:00/.test(t) && !/17:00/.test(t), t);
-  net.altData = null;
+  await s.chat("winchester", "fit-2", "у Тони завтра в 12 свободно?", ["Подскажу."]);
+  const p = prompt(); net.altData = null;
+  const line = (p.match(/· 1 ч \(Мужская стрижка.*?\)\): ([^\\]+)/) || [])[1] || "";
+  assert.equal(line, "14:00, 14:30, 15:00, 15:30, 16:00, 16:30", p.slice(p.indexOf("Проверка длительности"), p.indexOf("Проверка длительности") + 900));
+  assert.ok(/12:00, [^.]*1 ч — нельзя: в 12:00 мастер уже занят; ближайшее подходящее — 14:00/.test(p), "в 12 у Тони занято — ближайшее 14:00");
 });
 
-test("время по услуге не читается совсем — из «любого начала» остаются только окна на всю длительность", async () => {
-  net.reset(); W.down204 = true; net.altData = () => W;
+test("мастер не назван: «Отец и сын» в 17:00 — ни у одного мастера не помещается, ближайшее — 16:00 или 18:00", async () => {
+  net.reset(); net.altData = () => W;
   const s = mk(ENV);
-  await s.chat("winchester", "len-3", "у Тони завтра в 12 свободно?", ["Подскажу время."]);
-  const t = toniLine();
-  W.down204 = false; net.altData = null;
-  assert.ok(/14:00/.test(t) && /16:30/.test(t) && !/11:00/.test(t) && !/12:30/.test(t) && !/17:00/.test(t), t);
+  await s.chat("winchester", "fit-3", "можно завтра в 17 на отец и сын?", ["Подскажу."]);
+  const p = prompt(); net.altData = null;
+  assert.ok(/1 ч 30 мин — нельзя: ни у одного мастера не помещается; ближайшее подходящее — 16:00 или 18:00/.test(p), p.slice(p.indexOf("Клиент назвал"), p.indexOf("Клиент назвал") + 600));
 });
 
-test("основная услуга в Altegio называется иначе — время без услуги, но только окна на 60 мин подряд (вживую 18.10.2026, 20:27)", async () => {
-  net.reset();
-  const W2 = { ...W, services: W.services.map(x => x.id === 201 ? { ...x, title: "Стрижка классика" } : x.id === 204 ? { ...x, title: "Стрижка у шефа" } : x) };
-  net.altData = () => W2;
+test("запись Premium к Тони на 16:30 не уходит в Altegio: бот говорит, что не поместится, и предлагает ближайшее", async () => {
+  net.reset(); net.altData = () => W;
   const s = mk(ENV);
-  await s.chat("winchester", "len-4", "завтра у тони свободно?", ["Подскажу время."]);
-  const t = toniLine();
+  const r = await s.chat("winchester", "fit-4", "запишите на премиум к Тони завтра в 16:30, Азамат, +7 701 123 45 67",
+    [`Записала вас.\n[ЗАЯВКА] Имя: Азамат; Телефон: +77011234567; Услуга: Комплекс «Premium» (Шеф-барбер); Мастер: Тони; Дата: ${D1}; Время: 16:30`]);
   net.altData = null;
-  assert.ok(/14:00/.test(t) && /16:30/.test(t) && !/11:00/.test(t) && !/12:30/.test(t) && !/17:00/.test(t), t);
-  assert.ok(/Свободное время выше посчитано для услуги/.test(JSON.stringify(net.gemini.at(-1))), "ИИ знает, на какую длительность посчитано время");
+  assert.ok(/На 16:30 не получится: услуга идёт 1 ч 30 мин, а дальше у мастера Тони уже занято\. Ближайшее время, когда она поместится: 15:00, 15:30, 16:00/.test(r.reply), r.reply);
+  assert.ok(!net.alt.some(x => /^POST /.test(x)), "в Altegio ничего не отправлено: " + net.alt.filter(x => /^POST /.test(x)).join(" | "));
+});
+
+test("запись Premium к Тони на 16:00 проходит проверку длительности", async () => {
+  net.reset(); net.altData = () => W;
+  const s = mk(ENV);
+  const r = await s.chat("winchester", "fit-5", "запишите на премиум к Тони завтра в 16:00, Азамат, +7 701 123 45 67",
+    [`Записала вас.\n[ЗАЯВКА] Имя: Азамат; Телефон: +77011234567; Услуга: Комплекс «Premium» (Шеф-барбер); Мастер: Тони; Дата: ${D1}; Время: 16:00`]);
+  net.altData = null;
+  assert.ok(!/не получится/.test(r.reply), r.reply);
+  assert.ok(net.alt.some(x => /^POST \/book_check\//.test(x)), "проверка записи в Altegio (режим «без записи»): " + net.alt.join(" | "));
+});
+
+test("ИИ назвал «16:30 свободно» на Premium — ответ переписывается; не исправил — бот отвечает сам с ближайшим временем", async () => {
+  net.reset(); net.altData = () => W;
+  const s = mk(ENV);
+  const r = await s.chat("winchester", "fit-6", "премиум к тони завтра в 16 30 можно?",
+    ["Да, завтра у Тони в 16:30 свободно! Как вас зовут?", "Да, в 16:30 можно записаться."]);
+  net.altData = null;
+  assert.ok(/На 16:30 не получится: услуга идёт 1 ч 30 мин, а дальше у мастера Тони уже занято\. Ближайшее время, когда она поместится: 15:30, 16:00/.test(r.reply), r.reply);
+  assert.ok(/время 16:30: услуга «Комплекс «Premium»/.test(JSON.stringify(net.gemini.at(-1))), "второй запрос к ИИ объясняет, почему нельзя");
+});
+
+test("ИИ отвечает правильно («16:30 не поместится, можно в 16:00») — ответ не трогается", async () => {
+  net.reset(); net.altData = () => W;
+  const s = mk(ENV);
+  const r = await s.chat("winchester", "fit-7", "премиум к тони завтра в 16 30 можно?",
+    ["Premium идёт 1 ч 30 мин, в 16:30 не поместится — дальше у мастера занято. Можно в 16:00 или в 15:30. Как вас зовут?"]);
+  net.altData = null;
+  assert.ok(/в 16:30 не поместится/.test(r.reply) && /16:00/.test(r.reply), r.reply);
+  assert.equal(net.gemini.length, 1, "ИИ спрошен один раз");
 });

@@ -382,7 +382,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       // и ИИ не должен видеть их в «Уже известно о клиенте» — иначе скажет клиенту, что запись на месте
       if (pruned) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
-      Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt });
+      Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt, fitBad: alt.fitBad });
     } catch (e) {
       console.log("altegio", String(e));
       altDown = true;
@@ -442,7 +442,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       else {
         console.log("guard2", clientId, c2.why);
         const s = getSlots(cc, ctx)[0];
-        checked = { text: /время/.test(c2.why) && s ? altSay(lang, { reason: "plNoTime", day: plDay(s, lang, nowMs), times: s.times.slice(0, 2) }) : safeAsk(c, lang), why: null };
+        checked = { text: c2.fit ? altSay(lang, { reason: "taken", ...c2.fit, staffName: c2.fit.staff }) : /время/.test(c2.why) && s ? altSay(lang, { reason: "plNoTime", day: plDay(s, lang, nowMs), times: s.times.slice(0, 2) }) : safeAsk(c, lang), why: null }; // услуга не помещается — ответ кода с ближайшим временем
         raw = ""; guard += " → заготовка";
       }
     } catch (e) { checked = { text: safeAsk(c, lang), why: null }; raw = ""; }

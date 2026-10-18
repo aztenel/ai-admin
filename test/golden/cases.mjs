@@ -5,6 +5,11 @@
 // Рассылки и напоминания (фоновая задача) здесь не повторяются — их держит test/platform.mjs.
 // Источник сценариев — ошибки, найденные вживую и в независимых проверках (CLAUDE.md, docs/legacy-context.md, test/review/README.md).
 import { D1 } from "../harness.mjs";
+// У Winchester включена проверка длительности (altegio.fitCheck): свободное время мастера — сеткой по 30 мин, как отдаёт настоящий
+// Altegio без услуги (у Ерлана свободно 9:30–11:30). В общей заглушке у Ерлана только 9:30 и 10:00 — по настоящей сетке это значило бы
+// «в 10:30 уже занято», и часовая стрижка в 10:00 честно не поместилась бы (18.10.2026). Своя локация — чтобы не взять из кэша
+// расписание прошлых сценариев Winchester
+const WIN_GRID = d => ({ ...d, times: { ...d.times, 12: ["9:30", "10:00", "10:30", "11:00"] } });
 
 const tag = (o = {}) => `[ЗАЯВКА] Имя: ${o.name || "Тимур"}; Телефон: указан; Услуга: ${o.service || "Мужская стрижка"}; Мастер: ${o.staff || "любой"}; Дата: ${o.date || D1}; Время: ${o.time || "10:00"}`;
 const cx = (name = "Тимур", time = "10:00") => `[ОТМЕНА] Имя: ${name}; Дата: ${D1}; Время: ${time}`;
@@ -95,7 +100,7 @@ export const CASES = [
   // ---- показ барбершопа Winchester (14.10.2026): их прайс в фактах, реквизиты Kaspi дословно
   { id: "winchester-price", title: "Winchester: цена из фактов (линия барберов и шеф-барбера) проходит защиту", c: "winchester", steps: [{ in: "Сколько стоит мужская стрижка?", ai: "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸ ✂️ Записать вас?" }] },
   { id: "winchester-wrong-price", title: "Winchester: 8 000 ₸ (цена из старой сторис) нет в фактах — защита отклоняет, ИИ спрашивают ещё раз", c: "winchester", steps: [{ in: "Сколько стоит стрижка?", ai: ["Мужская стрижка — 8 000 ₸.", "У барберов мужская стрижка — 7 000 ₸, у шеф-барбера Тони — 9 000 ₸."] }] },
-  { id: "winchester-book-dry", title: "Winchester: режим «без записи» — окно проверяется, но запись в журнал Altegio НЕ создаётся (altRecords 0)", c: "winchester", steps: [book("Тимур", "+7 700 000 00 92")] },
-  { id: "winchester-book-live", title: "Winchester: ALTEGIO_DRY_WINCHESTER=0 — запись создаётся по-настоящему (переключатель работает)", c: "winchester", env: { ALTEGIO_DRY_WINCHESTER: "0" }, steps: [book("Тимур", "+7 700 000 00 93")] },
+  { id: "winchester-book-dry", title: "Winchester: режим «без записи» — окно проверяется, но запись в журнал Altegio НЕ создаётся (altRecords 0)", c: "winchester", alt: WIN_GRID, env: { ALTEGIO_LOC_WINCHESTER: "4102" }, steps: [book("Тимур", "+7 700 000 00 92")] },
+  { id: "winchester-book-live", title: "Winchester: ALTEGIO_DRY_WINCHESTER=0 — запись создаётся по-настоящему (переключатель работает)", c: "winchester", alt: WIN_GRID, env: { ALTEGIO_DRY_WINCHESTER: "0", ALTEGIO_LOC_WINCHESTER: "4103" }, steps: [book("Тимур", "+7 700 000 00 93")] },
   { id: "winchester-pay", title: "Winchester: метка [РЕКВИЗИТЫ] заменяется ссылкой Kaspi дословно", c: "winchester", steps: [{ in: "Можно оплатить заранее, как?", ai: "Конечно, реквизиты для оплаты ниже 🙌\n[РЕКВИЗИТЫ]" }] }
 ];

@@ -2,12 +2,12 @@
 // /privacy обещает «удалим в течение 10 дней», а кнопки у владельца не было — только ручная чистка ключей в Cloudflare. Всё на заглушках.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net, mk, D1 } from "../harness.mjs";
+import { net, mk, D1, ALT_GRID } from "../harness.mjs";
 
 const ENV = { ALTEGIO_PARTNER: "partner-key", WA_TOKEN_WINCHESTER: "tok-w", APP_SECRET_WINCHESTER: "sec-w", BOT_WA_WINCHESTER: "1" }; // бот в WhatsApp Winchester по умолчанию выключен (wa-off.test.mjs)
 const AI = `Записала.\n[ЗАЯВКА] Имя: Тимур; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${D1}; Время: 10:00`;
 const login = async (s, key) => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=" + encodeURIComponent(key) + "&next=%2Finbox" }); return b; };
-const reset = () => { net.reset(); net.altGone = []; net.altBusy = false; net.altCheckBusy = false; net.altGetFail = 0; net.altGetPlain = false; net.altJournalFail = 0; net.altData = null; };
+const reset = () => { net.reset(); net.altGone = []; net.altBusy = false; net.altCheckBusy = false; net.altGetFail = 0; net.altGetPlain = false; net.altJournalFail = 0; net.altData = ALT_GRID; }; // Winchester считает длительность — расписание сеткой, как настоящее
 const keysWith = (s, d) => [...s.kv.mem.entries()].filter(([k, v]) => k.includes(d) || String(v && (v.value ?? v)).includes(d)).map(([k]) => k);
 
 test("владелец удаляет данные клиента: переписка, заявки, согласие — удалены, другие клиенты не тронуты", async () => {

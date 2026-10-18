@@ -1,7 +1,7 @@
 // @ts-check
 // Подбор услуги и мастера по тому, что написал ИИ или клиент. Правило одно: не уверены — переспрашиваем, а не угадываем.
 import { isForm, staffNames, caseName, STAFF_POS } from "./people.js";
-import { nameToks, svTrim, svWords, svStem, svParts } from "../../lib/names.js";
+import { nameToks, svTrim, svWords, svStem, svParts, SV_STOP } from "../../lib/names.js";
 import { lowE, clean } from "../../lib/text.js";
 
 // мастер, которого назвал клиент (последний из упомянутых). Тёзок различаем по фамилии рядом; не ясно — никого не выбираем
@@ -37,6 +37,25 @@ export function altServicesIn(services, text) {
   const top = hits.filter(v => !hits.some(o => o !== v && o.w.size > v.w.size && [...v.w].every(w => o.w.has(w))));
   const key = /** @param {any} v */ v => [...v.w].sort().join(" ");
   return top.length && top.length <= 3 && top.every(v => key(v) === key(top[0])) ? top.map(v => v.x) : [];
+}
+
+// Какую услугу хочет клиент — по последнему сообщению, где услуга названа (передумал — считается последняя). В отличие от altServicesIn:
+// латиница как кириллица («Premium» = «премиум»), общие слова названия («комплекс», «услуга») не обязательны («отец и сын» =
+// «Комплекс «Отец и сын»»). Живой показ Winchester, 18.10.2026: «премиум» не узнавался, и время считалось как для стрижки на 1 ч
+const SV_GEN = new Set(["комплекс", "комплекса", "услуга", "услуги", "процедура", "complex", "service", "комплекс"].map(w => nameToks(w)[0]));
+/** @param {any[]} services @param {string} text @returns {any[]} */
+function svWanted1(services, text) {
+  const said = new Set(nameToks(text).filter(w => w.length >= 3 || /\d/.test(w)).map(svStem));
+  const hits = services.map(x => ({ x, w: new Set(nameToks(svTrim(x.title).replace(/\([^()]*\)/g, " ")).filter(w => (w.length >= 3 || /\d/.test(w)) && !SV_STOP.has(w) && !SV_GEN.has(w)).map(svStem)) }))
+    .filter(v => v.w.size && [...v.w].every(w => said.has(w)));
+  const top = hits.filter(v => !hits.some(o => o !== v && o.w.size > v.w.size && [...v.w].every(w => o.w.has(w))));
+  const key = /** @param {any} v */ v => [...v.w].sort().join(" ");
+  return top.length && top.length <= 4 && top.every(v => key(v) === key(top[0])) ? top.map(v => v.x) : [];
+}
+/** @param {any[]} services @param {string} userAll — сообщения клиента через « \n », последнее — текущее */
+export function altServiceWanted(services, userAll) {
+  for (const m of String(userAll || "").split(" \n ").reverse()) { const f = svWanted1(services, m); if (f.length) return f; }
+  return [];
 }
 
 // Та же услуга под другими названиями: у шеф-барбера она может называться длиннее («Мужская стрижка (шеф)», «Мужская стрижка — топ»)

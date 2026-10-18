@@ -3,11 +3,11 @@
 // бот написал «Записала», придёт, а записи в журнале нет. В WhatsApp в этом режиме запись уходит администратору. Всё на заглушках.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net, mk, D1 } from "../harness.mjs";
+import { net, mk, D1, ALT_GRID } from "../harness.mjs";
 
 const ENV = { ALTEGIO_PARTNER: "partner-key", WA_TOKEN_WINCHESTER: "tok-w", APP_SECRET_WINCHESTER: "sec-w", BOT_WA_WINCHESTER: "1" }; // бот в WhatsApp Winchester по умолчанию выключен (wa-off.test.mjs)
 const AI = `Записала.\n[ЗАЯВКА] Имя: Тимур; Телефон: указан; Услуга: Мужская стрижка; Мастер: любой; Дата: ${D1}; Время: 10:00`;
-const reset = () => { net.reset(); net.altGone = []; net.altBusy = false; net.altCheckBusy = false; net.altGetFail = 0; net.altGetPlain = false; net.altJournalFail = 0; net.altData = null; };
+const reset = () => { net.reset(); net.altGone = []; net.altBusy = false; net.altCheckBusy = false; net.altGetFail = 0; net.altGetPlain = false; net.altJournalFail = 0; net.altData = ALT_GRID; }; // Winchester считает длительность — расписание сеткой, как настоящее
 
 test("WhatsApp, режим без записи: клиенту не пишем «Записала» — запись передана администратору, в Telegram всё для записи вручную", async () => {
   reset(); net.ai = [AI];
