@@ -7,8 +7,8 @@ import { useEffect, useState } from "react";
 const twMerge = extendTailwindMerge({
   extend: {
     classGroups: {
-      "font-size": [{ text: ["xs", "sm", "base", "md", "lg", "xl", "2xl"] }],
-      "text-color": [{ text: ["fg", "fg-2", "fg-3", "accent", "accent-fg", "accent-ink", "critical", "positive", "bubble-op-fg", "white", "black", "inherit", "current", "transparent"] }],
+      "font-size": [{ text: ["xs", "sm", "ui", "base", "md", "lg", "xl", "2xl"] }],
+      "text-color": [{ text: ["fg", "fg-2", "fg-3", "accent", "accent-fg", "accent-ink", "selected-fg", "critical", "positive", "bubble-op-fg", "surface", "white", "black", "inherit", "current", "transparent"] }],
     },
   },
 });

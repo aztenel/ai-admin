@@ -107,25 +107,25 @@ export function InboxScreen({ route }: { route: Extract<Route, { name: "inbox" }
       )}
 
       {xl && conv && ws && panel && (
-        <aside aria-label="Карточка клиента" className="scroll-area w-[20rem] shrink-0 border-l border-line bg-surface 2xl:w-[22.5rem]">
+        <aside aria-label="Карточка клиента" className="scroll-area w-[20rem] shrink-0 border-l border-line bg-canvas 2xl:w-[22.5rem]">
           <ContactPanel convKey={conv} ws={ws} detail={detail} summary={summary} all={all} onOpenOther={open} onClose={() => setPanel(false)} />
         </aside>
       )}
 
       {/* планшет и ноутбук: карточка выезжает справа */}
       {md && !xl && conv && ws && (
-        <Sheet open={!!route.contact} onOpenChange={(v) => !v && back({ name: "inbox", conv })} title="Клиент" side="right">
+        <Sheet open={!!route.contact} onOpenChange={(v) => !v && back({ name: "inbox", conv })} title="Клиент" side="right" className="bg-canvas">
           <ContactPanel convKey={conv} ws={ws} detail={detail} summary={summary} all={all} onOpenOther={(k) => navigate({ name: "inbox", conv: k }, { replace: true })} />
         </Sheet>
       )}
 
       {/* телефон: карточка — отдельный экран поверх переписки */}
       {!md && contactView && ws && (
-        <div className="absolute inset-0 z-20 flex animate-push-in flex-col bg-surface">
-          <header className="shrink-0 border-b border-line pt-safe">
-            <div className="flex h-14 items-center gap-1 px-1">
-              <IconButton icon={ChevronLeft} label="Назад к переписке" onClick={() => back({ name: "inbox", conv })} className="[&>svg]:size-6" />
-              <h2 className="text-lg font-semibold">Клиент</h2>
+        <div className="absolute inset-0 z-20 flex animate-push-in flex-col bg-canvas">
+          <header className="shrink-0 pt-safe">
+            <div className="relative flex h-[3.25rem] items-center px-0.5">
+              <IconButton icon={ChevronLeft} label="Назад к переписке" onClick={() => back({ name: "inbox", conv })} className="text-accent hover:text-accent [&>svg]:size-7 [&>svg]:stroke-[2]" />
+              <h2 className="pointer-events-none absolute inset-x-14 text-center text-base font-semibold">Клиент</h2>
             </div>
           </header>
           <div className="scroll-area min-h-0 flex-1">

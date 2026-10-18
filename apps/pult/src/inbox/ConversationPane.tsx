@@ -1,6 +1,6 @@
 // Переписка: шапка (кто, через какой номер, кто ведёт), полоса состояния с главным действием, лента, просьбы, поле ответа.
 // Шапка показывается сразу по строке списка — не ждём загрузки переписки.
-import { ChevronLeft, CircleAlert, Eraser, Hand, Info, MoreHorizontal, PanelRight, Phone, RefreshCw, RotateCcw, CheckCheck, Bot, PowerOff, BellOff } from "lucide-react";
+import { BellOff, CheckCheck, ChevronLeft, CircleAlert, Eraser, Globe, Hand, Info, MessageCircle, MoreHorizontal, PanelRight, Phone, PowerOff, RefreshCw, RotateCcw, UserRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Confirm, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, toast } from "@/components/overlay";
 import { Avatar, Button, EmptyState, IconButton, Skeleton } from "@/components/ui";
@@ -8,20 +8,15 @@ import { dataMode } from "@/data/source";
 import { channelOf, channelTitle } from "@/model/channels";
 import type { BotState, ConversationDetail, ConversationSummary, Message, Workspace } from "@/model/types";
 import { formatPhone, until, waited } from "@/lib/format";
-import { cn, useNow } from "@/lib/utils";
+import { useNow } from "@/lib/utils";
 import { store, useStore } from "@/state/store";
 import { Composer } from "./Composer";
 import { Messages } from "./Messages";
+import { handling } from "./handling";
 import { RequestCard } from "./RequestCard";
 
 const EMPTY: Message[] = [];
 
-export function botText(b: BotState, now: number): string {
-  if (b.state === "off") return "бот выключен";
-  if (b.state === "stopped") return "просил не писать автоматически";
-  if (b.state === "paused") return `бот на паузе ${until(b.until, now)}`;
-  return "ведёт бот";
-}
 
 export function ConversationPane({
   convKey,
@@ -59,17 +54,28 @@ export function ConversationPane({
     if (r?.ok && r.warning) toast(r.warning, "critical");
   };
 
-  const sub = [ch ? channelTitle(ch) : "", botText(bot, now)].filter(Boolean).join(", ");
+  const h = handling(null, bot, now);
   return (
     <section aria-label={`Переписка: ${name}`} className="flex h-full min-h-0 min-w-0 flex-col bg-surface">
       <header className="shrink-0 border-b border-line pt-safe">
-        <div className="flex h-14 items-center gap-1 pl-1 pr-2 md:h-[3.75rem] md:pl-4 md:pr-3">
-          <IconButton icon={ChevronLeft} label="Назад к чатам" onClick={onBack} className="md:hidden [&>svg]:size-6" />
-          <button type="button" onClick={onContact} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-1 pr-2 text-left md:-ml-1.5 md:pl-1.5 md:hover:bg-surface-2" aria-label={`${name}: карточка клиента`}>
-            <Avatar name={contact?.name || contact?.profileName} phone={contact?.phone} size="sm" className="md:size-9" />
+        <div className="@container flex h-[3.25rem] items-center gap-0.5 pl-0.5 pr-1.5 md:h-[3.75rem] md:gap-1 md:pl-4 md:pr-3">
+          <IconButton icon={ChevronLeft} label="Назад к чатам" onClick={onBack} className="text-accent hover:text-accent md:hidden [&>svg]:size-7 [&>svg]:stroke-[2]" />
+          <button type="button" onClick={onContact} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[0.625rem] py-1 pr-2 text-left md:-ml-1.5 md:pl-1.5 md:hover:bg-surface-2" aria-label={`${name}: карточка клиента`}>
+            <Avatar name={contact?.name || contact?.profileName} size="sm" className="md:size-9" />
             <span className="min-w-0">
-              <span className="block truncate text-lg font-semibold leading-tight md:text-base">{name}</span>
-              <span className="block truncate text-xs text-fg-3 md:text-sm">{sub}</span>
+              <span className="block truncate text-base font-semibold leading-5 tracking-[-0.005em] md:text-[1.0625rem] md:leading-6">{name}</span>
+              <span className="flex min-w-0 items-center gap-3 text-sm leading-[1.125rem] text-fg-3">
+                {ch && (
+                  <span className="flex min-w-0 items-center gap-1 text-fg-2">
+                    {ch.kind === "web" ? <Globe aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : <MessageCircle aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} />}
+                    <span className="truncate">{channelTitle(ch)}</span>
+                  </span>
+                )}
+                <span className="flex shrink-0 items-center gap-1" title={h.text}>
+                  {h.icon && <h.icon aria-hidden className="size-3.5" strokeWidth={1.75} />}
+                  <span className="@max-[26rem]:sr-only">{h.short.split(",")[0]}</span>
+                </span>
+              </span>
             </span>
           </button>
           <div className="flex shrink-0 items-center">
@@ -81,29 +87,29 @@ export function ConversationPane({
               <MenuContent align="end">
                 {bot.state === "active" && (
                   <MenuItem onSelect={() => act("pause", "Чат у вас: бот молчит 12 часов")}>
-                    <Hand aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+                    <Hand aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                     Взять чат — бот замолчит на 12 часов
                   </MenuItem>
                 )}
                 {bot.state === "paused" && (
                   <MenuItem onSelect={() => act("resume", "Бот снова отвечает в этом чате")}>
-                    <RotateCcw aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+                    <RotateCcw aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                     Вернуть бота
                   </MenuItem>
                 )}
                 {(d?.attention || summary?.attention) && (
                   <MenuItem onSelect={() => act("resolve", "Убрано из «Ждут ответа»")}>
-                    <CheckCheck aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+                    <CheckCheck aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                     Готово — убрать из «Ждут ответа»
                   </MenuItem>
                 )}
                 <MenuItem onSelect={() => store.loadConversation(convKey)}>
-                  <RefreshCw aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+                  <RefreshCw aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                   Обновить переписку
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem danger onSelect={() => setConfirmForget(true)}>
-                  <Eraser aria-hidden className="size-4" strokeWidth={1.9} />
+                  <Eraser aria-hidden className="size-4" strokeWidth={1.75} />
                   Очистить память бота
                 </MenuItem>
               </MenuContent>
@@ -169,57 +175,55 @@ function CallIcon({ phone }: { phone: string }) {
   if (dataMode() === "demo") return <IconButton icon={Phone} label="Позвонить" onClick={() => toast("В демо звонок не набирается: номера вымышленные")} />;
   return (
     <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} aria-label="Позвонить" title="Позвонить" className="inline-grid size-9 place-items-center rounded-lg text-fg-2 hover:bg-surface-2 hover:text-fg pointer-coarse:size-11">
-      <Phone aria-hidden className="size-[1.1875rem]" strokeWidth={1.9} />
+      <Phone aria-hidden className="size-5" strokeWidth={1.75} />
     </a>
   );
 }
 
-/** Полоса под шапкой: что сейчас нужно от человека и главное действие. Нет повода — полосы нет. */
+/** Полоса под шапкой: что сейчас нужно от человека и одно главное действие. Нет повода — полосы нет. */
 function StatusStrip({ d, summary, bot, now, onAct }: { d?: ConversationDetail; summary?: ConversationSummary; bot: BotState; now: number; onAct: (a: "pause" | "resume" | "resolve", ok: string) => void }) {
   const attention = d ? d.attention : summary?.attention;
   // невыполненная просьба описана карточкой над полем ответа — полоса её не повторяет
   if (attention && d?.requests.length) return null;
-  let body: ReactNode = null, tone: "critical" | "muted" = "muted", icon: typeof Bot = Bot, action: ReactNode = null;
+  let body: ReactNode = null, mark: ReactNode = null, action: ReactNode = null;
   if (attention) {
-    tone = "critical";
-    icon = CircleAlert;
+    mark = <span aria-hidden className="mx-1 size-2 shrink-0 rounded-full bg-critical" />;
     body = (
       <>
-        <span className="font-medium">{attention.label}</span>
-        {attention.since ? <span className="whitespace-nowrap text-critical/80">, ждёт {waited(attention.since, now)}</span> : null}
+        <span className="font-medium text-fg">{attention.label}</span>
+        {attention.since ? <span className="whitespace-nowrap text-critical">, ждёт {waited(attention.since, now)}</span> : null}
       </>
     );
     action =
       bot.state === "active" ? (
-        <Button size="sm" variant="primary" icon={Hand} onClick={() => onAct("pause", "Чат у вас: бот молчит 12 часов")}>
+        <Button size="sm" variant="primary" onClick={() => onAct("pause", "Чат у вас: бот молчит 12 часов")}>
           Взять чат
         </Button>
-      ) : !d?.requests.length ? (
-        <Button size="sm" variant="outline" icon={CheckCheck} onClick={() => onAct("resolve", "Убрано из «Ждут ответа»")}>
+      ) : (
+        <Button size="sm" variant="tinted" onClick={() => onAct("resolve", "Убрано из «Ждут ответа»")}>
           Готово
         </Button>
-      ) : null;
+      );
   } else if (bot.state === "paused") {
-    icon = Hand;
-    body = <>Чат ведёт человек — бот молчит {until(bot.until, now)}</>;
+    mark = <UserRound aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />;
+    body = <>Ведёт человек: бот молчит {until(bot.until, now)}</>;
     action = (
-      <Button size="sm" variant="outline" icon={RotateCcw} onClick={() => onAct("resume", "Бот снова отвечает в этом чате")}>
+      <Button size="sm" variant="tinted" onClick={() => onAct("resume", "Бот снова отвечает в этом чате")}>
         Вернуть бота
       </Button>
     );
   } else if (bot.state === "stopped") {
-    icon = BellOff;
-    body = <>Клиент попросил не писать ему автоматически. Бот вернётся, когда он напишет «старт». Ответить вручную можно.</>;
+    mark = <BellOff aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />;
+    body = <>Клиент попросил не писать ему автоматически — бот вернётся, когда он напишет «старт». Ответить вручную можно.</>;
   } else if (bot.state === "off") {
-    icon = PowerOff;
+    mark = <PowerOff aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />;
     body = <>Бот в этой компании выключен — отвечаете вы.</>;
   }
   if (!body) return null;
-  const Icon = icon;
   return (
-    <div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 py-1.5 md:px-5">
-      <Icon aria-hidden className={cn("size-4 shrink-0", tone === "critical" ? "text-critical" : "text-fg-3")} strokeWidth={2} />
-      <p className={cn("min-w-0 flex-1 text-sm", tone === "critical" ? "text-critical" : "text-fg-2")}>{body}</p>
+    <div className="flex min-h-11 shrink-0 items-center gap-2.5 border-b border-line bg-canvas px-4 py-1.5 md:min-h-12 md:px-5">
+      {mark}
+      <p className="min-w-0 flex-1 text-sm text-fg-2 md:text-ui">{body}</p>
       {action}
     </div>
   );

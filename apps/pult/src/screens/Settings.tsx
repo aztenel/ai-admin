@@ -41,9 +41,9 @@ export default function SettingsScreen({ section }: { section?: string }) {
 
   return (
     <Page title="Настройки" sub={ws?.name} wide>
-      <div className="md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:gap-10">
-        <nav aria-label="Разделы настроек" className="max-md:-mx-4">
-          <ul className="max-md:divide-y max-md:divide-line max-md:border-y max-md:border-line">
+      <div className="md:grid md:grid-cols-[13rem_minmax(0,1fr)] md:gap-10">
+        <nav aria-label="Разделы настроек">
+          <ul className="max-md:overflow-hidden max-md:rounded-[0.875rem] max-md:bg-surface max-md:[&>li+li>a>span:last-of-type]:border-t max-md:[&>li+li>a>span:last-of-type]:border-line md:space-y-0.5">
             {sections.map((s) => (
               <li key={s.id}>
                 <a
@@ -51,22 +51,24 @@ export default function SettingsScreen({ section }: { section?: string }) {
                   onClick={(e) => (e.preventDefault(), open(s.id))}
                   aria-current={cur?.id === s.id ? "page" : undefined}
                   className={cn(
-                    "flex min-h-12 items-center gap-3 px-4 text-base md:min-h-9 md:rounded-lg md:px-2.5 md:text-sm",
-                    cur?.id === s.id ? "md:bg-surface-2 md:font-medium md:text-fg" : "md:text-fg-2 md:hover:bg-surface-2 md:hover:text-fg",
+                    "flex items-center gap-3 pl-4 text-base active:bg-surface-2 md:min-h-9 md:rounded-lg md:px-2.5 md:text-ui md:active:bg-transparent",
+                    cur?.id === s.id ? "md:bg-selected md:font-medium md:text-selected-fg" : "md:text-fg-2 md:hover:bg-surface-3/60 md:hover:text-fg",
                   )}
                 >
-                  <s.icon aria-hidden className="size-[1.125rem] shrink-0 text-fg-3" strokeWidth={1.9} />
-                  <span className="flex-1">{s.title}</span>
-                  <ChevronRight aria-hidden className="size-4 text-fg-3 md:hidden" />
+                  <s.icon aria-hidden className={cn("size-[1.125rem] shrink-0", cur?.id === s.id ? "text-fg-3 md:text-accent" : "text-fg-3")} strokeWidth={1.75} />
+                  <span className="flex min-h-12 flex-1 items-center justify-between pr-4 md:min-h-0 md:pr-0">
+                    {s.title}
+                    <ChevronRight aria-hidden className="size-4 text-fg-3 md:hidden" />
+                  </span>
                 </a>
               </li>
             ))}
           </ul>
-          <Logout className="mt-6 md:hidden" />
+          <Logout className="mt-6 w-full justify-start rounded-[0.875rem] bg-surface px-4 md:hidden" />
         </nav>
         {md && cur && (
           <div className="min-w-0 max-w-2xl">
-            <h2 className="mb-4 text-lg font-semibold">{cur.title}</h2>
+            <h2 className="mb-3 px-4 text-lg font-semibold">{cur.title}</h2>
             {cur.render()}
             <Logout className="mt-10" />
           </div>
@@ -81,9 +83,9 @@ function External({ page, children }: { page: "studio" | "launch" | "broadcast" 
   const url = wsId ? store.source?.externalUrl(page, wsId) : null;
   if (!url) return null;
   return (
-    <a href={url} className={buttonClass("outline", "md", "mt-1 h-auto min-h-9 whitespace-normal py-1.5 text-left pointer-coarse:h-auto")} target={page === "site" ? "_blank" : undefined} rel="noopener">
+    <a href={url} className={buttonClass("tinted", "md", "mb-6 h-auto min-h-9 whitespace-normal py-1.5 text-left pointer-coarse:h-auto")} target={page === "site" ? "_blank" : undefined} rel="noopener">
       {children}
-      <ExternalLink aria-hidden className="size-4 text-fg-3" strokeWidth={2} />
+      <ExternalLink aria-hidden className="size-4 opacity-80" strokeWidth={2} />
     </a>
   );
 }
@@ -121,7 +123,7 @@ function Channels() {
   const list = ws.channels;
   return (
     <>
-      <p className="mb-4 text-sm text-fg-2">
+      <p className="mb-4 px-4 text-sm text-fg-2">
         Каждый чат привязан к номеру, на который написал клиент, и ответ уходит с того же номера. Если клиент писал на два номера — это две переписки одного клиента: в карточке клиента есть переход между ними.
       </p>
       <Group note={!report && !err ? "Проверяю номера…" : err ? `Состояние номеров не получено: ${err}` : undefined}>
@@ -130,7 +132,7 @@ function Channels() {
           <ChannelRow key={c.id} c={c} branch={ws.branches.find((b) => b.id === c.branchId)?.name} />
         ))}
       </Group>
-      {mode === "live" && <p className="mb-3 text-sm text-fg-3">Своих названий у номеров («ИИ-администратор», «Основной WhatsApp») сервер пока не хранит — показываем номер телефона и вид подключения.</p>}
+      {mode === "live" && <p className="-mt-3 mb-4 px-4 text-sm text-fg-3">Своих названий у номеров («ИИ-администратор», «Основной WhatsApp») сервер пока не хранит — показываем номер телефона и вид подключения.</p>}
       <External page="launch">Подключить номер: «Проверка запуска»</External>
     </>
   );
@@ -140,10 +142,10 @@ function ChannelRow({ c, branch }: { c: Channel; branch?: string }) {
   const Icon = c.kind === "web" ? Globe : MessageCircle;
   return (
     <div className="flex items-start gap-3 py-3">
-      <Icon aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg-3" strokeWidth={1.9} />
+      <Icon aria-hidden className="mt-px size-[1.125rem] shrink-0 text-fg-3" strokeWidth={1.75} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-3">
-          <p className="min-w-0 flex-1 text-base font-medium">{channelTitle(c)}</p>
+          <p className="min-w-0 flex-1 text-ui font-medium pointer-coarse:text-base">{channelTitle(c)}</p>
           {c.health && <span className={cn("shrink-0 text-sm font-medium", c.health.level === "ok" ? "text-positive" : "text-critical")}>{c.health.level === "ok" ? c.health.text : "нужна настройка"}</span>}
         </div>
         <p className="text-sm text-fg-2">{[c.name && c.phone ? formatPhone(c.phone) : "", KIND_LONG[c.kind], branch].filter(Boolean).join(". ")}</p>
@@ -160,7 +162,7 @@ function Branches() {
     <Group note="Филиал объединяет свои номера: в списке чатов можно выбрать весь филиал или отдельный номер.">
       {ws.branches.map((b) => (
         <div key={b.id} className="py-3">
-          <p className="text-base font-medium">{b.name}</p>
+          <p className="text-ui font-medium pointer-coarse:text-base">{b.name}</p>
           <p className="text-sm text-fg-2">
             {[b.address, ws.channels.filter((c) => c.branchId === b.id).map(channelTitle).join(", ") || "номеров нет"].filter(Boolean).join(". ")}
           </p>
@@ -181,7 +183,7 @@ function Access() {
           <Field label="Что видно">{owner ? "все компании" : "чаты только этой компании"}</Field>
         </dl>
       </Group>
-      <p className="mb-3 text-sm text-fg-2">
+      <p className="-mt-3 mb-4 px-4 text-sm text-fg-3">
         {owner ? "Ключ для сотрудников компании выдаётся в «Моих ботах». Новый ключ отключает прежний." : "Ключ входа выдаёт владелец сервиса. Если ключ сменили, войдите заново."}
       </p>
       {owner && <External page="studio">Ключи сотрудников: «Мои боты»</External>}
@@ -201,7 +203,7 @@ function BotSection() {
           <Field label="Запись в CRM">{ws.capabilities.booking === null ? "видно владельцу сервиса" : ws.capabilities.booking ? "есть" : "нет — заявки администратору"}</Field>
         </dl>
       </Group>
-      <p className="mb-3 text-sm text-fg-2">Цены, график, услуги и что бот делает сам — в паспорте бота. Бот называет цены только оттуда.</p>
+      <p className="-mt-3 mb-4 px-4 text-sm text-fg-3">Цены, график, услуги и что бот делает сам — в паспорте бота. Бот называет цены только оттуда.</p>
       {session?.role === "owner" && <External page="studio">Паспорт бота: «Мои боты»</External>}
     </>
   );

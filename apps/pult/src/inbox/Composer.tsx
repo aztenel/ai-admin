@@ -1,6 +1,7 @@
-// Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем.
+// Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем, одной строкой.
+// Кнопка «Отправить» — внутри поля и оживает, когда есть текст; слева — быстрые ответы и реквизиты.
 // Enter — отправить (на телефоне Enter — новая строка, отправка кнопкой). Черновик каждого чата сохраняется, пока открыт пульт.
-import { ArrowUp, Banknote, Phone, Zap } from "lucide-react";
+import { ArrowUp, Banknote, MessageCircle, Phone, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/components/overlay";
 import { dataMode } from "@/data/source";
@@ -9,7 +10,6 @@ import { channelTitle } from "@/model/channels";
 import type { Channel, ReplyState } from "@/model/types";
 import { until } from "@/lib/format";
 import { isTouch } from "@/lib/viewport";
-import { cn } from "@/lib/utils";
 
 const drafts = new Map<string, string>();
 // Общие фразы — не про конкретный бизнес (те же, что у рабочего пульта, pult/app.js QUICK)
@@ -48,26 +48,38 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
 
   if (!reply.allowed) return <ReplyBlocked text={reply.text} phone={phone} />;
 
-  const closesSoon = reply.closesAt && reply.closesAt - now < 6 * 3600e3 && reply.closesAt > now;
-  const hint = [
-    multiChannel && channel ? `Ответ уйдёт с номера «${channelTitle(channel)}».` : "",
-    botActive ? "Бот замолчит в этом чате на 2 часа." : "",
-    closesSoon ? `Окно WhatsApp открыто ${until(reply.closesAt!, now)} — потом написать первым будет нельзя.` : "",
-  ].filter(Boolean).join(" ");
+  const closesSoon = !!reply.closesAt && reply.closesAt - now < 6 * 3600e3 && reply.closesAt > now;
+  const from = multiChannel && channel ? channelTitle(channel) : "";
 
   return (
-    <div className="pb-safe-kb shrink-0 border-t border-line bg-surface px-2 pt-2 md:px-4 md:pb-3">
-      {hint && <p className={cn("mx-auto mb-1.5 max-w-[52rem] px-2 text-xs [@media(max-height:500px)]:truncate", closesSoon ? "text-accent-ink" : "text-fg-3")}>{hint}</p>}
-      <div className="mx-auto flex max-w-[52rem] items-end gap-1">
+    <div className="@container pb-safe-kb shrink-0 border-t border-line bg-surface px-2 pt-1.5 md:px-4 md:pb-3 md:pt-2">
+      {(from || botActive || closesSoon) && (
+        <p className="mx-auto flex max-w-[50rem] items-center gap-3 truncate px-2.5 pb-1.5 text-xs text-fg-3 md:pl-11">
+          {from && (
+            <span className="flex min-w-0 items-center gap-1">
+              <MessageCircle aria-hidden className="size-3 shrink-0" strokeWidth={2} />
+              <span className="truncate">
+                С номера <span className="text-fg-2">{from}</span>
+              </span>
+            </span>
+          )}
+          {closesSoon ? (
+            <span className="shrink-0 text-critical">окно WhatsApp {until(reply.closesAt!, now)}</span>
+          ) : botActive ? (
+            <span className="shrink-0 @max-[24rem]:hidden">бот замолчит на 2 ч</span>
+          ) : null}
+        </p>
+      )}
+      <div className="mx-auto flex max-w-[50rem] items-end gap-1">
         <Menu>
           <MenuTrigger asChild>
-            <IconButton icon={Zap} label="Быстрые ответы" className="mb-px" />
+            <IconButton icon={Zap} label="Быстрые ответы и реквизиты" className="text-fg-3" />
           </MenuTrigger>
           <MenuContent side="top" className="w-[min(22rem,calc(100vw-24px))]">
             {payment && (
               <>
                 <MenuItem onSelect={() => insert(payment)}>
-                  <Banknote aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.9} />
+                  <Banknote aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />
                   <span className="min-w-0">
                     <span className="block">Реквизиты для оплаты</span>
                     <span className="block truncate text-xs text-fg-3">{payment}</span>
@@ -84,7 +96,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             ))}
           </MenuContent>
         </Menu>
-        <label className="flex min-h-10 min-w-0 flex-1 items-end rounded-[1.25rem] border border-line-strong bg-surface px-3.5 focus-within:border-fg-3 pointer-coarse:min-h-11">
+        <label className="flex min-h-9 min-w-0 flex-1 items-end gap-1 rounded-[1.125rem] border border-line-strong bg-surface py-[3px] pl-3.5 pr-[3px] transition-colors focus-within:border-accent pointer-coarse:min-h-10 dark:bg-surface-2">
           <span className="sr-only">Ответ клиенту</span>
           <textarea
             ref={ta}
@@ -100,18 +112,18 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             placeholder="Сообщение"
             enterKeyHint="send"
             maxLength={2000}
-            className="block max-h-40 min-h-0 w-full resize-none bg-transparent py-2 text-md leading-6 text-fg outline-none md:py-[0.4375rem] md:text-base pointer-coarse:py-2.5 pointer-coarse:text-md"
+            className="block max-h-40 min-h-0 w-full resize-none bg-transparent py-[3px] text-md leading-6 text-fg outline-none md:text-base md:leading-6 pointer-coarse:py-[5px] pointer-coarse:text-md"
           />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!text.trim()}
+            aria-label="Отправить"
+            className="grid size-[1.875rem] shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] hover:brightness-95 disabled:bg-transparent disabled:text-fg-3 disabled:opacity-60 pointer-coarse:size-8"
+          >
+            <ArrowUp aria-hidden className="size-[1.125rem]" strokeWidth={2.4} />
+          </button>
         </label>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!text.trim()}
-          aria-label="Отправить"
-          className="mb-px grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,filter] hover:brightness-95 disabled:bg-surface-3 disabled:text-fg-3 pointer-coarse:size-11"
-        >
-          <ArrowUp aria-hidden className="size-5" strokeWidth={2.4} />
-        </button>
       </div>
     </div>
   );
@@ -119,9 +131,9 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
 
 function ReplyBlocked({ text, phone }: { text: string; phone?: string }) {
   return (
-    <div className="pb-safe-kb shrink-0 border-t border-line bg-surface px-4 pt-3 md:pb-3">
-      <div className="mx-auto flex max-w-[52rem] flex-wrap items-center gap-x-4 gap-y-2">
-        <p className="min-w-0 flex-1 basis-60 text-sm text-fg-2">{text}</p>
+    <div className="pb-safe-kb shrink-0 border-t border-line bg-canvas px-4 pt-3 md:pb-3">
+      <div className="mx-auto flex max-w-[50rem] flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="min-w-0 flex-1 basis-60 text-sm text-fg-2 md:text-ui">{text}</p>
         <CallLink phone={phone} />
       </div>
     </div>
@@ -133,13 +145,13 @@ export function CallLink({ phone, className, label = "Позвонить" }: { p
   if (!phone) return null;
   if (dataMode() === "demo")
     return (
-      <button type="button" onClick={() => toast("В демо звонок не набирается: номера вымышленные")} className={buttonClass("outline", "sm", className)}>
+      <button type="button" onClick={() => toast("В демо звонок не набирается: номера вымышленные")} className={buttonClass("tinted", "sm", className)}>
         <Phone aria-hidden className="size-4" strokeWidth={2} />
         {label}
       </button>
     );
   return (
-    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className={buttonClass("outline", "sm", className)}>
+    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className={buttonClass("tinted", "sm", className)}>
       <Phone aria-hidden className="size-4" strokeWidth={2} />
       {label}
     </a>

@@ -1,6 +1,6 @@
 // Всплывающее: меню, листы (снизу на телефоне, по центру или справа на компьютере), подтверждение, короткие уведомления.
 // Доступность (фокус внутри, Esc, чтение экранными дикторами) — из Radix; вид — свой, на токенах из index.css.
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { DropdownMenu as DM, Dialog as D } from "radix-ui";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { cn, useMedia } from "@/lib/utils";
@@ -17,7 +17,7 @@ export function MenuContent({ children, align = "start", className, ...rest }: D
         sideOffset={6}
         collisionPadding={12}
         className={cn(
-          "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[14rem] max-w-[min(22rem,calc(100vw-24px))] overflow-y-auto rounded-xl border border-line bg-surface p-1 text-fg shadow-pop outline-none data-[state=open]:animate-pop-in",
+          "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[14rem] max-w-[min(22rem,calc(100vw-24px))] overflow-y-auto rounded-[0.875rem] border border-line bg-surface p-1 text-fg shadow-pop outline-none data-[state=open]:animate-pop-in dark:bg-surface-2",
           className,
         )}
         {...rest}
@@ -28,7 +28,7 @@ export function MenuContent({ children, align = "start", className, ...rest }: D
   );
 }
 const itemCls =
-  "relative flex min-h-9 cursor-default select-none items-center gap-2.5 rounded-md px-2.5 py-1.5 text-base outline-none data-[disabled]:opacity-45 data-[highlighted]:bg-surface-2 pointer-coarse:min-h-11";
+  "relative flex min-h-9 cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ui outline-none data-[disabled]:opacity-45 data-[highlighted]:bg-surface-2 dark:data-[highlighted]:bg-surface-3 pointer-coarse:min-h-11 pointer-coarse:text-base";
 export function MenuItem({ className, danger, ...rest }: DM.DropdownMenuItemProps & { danger?: boolean }) {
   return <DM.Item className={cn(itemCls, danger && "text-critical", className)} {...rest} />;
 }
@@ -36,8 +36,8 @@ export function MenuRadioItem({ className, children, ...rest }: DM.DropdownMenuR
   return (
     <DM.RadioItem className={cn(itemCls, "pr-8 data-[state=checked]:font-medium", className)} {...rest}>
       {children}
-      <DM.ItemIndicator className="absolute right-2.5 top-1/2 -translate-y-1/2">
-        <span className="block size-2 rounded-full bg-accent" />
+      <DM.ItemIndicator className="absolute right-2.5 top-1/2 -translate-y-1/2 text-accent">
+        <Check aria-hidden className="size-4" strokeWidth={2.25} />
       </DM.ItemIndicator>
     </DM.RadioItem>
   );
@@ -73,8 +73,8 @@ export function Sheet({ open, onOpenChange, title, description, side = "auto", c
         <D.Content
           className={cn(
             "fixed z-50 flex flex-col bg-surface text-fg shadow-pop outline-none",
-            kind === "bottom" && "inset-x-0 bottom-0 max-h-[min(88dvh,44rem)] rounded-t-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))] data-[state=open]:animate-sheet-in",
-            kind === "center" && "left-1/2 top-1/2 max-h-[min(80dvh,40rem)] w-[min(28rem,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl pb-3 data-[state=open]:animate-pop-in",
+            kind === "bottom" && "inset-x-0 bottom-0 max-h-[min(88dvh,44rem)] rounded-t-[1.125rem] pb-[max(0.75rem,env(safe-area-inset-bottom))] data-[state=open]:animate-sheet-in",
+            kind === "center" && "left-1/2 top-1/2 max-h-[min(80dvh,40rem)] w-[min(28rem,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[1.125rem] pb-3 data-[state=open]:animate-pop-in",
             kind === "right" && "inset-y-0 right-0 w-[min(25rem,100vw)] border-l border-line pb-safe pt-safe data-[state=open]:animate-drawer-in",
             className,
           )}
@@ -82,8 +82,8 @@ export function Sheet({ open, onOpenChange, title, description, side = "auto", c
           {kind === "bottom" && <span aria-hidden className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-line-strong" />}
           <header className={cn("flex shrink-0 items-start gap-3 px-4 pb-2", kind === "bottom" ? "pt-2" : "pt-4")}>
             <div className="min-w-0 flex-1 pt-1.5">
-              <D.Title className="text-lg font-semibold">{title}</D.Title>
-              {description ? <D.Description className="mt-0.5 text-sm text-fg-2">{description}</D.Description> : <D.Description className="sr-only">{title}</D.Description>}
+              <D.Title className="text-lg font-semibold tracking-[-0.01em]">{title}</D.Title>
+              {description ? <D.Description className="mt-1 text-ui text-fg-2">{description}</D.Description> : <D.Description className="sr-only">{title}</D.Description>}
             </div>
             <D.Close asChild>
               <IconButton icon={X} label="Закрыть" className="-mr-1.5" />
@@ -112,7 +112,7 @@ export function Confirm({ open, onOpenChange, title, text, yes, danger, onYes }:
           </Button>
           <Button
             variant={danger ? "secondary" : "primary"}
-            className={cn("flex-1", danger && "text-critical")}
+            className={cn("flex-1", danger && "bg-critical-soft text-critical hover:bg-critical-soft hover:brightness-[0.97]")}
             onClick={() => {
               onOpenChange(false);
               onYes();
@@ -156,8 +156,8 @@ export function Toasts() {
           key={t.id}
           role={t.tone === "critical" ? "alert" : "status"}
           className={cn(
-            "max-w-md animate-pop-in rounded-xl px-4 py-2.5 text-sm shadow-pop",
-            t.tone === "critical" ? "bg-critical text-white dark:text-black" : "bg-fg text-surface",
+            "max-w-md animate-pop-in rounded-xl px-4 py-2.5 text-ui shadow-pop",
+            t.tone === "critical" ? "bg-critical text-white dark:text-[#1b0d0b]" : "bg-fg text-surface",
           )}
         >
           {t.text}

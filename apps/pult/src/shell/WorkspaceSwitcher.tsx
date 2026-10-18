@@ -9,7 +9,7 @@ import { store, useStore } from "@/state/store";
 
 export function Monogram({ name, className }: { name: string; className?: string }) {
   return (
-    <span aria-hidden className={cn("grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-fg text-base font-semibold text-surface", className)}>
+    <span aria-hidden className={cn("grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-surface-3 text-ui font-semibold text-fg-2", className)}>
       {(name.trim()[0] || "·").toUpperCase()}
     </span>
   );
@@ -30,9 +30,9 @@ export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNod
 
   const label = (
     <>
-      <span className="truncate text-lg font-semibold leading-6 tracking-[-0.01em]">{name}</span>
-      {demo && <span className="shrink-0 rounded-md bg-accent-soft px-1.5 text-xs font-medium leading-5 text-accent-ink">демо</span>}
-      {can && <ChevronDown aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={2.2} />}
+      <span className="truncate text-xl font-semibold leading-7 tracking-[-0.015em] md:text-lg md:leading-6">{name}</span>
+      {can && <ChevronDown aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={2} />}
+      {demo && <span className="ml-0.5 shrink-0 rounded-md border border-line-strong px-1.5 text-xs font-medium leading-[1.125rem] text-fg-3">демо</span>}
     </>
   );
   const nameCls = cn("-ml-1 flex max-w-full items-center gap-1.5 rounded-md px-1 text-left text-fg", can && "hover:bg-surface-2");
@@ -73,8 +73,7 @@ export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNod
     );
 
   return (
-    <div className={cn("flex min-w-0 items-center gap-2.5", className)}>
-      <Monogram name={name} />
+    <div className={cn("flex min-w-0 items-center", className)}>
       <div className="min-w-0 flex-1">
         {nameEl}
         {below}
@@ -89,7 +88,7 @@ export function WorkspaceSwitcher({ below, demo, className }: { below?: ReactNod
                   <span className="block truncate text-base">{w.name}</span>
                   {w.kind && <span className="block truncate text-xs text-fg-3">{w.kind}</span>}
                 </span>
-                <Check aria-hidden className={cn("size-5 text-accent-ink", w.id !== wsId && "invisible")} strokeWidth={2.2} />
+                <Check aria-hidden className={cn("size-5 text-accent", w.id !== wsId && "invisible")} strokeWidth={2.25} />
               </button>
             ))}
           </div>

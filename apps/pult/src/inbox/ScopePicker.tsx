@@ -51,7 +51,7 @@ export function ScopePicker({ ws, list, scope, onChange }: { ws: Workspace; list
     <button
       type="button"
       onClick={wide ? undefined : () => setOpen(true)}
-      className="relative -ml-1 inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1 text-sm text-fg-2 after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:bg-surface-2 hover:text-fg"
+      className="relative -ml-1 mt-px inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1 text-[0.9375rem] text-fg-2 after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:bg-surface-2 hover:text-fg md:text-sm"
     >
       <span className="truncate">{scopeTitle(ws, scope)}</span>
       <ChevronDown aria-hidden className="size-3.5 shrink-0 text-fg-3" strokeWidth={2.2} />
@@ -91,7 +91,7 @@ export function ScopePicker({ ws, list, scope, onChange }: { ws: Workspace; list
               {g.items.map((o) => (
                 <button key={o.value} type="button" aria-pressed={o.value === cur} onClick={() => pick(o.value)} className={cn("flex min-h-14 w-full items-center gap-3 px-4 text-left active:bg-surface-2", o.indent && "pl-7")}>
                   <OptBody o={o} />
-                  <Check aria-hidden className={cn("size-5 shrink-0 text-accent-ink", o.value !== cur && "invisible")} strokeWidth={2.2} />
+                  <Check aria-hidden className={cn("size-5 shrink-0 text-accent", o.value !== cur && "invisible")} strokeWidth={2.25} />
                 </button>
               ))}
             </div>
@@ -106,9 +106,9 @@ function OptBody({ o }: { o: Opt }) {
   const Icon = o.icon === "web" ? Globe : o.icon === "wa" ? MessageCircle : null;
   return (
     <>
-      {Icon && <Icon aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.9} />}
+      {Icon && <Icon aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-base">{o.title}</span>
+        <span className="block truncate text-ui pointer-coarse:text-base">{o.title}</span>
         {o.sub && <span className="block truncate text-xs text-fg-3">{o.sub}</span>}
       </span>
       {o.waiting > 0 && (

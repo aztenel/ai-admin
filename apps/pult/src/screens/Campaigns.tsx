@@ -27,7 +27,7 @@ export default function CampaignsScreen() {
   const ext = wsId ? store.source?.externalUrl("broadcast", wsId) : null;
 
   const manage = ext ? (
-    <a href={ext} className={buttonClass("primary", "md")}>
+    <a href={ext} className={buttonClass("tinted", "md")}>
       Создать рассылку
       <ExternalLink aria-hidden className="size-4" strokeWidth={2} />
     </a>
@@ -74,7 +74,7 @@ function Row({ c, now, channel }: { c: Campaign; now: number; channel: string })
   return (
     <div className="flex flex-col gap-2 py-3.5 sm:flex-row sm:items-center sm:gap-6">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-semibold">{c.name}</p>
+        <p className="truncate text-[0.9375rem] font-semibold md:text-base">{c.name}</p>
         <p className="mt-0.5 truncate text-sm text-fg-3">{[shortDate(c.createdAt, now), channel].filter(Boolean).join(", ")}</p>
       </div>
       <div className="flex items-center gap-4 sm:w-72">
@@ -85,11 +85,11 @@ function Row({ c, now, channel }: { c: Campaign; now: number; channel: string })
               {c.failed ? <span className="text-critical">, не дошло {c.failed}</span> : null}
             </span>
           </div>
-          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-3" aria-hidden>
-            <div className={cn("h-full rounded-full", tone === "warn" ? "bg-accent" : "bg-fg-2")} style={{ width: `${pct}%` }} />
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3" aria-hidden>
+            <div className={cn("h-full rounded-full", tone === "run" || tone === "warn" ? "bg-accent" : "bg-fg-3/60")} style={{ width: `${pct}%` }} />
           </div>
         </div>
-        <span className={cn("w-32 shrink-0 text-right text-sm font-medium", tone === "ok" && "text-positive", tone === "run" && "text-accent-ink", tone === "warn" && "text-accent-ink", tone === "muted" && "text-fg-3")}>{label}</span>
+        <span className={cn("w-32 shrink-0 text-right text-sm font-medium", tone === "ok" && "text-positive", tone === "run" && "text-accent", tone === "warn" && "text-fg-2", tone === "muted" && "text-fg-3")}>{label}</span>
       </div>
     </div>
   );

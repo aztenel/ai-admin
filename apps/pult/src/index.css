@@ -3,67 +3,67 @@
 /* ======================================================================================
    Оформление пульта. Источник правды цветов — переменные ниже; в компонентах только их имена
    (bg-surface, text-fg-2, …): палитра Tailwind по умолчанию отключена, «случайный» цвет не соберётся.
-   Характер — тот же, что у рабочего пульта (pult/design.base.css): графит + шафран.
-   Шафран — только главное действие, непрочитанное, выбранный раздел и фокус. Состояния (ждёт ответа, готово)
-   — свои смысловые цвета, не украшение.
+   Характер — спокойный системный синий на нейтральном полотне, как в родных программах iPhone и Mac.
+   Синий — только выбранное, главное действие, фокус, ссылки и непрочитанное. Красный — ошибка, необратимое
+   действие и клиент, который ждёт человека. Зелёный — подключено, выполнено. Контраст текста проверен (WCAG AA).
    ====================================================================================== */
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
-  --canvas: #f2f3f5;          /* полотно под панелями: полоса разделов, фон за списком */
-  --surface: #ffffff;         /* панели: список, переписка, карточка клиента */
-  --surface-2: #f3f4f6;       /* поле ввода, наведение, пузырь клиента */
-  --surface-3: #e8ebee;       /* нажатие, выбранный пункт */
-  --selected: #eceff2;        /* выбранный чат в списке */
-  --line: #e3e6ea;
-  --line-strong: #d1d6dc;
-  --fg: #12181e;
-  --fg-2: #535e69;            /* 6.5:1 на белом */
-  --fg-3: #67727e;            /* 4.8:1 на белом — время, подписи */
-  --accent: #f2b230;          /* шафран: заливка главной кнопки */
-  --accent-fg: #241700;
-  --accent-ink: #875600;      /* шафран для текста и значков на светлом, 6:1 */
-  --accent-soft: #fcf1d8;
-  --critical: #b8321c;        /* ждёт ответа, ошибка */
-  --critical-soft: #fcebe7;
-  --positive: #1d7448;
-  --positive-soft: #e5f4ec;
-  --bubble-in: #eff1f4;
-  --bubble-bot: #ffffff;
-  --bubble-bot-line: #dde1e6;
-  --bubble-op: #fbedcc;
-  --bubble-op-fg: #2a1f06;
-  --ring: #b07a12;
-  --scrim: rgb(15 20 25 / 0.32);
-  --shadow-pop: 0 1px 2px rgb(18 24 30 / 0.06), 0 8px 24px rgb(18 24 30 / 0.12);
+  --canvas: #f5f7fa;          /* полотно: полоса разделов, фон настроек и карточки клиента */
+  --surface: #ffffff;         /* панели: список, переписка */
+  --surface-2: #f1f4f8;       /* поле поиска, наведение */
+  --surface-3: #e7ecf2;       /* нажатие, аватар */
+  --selected: #e8f1ff;        /* выбранный чат, раздел, фильтр */
+  --selected-fg: #174ea6;     /* текст на выбранном, 6.9:1 */
+  --line: #e4e9f0;            /* тонкие разделители */
+  --line-strong: #d5dde7;     /* рамки полей ввода */
+  --fg: #202631;              /* 15:1 */
+  --fg-2: #556070;            /* второстепенный текст, 6.4:1 */
+  --fg-3: #667085;            /* время, подписи, 5:1 */
+  --accent: #1769e0;          /* главное действие, ссылки, фокус: 5.1:1 на белом */
+  --accent-fg: #ffffff;
+  --accent-ink: #174ea6;      /* мелкий синий текст */
+  --accent-soft: #e8f1ff;
+  --critical: #c4352b;        /* ошибка, необратимое, клиент ждёт человека: 5.4:1 */
+  --critical-soft: #fdeeec;
+  --positive: #1a7f4e;        /* подключено, выполнено: 5:1 */
+  --positive-soft: #e7f5ee;
+  --bubble-in: #f0f3f7;       /* клиент */
+  --bubble-bot: #e9eff7;      /* бот: чуть холоднее клиента */
+  --bubble-op: #dceafe;       /* человек: светло-синий */
+  --bubble-op-fg: #0f2f63;
+  --ring: #1769e0;
+  --scrim: rgb(16 24 40 / 0.28);
+  --shadow-pop: 0 1px 2px rgb(16 24 40 / 0.06), 0 10px 28px rgb(16 24 40 / 0.12);
 }
 
 [data-theme="dark"] {
-  --canvas: #0c1014;
-  --surface: #12171c;
-  --surface-2: #1a2026;
-  --surface-3: #232a31;
-  --selected: #1d242a;
-  --line: #222a31;
-  --line-strong: #2f3943;
-  --fg: #e8ecef;
-  --fg-2: #9aa6b1;
-  --fg-3: #85919c;
-  --accent: #f2b33d;
-  --accent-fg: #1f1500;
-  --accent-ink: #f4c461;
-  --accent-soft: #2b2414;
-  --critical: #ff8a73;
-  --critical-soft: #3a1f19;
-  --positive: #6acb98;
-  --positive-soft: #15281f;
-  --bubble-in: #1d242a;
-  --bubble-bot: #12171c;
-  --bubble-bot-line: #2c353e;
-  --bubble-op: #352b17;
-  --bubble-op-fg: #f3e8cf;
-  --ring: #f4c461;
+  --canvas: #111418;
+  --surface: #171b21;
+  --surface-2: #1f242b;
+  --surface-3: #282e37;
+  --selected: #1a2b44;
+  --selected-fg: #9cc3ff;
+  --line: #252b33;
+  --line-strong: #323a45;
+  --fg: #e6e9ee;
+  --fg-2: #aab3bf;
+  --fg-3: #8a94a3;
+  --accent: #2c70e0;          /* белый текст на нём 4.7:1 */
+  --accent-fg: #ffffff;
+  --accent-ink: #7fb2ff;
+  --accent-soft: #1a2b44;
+  --critical: #f0776b;
+  --critical-soft: #3a1f1d;
+  --positive: #56c28e;
+  --positive-soft: #16291f;
+  --bubble-in: #222830;
+  --bubble-bot: #1d2530;
+  --bubble-op: #1e3554;
+  --bubble-op-fg: #e3edff;
+  --ring: #7fb2ff;
   --scrim: rgb(0 0 0 / 0.5);
   --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
 }
@@ -71,10 +71,11 @@
 /* без скрипта темы (например, страница открыта из кэша) — как в системе */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --canvas: #0c1014; --surface: #12171c; --surface-2: #1a2026; --surface-3: #232a31; --selected: #1d242a; --line: #222a31; --line-strong: #2f3943;
-    --fg: #e8ecef; --fg-2: #9aa6b1; --fg-3: #85919c; --accent: #f2b33d; --accent-fg: #1f1500; --accent-ink: #f4c461; --accent-soft: #2b2414;
-    --critical: #ff8a73; --critical-soft: #3a1f19; --positive: #6acb98; --positive-soft: #15281f;
-    --bubble-in: #1d242a; --bubble-bot: #12171c; --bubble-bot-line: #2c353e; --bubble-op: #352b17; --bubble-op-fg: #f3e8cf; --ring: #f4c461;
+    --canvas: #111418; --surface: #171b21; --surface-2: #1f242b; --surface-3: #282e37; --selected: #1a2b44; --selected-fg: #9cc3ff;
+    --line: #252b33; --line-strong: #323a45; --fg: #e6e9ee; --fg-2: #aab3bf; --fg-3: #8a94a3;
+    --accent: #2c70e0; --accent-fg: #ffffff; --accent-ink: #7fb2ff; --accent-soft: #1a2b44;
+    --critical: #f0776b; --critical-soft: #3a1f1d; --positive: #56c28e; --positive-soft: #16291f;
+    --bubble-in: #222830; --bubble-bot: #1d2530; --bubble-op: #1e3554; --bubble-op-fg: #e3edff; --ring: #7fb2ff;
     --scrim: rgb(0 0 0 / 0.5); --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
   }
 }
@@ -85,11 +86,12 @@
   --color-black: #000000;
 
   /* системный шрифт: San Francisco на iPhone и Mac, Segoe UI на Windows, Roboto на Android — без загрузки файлов */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* шкала размеров в rem: растёт вместе с крупным шрифтом системы */
   --text-xs: 0.75rem;        --text-xs--line-height: 1rem;         /* 12 — время, счётчики */
   --text-sm: 0.8125rem;      --text-sm--line-height: 1.125rem;     /* 13 — подписи, второстепенное */
+  --text-ui: 0.875rem;       --text-ui--line-height: 1.25rem;      /* 14 — превью и подписи на компьютере */
   --text-base: 0.9375rem;    --text-base--line-height: 1.3125rem;  /* 15 — строки и сообщения на компьютере */
   --text-md: 1rem;           --text-md--line-height: 1.375rem;     /* 16 — сообщения на телефоне, поля ввода */
   --text-lg: 1.0625rem;      --text-lg--line-height: 1.375rem;     /* 17 — имена, заголовки панелей */
@@ -119,6 +121,7 @@
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-selected: var(--selected);
+  --color-selected-fg: var(--selected-fg);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-fg: var(--fg);
@@ -134,7 +137,6 @@
   --color-positive-soft: var(--positive-soft);
   --color-bubble-in: var(--bubble-in);
   --color-bubble-bot: var(--bubble-bot);
-  --color-bubble-bot-line: var(--bubble-bot-line);
   --color-bubble-op: var(--bubble-op);
   --color-bubble-op-fg: var(--bubble-op-fg);
   --color-ring: var(--ring);

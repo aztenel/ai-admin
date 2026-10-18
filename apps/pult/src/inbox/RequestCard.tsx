@@ -33,20 +33,18 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
   };
   const details = [q.name, q.service].filter(Boolean).join(", ");
   return (
-    <div className="border-t border-line bg-surface px-3 py-3 md:px-4">
-      <div className="mx-auto max-w-[52rem]">
+    <div className="border-t border-line bg-canvas px-4 py-3">
+      <div className="mx-auto max-w-[50rem]">
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-critical-soft text-critical">
-            <Icon aria-hidden className="size-4" strokeWidth={2} />
-          </span>
+          <Icon aria-hidden className="mt-[3px] size-[1.125rem] shrink-0 text-critical" strokeWidth={1.75} />
           <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold">
-              {TITLE[q.kind]}
-              {since ? <span className="whitespace-nowrap text-sm font-normal text-critical">, ждёт {waited(since, now)}</span> : null}
-            </p>
-            {details && <p className="text-sm text-fg-2">{details}</p>}
-            {q.time && <p className="text-sm text-fg-2">Время: {q.time}</p>}
-            {q.note && <p className="mt-0.5 text-sm text-fg-3">{q.note}</p>}
+            <p className="text-[0.9375rem] font-semibold leading-5 md:text-base">{TITLE[q.kind]}</p>
+            {since ? <p className="mt-0.5 text-sm leading-5 text-critical">ждёт {waited(since, now)}</p> : null}
+            <div className="mt-1 space-y-px text-sm leading-5 text-fg-2 md:text-ui">
+              {details && <p>{details}</p>}
+              {q.time && <p>Время: {q.time}</p>}
+              {q.note && <p className="text-fg-3">{q.note}</p>}
+            </div>
           </div>
           {!edit && (
             <Button
@@ -61,17 +59,17 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
           )}
         </div>
         {edit && (
-          <div className="mt-3 md:pl-11">
+          <div className="mt-3 md:pl-[1.875rem]">
             <label className="block">
               <span className="mb-1 block text-xs text-fg-3">Сообщение клиенту</span>
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={3}
-                className="w-full resize-none rounded-lg border border-line-strong bg-surface px-3 py-2 text-md text-fg outline-none focus:border-fg-3 md:text-base"
+                className="w-full resize-none rounded-[0.625rem] border border-line-strong bg-surface px-3 py-2 text-md text-fg outline-none focus:border-accent/60 md:text-base dark:bg-surface-2"
               />
             </label>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <div className="mt-2 grid grid-cols-[1fr_auto] gap-2 sm:flex sm:flex-wrap">
               <Button variant="primary" className="col-span-2" busy={busy === "send"} disabled={!text.trim() || !!busy} onClick={() => run("send")}>
                 Отправить и закрыть
               </Button>
@@ -84,8 +82,8 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
             </div>
           </div>
         )}
-        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-1.5 text-xs text-fg-3 md:pl-11">Написать клиенту сейчас нельзя — сообщите ему по телефону.</p>}
-        {err && <p className={cn("mt-2 text-sm text-critical md:pl-11")}>{err}</p>}
+        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-1.5 text-xs text-fg-3 md:pl-[1.875rem]">Написать клиенту сейчас нельзя — сообщите ему по телефону.</p>}
+        {err && <p className={cn("mt-2 text-sm text-critical md:pl-[1.875rem]")}>{err}</p>}
       </div>
     </div>
   );

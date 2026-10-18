@@ -93,27 +93,25 @@ function Row({ l, now, done, badge, onOpen }: { l: Lead; now: number; done?: boo
   const [label, Icon] = KIND[l.kind];
   const what = [l.service, l.time].filter(Boolean).join(", ");
   return (
-    <button type="button" onClick={onOpen} className="group flex w-full items-start gap-3 py-3 text-left">
-      <span className={cn("mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg", done ? "bg-surface-2 text-fg-3" : "bg-critical-soft text-critical")}>
-        <Icon aria-hidden className="size-[1.125rem]" strokeWidth={1.9} />
-      </span>
+    <button type="button" onClick={onOpen} className="group -mx-4 flex w-[calc(100%+2rem)] items-start gap-3 px-4 py-3 text-left hover:bg-surface-2/60">
+      <Icon aria-hidden className={cn("mt-0.5 size-[1.125rem] shrink-0", done ? "text-fg-3" : "text-critical")} strokeWidth={1.75} />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className={cn("min-w-0 flex-1 truncate text-base font-semibold", done && "font-medium text-fg-2")}>
+          <span className={cn("min-w-0 flex-1 truncate text-[0.9375rem] font-semibold md:text-base", done && "font-medium text-fg-2")}>
             {label}
             {l.name ? `: ${l.name}` : ""}
           </span>
-          <span className="tnum shrink-0 text-xs text-fg-3">{shortDate(l.at, now)}</span>
+          {done && l.status && <span className="shrink-0 text-sm font-medium text-positive">{l.status}</span>}
         </span>
-        {what && <span className="mt-0.5 block text-sm text-fg-2">{what}</span>}
+        {what && <span className="mt-0.5 block text-sm text-fg-2 md:text-ui">{what}</span>}
         {l.note && <span className="mt-0.5 block text-sm text-fg-3">{l.note}</span>}
-        <span className="mt-1 flex items-center gap-2 text-xs text-fg-3">
+        <span className="mt-1 flex items-center gap-3 text-sm text-fg-3 md:text-xs">
+          <span className="tnum whitespace-nowrap">{shortDate(l.at, now)}</span>
           <span className="tnum whitespace-nowrap">{l.phone ? formatPhone(l.phone) : "без телефона"}</span>
-          {badge && <span className="min-w-0 truncate">{badge}</span>}
-          {done && l.status && <span className="ml-auto shrink-0 font-medium text-positive">{l.status}</span>}
+          {badge && <span className="min-w-0 truncate max-sm:hidden">{badge}</span>}
         </span>
       </span>
-      <ChevronRight aria-hidden className="mt-2.5 size-4 shrink-0 text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100" />
+      <ChevronRight aria-hidden className="mt-1 size-4 shrink-0 text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100" />
     </button>
   );
 }

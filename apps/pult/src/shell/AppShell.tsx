@@ -42,8 +42,8 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
 
   return (
     <div ref={setRoot} className="app-root flex bg-surface text-fg">
-      <nav aria-label="Разделы" className="hidden w-[4.75rem] shrink-0 flex-col items-center border-r border-line bg-canvas pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] pl-safe md:flex">
-        <ul className="flex flex-col gap-1">
+      <nav aria-label="Разделы" className="hidden w-[4.5rem] shrink-0 flex-col items-center border-r border-line bg-canvas pb-3 pt-[max(0.875rem,env(safe-area-inset-top))] pl-safe md:flex">
+        <ul className="flex flex-col gap-2">
           {items.map((it) => (
             <li key={it.id}>
               <RailLink it={it} active={route.name === it.id} />
@@ -66,11 +66,11 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
                   href={href({ name: it.id } as Route)}
                   onClick={(e) => (e.preventDefault(), go(it.id))}
                   aria-current={route.name === it.id ? "page" : undefined}
-                  className={cn("relative flex h-[3.25rem] flex-col items-center justify-center gap-0.5 text-xs font-medium", route.name === it.id ? "text-fg" : "text-fg-3")}
+                  className={cn("relative flex h-[3.125rem] flex-col items-center justify-center gap-[3px] text-[0.6875rem] font-medium leading-none", route.name === it.id ? "text-accent" : "text-fg-3")}
                 >
-                  <it.icon aria-hidden className={cn("size-6", route.name === it.id && "text-accent-ink")} strokeWidth={route.name === it.id ? 2.1 : 1.8} />
+                  <it.icon aria-hidden className="size-6" strokeWidth={route.name === it.id ? 2 : 1.6} />
                   {it.label}
-                  {!!it.badge && <CountBadge n={it.badge} className="absolute left-[calc(50%+0.375rem)] top-1" />}
+                  {!!it.badge && <CountBadge n={it.badge} tone="critical" className="absolute left-[calc(50%+0.25rem)] top-1 ring-2 ring-surface" />}
                 </a>
               </li>
             ))}
@@ -94,11 +94,11 @@ function RailLink({ it, active }: { it: Item; active: boolean }) {
       href={href({ name: it.id } as Route)}
       onClick={(e) => (e.preventDefault(), go(it.id))}
       aria-current={active ? "page" : undefined}
-      className={cn("group flex w-16 flex-col items-center gap-1 rounded-lg py-1.5 text-xs font-medium", active ? "text-fg" : "text-fg-2 hover:text-fg")}
+      className={cn("group flex w-16 flex-col items-center gap-1 text-[0.6875rem] font-medium leading-none", active ? "text-fg" : "text-fg-3 hover:text-fg-2")}
     >
-      <span className={cn("relative grid h-8 w-12 place-items-center rounded-full transition-colors", active ? "bg-accent-soft text-accent-ink" : "group-hover:bg-surface-3")}>
-        <it.icon aria-hidden className="size-5" strokeWidth={active ? 2.1 : 1.8} />
-        {!!it.badge && <CountBadge n={it.badge} className="absolute -right-1 -top-1 ring-2 ring-canvas" />}
+      <span className={cn("relative grid h-8 w-11 place-items-center rounded-[0.625rem] transition-colors", active ? "bg-selected text-accent" : "group-hover:bg-surface-3")}>
+        <it.icon aria-hidden className="size-5" strokeWidth={active ? 2 : 1.75} />
+        {!!it.badge && <CountBadge n={it.badge} tone="critical" className="absolute -right-1.5 -top-1.5 ring-2 ring-canvas" />}
       </span>
       {it.label}
     </a>
@@ -117,8 +117,8 @@ function AccountMenu() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button ref={trigger} type="button" aria-label={`${role}: тема и выход`} title={role} className="grid size-10 place-items-center rounded-full bg-surface-3 text-fg-2 hover:text-fg">
-          <UserRound aria-hidden className="size-5" strokeWidth={1.9} />
+        <button ref={trigger} type="button" aria-label={`${role}: тема и выход`} title={role} className="grid size-9 place-items-center rounded-full bg-surface-3 text-fg-3 hover:text-fg">
+          <UserRound aria-hidden className="size-[1.125rem]" strokeWidth={1.75} />
         </button>
       </MenuTrigger>
       <MenuContent side="right" align="end" className="w-60">
@@ -128,19 +128,19 @@ function AccountMenu() {
         <MenuRadioGroup value={pref} onValueChange={(v) => setTheme(v as ThemePref)}>
           {THEMES.map((t) => (
             <MenuRadioItem key={t.id} value={t.id}>
-              <t.icon aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+              <t.icon aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
               {t.label}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
         <MenuItem onSelect={() => go("settings")}>
-          <Settings aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+          <Settings aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
           Настройки
         </MenuItem>
         {logout && (
           <MenuItem onSelect={() => (location.href = logout)}>
-            <LogOut aria-hidden className="size-4 text-fg-3" strokeWidth={1.9} />
+            <LogOut aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
             Выйти
           </MenuItem>
         )}
