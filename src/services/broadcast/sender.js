@@ -35,8 +35,8 @@ export const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoD
 /** @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
 export const bcRoute = (env, cid, ch) => { // с какого номера и каким токеном уходят шаблоны (ch = "ga" — номер Green-API клиента)
   const up = cid.toUpperCase();
-  // gaReplyOnly — номер Green-API только для ответов бота: рассылка с неофициального номера — прямой путь к блокировке (Winchester, 18.10.2026)
-  if (ch === "ga" && CLIENTS[cid] && CLIENTS[cid].gaReplyOnly) return { error: "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta." };
+  // gaNoBroadcast — номер Green-API только для ответов бота: рассылка с неофициального номера — прямой путь к блокировке (Winchester, 18.10.2026)
+  if (ch === "ga" && CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) return { error: "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta." };
   if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Green-API у этого клиента не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} (номер и токен инстанса из кабинета Green-API).` }; }
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID» — без него рассылку не отправить (страница «Мои боты» → Изменить)." }; }
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };

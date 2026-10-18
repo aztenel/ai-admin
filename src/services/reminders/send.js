@@ -38,8 +38,6 @@ export async function remindSend(env, cid, x, now) {
   // почти всегда за окном: без шаблона их не было бы вовсе (16.10.2026). Шаблон задаётся в Cloudflare: TPL_REMIND_<ID>, TPL_REVIEW_<ID>
   const tpl = x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) ? remindTpl(env, c, b, x.k) : null;
   if (x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) && !tpl) return false;
-  // gaReplyOnly: с номера Green-API (неофициальный) первым не пишем — напоминание и отзыв только тому, кто сам писал в последние 24 часа (Winchester, 18.10.2026)
-  if (x.ch === "ga" && c.gaReplyOnly && !(p.li && now - p.li < 24 * 3600e3)) return false;
   const route = x.ch === "ga" ? gaRoute(env, cid) || gaShared(env) : waRoute(env, cid, p);
   if (!route) return false;
   const text = remindText(c, b, x.k, p.lang);

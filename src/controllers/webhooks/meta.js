@@ -60,7 +60,6 @@ export async function handleWAText(env, channel, fromDigits, text, send, wx) {
     try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }
-export const THANKS = /^(?:спасибо(?: большое| вам)?|спс|благодарю|рахмет|рақмет|thanks|thank you|👍|🙏|🙂|😊|❤️)[\s!.)]*$/iu;
 /** @param {Env} env @param {any} channel @param {any} fromDigits @param {any} text @param {any} send @param {any} phone @param {any} wx */
 export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   const fixed = fixedOf(env, channel, wx);
@@ -95,16 +94,6 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     await env.KV.put(nicheKey, pick.id, { expirationTtl: 30 * 86400 });
     await env.KV.put(consentKey, "1", { expirationTtl: 30 * 86400 });
     return send(`${pick.greeting}\n\n${consentText(env, pick)}`);
-  }
-  // номер Green-API: на «спасибо» и 👍 без вопроса бот не отвечает — лишние сообщения с неофициального номера ни к чему (18.10.2026).
-  // Сообщение остаётся в пульте. Если бот ждёт «да» на отмену или перенос — отвечает как обычно
-  if (channel === "ga" && THANKS.test(text.trim())) {
-    const p = ((await readHist(env, histKey())) || {}).profile || {};
-    if (!p.cxAsk && !p.mvAsk && !(p.pausedUntil > Date.now())) {
-      const now = Date.now();
-      await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], q => { q.li = now; if (!q.phone) q.phone = phone; });
-      return;
-    }
   }
   /** @type {any[]} */ const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору

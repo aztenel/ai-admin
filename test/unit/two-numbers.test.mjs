@@ -1,6 +1,6 @@
 // Winchester: два номера (18.10.2026, docs/tz-winchester-v2.md). Официальный (Wazzapo) — у администратора, бот там молчит;
-// второй номер на Green-API — бот, но до слова владельца тоже молчит (BOT_GA_WINCHESTER = 1 включает). С номера бота первым
-// не пишем: рассылок нет, напоминание и отзыв — только если клиент писал в последние 24 часа; на «спасибо» бот не отвечает.
+// второй номер на Green-API — бот, но до слова владельца тоже молчит (BOT_GA_WINCHESTER = 1 включает). С номера бота нет рассылок
+// (главная причина блокировок неофициальных номеров); отвечает бот всем, напоминание и отзыв — по записям, сделанным в этом чате.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
@@ -30,17 +30,12 @@ test("BOT_GA_WINCHESTER = 1: бот отвечает на номере бота,
   assert.deepEqual(s.sentTo(from), [], "официальный номер — у администратора");
 });
 
-test("номер бота: на «спасибо» и 👍 бот не отвечает, сообщение видно в пульте", async () => {
-  net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
+test("номер бота: на «спасибо» бот отвечает как обычно", async () => {
+  net.reset(); net.ai = ["Здравствуйте! Чем помочь?", "Пожалуйста! Ждём вас 💈"];
   const s = mk({ ...ENV, BOT_GA_WINCHESTER: "1" }), from = "77000000093";
   await s.gaText("winchester", INST, from, "Здравствуйте");
-  const before = gaSent(from).length, ai = net.gemini.length;
-  await s.gaText("winchester", INST, from, "Спасибо большое!");
-  await s.gaText("winchester", INST, from, "👍");
-  assert.equal(gaSent(from).length, before, JSON.stringify(gaSent(from)));
-  assert.equal(net.gemini.length, ai, "ИИ не вызывался");
-  const h = s.hist("ga", "winchester", from);
-  assert.ok(h.turns.some(t => /Спасибо/.test(t.text)) && !h.profile.need);
+  await s.gaText("winchester", INST, from, "Спасибо!");
+  assert.ok(gaSent(from).some(t => /Ждём вас/.test(t)), JSON.stringify(gaSent(from)));
 });
 
 test("с номера бота рассылки запрещены; с официального — как раньше", () => {
@@ -49,16 +44,11 @@ test("с номера бота рассылки запрещены; с офиц�
   assert.ok(bcRoute({ ...ENV, GA_ID_BARBER: "1", GA_TOKEN_BARBER: "t" }, "barber", "ga").ga, "у других компаний Green-API-рассылки не тронуты");
 });
 
-test("напоминание с номера бота — только если клиент писал в последние 24 часа", async () => {
+test("напоминание о записи из этого чата уходит с номера бота, даже если клиент молчит больше суток", async () => {
   net.reset();
   const s = mk({ ...ENV, BOT_GA_WINCHESTER: "1" }), from = "77000000094", now = Date.now();
-  const put = li => s.kv.api.put(`h:ga:winchester:${from}`, JSON.stringify({ n: 1, turns: [], profile: { li, bookings: [{ record_id: "r1", date: "2026-10-20", time: "10:00", services: ["Мужская стрижка"] }] } }));
-  const x = { ch: "ga", id: from, rec: "r1", k: "d1", date: "2026-10-20", time: "10:00" };
-  await put(now - 30 * 3600e3);
-  assert.equal(await remindSend(s.env, "winchester", x, now), false, "клиент молчит больше суток — не пишем");
-  assert.deepEqual(gaSent(from), []);
-  await put(now - 2 * 3600e3);
-  assert.equal(await remindSend(s.env, "winchester", x, now), true);
+  await s.kv.api.put(`h:ga:winchester:${from}`, JSON.stringify({ n: 1, turns: [], profile: { li: now - 30 * 3600e3, bookings: [{ record_id: "r1", date: "2026-10-20", time: "10:00", services: ["Мужская стрижка"] }] } }));
+  assert.equal(await remindSend(s.env, "winchester", { ch: "ga", id: from, rec: "r1", k: "d1", date: "2026-10-20", time: "10:00" }, now), true);
   assert.equal(gaSent(from).length, 1);
 });
 
