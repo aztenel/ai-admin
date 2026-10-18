@@ -82,7 +82,7 @@ export async function inboxApi(request, env, url, s) {
       promo,
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
       bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
-      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: !!c.off,
+      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
       canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
     };
   };

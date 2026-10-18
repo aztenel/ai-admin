@@ -59,4 +59,10 @@ test("пульт: оба номера в одном списке, номера �
   assert.equal(d.client.two, true, JSON.stringify(d.client));
   assert.equal(d.client.off, true, "официальный номер: бот выключен");
   assert.equal(d.client.offGa, true, "номер бота: до слова владельца выключен");
+  await s.gaText("winchester", INST, "77000000095", "привет");
+  const c = await (await own.go("/api/inbox/chat?c=winchester&ch=ga&id=77000000095")).json();
+  assert.equal(c.off, true, "в чате номера бота — «бот выключен», а не «ведёт бот»");
+  const s2 = mk({ ...ENV, BOT_GA_WINCHESTER: "1" }), own2 = await login(s2);
+  await s2.gaText("winchester", INST, "77000000096", "привет");
+  assert.equal((await (await own2.go("/api/inbox/chat?c=winchester&ch=ga&id=77000000096")).json()).off, false);
 });
