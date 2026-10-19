@@ -10,7 +10,7 @@ import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
 import { eraseClient } from "../services/inbox/erase.js";
-import { loadLeads, allLeads, leadTs, logTurns, gaShared, gaRoute, gaWhy, waCreds, WA_HINT } from "../services/inbox/deps.js";
+import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaShared, gaRoute, gaWhy, waCreds, WA_HINT } from "../services/inbox/deps.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { wzOn, wzMedia } from "../services/channels/wazzapo.js";
@@ -69,6 +69,9 @@ export async function inboxApi(request, env, url, s) {
   /** @type {any} */
   let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте ещё раз." }, 503); }
   if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
+  // чат очищали, а бот в другом месте сети успел записать копию до очистки: пульт показывает то, что бот будет помнить (19.10.2026)
+  const fgAt = await readForgot(env.KV, hk);
+  applyForget(h, fgAt);
   let p = h.profile || {};
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id;
@@ -137,6 +140,7 @@ export async function inboxApi(request, env, url, s) {
     let warn = "";
     try { h = await logTurns(env.KV, hk, [{ role: "model", text: msg, t: now, by: "admin" }], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; }); }
     catch (e) { console.log("inbox log", String(e)); warn = "Сообщение клиенту ушло, но не сохранилось в переписке (хранилище не ответило). Второй раз не отправляйте."; } // сообщение уже у клиента: ошибка здесь привела бы к повторной отправке
+    applyForget(h, fgAt); // ответ пульту — тоже без того, что забыто (копию до очистки мог записать вебхук в другом месте сети)
     p = h.profile || {};
     return jsonP({ ok: true, chat: await view(), ...(warn ? { warn } : {}) });
   }
@@ -149,7 +153,7 @@ export async function inboxApi(request, env, url, s) {
     else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
     else if (act === "forget") { // бот забывает переписку, записи и просьбы этого чата (например, всё уже сделано в Altegio); окно WhatsApp и «стоп» остаются
       const ph0 = normPhone(p.phone || "") || (ch !== "web" ? normPhone("+" + id) : ""), L0 = altLoc(env, c);
-      h = await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (!["li", "waName", "stop", "pn"].includes(k)) delete pr[k]; pr.forgot = Date.now(); }); // forgot: старые заявки этого чата бот в чат не возвращает
+      h = await forgetChat(env.KV, hk, Date.now()); // время очистки — и в чате, и отдельным ключом: копия чата из другого места сети её не затрёт
       if (L0 && ph0) try { await env.KV.delete(`bk:${L0}:${ph0}:${isoDay(Date.now())}`); } catch (e) { console.log("forget limit", String(e)); } // дневной предел записей этого номера — заново
     }
     else if (act === "erase") { // клиент попросил удалить его данные (/privacy): только владелец, отменить нельзя
@@ -191,6 +195,7 @@ export async function inboxApi(request, env, url, s) {
         delete pr.need;
       });
     } else return jsonP({ error: "Неизвестное действие." }, 400);
+    applyForget(h, fgAt);
     p = h.profile || {};
     return jsonP({ ok: true, chat: await view() });
   }

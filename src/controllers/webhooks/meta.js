@@ -79,7 +79,8 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     if (niche) {
       // разговор начинается заново, но то, что уже сделано, бот помнит: записи, заявки и ограничения. Паузу и «стоп» эта команда клиента снимает
       const p = ((await readHist(env, histKey())) || {}).profile || {}, /** @type {Record<string, any>} */ keep = {};
-      for (const k of ["bookings", "pend", "gone", "cbAt", "adminLeads", "delFails", "booked", "leadId", "leadSig", "day", "hoAt", "req", "unk", "name", "phone", "waName", "need"]) if (p[k] !== undefined && p[k] !== null) keep[k] = p[k];
+      // forgot — отметка «Очистить память бота»: без неё старые заявки возвращались бы в чат, а очистка из ключа fg:… стёрла бы то, что «сброс» оставляет
+      for (const k of ["bookings", "pend", "gone", "cbAt", "adminLeads", "delFails", "booked", "leadId", "leadSig", "day", "hoAt", "req", "unk", "name", "phone", "waName", "need", "forgot"]) if (p[k] !== undefined && p[k] !== null) keep[k] = p[k];
       if (Object.keys(keep).length) await putHist(env.KV, histKey(), { n: 0, turns: [], profile: keep });
       else await env.KV.delete(histKey());
     }

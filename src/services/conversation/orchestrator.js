@@ -11,7 +11,7 @@ import { altWhen, altLabel, altSay } from "../booking/replies.js";
 import { AI_BUDGET_MS, PL_MAX, MAX_LEN, HIST_KEEP, MAX_MSGS_PER_SESSION, WA_MAX_DAY, PAUSE_MS, MAX_TURNS, ALT_MAX_ACTIVE, ALT_MAX_ADMIN_LEADS, LEAD_TTL } from "../../config/constants.js";
 import { hasClient, CLIENTS } from "../../config/builtin-clients.js";
 import { redact, phonesIn, maskPhones, normPhone, logSafe } from "../../lib/phone.js";
-import { mergeProfile, putHist } from "../../db/kv/chats.js";
+import { mergeProfile, putHist, readForgot, applyForget, keepAfterForget } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
 import { safeText, safeAsk, fallbackText, cutOffText } from "./fallbacks.js";
 import { notify } from "../integrations/telegram/client.js";
@@ -227,9 +227,13 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const aiDeadline = Date.now() + (+env.AI_BUDGET_MS || AI_BUDGET_MS);
   const c = (hasClient(clientId) && CLIENTS[clientId]) || CLIENTS.dent;
   const ctxT = { nowMs: opts.nowMs ?? Date.now() };
-  const saved = JSON.parse((await store.get(histKey)) || '{"n":0,"turns":[],"profile":{}}');
+  const [histRaw, forgotAt] = await Promise.all([store.get(histKey), readForgot(store, histKey)]);
+  const saved = JSON.parse(histRaw || '{"n":0,"turns":[],"profile":{}}');
   saved.profile = saved.profile || {};
   saved.turns = saved.turns || [];
+  // память чата очищали в пульте, а копию до очистки успели записать обратно (KV в другом месте сети отдавал старую копию) — очищаем снова
+  // (живая проверка владельца 19.10.2026: «бот не может забыть меня, сколько раз бы я не очищал»)
+  const reforgot = applyForget(saved, forgotAt);
   const base = JSON.stringify(saved.profile); // профиль до этого сообщения: при слиянии с другим сообщением берём из своего только то, что изменили сами
   const isNew = saved.n === 0, nowMs = ctxT.nowMs, wa = opts.channel === "wa";
   // вопросы бота «Отменить запись …?» и «Перенести её?» действуют только на одно, следующее сообщение — каким бы путём оно ни пошло
@@ -254,7 +258,9 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     const put = async () => {
       let n = saved.n + 1, t = saved.turns.concat(add), prof = saved.profile, cur = null;
       try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) {}
-      if (cur && cur.n > saved.n) { n = cur.n + 1; t = (cur.turns || []).concat(add); prof = mergeProfile(cur.profile || {}, saved.profile, JSON.parse(base), [], [], []); } // в чат успело прийти другое сообщение — его записи не затираем
+      if (cur) applyForget(cur, saved.profile.forgot || 0);
+      if (cur && (cur.profile?.forgot || 0) > (saved.profile.forgot || 0)) { n = Math.max(cur.n || 0, saved.n) + 1; t = cur.turns || []; prof = keepAfterForget(cur.profile || {}, saved.profile, JSON.parse(base)); } // пока бот отвечал, память чата очистили (см. saveHist)
+      else if (cur && cur.n > saved.n) { n = cur.n + 1; t = (cur.turns || []).concat(add); prof = mergeProfile(cur.profile || {}, saved.profile, JSON.parse(base), [], [], []); } // в чат успело прийти другое сообщение — его записи не затираем
       await putHist(store, histKey, { n, turns: t.slice(-HIST_KEEP), profile: prof });
     };
     try { await put(); }
@@ -397,7 +403,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         catch (e) { console.log("alt journal", String(e)); if (!opts.test) await notifyOnce(env, "altj:" + c.id, `⚠️ Журнал Altegio не читается — ${c.name}\n${String(e.message || e).slice(0, 200)}\nБот отвечает о записях по своей памяти. Проверьте ключ ALTEGIO_USER_${String(c.id).toUpperCase()} (/altegio/user).`, c.id); }
       } else try { pruned = await altPrune(env, saved.profile, nowMs, altLoc(env, c)); } catch (e) { console.log("alt prune", String(e)); } // записи, которые администратор удалил прямо в Altegio, бот забывает
       // и ИИ не должен видеть их в «Уже известно о клиенте» — иначе скажет клиенту, что запись на месте
-      if (pruned) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
+      if (pruned || reforgot) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
       Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt, fitBad: alt.fitBad, fitWho: alt.fitWho });
     } catch (e) {
@@ -1559,7 +1565,15 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     let n = saved.n + 1, outTurns = saved.turns.concat([userTurn, botTurn]), prof = saved.profile, cur = null;
     taken = false;
     try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) { console.log("history read", String(e)); } // не прочиталось — пишем без слияния
-    if (cur && cur.n > saved.n) { // пока бот отвечал, в этот же чат пришло и обработалось другое сообщение — его не затираем
+    if (cur) applyForget(cur, saved.profile.forgot || 0); // другое сообщение записало копию до очистки — она очищается и здесь
+    if (cur && (cur.profile?.forgot || 0) > (saved.profile.forgot || 0)) {
+      // пока бот отвечал, владелец нажал в пульте «Очистить память бота» (живая проверка 19.10.2026). Ответ клиенту уходит (без ответа клиент
+      // не остаётся), но в память не попадает: он написан по старой переписке, и следующее сообщение продолжало бы её («Хотите записаться на
+      // «Premium» к другому мастеру…»). Из профиля — только то, что очистка оставляет; заявки и вопросы бота до очистки не возвращаются.
+      // Сверяем отметку очистки, а не счётчик n: пульт мог очистить чат по своей устаревшей копии, и n у очистки и у бота совпадали
+      n = Math.max(cur.n || 0, saved.n) + 1; outTurns = cur.turns || [];
+      prof = keepAfterForget(cur.profile || {}, saved.profile, JSON.parse(base));
+    } else if (cur && cur.n > saved.n) { // пока бот отвечал, в этот же чат пришло и обработалось другое сообщение — его не затираем
       n = cur.n + 1;
       // человек уже ответил клиенту — второй ответ бота поверх него не нужен. Если бот успел что-то сделать (запись, отмена, заявка), ответ уходит: клиент должен об этом знать
       taken = wa && (cur.profile?.pausedUntil || 0) > nowMs && !((JSON.parse(base).pausedUntil || 0) > nowMs) && !added.length && !removed.length && !newLeads.length;
