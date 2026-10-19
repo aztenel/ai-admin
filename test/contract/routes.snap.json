@@ -1962,6 +1962,72 @@
    "error"
   ]
  },
+ "GET /api/bc/service?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/service?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "botOff",
+   "client",
+   "kinds",
+   "owner",
+   "queue",
+   "sent3d",
+   "total"
+  ]
+ },
+ "GET /api/bc/service?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "botOff",
+   "client",
+   "kinds",
+   "owner",
+   "queue",
+   "sent3d",
+   "total"
+  ]
+ },
+ "GET /api/bc/service?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/service?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "botOff",
+   "client",
+   "kinds",
+   "owner",
+   "queue",
+   "sent3d",
+   "total"
+  ]
+ },
+ "GET /api/bc/service?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "GET /api/bc/auto?c=barber [anon]": {
   "status": 401,
   "type": "application/json",

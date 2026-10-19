@@ -12,6 +12,7 @@ import { BC_HINT, bcCode, bcWhy } from "../services/broadcast/errors.js";
 import { bcOptouts } from "../services/broadcast/segments.js";
 import { bcFields, bcCheck, bcCreate, bcStarting, bcStarted, bcCrmStale } from "../services/broadcast/create.js";
 import { autoInfo, autoSet } from "../services/crm/auto.js";
+import { serviceInfo } from "../services/reminders/info.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, GA_CAP } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
@@ -51,8 +52,10 @@ export async function bcApi(request, env, url, s) {
     if (gr) {
       try { usedGa = bcUsed(JSON.parse((await env.KV.get("bcq:" + cid + ":ga")) || "{}"), now); } catch (e) {}
       const g = await gaInfo(env, gr);
+      // bcOff — рассылки с номера бота выключены кодом (gaNoBroadcast, Winchester): пульт сразу пишет почему и не даёт выбрать этот номер,
+      // а не узнаёт об этом только при «Запустить» (19.10.2026)
       ga = { ready: !g.error && g.state === "authorized", state: g.state || "", phone: g.phone || "", hook: !!g.hook, why: g.error || (g.state === "authorized" ? "" : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
-        warn: g.error || g.hook ? "" : GA_HOOK_WARN, used: usedGa, cap: GA_CAP, hold: holdGa };
+        warn: g.error || g.hook ? "" : GA_HOOK_WARN, used: usedGa, cap: GA_CAP, hold: holdGa, bcOff: bcRoute(env, cid, "ga").error || "" };
     }
     return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, ga, list: rows.slice(0, 60), now });
   }
@@ -65,6 +68,10 @@ export async function bcApi(request, env, url, s) {
   if (M === "GET" && P === "/api/bc/auto") { // автосценарий «Пора на стрижку»: настройки, кому он написал бы сегодня, почему недоступен
     try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await autoInfo(env, c, now)) }); }
     catch (e) { console.log("bc auto", String(e)); return jsonP({ error: BUSY }, 503); }
+  }
+  if (M === "GET" && P === "/api/bc/service") { // сервисные сообщения с номера бота (пульт): что бот шлёт сам, очередь — номера маской
+    try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await serviceInfo(env, c, now)) }); }
+    catch (e) { console.log("bc service", String(e)); return jsonP({ error: BUSY }, 503); }
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
