@@ -46,7 +46,7 @@
 | Тесты | `test/smoke.mjs` (592), `test/platform.mjs` (481), контракт маршрутов `test/contract/` (709), золотые переписки `test/golden/` (51), `test/unit/`, `test/e2e.mjs` (72, Playwright), `test/review/` (~130 независимых сценариев), CI на Node 20/22/24 | Те же наборы как защитная сетка + юнит-тесты модулей + проверки изоляции арендаторов |
 | Выкладка | Cloudflare Workers Builds: `main` → боевой сайт, любая другая ветка → черновик (Worker Previews) | Без изменений; миграции БД — `supabase db push` в отдельном шаге CI |
 
-Слова «Supabase», «Tailwind», «Capacitor», «Realtime» в этом документе — **цель**, их в коде пока нет.
+Слова «Supabase», «Capacitor», «Realtime» в этом документе — **цель**, их в коде пока нет. Tailwind CSS v4 и Vite уже есть в новом пульте `apps/pult` (React 19 + TypeScript), но он ещё не выкладывается на сайт — см. §2.4.
 
 ### 1.3. Ключевые архитектурные решения (и почему)
 
@@ -134,6 +134,7 @@
 ### 2.4. Связанные части вне `worker.js`
 
 - `pult/` → `tools/build-pult.mjs` → `pult.gen.js` (не править руками): PWA-пульт (`/inbox`, `/demo`, манифесты, значки).
+- `apps/pult/` — новый пульт (фаза 4): React 19 + TypeScript + Vite + Tailwind CSS v4. Ходит в тот же API `/api/inbox/*`, `/api/bc/list`, `/api/studio/list`; на сайт **не выкладывается** (рабочий пульт — по-прежнему `pult/` → `pult.gen.js`). Демо-данные — только явно (`npm run dev`, адрес `/demo`, `?demo`), подмены настоящих данных при ошибке нет. Проверка на настоящем коде бота без сети — `npm run dev:live` (поднимает `test/devserver.mjs`). Подробно — `apps/pult/README.md`.
 - `desktop/` — программа «Пульт» для Windows (Tauri 2), сборка `.github/workflows/desktop.yml`, снимки пробного запуска — ветка `desktop-shots`. Подробно — `desktop/README.md`.
 - `test/` — `harness.mjs` (KV в памяти, заглушки Gemini/Claude/Telegram/Meta/Altegio/Green-API, `S.gaText` — вебхук Green-API), `smoke.mjs`, `platform.mjs`, `e2e.mjs`, `devserver.mjs` (локальный сервер на заглушках), `review/` (независимые сценарии, `node test/review/run.mjs`).
 - Защитная сетка переезда (шаг 0, всё запускается из `test/smoke.mjs`, значит, и перед выкладкой):
