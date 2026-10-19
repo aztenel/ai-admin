@@ -426,7 +426,8 @@ test("сигнал Meta пришёл, когда рассылки дня уже 
   assert.ok(s.kv.json("bchold:winchester"));
   assert.equal((await (await own.post("/api/bc/auto", { c: "winchester", clearHold: true })).json()).ok, true);
   assert.equal(s.kv.json("bchold:winchester"), null);
-  assert.ok((await (await own.go("/broadcast?c=winchester")).text()).includes("Снять сигнал Meta"));
+  const pg = await (await own.go("/broadcast?c=winchester")).text();
+  assert.ok(pg.includes("Снять сигнал Meta")); assert.ok(pg.includes("База клиентов из Altegio") && pg.includes("/api/crm/refresh"), "блок базы и кнопка «Обновить базу»");
 });
 
 test("очередь отправки не записалась — рассылка автосценария на паузе с объяснением, владелец узнаёт", async () => {

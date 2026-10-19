@@ -149,6 +149,7 @@ export function bcPage() {
 input[type=file]{font-size:14px;margin-top:6px}label.ck{font-weight:400;display:flex;gap:8px;align-items:flex-start}label.ck input{margin-top:4px;width:18px;height:18px}</style></head><body>
 <div class="top"><b id="ttl">Рассылки</b><a id="l_in" href="/inbox">Чаты</a><a id="l_st" href="/admin" hidden>Панель</a><a href="/logout">Выйти</a></div><div class="w">
 <div id="info"></div>
+<div id="crm" class="card" hidden></div>
 <div id="list"></div>
 <div class="row"><button class="btn p" id="b_new">+ Новая рассылка</button></div>
 <div id="form" class="card" hidden>
@@ -230,6 +231,18 @@ $('b_chk').onclick=function(){api('/api/bc/check',body()).then(function(d){if(d.
 $('b_test').onclick=function(){var b=body();b.to=$('f_to1').value;var t=$('b_test');t.disabled=true;api('/api/bc/test',b).then(function(d){t.disabled=false;msg($('tout'),d.error?'e':'g',[d.error||d.text])}).catch(function(e){t.disabled=false;fail(e,$('tout'))})};
 $('b_make').onclick=function(){var t=$('b_make');t.disabled=true;api('/api/bc/create',body()).then(function(d){t.disabled=false;if(!d.ok){msg($('fout'),'e',(d.errors||[d.error||'Не получилось.']).map(function(x){return'• '+x}));return}$('form').hidden=true;$('b_new').hidden=false;$('f_rec').value='';$('fout').textContent='';load()}).catch(function(e){t.disabled=false;fail(e,$('fout'))})};
 document.addEventListener('visibilitychange',function(){if(!document.hidden)watch()});
-load();
+// база клиентов из Altegio (этап 2): сколько клиентов, когда обновлена, сегменты; «Обновить базу» — у владельца (у черновика нет ночного обновления)
+function crmBox(){api('/api/crm/segments?c='+C).then(function(d){var B=$('crm');B.textContent='';if(!d.segments||(d.why&&!d.at)){B.hidden=true;return}B.hidden=false;
+ B.appendChild(el('h3','','База клиентов из Altegio'));
+ if(d.at){B.appendChild(el('p','','Клиентов с визитами за 90 дней: '+d.clients+'. Можно писать сейчас: '+d.ok+'. Обновлена '+new Date(d.at).toLocaleString('ru-RU',{timeZone:'Asia/Almaty',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'})+'.'));
+  var i=d.info||{};if(i.masked)B.appendChild(el('p','msg w','Скрытых номеров: '+i.masked+' — у сотрудника, чей ключ журнала у бота, в Altegio нет права видеть телефоны клиентов.'));if(i.cut)B.appendChild(el('p','msg w','Журнал прочитан не весь (слишком много записей) — числа могут быть меньше настоящих.'));
+  B.appendChild(el('p','mut',d.segments.filter(function(x){return x.id.indexOf('staff:')}).map(function(x){return x.label+' — '+x.n}).join(' · ')));
+  var e=d.excluded||{};B.appendChild(el('p','mut','Не пишем: просили не писать — '+(e.stop||0)+', уже записаны — '+(e.fut||0)+', были меньше 14 дней назад — '+(e.recent||0)+', уже писали за 14 дней — '+(e.marketed||0)+'.'));
+  if(i.att)B.appendChild(el('p','mut','Отметки визитов в журнале Altegio (для проверки): '+Object.keys(i.att).map(function(k){return k+' — '+i.att[k]}).join(', ')+'. «-1» — не пришёл, такие визиты не считаются.'))}
+ else B.appendChild(el('p','mut',d.why||'Базу ещё не собирали.'));
+ if(d.error)B.appendChild(el('p','msg e','Последнее обновление не удалось: '+d.error));
+ if(d.owner&&!d.why){var rb=el('button','btn','Обновить базу');rb.onclick=function(){rb.disabled=true;rb.textContent='Читаю журнал Altegio… до минуты';api('/api/crm/refresh',{c:C}).then(function(r){if(r.error){rb.disabled=false;rb.textContent='Обновить базу';msg(B,'e',[r.error]);return}crmBox()}).catch(function(e){rb.disabled=false;rb.textContent='Обновить базу';fail(e,B)})};B.appendChild(rb)}
+}).catch(function(){$('crm').hidden=true})}
+load();crmBox();
 </script></body></html>`;
 }
