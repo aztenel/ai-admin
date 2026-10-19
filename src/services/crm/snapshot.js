@@ -63,7 +63,10 @@ export function crmFold(records, nowMs) {
     x.svc = altText([...new Set([...(x.svc ? x.svc.split(" + ") : []), ...svc])].join(" + "), 90);
   }
   const list = [...by.values()].filter(x => x.v > 0).map(x => { const { fut, ...rest } = x; return fut ? x : rest; });
-  return { list, visits, masked: masked.size, bad: bad.size, att };
+  // только будущая запись, визита за 90 дней нет: в сегменты не попадают, но рассылка, созданная раньше (последний визит тогда был
+  // в окне), перед отправкой должна увидеть, что человек записался (находка проверки 19.10.2026)
+  const futOnly = [...by.values()].filter(x => !x.v && x.fut).map(x => x.p);
+  return { list, futOnly, visits, masked: masked.size, bad: bad.size, att };
 }
 
 // собрать снимок сейчас: журнал за 90 дней назад и 60 вперёд → crm:<клиент>:snap. Возвращает мета-данные без списка.
@@ -80,7 +83,7 @@ export async function crmBuild(env, c, nowMs) {
     const r = await altRecordsRange(env, altUserKey(env, c), altLoc(env, c), from, to);
     const f = crmFold(r.list, nowMs);
     const meta = { at: nowMs, from, to, records: r.list.length, visits: f.visits, clients: f.list.length, masked: f.masked, bad: f.bad, att: f.att, cut: r.cut };
-    try { await crmSave(env, c.id, { ...meta, list: f.list }); } catch (e) { throw crmError("store", "Не удалось сохранить базу — хранилище не отвечает, попробуйте ещё раз."); }
+    try { await crmSave(env, c.id, { ...meta, list: f.list, futOnly: f.futOnly }); } catch (e) { throw crmError("store", "Не удалось сохранить базу — хранилище не отвечает, попробуйте ещё раз."); }
     console.log("crm", c.id, JSON.stringify({ ...meta, att: undefined })); // только числа, без номеров
     return meta;
   } catch (/** @type {any} */ e) {

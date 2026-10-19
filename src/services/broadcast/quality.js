@@ -9,13 +9,16 @@ import { local, isoDay } from "../../lib/time.js";
 import { waRoute } from "../channels/index.js";
 import { notify } from "../integrations/telegram/client.js";
 import { bcHealth } from "./sender.js";
+import { autoLoad } from "../../db/kv/crm.js";
 
 const QL = /** @type {Record<string, string>} */ ({ YELLOW: "жёлтое (жалобы клиентов растут)", RED: "красное (номер могут ограничить)" });
 
 /** @param {Env} env @param {number} now @returns {Promise<number>} сколько сигналов отправлено */
 export async function qualityRun(env, now) {
   const d = local(now);
-  if (d.getUTCHours() !== 10 || d.getUTCMinutes() >= 10 || !env.TG_TOKEN) return 0;
+  // без TG_TOKEN тоже проверяем и записываем qual: — по нему автосценарий «Пора на стрижку» решает, можно ли сегодня маркетинг
+  // (без записи он пропускал бы каждый день молча: находка проверки 19.10.2026); сигналы в Telegram — только с TG_TOKEN (notify)
+  if (d.getUTCHours() !== 10 || d.getUTCMinutes() >= 10) return 0;
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
     if (c.off || !env["WA_TOKEN_" + c.id.toUpperCase()]) continue; // свой номер Meta или Wazzapo
@@ -31,6 +34,8 @@ export async function qualityRun(env, now) {
       if (QL[h.quality]) L.push(`Качество номера WhatsApp — ${QL[h.quality]}. Сократите рассылки и проверьте, на что жалуются клиенты.`);
       if (prev && prev.limit > 0 && h.limit > 0 && h.limit < prev.limit) L.push(`Предел Meta уменьшился: было ${prev.limit} получателей за 24 часа, стало ${h.limit}.`);
       if (prev && QL[prev.quality] && h.quality === "GREEN") L.push("Качество номера снова зелёное ✅");
+      // качество не пришло (поле ответа Wazzapo вживую не проверено) — автосценарий без него не пишет; включённый — пусть владелец знает почему
+      if (!h.quality && c.crm) { /** @type {any} */ let a = null; try { a = await autoLoad(env, c.id); } catch (e) {} if (a && a.on) L.push("Meta (или Wazzapo) не сообщили качество номера — автосценарий «Пора на стрижку» сегодня не отправит. Если так каждый день, скажите разработчику."); }
       try { await env.KV.put(qk, JSON.stringify({ quality: h.quality || "", limit: h.limit || 0, at: now }), { expirationTtl: 60 * 86400 }); } catch (e) { console.log("quality save", String(e)); }
     }
     if (L.length && await notify(env, `📶 Номер WhatsApp — ${c.name}${h.phone ? " (" + h.phone + ")" : ""}\n${L.join("\n")}`, c.id)) n++;

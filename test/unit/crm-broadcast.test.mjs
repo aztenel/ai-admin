@@ -313,3 +313,47 @@ test("рассылка автосценария — только в день с�
   const t = await autoOne(s.env, W, AT); await s.cron();
   assert.equal(t.state, "sent"); assert.deepEqual(tpls().map(x => x.body.to).sort(), [dg(201), dg(202), dg(203)].sort(), "сегодняшняя — как обычно");
 });
+
+// находки второй проверки 19.10.2026 (исправления первой)
+test("записался, а визит уже старше 90 дней — снимок помнит запись, рассылка, созданная раньше, ему не пишет; номер браузеру не уходит", async () => {
+  const s = await base(), own = await login(s, OWNER);
+  net.altJournal.push(rec(ph(301), 89, { name: "Тимур" }));
+  await crmBuild(s.env, W, NOW);
+  const d = await (await own.post("/api/bc/create", { ...FORM, name: "Уходят", segment: "uhodyat" })).json();
+  assert.equal(d.ok, true, JSON.stringify(d)); assert.equal(d.b.total, 1);
+  net.altJournal = net.altJournal.filter(r => r.client.phone !== ph(301)).concat(rec(ph(301), -2, { name: "Тимур" })); // прошло 2 дня: визит вышел из окна, Тимур записался
+  await crmBuild(s.env, W, NOW);
+  assert.deepEqual(s.kv.json("crm:winchester:snap").futOnly, [dg(301)]);
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
+  await s.cron();
+  assert.equal(tpls().length, 0, "записавшемуся — нет"); assert.equal(s.kv.json(`bc:winchester:${d.b.id}`).excl, 1);
+  const t = await (await own.go("/api/crm/segments?c=winchester")).text();
+  assert.ok(!t.includes(dg(301)) && !t.includes("futOnly"), "номера только на сервере");
+});
+
+test("качество номера: без TG_TOKEN проверка всё равно записывается; качество не пришло — автосценарий пропускает день, пульт видит почему", async () => {
+  const s = await autoBase(), own = await login(s, OWNER);
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  await s.kv.api.put("qual:winchester", JSON.stringify({ quality: "", limit: 250, at: AT - 3600e3 }));
+  assert.equal((await autoOne(s.env, W, AT)).state, "skip");
+  assert.ok(/не сообщили качество/.test(net.tg.at(-1).text));
+  const g = await (await own.go("/api/bc/auto?c=winchester")).json();
+  assert.ok(/не сообщили качество/.test(g.skip.why), JSON.stringify(g)); assert.deepEqual(g.qual, { quality: "", at: AT - 3600e3 });
+});
+
+test("«Продолжить» у вчерашней рассылки автосценария: сигнал Meta снимается, рассылка не уходит; без сигнала — отказ", async () => {
+  const s = await autoBase(), own = await login(s, OWNER);
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  const r = await autoOne(s.env, W, AT - 86400e3);
+  const b = s.kv.json(`bc:winchester:${r.id}`); b.status = "paused"; b.note = "Сигнал от Meta"; s.kv.mem.set(`bc:winchester:${r.id}`, JSON.stringify(b));
+  await s.kv.api.put("bchold:winchester", JSON.stringify({ tpl: { pora_na_strizhku: { at: AT - 86400e3, why: "шаблон приостановлен Meta" } } }));
+  const c1 = await own.post("/api/bc/act", { c: "winchester", id: r.id, act: "start" });
+  assert.equal(c1.status, 409); assert.ok(/Снять сигнал/.test((await c1.json()).confirm));
+  const c2 = await (await own.post("/api/bc/act", { c: "winchester", id: r.id, act: "start", force: true })).json();
+  assert.equal(c2.ok, true); assert.equal(c2.b.status, "stopped"); assert.ok(/Сигнал снят/.test(c2.b.note));
+  assert.ok(!(((s.kv.json("bchold:winchester") || {}).tpl || {}).pora_na_strizhku), "сигнал снят — автосценарий продолжит со следующего дня");
+  await s.cron(); assert.equal(tpls().length, 0);
+  const b2 = s.kv.json(`bc:winchester:${r.id}`); b2.status = "paused"; s.kv.mem.set(`bc:winchester:${r.id}`, JSON.stringify(b2));
+  const c3 = await own.post("/api/bc/act", { c: "winchester", id: r.id, act: "start" });
+  assert.equal(c3.status, 409); assert.ok(/за прошлый день/.test((await c3.json()).error));
+});

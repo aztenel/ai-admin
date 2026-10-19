@@ -101,7 +101,10 @@ export async function bcApi(request, env, url, s) {
       const rt = bcRoute(env, cid, cur.ch);
       if (rt.error) return jsonP({ error: rt.error }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
-      const stale = await bcCrmStale(env, c, cur, now);
+      // рассылка автосценария — только в день создания (bcTick): вчерашнюю не продолжаем, а сигнал Meta снять даём — иначе автосценарий
+      // пропускал бы дни, а «Продолжить» запускал бы рассылку, которая тут же остановится (находка проверки 19.10.2026)
+      const past = cur.by === "auto" && isoDay(cur.created) < isoDay(now), PAST = "Эту рассылку автосценария уже не отправить — она за прошлый день: тем, кому не ушло, уже не «ровно N дней». Завтра в 11:00 автосценарий соберёт новый список.";
+      const stale = past ? "" : await bcCrmStale(env, c, cur, now);
       if (stale) return jsonP({ error: stale }, 409);
       if (cur.ch === "ga") { // номер на связи и вебхук ведёт в этот бот — иначе «стоп» клиентов до бота не дойдёт
         const g = await gaInfo(env, rt.ga);
@@ -110,8 +113,10 @@ export async function bcApi(request, env, url, s) {
         if (!g.hook) return jsonP({ error: GA_HOOK_WARN }, 409);
       }
       const hold = bcHoldFor(await bcHold(env, cid), cur);
-      if (hold && body.force !== true) return jsonP({ confirm: `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
+      if (past && !hold) return jsonP({ error: PAST }, 409);
+      if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
+      if (past) { cur.status = "stopped"; cur.note = "Сигнал снят. " + PAST; await bcPut(env, cid, cur); await bcRun(env, cid, id, false); return jsonP({ ok: true, b: pub(cur) }); }
       bcStarting(cur, now); await bcPut(env, cid, cur); await bcStarted(env, cid, cur, now);
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "stop") { if (cur.status !== "done") { cur.status = "stopped"; delete cur.note; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }

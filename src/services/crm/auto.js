@@ -13,7 +13,7 @@ import { logSafe } from "../../lib/phone.js";
 import { TZ, local, isoDay } from "../../lib/time.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { AUTO_HOUR, CRM_FRESH_AUTO, CRM_QUIET_DAYS, CRM_PAST_DAYS } from "../../config/constants.js";
-import { autoLoad, autoSave, autoDayMark } from "../../db/kv/crm.js";
+import { autoLoad, autoSave, autoDayMark, autoSkipSave, autoSkipLoad } from "../../db/kv/crm.js";
 import { notify } from "../integrations/telegram/client.js";
 import { bcRoute } from "../broadcast/sender.js";
 import { bcHold, bcHoldFor } from "../broadcast/holds.js";
@@ -59,10 +59,13 @@ export async function autoSet(env, c, body) {
   return { ok: true, auto: cfg };
 }
 
-// для пульта: настройки, почему недоступен, свежесть базы и кому автосценарий написал бы сегодня (n — с учётом предела в день)
+// для пульта: настройки, почему недоступен, свежесть базы, кому автосценарий написал бы сегодня (n — с учётом предела в день),
+// последняя проверка номера (qual) и почему последний раз пропустил день (skip, за 2 дня) — видно и без Telegram
 /** @param {Env} env @param {Client} c @param {number} now */
 export async function autoInfo(env, c, now) {
   const auto = await autoGet(env, c.id), route = bcRoute(env, c.id, "");
+  /** @type {any} */ let q = null, sk = null;
+  try { [q, sk] = await Promise.all([qualityGet(env, c.id), autoSkipLoad(env, c.id)]); } catch (e) {}
   const why = !c.crm ? "У этой компании нет базы клиентов из Altegio — автосценарий недоступен." : route.error || "";
   let at = 0, today = { n: 0, total: 0 };
   if (c.crm) {
@@ -71,7 +74,8 @@ export async function autoInfo(env, c, now) {
   }
   const note = auto.days < CRM_QUIET_DAYS ? `Тем, кто был меньше ${CRM_QUIET_DAYS} дней назад, маркетинг не пишем — с таким числом дней автосценарию некому писать.`
     : auto.days > CRM_PAST_DAYS ? `В базе — визиты за ${CRM_PAST_DAYS} дней: с таким числом дней автосценарию некому писать.` : "";
-  return { auto, available: !!c.crm, why, crm: { at, fresh: !!at && now - at <= CRM_FRESH_AUTO }, today, ...(note ? { note } : {}) };
+  return { auto, available: !!c.crm, why, crm: { at, fresh: !!at && now - at <= CRM_FRESH_AUTO }, today, ...(note ? { note } : {}),
+    qual: q ? { quality: String(q.quality || ""), at: +q.at || 0 } : null, ...(sk && now - sk.at < 2 * 86400e3 ? { skip: sk } : {}) };
 }
 
 // 11:00–11:09 по Астане: компаниям с базой клиентов (c.crm) и включённым автосценарием — не больше одной рассылки в день
@@ -99,6 +103,7 @@ export async function autoOne(env, c, now) {
   if (!(await autoDayMark(env, c.id, isoDay(now)))) return { state: "off" }; // отметка до работы: сбой не повторяется каждую минуту, рассылка не создаётся дважды
   /** @param {string} why */
   const skip = async why => {
+    try { await autoSkipSave(env, c.id, { at: now, why }); } catch (e) { console.log("auto skip", String(e)); }
     try { await notify(env, `⏸ «Пора на стрижку» сегодня не отправлен — ${c.name}\n${why}\nЗавтра в ${AUTO_HOUR}:00 бот проверит снова.`, c.id); } catch (e) { console.log("auto tg", String(e)); }
     return { state: "skip", why };
   };
@@ -116,9 +121,10 @@ async function autoDay(env, c, cfg, now, skip) {
   if (q && QBAD[q.quality]) return skip(`Качество номера WhatsApp — ${QBAD[q.quality]}: маркетинг сейчас может привести к ограничению номера.`);
   // качество не узнали сегодня (проверка в 10:00 не удалась, Meta или Wazzapo не сообщили качество) — не «всё хорошо»: через Wazzapo
   // вебхуков о качестве нет, и эта проверка — единственный сигнал, а номер Winchester уже блокировали (находка проверки 19.10.2026)
-  if (!q || !q.quality || !(q.at >= day0)) return skip("Номер WhatsApp сегодня не проверен (проверка в 10:00 не удалась или не сообщила качество номера): без проверки маркетинг не отправляю.");
+  if (!q || !(q.at >= day0)) return skip("Номер WhatsApp сегодня не проверен: проверка в 10:00 не получила ответа от Meta (или Wazzapo). Без проверки качества номера маркетинг не отправляю.");
+  if (!q.quality) return skip("Номер WhatsApp сегодня не проверен: Meta (или Wazzapo) не сообщили качество номера. Без него маркетинг не отправляю — если так каждый день, скажите разработчику.");
   const hold = bcHoldFor(await bcHold(env, c.id), { tpl: cfg.tpl });
-  if (hold) return skip(`Сигнал от Meta: ${hold.why}. Когда причина устранена, продолжите остановленную рассылку на странице рассылок.`);
+  if (hold) return skip(`Сигнал от Meta: ${hold.why}. Когда причина устранена, нажмите «Продолжить» у остановленной рассылки на странице рассылок — сигнал снимется, и автосценарий продолжит со следующего дня.`);
   const view = await crmView(env, c, now);
   if (!view.snap || now - view.snap.at > CRM_FRESH_AUTO) return skip("База клиентов из Altegio не обновлялась больше 36 часов (ночное обновление не сработало): по старой базе можно написать тому, кто уже записался. Обновите базу в разделе сегментов.");
   const seg = { id: "all", days: cfg.days };

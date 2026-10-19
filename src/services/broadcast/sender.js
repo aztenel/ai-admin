@@ -110,9 +110,9 @@ export async function bcTick(env, cid, id, gaBusy) {
   // рассылка автосценария «Пора на стрижку» — только в день создания: ждала предела номера за сутки и не успела — назавтра её получателям
   // уже не «ровно N дней», а с новой рассылкой автосценария за день ушло бы больше его предела (находка проверки 19.10.2026)
   if (b.by === "auto" && isoDay(b.created) < isoDay(now)) {
-    b.status = "stopped"; b.note = "Остановлена: не успела уйти в день создания — назавтра автосценарий собирает новый список."; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
+    b.status = "stopped"; b.note = "Остановлена: не успела уйти в день создания (пауза, ошибки Meta или предел номера за сутки) — назавтра автосценарий собирает новый список."; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     await bcPut(env, cid, b); await bcRun(env, cid, id, false);
-    try { await notify(env, `⏹ Автосценарий «${b.name}» не успел отправить всем — ${CLIENTS[cid].name}\nОтправлено ${b.sent} из ${b.total}: предел номера за сутки был занят другими рассылками. Остальным — нет: им уже не «ровно N дней».`, cid); } catch (e) { console.log("bc tg", String(e)); }
+    try { await notify(env, `⏹ Автосценарий «${b.name}» не успел отправить всем — ${CLIENTS[cid].name}\nОтправлено ${b.sent} из ${b.total} в день создания (мешали пауза, ошибки Meta или предел номера за сутки). Остальным — нет: им уже не «ровно N дней».`, cid); } catch (e) { console.log("bc tg", String(e)); }
     return { b, state: "stopped" };
   }
   const ga = b.ch === "ga";
@@ -184,6 +184,7 @@ export async function bcTick(env, cid, id, gaBusy) {
       if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return await stopFor("База клиентов из Altegio не обновлялась больше 3 дней — по ней не видно, кто уже записался. Обновите базу в разделе сегментов и нажмите «Продолжить».");
       for (const x of view.rows) if (x.why && x.why !== "stop") no.add(x.p);
       for (const p of view.marked || []) no.add(p);
+      for (const p of view.futOnly || []) no.add(p);
     }
     if (ga) { const j = items.findIndex(x => !stop.has(x[0])); if (j >= 0) items.length = j + 1; }
     // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт

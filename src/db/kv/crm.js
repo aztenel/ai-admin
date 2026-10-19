@@ -4,7 +4,8 @@
 //     одно значение (предел KV — 25 МБ): одно чтение на запрос пульта вместо сотен ключей. Номера только здесь, в журнал сервера — через logSafe
 //   crm:<клиент>:err — { at, error } последнего неудачного обновления, 7 дней (пульт покажет, почему база старая)
 //   bcm:<клиент>:<день> — цифры номеров, кому в этот день ушёл маркетинговый шаблон (JSON-массив), 15 дней: сегменты не берут их 14 дней
-//   bcauto:<клиент> — настройки автосценария «Пора на стрижку» (services/crm/auto.js), без срока; bca:<клиент>:<день> — отметка «сегодня уже был», 3 дня
+//   bcauto:<клиент> — настройки автосценария «Пора на стрижку» (services/crm/auto.js), без срока; bca:<клиент>:<день> — отметка «сегодня уже был», 3 дня;
+//   bcas:<клиент> — почему последний раз пропустил день, 7 дней
 /** @import { Env } from "../../lib/types.js" */
 import { kvRetry } from "./retry.js";
 
@@ -64,6 +65,11 @@ export async function bcmAdd(env, cid, day, phones) {
 export const autoLoad = async (env, cid) => JSON.parse((await env.KV.get(`bcauto:${cid}`)) || "null");
 /** @param {Env} env @param {string} cid @param {Record<string, any>} cfg */
 export const autoSave = (env, cid, cfg) => kvRetry(() => env.KV.put(`bcauto:${cid}`, JSON.stringify(cfg)));
+// почему автосценарий пропустил день — bcas:<клиент> { at, why }, 7 дней: пульт показывает причину и без Telegram
+/** @param {Env} env @param {string} cid @param {{ at: number, why: string }} v */
+export const autoSkipSave = (env, cid, v) => env.KV.put(`bcas:${cid}`, JSON.stringify(v), { expirationTtl: 7 * 86400 });
+/** @param {Env} env @param {string} cid @returns {Promise<{ at: number, why: string } | null>} */
+export const autoSkipLoad = async (env, cid) => JSON.parse((await env.KV.get(`bcas:${cid}`)) || "null");
 // дневная отметка автосценария bca:<клиент>:<день> — до работы, как у ночного снимка: сбой не повторяется каждую минуту и рассылка
 // не создаётся дважды. true — сегодня ещё не было
 /** @param {Env} env @param {string} cid @param {string} day */

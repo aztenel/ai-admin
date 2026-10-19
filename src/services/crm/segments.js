@@ -11,7 +11,7 @@ import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string> }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -66,7 +66,8 @@ export async function crmView(env, c, now) {
     const d = daysSince(x.last, now);
     return { ...x, d, why: stop.has(x.p) ? "stop" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
-  return { snap, rows, marked }; // marked — и тем, кого в новом снимке нет: отправка рассылки проверяет каждого получателя (sender.js)
+  // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
+  return { snap, rows, marked, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
 }
 
 // кнопки с числами и сведения о снимке (для пульта)
@@ -78,7 +79,7 @@ export async function crmSegments(env, c, now) {
   const staff = [...new Set(rows.map(x => x.staff).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
   const segments = CRM_SEGS.map(s => ({ id: s.id, label: s.label, rule: s.rule, n: ok.filter(s.test).length }))
     .concat(staff.map(n => ({ id: "staff:" + n, label: "Мастер: " + n, rule: "последний визит у мастера", n: ok.filter(x => x.staff === n).length })));
-  const { list, ...info } = snap || {};
+  const { list, futOnly, ...info } = snap || {}; // номера — только на сервере
   return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") },
     info: snap ? info : null, ...(err && err.at > ((snap && snap.at) || 0) ? { error: err.error, errorAt: err.at } : {}) };
 }

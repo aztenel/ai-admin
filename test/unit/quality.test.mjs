@@ -49,3 +49,15 @@ test("не в 10 утра и у бизнеса без своего номера 
   await qualityRun(s2.env, AT);
   assert.equal(net.wz.length + net.graph.length, 0);
 });
+
+test("без TG_TOKEN проверка всё равно идёт и записывается (по ней автосценарий решает про маркетинг); качество не пришло при включённом автосценарии — строка в сигнале", async () => {
+  net.reset(); health("GREEN", "TIER_250");
+  const s = mk({ ...WZ, TG_TOKEN: "" });
+  await qualityRun(s.env, AT);
+  assert.equal(s.kv.json("qual:winchester").quality, "GREEN"); assert.equal(net.tg.length, 0);
+  net.reset(); health("", "TIER_250");
+  const s2 = mk(WZ);
+  await s2.kv.api.put("bcauto:winchester", JSON.stringify({ on: true, tpl: "pora_na_strizhku" }));
+  await qualityRun(s2.env, AT);
+  assert.equal(tg().length, 1, JSON.stringify(net.tg)); assert.ok(/не сообщили качество/.test(tg()[0]), tg()[0]);
+});
