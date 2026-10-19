@@ -18,6 +18,9 @@ import type {
   CrmSegment,
   MainNumberState,
   SegmentSpec,
+  ServiceKindState,
+  ServiceOverview,
+  ServiceQueueItem,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
 import { ApiError } from "./errors";
@@ -217,6 +220,49 @@ function parseList(text: string) {
     list.push({ phone: p, name });
   }
   return { list, bad, badN, dup };
+}
+
+// ---------- сервисные сообщения: вымышленные записи через бота, времена — по правилам бота (src/services/reminders/plan.js) ----------
+const ASTANA = 5 * HOUR; // UTC+5
+/** Время по Астане: day — дней от сегодняшнего, hm — «ЧЧ:ММ». */
+function astanaAt(now: number, day: number, hm: string): number {
+  const d = new Date(now + ASTANA), [h, m] = hm.split(":").map(Number);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + day, h, m) - ASTANA;
+}
+const SERVICE_LABEL: Record<ServiceKindState["kind"], string> = {
+  d1: "Накануне в 18:00 — напоминание о записи",
+  h2: "За 2 часа — напоминание о записи",
+  rv: "Через 3 часа после визита — просьба оставить отзыв",
+};
+/** Очередь «Демо Барбера»: четыре записи через бота — накануне в 18:00, за 2 часа, отзыв через 3 часа (вечером — утром в 11:00). */
+function barberQueue(now: number): ServiceQueueItem[] {
+  // после 14:00 по Астане записи — с завтрашнего дня, чтобы вся очередь была впереди
+  const b = new Date(now + ASTANA).getUTCHours() < 14 ? 0 : 1;
+  const books: { name: string; phone: string; channel: "main" | "bot"; day: number; time: string; eve: boolean }[] = [
+    { name: "Тимур", phone: "+7 700 *** ** 18", channel: "bot", day: b, time: "16:00", eve: false }, // записался сегодня утром — без «накануне»
+    { name: "Арман", phone: "+7 700 *** ** 41", channel: "bot", day: b + 1, time: "12:00", eve: true },
+    { name: "", phone: "+7 700 *** ** 07", channel: "bot", day: b + 1, time: "16:30", eve: true },
+    { name: "Данияр", phone: "+7 700 *** ** 63", channel: "main", day: b + 2, time: "11:00", eve: true }, // писал на основной номер — оттуда и напоминание
+  ];
+  const out: ServiceQueueItem[] = [];
+  for (const x of books) {
+    const t = astanaAt(now, x.day, x.time), base = { phone: x.phone, name: x.name, channel: x.channel, date: dayIso(t), time: x.time };
+    if (x.eve) out.push({ ...base, kind: "d1", at: astanaAt(now, x.day - 1, "18:00") });
+    out.push({ ...base, kind: "h2", at: t - 2 * HOUR });
+    const rv = t + 3 * HOUR, rh = new Date(rv + ASTANA).getUTCHours();
+    out.push({ ...base, kind: "rv", at: rh >= 21 || rh < 10 ? astanaAt(now, x.day + (rh >= 21 ? 1 : 0), "11:00") : rv });
+  }
+  return out.filter((x) => x.at > now).sort((a, z) => a.at - z.at);
+}
+function demoService(ws: string, now: number): Omit<ServiceOverview, "owner"> {
+  const kinds = (on: Record<ServiceKindState["kind"], boolean>, link = ""): ServiceKindState[] =>
+    (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k], on: on[k], ...(k === "rv" && link ? { link } : {}) }));
+  if (ws === "demo") {
+    const queue = barberQueue(now);
+    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true };
+  }
+  // «Демо Сервис» и новая компания — без записи через Altegio: напоминаний и отзывов бот не шлёт (как сервер: только по своим записям в Altegio)
+  return { kinds: kinds({ d1: false, h2: false, rv: false }), queue: [], total: 0, sent3d: 0, botOff: false, altegio: false };
 }
 
 export function createDemoCampaigns(role: () => Role): { api: CampaignSource; rows(ws: string, channelId: (ch: "main" | "bot") => string | undefined): Campaign[] } {
@@ -471,6 +517,11 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       const w = find(ws);
       ownerOnly("Настраивать автосценарий может только владелец.");
       w.hold = [];
+    },
+    async serviceMessages(ws) {
+      await wait(350);
+      find(ws);
+      return { owner: owner(), ...demoService(ws, Date.now()) };
     },
   };
 

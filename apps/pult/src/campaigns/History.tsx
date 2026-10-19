@@ -47,11 +47,24 @@ export function useCampaignDetails(ws: string, rows: CampaignRow[] | undefined, 
     setGone(new Set());
   }, [ws]);
 
-  const upsert = useCallback((d: CampaignDetail) => {
+  // номер последнего запроса или действия по каждой рассылке: ответ опроса, ушедшего раньше «Пауза», приходит позже ответа «Пауза» и
+  // затирал его — лист снова показывал «Идёт отправка» (находка проверки 19.10.2026). Применяем только ответ самого свежего.
+  const ver = useRef<Record<string, number>>({});
+  const bump = (id: string) => (ver.current[id] = (ver.current[id] || 0) + 1);
+  const apply = useCallback((d: CampaignDetail) => {
     const was = ref.current[d.id];
+    ref.current = { ...ref.current, [d.id]: d }; // два ответа подряд до перерисовки: второй видит первый
     setDetails((prev) => ({ ...prev, [d.id]: d }));
     if (was && was.status === "running" && d.status !== "running") settledRef.current();
   }, []);
+  /** Ответ действия (запуск, пауза…) — свежее любого опроса, который ещё в пути. */
+  const upsert = useCallback(
+    (d: CampaignDetail) => {
+      bump(d.id);
+      apply(d);
+    },
+    [apply],
+  );
   const remove = useCallback((id: string) => {
     setGone((prev) => new Set(prev).add(id));
     setDetails((prev) => {
@@ -61,19 +74,19 @@ export function useCampaignDetails(ws: string, rows: CampaignRow[] | undefined, 
     });
   }, []);
 
-  const fetchOne = useCallback(
+  /** Перечитать рассылку целиком. Ошибка — исключением (лист покажет её); ответ, который обогнали, не применяется. */
+  const load = useCallback(
     async (id: string) => {
       const src = store.source;
       if (!src) return;
-      try {
-        const d = await src.campaign(ws, id);
-        if (alive.current) upsert(d);
-      } catch {
-        // строка списка остаётся как есть; ошибку покажет лист рассылки, если её открыть
-      }
+      const my = bump(id);
+      const d = await src.campaign(ws, id);
+      if (alive.current && ver.current[id] === my) apply(d);
     },
-    [ws, upsert],
+    [ws, apply],
   );
+  // опрос и дочитывание: ошибку не показываем — строка списка остаётся как есть, ошибку покажет лист рассылки, если её открыть
+  const fetchOne = useCallback((id: string) => load(id).catch(() => {}), [load]);
 
   // незавершённые без полных сведений (или сведения отстали от строки) — дочитать
   useEffect(() => {
@@ -105,7 +118,7 @@ export function useCampaignDetails(ws: string, rows: CampaignRow[] | undefined, 
     };
   }, [running, fetchOne]);
 
-  return { details, gone, upsert, remove, refresh: fetchOne };
+  return { details, gone, upsert, remove, load };
 }
 
 const TONE: Record<Tone, string> = {

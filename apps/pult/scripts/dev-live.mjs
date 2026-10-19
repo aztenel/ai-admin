@@ -2,7 +2,8 @@
 // Altegio, Telegram и «ИИ») + Vite с пультом по адресу /app/. Запросы /api/*, /login и т. п. Vite передаёт серверу бота — как будет на сайте.
 // Две компании, у каждой два номера: Meta Cloud API (wa, «основной номер») и Green-API (ga, «номер бота»):
 //   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов), рассылки с номера бота
-//                выключены кодом (gaNoBroadcast), ключ сотрудника staff-key-winch-0001;
+//                выключены кодом (gaNoBroadcast), ключ сотрудника staff-key-winch-0001; три записи через бота на номере бота —
+//                в очереди 8 напоминаний и просьб об отзыве (вкладка «Сервисные · номер бота»), 2 ушли за 3 дня;
 //   dent       — «Демо Дент»: без базы; сервер разрешает рассылки с номера бота (вебхук Green-API настроен), но пульт их не создаёт
 //                (решение владельца 19.10.2026: маркетинг — только с основного номера); маркетинг — вставленным списком.
 //   npm run dev:live            → адреса и ключи — в выводе; владелец входит ключом owner-key-123456
@@ -76,6 +77,33 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   journal.push(rec("+7 700 XXX-X0-44", "Скрытый номер", 30, { staff: "Арман" })); // ключ журнала без права видеть телефоны — номер скрыт
   net.altJournal = journal;
   await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+
+  // Winchester, вкладка «Сервисные · номер бота»: три записи, которые клиенты сделали в чате с ботом на номере бота (ga). Очередь
+  // напоминаний и просьбы об отзыве (rmq:winchester) строит тот же код, что у бота (remindPlan), — времена по его правилам: накануне
+  // в 18:00, за 2 часа, отзыв через 3 часа. Все — впереди по часам бота, фоновая задача (/_cron) их не отправит. Плюс вчерашняя запись,
+  // по которой напоминание и отзыв уже ушли (отметки попытки rms: и удачной отправки rmok: живут 3 дня) — «Отправлено за 3 дня: 2»;
+  // ещё одна попытка не удалась (только rms:) — её не считаем. Номера — вымышленные +7 700 000 11 0x.
+  const { remindPlan } = await import(new URL("../../../src/services/reminders/plan.js", import.meta.url).href);
+  const { putHist } = await import(new URL("../../../src/db/kv/chats.js", import.meta.url).href);
+  const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
+  const madeAt = NOW - 3600e3; // записались час назад
+  const booked = [
+    { id: "77000001101", name: "Арман", day: -1, time: "12:00", svc: "Мужская стрижка", staff: "Данияр" },
+    { id: "77000001102", name: "", day: -2, time: "16:30", svc: "Стрижка и борода", staff: "Ерлан" },
+    { id: "77000001103", name: "Тимур", day: 0, time: "17:00", svc: "Оформление бороды", staff: "Арман" },
+  ];
+  for (const [i, b] of booked.entries()) {
+    const hk = `h:ga:winchester:${b.id}`;
+    const rec = { name: b.name || "Клиент", date: day(b.day), time: b.time, services: b.svc, staffName: b.staff, record_id: 9101 + i, record_hash: `dev${9101 + i}`, at: madeAt };
+    const turns = [
+      { role: "user", text: `Здравствуйте! Можно записаться: ${b.svc.toLowerCase()}, ${b.time}?`, t: madeAt - 60e3 },
+      { role: "model", text: `Записала вас на ${b.time} к мастеру ${b.staff} ✂️`, t: madeAt },
+    ];
+    await putHist(S.kv.api, hk, { n: 2, turns, profile: { ...(b.name ? { name: b.name } : {}), bookings: [rec] } });
+    await remindPlan(S.env, CLIENTS.winchester, hk, [rec], madeAt);
+  }
+  for (const k of ["rms:winchester:9100:d1", "rms:winchester:9100:rv", "rmok:winchester:9100:d1", "rmok:winchester:9100:rv", "rms:winchester:9099:d1"])
+    await S.kv.api.put(k, "1", { expirationTtl: 3 * 86400 });
 
   // переписки: два номера одной компании, один клиент пишет на оба
   const wa = (from, text, name) => S.waText("/wa/dent", from, text, { secret: "sec-dent", pnid: "900111", names: { [from]: name || "" } });

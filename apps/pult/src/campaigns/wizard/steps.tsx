@@ -11,7 +11,8 @@ import { store } from "@/state/store";
 import { checkErrors, costEstimate, errText, LANGS, MARKETING_PRICE_KZT, money, QUALITY, segmentTitle } from "../common";
 import type { Loaded } from "../useLoad";
 import { Checkbox, ErrorList, Note, RadioRow, SelectField, TextArea, TextField } from "./fields";
-import { cleanParams, templateVars, type BaseState, type Errs, type Form, type Resolved } from "./form";
+import { segRule } from "../base/shared";
+import { capNum, cleanParams, templateVars, type BaseState, type Errs, type Form, type Resolved } from "./form";
 import { fillTemplate, TemplatePreview } from "./Preview";
 
 type P = { f: Form; set: (p: Partial<Form>) => void; r: Resolved; errs: Errs };
@@ -43,7 +44,7 @@ export function RecipientsSection({ f, set, r, errs, crm, base, owner }: P & { c
         <p className="mb-4 px-1 text-sm text-fg-2">
           {crm.error && !crm.data ? `База клиентов не загрузилась: ${crm.error}` : "Базы клиентов из Altegio у компании нет — вставьте список номеров."}
           {crm.error && !crm.data && (
-            <button type="button" onClick={() => void crm.reload()} className="ml-1 font-medium text-accent-ink underline-offset-2 hover:underline">
+            <button type="button" onClick={() => void crm.reload()} className="ml-1 inline-flex items-center font-medium text-accent-ink underline-offset-2 hover:underline pointer-coarse:min-h-11">
               Повторить
             </button>
           )}
@@ -88,7 +89,7 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
       <Group title="Сегмент базы" note={`База обновлена ${shortDate(crm.at, Date.now())}. Можно писать ${nf.format(crm.ok)} из ${nf.format(crm.clients)}: кто просил не писать, записан, был меньше 14 дней назад или уже получал рассылку за 14 дней — не входят.`}>
         <div role="radiogroup" aria-label="Сегмент базы" className="[&>*+*]:border-t [&>*+*]:border-line">
           {main.map((s) => (
-            <RadioRow key={s.id} name="seg" checked={r.spec.id === s.id} onSelect={() => pick(s.id)} title={s.label} sub={s.rule} aside={nf.format(s.n)} />
+            <RadioRow key={s.id} name="seg" checked={r.spec.id === s.id} onSelect={() => pick(s.id)} title={s.label} sub={segRule(s)} aside={nf.format(s.n)} />
           ))}
           <RadioRow name="seg" checked={r.spec.id === "all"} onSelect={() => pick("all")} title="Вся база" sub="все, кому можно писать сейчас" aside={nf.format(crm.ok)} />
         </div>
@@ -97,7 +98,7 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
         <Group title="Клиенты мастера">
           <div role="radiogroup" aria-label="Клиенты мастера" className="[&>*+*]:border-t [&>*+*]:border-line">
             {staff.map((s) => (
-              <RadioRow key={s.id} name="seg" checked={r.spec.id === s.id} onSelect={() => pick(s.id)} title={s.label} sub={s.rule} aside={nf.format(s.n)} />
+              <RadioRow key={s.id} name="seg" checked={r.spec.id === s.id} onSelect={() => pick(s.id)} title={s.label} sub={segRule(s)} aside={nf.format(s.n)} />
             ))}
           </div>
         </Group>
@@ -127,7 +128,7 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
           </Group>
           <Note>
             Сколько людей подходит — покажет проверка.{" "}
-            <button type="button" onClick={() => set({ filters: false, dayFrom: "", dayTo: "", staff: "" })} className="font-medium text-accent-ink hover:underline">
+            <button type="button" onClick={() => set({ filters: false, dayFrom: "", dayTo: "", staff: "" })} className="inline-flex items-center font-medium text-accent-ink hover:underline pointer-coarse:min-h-11">
               Убрать уточнение
             </button>
           </Note>
@@ -198,6 +199,9 @@ function ListInput({ f, set, errs }: P) {
 export function MessageSection({ f, set, errs }: P) {
   const vars = templateVars(f.text);
   const n = cleanParams(f.params).length;
+  // число переменных и подстановок не совпало — Meta не примет шаблон (#132000), рассылка встанет на первом же сообщении. Чаще всего:
+  // текст без {{1}}, а подстановка {имя} осталась по умолчанию (находка проверки 19.10.2026)
+  const mismatch = !!f.text.trim() && vars !== n;
   const setParam = (i: number, v: string) => set({ params: f.params.map((p, j) => (j === i ? v : p)) });
   return (
     <>
@@ -268,11 +272,13 @@ export function MessageSection({ f, set, errs }: P) {
           error={errs.fallback}
         />
       </Group>
-      {(errs.params || (vars > 0 && vars !== n)) && (
+      {(errs.params || mismatch) && (
         <p data-error={errs.params ? "" : undefined} className={cn("-mt-3 mb-6 flex items-start gap-1.5 px-4 text-sm", errs.params ? "text-critical" : "text-fg-2")}>
           <TriangleAlert aria-hidden className="mt-px size-4 shrink-0" strokeWidth={2} />
           {errs.params ||
-            `В тексте шаблона ${vars} ${plural(vars, ["переменная", "переменные", "переменных"])}, а подстановок ${n}. Если число не совпадает, Meta не примет шаблон — проверьте пробной отправкой.`}
+            (vars === 0
+              ? `В тексте шаблона нет переменных, а ${n === 1 ? "подстановка есть" : `подстановок ${n}`}. Уберите ${n === 1 ? "строку «Вместо {{1}}»" : "строки подстановок"}, иначе Meta не примет шаблон.`
+              : `В тексте шаблона ${vars} ${plural(vars, ["переменная", "переменные", "переменных"])}, а подстановок ${n}. Если число не совпадает, Meta не примет шаблон — проверьте пробной отправкой.`)}
         </p>
       )}
       <Group>
@@ -585,7 +591,7 @@ export function LaunchSection({ f, set, r, errs, ov, res, name, errors }: P & { 
             </span>
           </Field>
           <Field label="В сутки">
-            <span className="tnum">не больше {nf.format(Number(f.cap) || 0)}</span>
+            <span className="tnum">не больше {nf.format(capNum(f.cap) || 0)}</span>
           </Field>
           <Field label="Стоимость">
             <span className="tnum">{`≈\u00a0${money(costEstimate(n))}`}</span>

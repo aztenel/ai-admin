@@ -223,6 +223,10 @@
 /* клавиатура открыта: нижний отступ «полоски Домой» не нужен, его закрывает клавиатура */
 .app-root[data-kb="1"] .pb-safe-kb { padding-bottom: 0.5rem; }
 .pb-safe-kb { padding-bottom: max(0.5rem, var(--safe-b)); }
+/* клавиатура открыта: нижние вкладки телефона прячем (как в приложениях iPhone) — иначе над клавиатурой от экрана оставалось ~250 px
+   под поля (настройки автосценария, находка проверки 19.10.2026); запас прокрутки под вкладки тоже не нужен */
+.app-root[data-kb="1"] .hide-kb { display: none; }
+.app-root[data-kb="1"] .pb-tabbar { padding-bottom: 1rem; }
 
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }

@@ -34,6 +34,14 @@ export async function remindPlan(env, c, hk, books, made) {
   await kvRetry(async () => { const q = JSON.parse((await env.KV.get("rmq:" + c.id)) || "[]"); for (const x of items) if (!q.some(/** @param {any} y */ y => y.rec === x.rec && y.k === x.k)) q.push(x); await env.KV.put("rmq:" + c.id, JSON.stringify(q.slice(-500))); });
   await kvRetry(async () => { const ix = JSON.parse((await env.KV.get("rmidx")) || "[]"); if (!ix.includes(c.id)) { ix.push(c.id); await env.KV.put("rmidx", JSON.stringify(ix)); } });
 }
+/** Напоминание ещё в силе — запись на месте (тот же номер записи, день и время), по ней нет просьбы администратору, клиент не писал «стоп».
+ *  Иначе бот его не отправит. Одно правило для отправки (remindSend) и для пульта (вкладка «Сервисные», находка проверки 19.10.2026:
+ *  там висели напоминания отменённых и перенесённых записей). Возвращает запись или null.
+ *  @param {any} p профиль чата @param {any} x элемент очереди { rec, date, time } */
+export function remindLive(p, x) {
+  const b = ((p && p.bookings) || []).find(/** @param {any} v */ v => String(v.record_id) === String(x.rec));
+  return b && !b.rq && b.date === x.date && b.time === x.time && !p.stop ? b : null;
+}
 /** @param {Client} c @param {any} b @param {string} k @param {any} [lang] */
 export function remindText(c, b, k, lang) {
   const svc = [b.services, b.staffName].filter(Boolean).join(" · "), name = c.name, adr = c.address || "";

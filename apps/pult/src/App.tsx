@@ -2,6 +2,7 @@
 // Чаты — в основной сборке (открываются первыми); заявки, рассылки и настройки грузятся при первом открытии.
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { lazy, Suspense, useEffect } from "react";
+import { ChunkBoundary } from "@/components/boundary";
 import { Toasts } from "@/components/overlay";
 import { Button, EmptyState, Spinner } from "@/components/ui";
 import { InboxScreen } from "@/inbox/InboxScreen";
@@ -46,17 +47,20 @@ export default function App() {
       {route.name === "inbox" ? (
         <InboxScreen route={route} />
       ) : (
-        <Suspense
-          fallback={
-            <div className="grid flex-1 place-items-center">
-              <Spinner />
-            </div>
-          }
-        >
-          {route.name === "requests" && <RequestsScreen />}
-          {route.name === "campaigns" && <CampaignsScreen />}
-          {route.name === "settings" && <SettingsScreen section={route.section} />}
-        </Suspense>
+        // раздел — отдельным файлом: не загрузился (нет связи) — «Повторить», а не пустой экран; смена раздела — рамка заново
+        <ChunkBoundary key={route.name}>
+          <Suspense
+            fallback={
+              <div className="grid flex-1 place-items-center">
+                <Spinner />
+              </div>
+            }
+          >
+            {route.name === "requests" && <RequestsScreen />}
+            {route.name === "campaigns" && <CampaignsScreen />}
+            {route.name === "settings" && <SettingsScreen section={route.section} />}
+          </Suspense>
+        </ChunkBoundary>
       )}
       <Toasts />
     </AppShell>

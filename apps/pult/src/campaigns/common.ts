@@ -130,4 +130,6 @@ export const errorList = (e: unknown): string[] => (e instanceof ApiError && e.e
 /** Ошибки проверки (CampaignCheck.errors) — с заглавной буквы. */
 export const checkErrors = (errors: string[]) => errors.map(cap1);
 /** Нет права (сотруднику — 403 на автосценарий, «Обновить базу», «Снять сигнал»). */
+/** Вопрос сервера при сигнале «остановиться» — сотруднику как причина: снять сигнал (а запуск его снимает) может только владелец. */
+export const ownerOnly = (question: string) => `${question.replace(/\s*(Всё равно продолжить|Снять сигнал, если причина устранена)\?/g, "").trim()} Снять сигнал может владелец.`;
 export const isForbidden = (e: unknown) => e instanceof ApiError && e.status === 403;

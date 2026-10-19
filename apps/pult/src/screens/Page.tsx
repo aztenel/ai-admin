@@ -25,7 +25,7 @@ export function Page({ title, sub, onBack, actions, children, wide, className }:
       </header>
       {/* relative: невидимые подписи для читалок (sr-only — position: absolute) остаются внутри прокрутки; без этого они растягивали
           корень пульта, и на компьютере экран съезжал вверх (находка проверки раздела «Рассылки» 19.10.2026) */}
-      <div className="scroll-area relative min-h-0 flex-1 pb-[calc(var(--safe-b)+5rem)] md:pb-10">
+      <div className="scroll-area pb-tabbar relative min-h-0 flex-1 pb-[calc(var(--safe-b)+5rem)] md:pb-10">
         <div className={cn("mx-auto w-full px-4 pt-1 md:px-8", wide ? "max-w-6xl" : "max-w-3xl")}>{children}</div>
       </div>
     </div>

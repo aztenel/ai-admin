@@ -125,9 +125,13 @@ export async function bcApi(request, env, url, s) {
         if (g.state !== "authorized") return jsonP({ error: `${GA_STATE_TEXT[g.state] || `Green-API: номер в состоянии «${clean(g.state, 30)}»`}. ${GA_STATE_BAD[g.state] ? "Пока ограничение не снято, рассылку запускать нельзя." : "Запустите рассылку, когда номер будет на связи."}` }, 409);
         if (!g.hook) return jsonP({ error: GA_HOOK_WARN }, 409);
       }
-      const hold = bcHoldFor(await bcHold(env, cid), cur);
+      const holds = await bcHold(env, cid), hold = bcHoldFor(holds, cur);
       if (past && !hold) return jsonP({ error: PAST }, 409);
-      if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
+      // запуск при сигнале снимает сигнал (ниже) — для всего номера и автосценария; это решение владельца, как и «Снять сигнал Meta»:
+      // сотрудник получал вопрос и снимал сигнал кнопкой «Всё равно запустить» (находка проверки 19.10.2026)
+      if (hold && s.role !== "owner") return jsonP({ error: `Сигнал от ${bcFrom(cur)}: ${hold.why}. Запустить рассылку, несмотря на сигнал, может только владелец.` }, 403);
+      const scope = cur.ch === "ga" ? "сигнал снимется для всех рассылок с номера бота" : holds && holds.all ? "сигнал снимется для всех рассылок с основного номера и для автосценария" : `сигнал снимется для шаблона «${cur.tpl}» — во всех рассылках с ним (и в автосценарии, если он шлёт этот шаблон)`;
+      if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Если продолжить, ${scope}. Всё равно продолжить?` }, 409);
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
       if (past) { cur.status = "stopped"; cur.note = "Сигнал снят. " + PAST; await bcPut(env, cid, cur); await bcRun(env, cid, id, false); return jsonP({ ok: true, b: pub(cur) }); }
       bcStarting(cur, now); await bcPut(env, cid, cur);

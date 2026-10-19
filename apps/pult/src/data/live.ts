@@ -286,6 +286,7 @@ export function createLiveSource(): DataSource {
     autoGet: campaignsApi("autoGet"),
     autoSet: campaignsApi("autoSet"),
     clearMetaHold: campaignsApi("clearMetaHold"),
+    serviceMessages: campaignsApi("serviceMessages"),
     externalUrl(page, ws) {
       const c = "?c=" + enc(ws);
       return { broadcast: "/broadcast" + c, studio: "/studio", launch: "/launch" + c, leads: "/leads" + c, logout: "/logout", site: "/" + c }[page];

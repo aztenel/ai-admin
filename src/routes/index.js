@@ -1,6 +1,7 @@
 // @ts-check — перенесено из worker.js как есть (REFACTORING.md, фаза 3)
 // Роутер: цепочка проверок «метод + путь → контроллер». Порядок проверок менять нельзя (контракт маршрутов test/contract).
 // Страницы пульта (PULT_DEMO, PULT_LIVE, PULT_ICONS) приходят параметром `pult` из worker.js: pult.gen.js лежит вне src/.
+// Новый пульт apps/pult (/app/) — там же, PULT_APP из pult-app.gen.js.
 import { COOKIE } from "../config/constants.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { html, jsonP, page, forbid, sameOrigin, text } from "../lib/http.js";
@@ -22,13 +23,13 @@ import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
 import { handleGreen } from "../controllers/webhooks/greenapi.js";
-import { pultIcon, pultManifest } from "../controllers/pult.js";
+import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
 
 /**
  * @param {any} request
  * @param {any} env
  * @param {any} ctx
- * @param {any} pult страницы пульта из worker.js: { PULT_LIVE, PULT_DEMO, PULT_ICONS }
+ * @param {any} pult страницы пульта из worker.js: { PULT_LIVE, PULT_DEMO, PULT_ICONS, PULT_APP }
  * @returns {Promise<Response>}
  */
 export async function route(request, env, ctx, pult) {
@@ -41,6 +42,8 @@ export async function route(request, env, ctx, pult) {
       const g = await keyGate(request, env, key === undefined ? url.searchParams.get("key") : key, [leadsKey(env)]);
       return g === -2 ? tooManyKeys() : g === 0;
     };
+    // новый пульт apps/pult — только файлы сборки, до чтения хранилища: им не нужны ни вход, ни паспорта ботов (данные — через /api/*)
+    if (M === "GET" && (P === "/app" || P.startsWith("/app/"))) return pultApp(P, url.search, pult.PULT_APP);
     try { await syncClients(env); } catch (e) { console.log("cfg", String(e)); } // боты клиентов из хранилища (паспорта) — раз в минуту
 
     if (M === "GET" && url.searchParams.get("hub.mode") === "subscribe") {

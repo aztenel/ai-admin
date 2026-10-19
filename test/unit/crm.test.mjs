@@ -206,3 +206,14 @@ test("ночью в 04:00 — снимок Winchester раз в день; в д�
   await s.cron(AT + 2 * 86400e3); // через фоновую задачу Worker
   assert.equal(calls(), 3);
 });
+
+// находка проверки 19.10.2026: администраторы пишут в Altegio номер вместо имени — в списке людей сегмента он только маской
+test("номер в поле «имя» клиента Altegio — в /api/crm/list только маской", async () => {
+  net.reset();
+  net.altJournal = [rec(ph(301), 25, { name: "87000004455" }), rec(ph(302), 26, { name: "Арман +7 700 000 66 77" })];
+  const s = mk(ENV);
+  await crmBuild(s.env, CLIENTS.winchester, Date.now());
+  const own = await login(s, OWNER), t = await (await own.go("/api/crm/list?c=winchester&seg=all")).text();
+  assert.ok(!t.includes("87000004455") && !t.includes("7000006677") && !/\+7 700 000 66 77/.test(t), t);
+  assert.ok(/\*\*\*/.test(JSON.parse(t).list.map(x => x.name).join(" ")), t);
+});

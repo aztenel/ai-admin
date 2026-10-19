@@ -75,6 +75,8 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
       setLoading(true);
       setErr("");
       setMoreErr("");
+      // «Ещё» прежнего отбора ещё грузилось — его ответ выбросим (seq), а кнопка не должна остаться с крутилкой (находка проверки 19.10.2026)
+      setMore(false);
       try {
         const p = await src.crmList(ws, s, 1);
         if (my !== seq.current) return; // пришёл ответ на прежний отбор

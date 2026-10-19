@@ -249,14 +249,14 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
               autoComplete="off"
               spellCheck={false}
               maxLength={512}
-              placeholder="pora_na_strizhku"
+              placeholder="например, pora_na_strizhku"
               value={edit.tpl}
               onChange={(e) => {
                 set({ tpl: e.target.value });
                 setTplErr("");
               }}
               error={tplErr || undefined}
-              hint="Название — как в кабинете Meta / Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta."
+              hint="Название — как в кабинете Meta / Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta. В шаблоне — одна переменная {{1}}: имя клиента."
             />
             <SelectField label="Язык шаблона" value={edit.lang} onChange={(e) => set({ lang: e.target.value })}>
               {langs.map((l) => (
@@ -368,7 +368,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
         text={
           <>
             Каждый день в 11:00 бот сам напишет до {capN} {plural(capN, CLIENTS_DAT)} — тем, у кого ровно {daysN} {plural(daysN, DAYS)} с последнего визита.
-            Шаблон «{eff.tpl}» с основного номера{Number.isFinite(eff.from) && Number.isFinite(eff.to) ? `, с ${eff.from}:00 до ${eff.to}:00` : ""}. Оценка — до
+            Шаблон «{eff.tpl}» с основного номера{Number.isFinite(eff.from) && Number.isFinite(eff.to) ? `, с ${eff.from}:00 до ${eff.to}:00` : ""}. Оценка — до{" "}
             {`≈\u00a0${money(costEstimate(capN))}`} в день, точная цена — в кабинете Meta.
           </>
         }

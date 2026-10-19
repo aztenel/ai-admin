@@ -329,6 +329,174 @@
   "type": "text/plain",
   "text": "Not found"
  },
+ "GET /app [anon]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/"
+ },
+ "GET /app [owner]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/"
+ },
+ "GET /app [staff]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/"
+ },
+ "GET /app?c=barber [anon]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/?c=barber"
+ },
+ "GET /app?c=barber [owner]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/?c=barber"
+ },
+ "GET /app?c=barber [staff]": {
+  "status": 301,
+  "type": "-",
+  "location": "/app/?c=barber"
+ },
+ "GET /app/ [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/ [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/ [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/?c=barber [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/?c=barber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/?c=barber [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/index.html [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/index.html [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/index.html [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /app/assets/index-<хэш>.js [anon]": {
+  "status": 200,
+  "type": "text/javascript",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/index-<хэш>.js [owner]": {
+  "status": 200,
+  "type": "text/javascript",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/index-<хэш>.js [staff]": {
+  "status": 200,
+  "type": "text/javascript",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/index-<хэш>.css [anon]": {
+  "status": 200,
+  "type": "text/css",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/index-<хэш>.css [owner]": {
+  "status": 200,
+  "type": "text/css",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/index-<хэш>.css [staff]": {
+  "status": 200,
+  "type": "text/css",
+  "cache": "public, max-age=31536000, immutable"
+ },
+ "GET /app/assets/nope.js [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /app/assets/nope.js [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /app/assets/nope.js [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /app/nope [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /app/nope [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "GET /app/nope [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /app/ {} [anon]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /app/ {} [owner]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
+ "POST /app/ {} [staff]": {
+  "status": 404,
+  "type": "text/plain",
+  "text": "Not found"
+ },
  "GET /login [anon]": {
   "status": 200,
   "type": "text/html",
@@ -365,6 +533,27 @@
   "frame": "DENY"
  },
  "GET /login?next=%2Finbox [staff]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Fapp%2F%3Fc%3Dbarber [anon]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Fapp%2F%3Fc%3Dbarber [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /login?next=%2Fapp%2F%3Fc%3Dbarber [staff]": {
   "status": 200,
   "type": "text/html",
   "cache": "no-store",
@@ -1975,6 +2164,7 @@
   "type": "application/json",
   "cache": "no-store",
   "json": [
+   "altegio",
    "botOff",
    "client",
    "kinds",
@@ -1989,6 +2179,7 @@
   "type": "application/json",
   "cache": "no-store",
   "json": [
+   "altegio",
    "botOff",
    "client",
    "kinds",
@@ -2011,6 +2202,7 @@
   "type": "application/json",
   "cache": "no-store",
   "json": [
+   "altegio",
    "botOff",
    "client",
    "kinds",

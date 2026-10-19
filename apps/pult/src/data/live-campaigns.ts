@@ -20,6 +20,8 @@ import type {
   MainNumberState,
   NumberQuality,
   SegmentSpec,
+  ServiceKind,
+  ServiceOverview,
 } from "@/model/campaigns";
 import { ApiError } from "./errors";
 import { call, enc } from "./live";
@@ -44,6 +46,11 @@ type ListRaw = {
 };
 type CheckRaw = Omit<CampaignCheck, "listFilter"> & { seg?: string; segOut?: number; noDate?: number };
 type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null };
+type ServiceRaw = {
+  owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string }[];
+  queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string }[];
+  total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean;
+};
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
 
@@ -117,6 +124,19 @@ function overview(d: ListRaw): CampaignsOverview {
       }
     : null;
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
+}
+
+const KINDS: ServiceKind[] = ["d1", "h2", "rv"];
+const isKind = (k: string): k is ServiceKind => (KINDS as string[]).includes(k);
+
+/** Сервисные сообщения: незнакомые виды (сервер новее пульта) не показываем; номер — маска сервера как есть. */
+function service(d: ServiceRaw): ServiceOverview {
+  const kinds = (d.kinds || []).flatMap((x) => (isKind(x.k) ? [{ kind: x.k, label: x.label || "", on: !!x.on, ...(x.link ? { link: x.link } : {}) }] : []));
+  const queue = (d.queue || []).flatMap((x) =>
+    isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }] : [],
+  );
+  // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
+  return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false };
 }
 
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */
@@ -224,5 +244,8 @@ export const liveCampaigns: CampaignSource = {
   },
   async clearMetaHold(ws) {
     await call<{ ok: true }>("/api/bc/auto", { c: ws, clearHold: true });
+  },
+  async serviceMessages(ws) {
+    return service(await call<ServiceRaw>(`/api/bc/service?c=${enc(ws)}`));
   },
 };

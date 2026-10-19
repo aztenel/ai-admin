@@ -56,8 +56,8 @@ function build(now: number): Fixture[] {
     payment: "Оплата через Kaspi: +7 700 000 12 34 (Демо Барбер). В комментарии укажите имя и время записи.",
     convs: [
       {
-        ref: { channelId: "wa", externalId: "77000482715" },
-        phone: "+77000482715",
+        ref: { channelId: "wa", externalId: "77000009100" },
+        phone: "+77000009100",
         unread: 2,
         attention: { reason: "human", label: "Просит человека", since: now - 9 * MIN },
         bot: { state: "active" },
@@ -71,9 +71,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "ga", externalId: "77000316492" },
+        ref: { channelId: "ga", externalId: "77000009101" },
         name: "Самат Жумабеков",
-        phone: "+77000316492",
+        phone: "+77000009101",
         unread: 1,
         attention: { reason: "req", label: "Просит перенести запись", since: now - 22 * MIN },
         bot: { state: "active" },
@@ -85,9 +85,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "ga", externalId: "77000263958" },
+        ref: { channelId: "ga", externalId: "77000009102" },
         name: "Ерлан",
-        phone: "+77000263958",
+        phone: "+77000009102",
         bot: { state: "paused", until: now + 1 * HOUR + 40 * MIN },
         messages: [
           msg("contact", "Скиньте адрес, пожалуйста, не могу найти вход", 26 * MIN),
@@ -96,9 +96,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "wa", externalId: "77000263958" },
+        ref: { channelId: "wa", externalId: "77000009102" },
         name: "Ерлан",
-        phone: "+77000263958",
+        phone: "+77000009102",
         bot: { state: "active" },
         bookings: ["сегодня, 17:00 — мужская стрижка, мастер Данияр"],
         messages: [
@@ -109,9 +109,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "ga", externalId: "77000120344" },
+        ref: { channelId: "ga", externalId: "77000009103" },
         name: "Алия",
-        phone: "+77000120344",
+        phone: "+77000009103",
         unread: 1,
         attention: { reason: "media", label: "Прислала фото", since: now - 41 * MIN },
         bot: { state: "active" },
@@ -122,9 +122,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "wa", externalId: "77000473066" },
+        ref: { channelId: "wa", externalId: "77000009104" },
         name: "Динара Абдрахманова-Сейтказиева",
-        phone: "+77000473066",
+        phone: "+77000009104",
         bot: { state: "active" },
         messages: [
           msg("contact", "Сәлеметсіз бе! Ертең таңертең бос уақыт бар ма?", 58 * MIN),
@@ -143,9 +143,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "wa", externalId: "77000550219" },
+        ref: { channelId: "wa", externalId: "77000009105" },
         name: "Тимур",
-        phone: "+77000550219",
+        phone: "+77000009105",
         bot: { state: "stopped" },
         messages: [
           msg("bot", "Тимур, напоминаем: сегодня в 12:00 мужская стрижка у Армана. Ждём вас!", 5 * HOUR),
@@ -154,9 +154,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "ga", externalId: "77000553311" },
+        ref: { channelId: "ga", externalId: "77000009106" },
         name: "Ботагоз",
-        phone: "+77000553311",
+        phone: "+77000009106",
         attention: { reason: "call", label: "Ждёт звонка", since: now - 2 * HOUR - 10 * MIN },
         bot: { state: "active" },
         requests: [{ id: "rq-botagoz", kind: "callback", name: "Ботагоз", service: "Подарочный сертификат", time: "", note: "Перезвонить после 14:00" }],
@@ -166,9 +166,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "wa", externalId: "77000664912" },
+        ref: { channelId: "wa", externalId: "77000009107" },
         name: "Данияр",
-        phone: "+77000664912",
+        phone: "+77000009107",
         bot: { state: "active" },
         windowClosed: true,
         bookings: ["15 октября — стрижка и борода, мастер Арман (прошла)"],
@@ -179,9 +179,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "wa", externalId: "77000340018" },
+        ref: { channelId: "wa", externalId: "77000009108" },
         name: "Руслан",
-        phone: "+77000340018",
+        phone: "+77000009108",
         bot: { state: "paused", until: now + 9 * HOUR },
         messages: [
           msg("contact", "Почему так дорого? В соседнем барбершопе дешевле", 5 * HOUR + 30 * MIN),
@@ -191,8 +191,8 @@ function build(now: number): Fixture[] {
       },
     ],
     done: [
-      { id: "l-old1", kind: "cancel", name: "Нурлан", phone: "+77000902135", service: "Детская стрижка", time: "вчера, 19:00", note: "Отменил администратор, клиенту сообщено", status: "выполнена", channelId: "wa", at: now - 26 * HOUR },
-      { id: "l-old2", kind: "lead", name: "Канат", phone: "+77000144089", service: "Бритьё опасной бритвой", time: "16 октября, 15:30", note: "", status: "выполнена", channelId: "ga", at: now - 2 * DAY },
+      { id: "l-old1", kind: "cancel", name: "Нурлан", phone: "+77000009109", service: "Детская стрижка", time: "вчера, 19:00", note: "Отменил администратор, клиенту сообщено", status: "выполнена", channelId: "wa", at: now - 26 * HOUR },
+      { id: "l-old2", kind: "lead", name: "Канат", phone: "+77000009110", service: "Бритьё опасной бритвой", time: "16 октября, 15:30", note: "", status: "выполнена", channelId: "ga", at: now - 2 * DAY },
     ],
   };
 
@@ -216,9 +216,9 @@ function build(now: number): Fixture[] {
     },
     convs: [
       {
-        ref: { channelId: "abay-bot", externalId: "77000810011" },
+        ref: { channelId: "abay-bot", externalId: "77000009111" },
         name: "Арман",
-        phone: "+77000810011",
+        phone: "+77000009111",
         unread: 1,
         attention: { reason: "lead", label: "Новая заявка", since: now - 14 * MIN },
         bot: { state: "active" },
@@ -231,9 +231,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "mega-main", externalId: "77000820022" },
+        ref: { channelId: "mega-main", externalId: "77000009112" },
         name: "Жанар",
-        phone: "+77000820022",
+        phone: "+77000009112",
         bot: { state: "paused", until: now + 50 * MIN },
         messages: [
           msg("contact", "Мой Samsung уже готов? Сдавала в понедельник", 70 * MIN),
@@ -241,9 +241,9 @@ function build(now: number): Fixture[] {
         ],
       },
       {
-        ref: { channelId: "abay-main", externalId: "77000830033" },
+        ref: { channelId: "abay-main", externalId: "77000009113" },
         name: "Олжас",
-        phone: "+77000830033",
+        phone: "+77000009113",
         unread: 2,
         attention: { reason: "human", label: "Просит человека", since: now - 6 * MIN },
         bot: { state: "active" },

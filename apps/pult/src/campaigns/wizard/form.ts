@@ -106,7 +106,8 @@ export function defaultName(r: Resolved, now: number): string {
 export const nameOf = (f: Form, r: Resolved, now: number) => (f.nameTouched ? f.name : defaultName(r, now));
 
 export const cleanParams = (p: string[]) => p.map((x) => x.trim()).filter(Boolean);
-const capNum = (s: string) => Number(String(s).replace(/[\s ]/g, ""));
+/** Предел в сутки из поля: «1 000» — тоже 1000 (пробелы между разрядами — по-русски). */
+export const capNum = (s: string) => Number(String(s).replace(/[\s ]/g, ""));
 
 export function toDraft(f: Form, r: Resolved, now: number): CampaignDraft {
   const d: CampaignDraft = {

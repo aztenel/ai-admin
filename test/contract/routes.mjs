@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
 import { mk, net, ok, T, gaPass } from "../harness.mjs";
+import { PULT_APP } from "../../pult-app.gen.js";
 
 const SNAP = fileURLToPath(new URL("./routes.snap.json", import.meta.url));
 const OWNER_KEY = "owner-key-123456", STAFF_KEY = "staff-key-barber-0001", OTHER_KEY = "staff-key-dent-0002";
@@ -18,6 +19,10 @@ const S = mk({ KEY_BARBER: STAFF_KEY, KEY_DENT: OTHER_KEY, WA_TOKEN_BARBER: "tok
   GA_ID: "7105000009", GA_TOKEN: "ga-tok-shared", GA_URL: "https://7105.api.green-api.com", GA_CLIENT: "barber", GA_HOOK: "ga-hook-shared" });
 const sig = (secret, body) => "sha256=" + createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex");
 const gaPw = gaPass("barber", GA);
+// новый пульт /app/ (apps/pult → pult-app.gen.js): имена файлов сборки меняются с каждой сборкой (хэш содержимого) — в снимке вместо хэша «<хэш>»
+const APP_JS = "/app/" + /<script type="module"[^>]*\bsrc="\.\/(assets\/[^"]+\.js)"/.exec(PULT_APP["index.html"].body)[1];
+const APP_CSS = "/app/" + /<link rel="stylesheet"[^>]*\bhref="\.\/(assets\/[^"]+\.css)"/.exec(PULT_APP["index.html"].body)[1];
+const shown = p => p.replace(/^(\/app\/assets\/[\w.-]+?)-[\w-]{8}\.(js|css)$/, "$1-<хэш>.$2");
 
 // у каждого запроса свой адрес: неверные ключи считаются по адресу, и проверки не должны блокировать друг друга
 let ipN = 0;
@@ -79,7 +84,8 @@ const R = [
   ["GET", "/"], ["GET", "/?c=barber"], ["GET", "/?c=nope"], ["GET", "/chat"], ["GET", "/privacy"], ["GET", "/nope"], ["POST", "/nope", {}],
   ["GET", "/?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=12345"], ["GET", "/?hub.mode=subscribe&hub.verify_token=bad&hub.challenge=1"],
   ["GET", "/demo"], ["GET", "/demo/"], ["GET", "/manifest.webmanifest"], ["GET", "/demo.webmanifest"], ["GET", "/pult/icon-180.png"], ["GET", "/pult/icon-192.png"], ["GET", "/pult/icon-512.png"], ["GET", "/pult/icon-64.png"],
-  ["GET", "/login"], ["GET", "/login?next=%2Finbox"], ["POST", "/login", "key=wrong-key"], ["GET", "/logout"],
+  ["GET", "/app"], ["GET", "/app?c=barber"], ["GET", "/app/"], ["GET", "/app/?c=barber"], ["GET", "/app/index.html"], ["GET", APP_JS], ["GET", APP_CSS], ["GET", "/app/assets/nope.js"], ["GET", "/app/nope"], ["POST", "/app/", {}],
+  ["GET", "/login"], ["GET", "/login?next=%2Finbox"], ["GET", "/login?next=%2Fapp%2F%3Fc%3Dbarber"], ["POST", "/login", "key=wrong-key"], ["GET", "/logout"],
   ["GET", "/leads"], ["GET", "/leads?c=barber"], ["GET", "/leads?c=dent"], ["GET", "/leads?key=wrong"], ["GET", `/leads?key=${OWNER_KEY}`], ["GET", `/leads?c=barber&key=${STAFF_KEY}`], ["GET", `/leads?c=dent&key=${STAFF_KEY}`],
   ["GET", "/studio"], ["GET", "/inbox"], ["GET", "/inbox?c=barber"], ["GET", "/inbox?c=dent"], ["GET", "/inbox?c=nope"],
   ["GET", "/launch"], ["GET", "/launch?c=barber"], ["GET", "/broadcast"], ["GET", "/broadcast?c=barber"], ["GET", "/broadcast?c=dent"],
@@ -118,7 +124,7 @@ const got = {};
 net.reset(); net.ai = ["Здравствуйте! Чем помочь?"];
 for (const [method, path, body, hd] of R) {
   for (const [role, b] of Object.entries(ROLES)) {
-    const id = `${method} ${path}${label(body, hd)} [${role}]`;
+    const id = `${method} ${shown(path)}${label(body, hd)} [${role}]`;
     const ai0 = net.gemini.length;
     const r = await go(b, method, path, body, hd);
     const o = await shape(r);

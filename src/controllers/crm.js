@@ -33,7 +33,8 @@ export async function crmApi(request, env, url, s) {
     if ([from, to].some(v => v !== undefined && !(v >= 0 && v <= 400))) return jsonP({ error: "Дни с визита — число от 0 до 400." }, 400);
     let all;
     try { all = (await crmPick(env, c, seg, now, { from, to, staff })) || []; } catch (e) { console.log("crm list", String(e)); return jsonP({ error: BUSY }, 503); }
-    const rows = all.slice((page - 1) * CRM_PAGE, page * CRM_PAGE).map(x => ({ name: x.name, phone: maskPhone(x.phone), last: x.last, d: x.d, v: x.v, staff: x.staff, svc: x.svc }));
+    // имя — через logSafe: администраторы нередко пишут в Altegio номер вместо имени («87071234567»), а полные номера базы браузеру не уходят
+    const rows = all.slice((page - 1) * CRM_PAGE, page * CRM_PAGE).map(x => ({ name: logSafe(x.name), phone: maskPhone(x.phone), last: x.last, d: x.d, v: x.v, staff: x.staff, svc: x.svc }));
     return jsonP({ seg, total: all.length, page, pages: Math.max(1, Math.ceil(all.length / CRM_PAGE)), per: CRM_PAGE, list: rows });
   }
   if (M === "POST" && P === "/api/crm/refresh") { // собрать снимок сейчас: у черновиков фоновой задачи нет, а владелец хочет видеть свежие числа

@@ -29,6 +29,7 @@ import type {
   CrmOverview,
   CrmPage,
   SegmentSpec,
+  ServiceOverview,
 } from "@/model/campaigns";
 import { createLiveSource } from "./live";
 
@@ -68,6 +69,8 @@ export interface CampaignSource {
   autoSet(ws: string, patch: Partial<AutoSettings>): Promise<AutoSettings>;
   /** Снять сигнал Meta «остановиться» (только владелец). Остановленные рассылки остаются на паузе — их продолжают «Продолжить». */
   clearMetaHold(ws: string): Promise<void>;
+  /** Сервисные сообщения (вкладка «Сервисные · номер бота»): что бот шлёт сам, очередь (номера маской), сколько ушло за 3 дня. Только чтение. */
+  serviceMessages(ws: string): Promise<ServiceOverview>;
 }
 
 export interface DataSource extends CampaignSource {

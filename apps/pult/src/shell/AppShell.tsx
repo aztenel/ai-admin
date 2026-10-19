@@ -59,7 +59,7 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
       <main className="relative flex min-w-0 flex-1 flex-col md:pr-safe">{children}</main>
 
       {!inConversation && !deepSettings && (
-        <nav aria-label="Разделы" className="pb-safe absolute inset-x-0 bottom-0 z-30 border-t border-line bg-surface md:hidden">
+        <nav aria-label="Разделы" className="hide-kb pb-safe absolute inset-x-0 bottom-0 z-30 border-t border-line bg-surface md:hidden">
           <ul className="flex">
             {items.map((it) => (
               <li key={it.id} className="flex-1">

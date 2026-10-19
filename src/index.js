@@ -1,10 +1,10 @@
 // @ts-check — перенесено из worker.js как есть (REFACTORING.md, фаза 3)
-// Точка входа Worker: fetch / scheduled. Страницы пульта (pult.gen.js лежит вне src/) приходят из worker.js параметром.
+// Точка входа Worker: fetch / scheduled. Страницы пульта (pult.gen.js и pult-app.gen.js лежат вне src/) приходят из worker.js параметром.
 import { jsonP } from "./lib/http.js";
 import { route } from "./routes/index.js";
 import { backup, scheduled } from "./jobs/scheduled.js";
 
-/** @param {any} pult { PULT_LIVE, PULT_DEMO, PULT_ICONS } из pult.gen.js */
+/** @param {any} pult { PULT_LIVE, PULT_DEMO, PULT_ICONS } из pult.gen.js и { PULT_APP } из pult-app.gen.js (новый пульт, /app/) */
 export function createWorker(pult) {
   return {
     /** @param {any} request @param {any} env @param {any} ctx */

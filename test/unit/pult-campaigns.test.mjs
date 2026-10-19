@@ -73,3 +73,29 @@ test("метаданные строки — не больше 1024 байт да
   assert.equal(m.by, "auto"); assert.equal(m.src, "crm"); assert.equal(m.tpl.length, 60); assert.equal(m.seg.length, 60);
   assert.deepEqual(Object.keys(bcMeta({ name: "x", status: "ready", total: 1, pos: 0, sent: 0, failed: 0, skipped: 0, created: NOW })).sort(), ["created", "failed", "name", "pos", "sent", "skipped", "status", "total"], "старые рассылки без новых полей — как раньше");
 });
+
+// находка проверки 19.10.2026: сотрудник снимал сигнал Meta «остановиться» для всего номера кнопкой «Всё равно запустить» (force), хотя
+// «Снять сигнал Meta» ему не показывают и сервер его не разрешает. Теперь при сигнале сотрудник получает 403 без вопроса, сигнал на месте;
+// владелец — вопрос, в котором сказано, что сигнал снимется для всех рассылок с номера и для автосценария.
+test("сигнал Meta: сотрудник не снимает его запуском рассылки (403, сигнал на месте); владелец — вопрос с последствием, потом force", async () => {
+  net.reset();
+  const s = mk(ENV), own = await login(s, OWNER), sw = await login(s, STAFF_W);
+  const made = await (await sw.post("/api/bc/create", { ...FORM, name: "Список", recipients: "8 700 000 02 01, Айгерим" })).json();
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const id = made.b.id;
+  await s.kv.api.put("bchold:winchester", JSON.stringify({ all: { at: NOW, why: "Meta ограничила аккаунт WhatsApp" } }));
+  for (const force of [false, true]) {
+    const r = await sw.post("/api/bc/act", { c: "winchester", id, act: "start", force }), d = await r.json();
+    assert.equal(r.status, 403, JSON.stringify(d));
+    assert.match(d.error, /только владелец/); assert.equal(d.confirm, undefined);
+  }
+  assert.ok(s.kv.json("bchold:winchester"), "сигнал на месте");
+  assert.equal(s.kv.json(`bc:winchester:${id}`).status, "ready");
+  const q = await own.post("/api/bc/act", { c: "winchester", id, act: "start" }), qd = await q.json();
+  assert.equal(q.status, 409);
+  assert.match(qd.confirm, /снимется для всех рассылок с основного номера и для автосценария/);
+  assert.match(qd.confirm, /Всё равно продолжить\?$/);
+  const ok = await (await own.post("/api/bc/act", { c: "winchester", id, act: "start", force: true })).json();
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(s.kv.json("bchold:winchester"), null, "владелец снял сигнал");
+});

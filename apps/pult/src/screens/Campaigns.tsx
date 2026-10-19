@@ -6,7 +6,8 @@
 // Рассылок с номера бота (Green-API) в пульте не создают: массовые сообщения с обычного WhatsApp — главная причина блокировок.
 // Старая страница /broadcast не нужна — ссылки на неё здесь нет.
 // Мастер — полноэкранный лист на телефоне (внутри корня пульта, чтобы клавиатура iPhone не закрывала поля — lib/viewport.ts) и большой
-// лист по центру на компьютере. Открытый лист — своя запись истории: жест «назад» закрывает лист, а не уводит из раздела.
+// лист по центру на компьютере. Открытый лист — своя запись истории: жест «назад» закрывает лист, а не уводит из раздела; в мастере на
+// телефоне «назад» — на прошлый шаг (как стрелка мастера), созданную, но не запущенную рассылку — в её лист (Wizard: backRef).
 // Выбранная вкладка запоминается на этом устройстве (localStorage pult2.campaigns.tab).
 import { CircleAlert, Plus, RefreshCw } from "lucide-react";
 import { Dialog as D } from "radix-ui";
@@ -19,10 +20,12 @@ import { CampaignList, ListSkeleton, UNFINISHED, useCampaignDetails } from "@/ca
 import { BotNumber, MainNumber, NumberSkeleton } from "@/campaigns/Overview";
 import ServiceMessages from "@/campaigns/ServiceMessages";
 import { useLoad } from "@/campaigns/useLoad";
+import { ChunkBoundary } from "@/components/boundary";
 import { Sheet } from "@/components/overlay";
 import { Button, EmptyState, IconButton, Spinner } from "@/components/ui";
 import { cn, useNow } from "@/lib/utils";
 import type { CampaignStatus, SegmentSpec } from "@/model/campaigns";
+import type { WizardBack } from "@/campaigns/Wizard";
 import { useStore } from "@/state/store";
 import { Group, Page } from "./Page";
 
@@ -82,7 +85,14 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   const [rev, setRev] = useState(0);
   const [layer, setLayer] = useState<Layer | null>(null);
   const closeLayer = useCallback(() => setLayer(null), []);
-  useBackClose(layer !== null, closeLayer);
+  // мастер сам отвечает на «назад» и Esc (шаг назад, лист созданной рассылки); пока он не загрузился — просто закрыть
+  const wizBack: WizardBack = useRef<(() => boolean) | null>(null);
+  const back = () => {
+    if (layer?.kind === "wizard" && wizBack.current) return wizBack.current();
+    closeLayer();
+    return false;
+  };
+  useBackClose(layer !== null, back);
 
   const reloadOv = ov.reload;
   const reloadCrm = crm.reload;
@@ -179,6 +189,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         ws={ws}
         open={layer?.kind === "wizard"}
         preset={layer?.kind === "wizard" ? layer.preset : undefined}
+        backRef={wizBack}
         onClose={closeLayer}
         onDone={(id) => {
           // рассылка создана (и, может быть, запущена) — открываем её лист вместо мастера и перечитываем обзор
@@ -195,8 +206,10 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
           detail={det.details[lid]}
           now={now}
           open
+          owner={owner}
           onOpenChange={(v) => !v && closeLayer()}
           onChange={det.upsert}
+          load={det.load}
           onDeleted={(id) => {
             det.remove(id);
             closeLayer();
@@ -257,8 +270,11 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
             )}
           >
             <span className="truncate text-ui font-semibold pointer-coarse:text-base">{t.title}</span>
-            <span className="text-fg-3 max-md:sr-only"> · </span>
-            <span className={cn("truncate text-xs md:text-ui", on ? "text-fg-2" : "text-fg-3")}>{t.sub}</span>
+            <span aria-hidden className="text-fg-2 max-md:hidden">
+              {" · "}
+            </span>
+            {/* подпись — text-fg-2 и у неактивной вкладки: fg-3 на заливке вкладок — 4.39:1, ниже 4.5:1 (находка проверки 19.10.2026) */}
+            <span className="truncate text-xs text-fg-2 md:text-ui">{t.sub}</span>
           </button>
         );
       })}
@@ -267,11 +283,12 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
 }
 
 /** Мастер «Новая рассылка»: на телефоне — во весь экран (снизу вверх), на компьютере — большой лист по центру. */
-function WizardLayer({ ws, open, preset, onClose, onDone }: { ws: string; open: boolean; preset?: Preset; onClose: () => void; onDone: (id: string) => void }) {
+function WizardLayer({ ws, open, preset, backRef, onClose, onDone }: { ws: string; open: boolean; preset?: Preset; backRef: WizardBack; onClose: () => void; onDone: (id: string) => void }) {
   // внутри корня пульта: его высоту и сдвиг при открытой клавиатуре iPhone задаёт lib/viewport.ts — поля мастера не уходят под клавиатуру
   const root = document.querySelector<HTMLElement>(".app-root");
   return (
-    <D.Root open={open} onOpenChange={(v) => !v && onClose()}>
+    // Esc — как «назад» мастера: созданную, но не запущенную рассылку открывает в списке, а не бросает черновиком
+    <D.Root open={open} onOpenChange={(v) => !v && (backRef.current ? backRef.current() : onClose())}>
       <D.Portal container={root ?? undefined}>
         <D.Overlay className="absolute inset-0 z-40 bg-scrim data-[state=open]:animate-fade-in max-md:hidden" />
         <D.Content
@@ -285,15 +302,17 @@ function WizardLayer({ ws, open, preset, onClose, onDone }: { ws: string; open: 
           )}
         >
           <D.Title className="sr-only">Новая рассылка</D.Title>
-          <Suspense
-            fallback={
-              <div className="grid flex-1 place-items-center">
-                <Spinner />
-              </div>
-            }
-          >
-            {open && <Wizard ws={ws} preset={preset} onClose={onClose} onDone={onDone} />}
-          </Suspense>
+          <ChunkBoundary what="Мастер рассылки" onClose={onClose}>
+            <Suspense
+              fallback={
+                <div className="grid flex-1 place-items-center">
+                  <Spinner />
+                </div>
+              }
+            >
+              {open && <Wizard ws={ws} preset={preset} onClose={onClose} onDone={onDone} backRef={backRef} />}
+            </Suspense>
+          </ChunkBoundary>
         </D.Content>
       </D.Portal>
     </D.Root>
@@ -301,19 +320,21 @@ function WizardLayer({ ws, open, preset, onClose, onDone }: { ws: string; open: 
 }
 
 /** Открытый лист — своя запись истории: жест «назад» на iPhone и кнопка «Назад» в Android закрывают лист, а не уводят из раздела.
- *  Адрес не меняется, поэтому роутер (lib/router.ts) экран не переключает. */
-function useBackClose(open: boolean, close: () => void) {
-  const closeRef = useRef(close);
-  closeRef.current = close;
+ *  Адрес не меняется, поэтому роутер (lib/router.ts) экран не переключает. back() вернул true — лист остался (мастер ушёл на прошлый
+ *  шаг или открылся лист созданной рассылки): запись истории ставим снова, следующее «назад» опять придёт сюда. */
+function useBackClose(open: boolean, back: () => boolean) {
+  const backRef = useRef(back);
+  backRef.current = back;
   useEffect(() => {
     if (!open) return;
     const st = history.state && typeof history.state === "object" ? history.state : {};
     const depth = typeof st.pultDepth === "number" ? st.pultDepth : 0;
-    history.pushState({ ...st, pultDepth: depth + 1, pultLayer: 1 }, "", location.href);
+    const push = () => history.pushState({ ...st, pultDepth: depth + 1, pultLayer: 1 }, "", location.href);
+    push();
     let mine = true;
     const onPop = () => {
-      mine = false;
-      closeRef.current();
+      if (backRef.current()) push();
+      else mine = false;
     };
     window.addEventListener("popstate", onPop);
     return () => {

@@ -10,7 +10,7 @@ import { gaRoute, gaShared } from "../integrations/greenapi/webhook.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { sendWA } from "../channels/meta.js";
 import { waRoute } from "../channels/index.js";
-import { remindText } from "./plan.js";
+import { remindText, remindLive } from "./plan.js";
 import { logSafe } from "../../lib/phone.js";
 import { sendTemplate } from "../channels/templates.js";
 // шаблон Meta для напоминания или просьбы об отзыве (вне 24-часового окна). Имя — из Cloudflare: TPL_REMIND_<ID> (накануне и за 2 часа),
@@ -32,8 +32,8 @@ export async function remindSend(env, cid, x, now) {
   const mk = `rms:${cid}:${x.rec}:${x.k}`;
   if (await env.KV.get(mk)) return false;
   const hk = `h:${x.ch}:${cid}:${x.id}`, h = JSON.parse((await env.KV.get(hk)) || "null"), p = (h && h.profile) || {};
-  const b = (p.bookings || []).find(/** @param {any} v */ v => String(v.record_id) === x.rec);
-  if (!b || b.rq || b.date !== x.date || b.time !== x.time || p.stop) return false; // запись отменена, перенесена, по ней просьба — или клиент написал «стоп»
+  const b = remindLive(p, x);
+  if (!b) return false; // запись отменена, перенесена, по ней просьба — или клиент написал «стоп»
   // официальный WhatsApp (Meta, Wazzapo): вне 24-часового окна — только одобренным шаблоном. Напоминание накануне и просьба об отзыве
   // почти всегда за окном: без шаблона их не было бы вовсе (16.10.2026). Шаблон задаётся в Cloudflare: TPL_REMIND_<ID>, TPL_REVIEW_<ID>
   const tpl = x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) ? remindTpl(env, c, b, x.k) : null;
@@ -44,6 +44,9 @@ export async function remindSend(env, cid, x, now) {
   await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 });
   let r; try { r = tpl ? await sendTemplate(env, x.id, tpl, "", route) : x.ch === "ga" ? await sendGreen(env, x.id + "@c.us", text, route, true) : await sendWA(env, x.id, text, route); } catch (e) { r = { ok: false, error: String(e) }; }
   if (!(r && r.ok)) { console.log("remind send", cid, x.k, logSafe(JSON.stringify(r).slice(0, 200))); return false; }
+  // отметка «ушло» — отдельным ключом (тот же ключ второй раз за секунду KV не принимает): по ней пульт считает «Отправлено за 3 дня»,
+  // неудачные попытки (rms: без rmok:) не считаются (находка проверки 19.10.2026)
+  try { await env.KV.put(`rmok:${cid}:${x.rec}:${x.k}`, "1", { expirationTtl: 3 * 86400 }); } catch (e) { console.log("remind ok mark", String(e)); }
   try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k }]); } catch (e) { console.log("remind log", String(e)); }
   return true;
 }

@@ -65,7 +65,7 @@ export function shortDate(t: number, now: number): string {
   return `${d.getDate()} ${MON[d.getMonth()]}, ${timeHM(t)}`;
 }
 
-/** +7 701 048 27 15 — так номера пишут в Казахстане. Чужие форматы оставляем как есть. */
+/** +7 700 000 27 15 — так номера пишут в Казахстане. Чужие форматы оставляем как есть. */
 export function formatPhone(s: string): string {
   const d = String(s || "").replace(/\D/g, "");
   if (d.length === 11 && (d[0] === "7" || d[0] === "8")) return `+7 ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7, 9)} ${d.slice(9)}`;

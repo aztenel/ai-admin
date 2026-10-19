@@ -35,7 +35,9 @@
 //
 // Новый клиент = новый блок в CLIENTS: факты, график (hours), слоты (slots), безопасные фразы.
 // Страница пульта (дизайн, телефон/планшет/ПК, демо) лежит в папке pult/ и собирается в pult.gen.js командой `node tools/build-pult.mjs`.
+// Новый пульт (apps/pult, React + Vite) — по адресу /app/; собирается в pult-app.gen.js командой `npm run build:app`.
 import { PULT_LIVE, PULT_DEMO, PULT_ICONS } from "./pult.gen.js";
+import { PULT_APP } from "./pult-app.gen.js";
 // Модули переезда (REFACTORING.md): всё новое — только в src/, worker.js их подключает.
 import { money } from "./src/lib/money.js";
 import { nameToks, svTrim } from "./src/lib/names.js";
@@ -120,5 +122,5 @@ const WORD = /[^a-zа-яәғқңөұүһі0-9]+/;
 const firstWord = s => clean(s).toLowerCase().split(" ")[0];
 
 // ================= HTTP =================
-// Роутер — src/routes/index.js, точка входа — src/index.js; страницы пульта приходят из pult.gen.js (вне src/).
-export default createWorker({ PULT_LIVE, PULT_DEMO, PULT_ICONS });
+// Роутер — src/routes/index.js, точка входа — src/index.js; страницы пульта приходят из pult.gen.js и pult-app.gen.js (вне src/).
+export default createWorker({ PULT_LIVE, PULT_DEMO, PULT_ICONS, PULT_APP });

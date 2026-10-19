@@ -1,7 +1,8 @@
 // Одна рассылка: ход, почему стоит или чего ждёт, действия и «Не дошло — почему». Лист снизу на телефоне, панель справа на компьютере.
 // Действия и подтверждения — как на старой странице /broadcast (её больше нет в пульте): «Запустить»/«Продолжить» — с числом получателей,
 // у шаблонов больше 100 получателей — второе подтверждение с оценкой суммы; сервер спросил про сигнал «остановиться» (409 confirm) —
-// вопрос сервера и тот же запрос с force. «Остановить совсем» и «Удалить» — необратимы, с подтверждением.
+// вопрос сервера и тот же запрос с force — только владельцу: запуск при сигнале снимает сигнал для всего номера (сотруднику сервер
+// отвечает 403, а его вопрос пульт показывает как причину). «Остановить совсем» и «Удалить» — необратимы, с подтверждением.
 // Старые рассылки с номера бота (Green-API) не запускаются и не продолжаются из пульта (решение владельца 19.10.2026): их можно
 // поставить на паузу, остановить и удалить. Ход идущей рассылки опрашивает хаб (useCampaignDetails), сюда приходят свежие сведения.
 import { CircleAlert, Clock, ListX, Pause, Play, Send, Square, Trash2 } from "lucide-react";
@@ -12,7 +13,7 @@ import { plural, shortDate, timeHM } from "@/lib/format";
 import { cn, useMedia } from "@/lib/utils";
 import type { CampaignAct, CampaignDetail, CampaignRow } from "@/model/campaigns";
 import { store } from "@/state/store";
-import { CHANNEL_LABEL, CONFIRM_OVER, costText, errText, progressPct, type Tone } from "./common";
+import { CHANNEL_LABEL, CONFIRM_OVER, costText, errText, ownerOnly, progressPct, type Tone } from "./common";
 import { statusOf } from "./History";
 
 const nf = new Intl.NumberFormat("ru-RU");
@@ -39,8 +40,10 @@ export function CampaignSheet({
   detail,
   now,
   open,
+  owner,
   onOpenChange,
   onChange,
+  load,
   onDeleted,
   onStarted,
 }: {
@@ -52,8 +55,13 @@ export function CampaignSheet({
   detail?: CampaignDetail;
   now: number;
   open: boolean;
+  /** Владелец: только ему — «Всё равно продолжить» при сигнале «остановиться». */
+  owner: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Ответ действия — свежие сведения рассылки. */
   onChange: (d: CampaignDetail) => void;
+  /** Перечитать рассылку (useCampaignDetails: ответ, который обогнал более свежий, не применяется). */
+  load: (id: string) => Promise<void>;
   onDeleted: (id: string) => void;
   /** Запуск прошёл — хаб перечитывает обзор (сигнал Meta мог сняться). */
   onStarted: () => void;
@@ -70,16 +78,13 @@ export function CampaignSheet({
     setErr("");
     setBad(null);
     setLoadErr("");
-    if (!open || !store.source) return;
+    if (!open) return;
     let live = true;
-    store.source.campaign(ws, id).then(
-      (d) => live && onChange(d),
-      (e) => live && setLoadErr(errText(e)),
-    );
+    load(id).catch((e) => live && setLoadErr(errText(e)));
     return () => {
       live = false;
     };
-    // onChange не в зависимостях: перезапрашиваем только при открытии и смене рассылки
+    // load не в зависимостях: перезапрашиваем только при открытии и смене рассылки
   }, [open, ws, id]);
 
   const c: (CampaignRow & Partial<CampaignDetail>) | undefined = detail ?? row;
@@ -91,9 +96,10 @@ export function CampaignSheet({
     setErr("");
     try {
       const r = await src.campaignAct(ws, c.id, a, force);
-      if (r.kind === "confirm")
-        setAsk({ title: "Есть сигнал «остановиться»", text: r.question, yes: "Всё равно продолжить", danger: true, run: () => void act(a, true) });
-      else if (r.kind === "deleted") {
+      if (r.kind === "confirm") {
+        if (owner) setAsk({ title: "Есть сигнал «остановиться»", text: r.question, yes: "Всё равно продолжить", danger: true, run: () => void act(a, true) });
+        else setErr(ownerOnly(r.question));
+      } else if (r.kind === "deleted") {
         toast(DONE_TOAST.delete);
         onDeleted(c.id);
       } else {
@@ -103,6 +109,9 @@ export function CampaignSheet({
       }
     } catch (e) {
       setErr(errText(e));
+      // запуск не удался, а рассылка на сервере могла измениться (очередь не записалась — сервер ставит её на паузу): перечитываем,
+      // иначе лист показывал бы «Готова к запуску» и «Запустить» вместо «Продолжить» (находка проверки 19.10.2026)
+      if (a === "start") void load(c.id).catch(() => {});
     } finally {
       setBusy(null);
     }

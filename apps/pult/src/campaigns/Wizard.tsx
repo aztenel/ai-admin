@@ -3,6 +3,8 @@
 // На телефоне — по шагам (кому → сообщение → часы и предел → проверка, предпросмотр, стоимость, пробная себе → согласие и запуск),
 // на компьютере — одной формой. Проверка, создание и запуск — сервер (/api/bc/check, /create, /act start); его тексты — как есть.
 // Основного номера нет — мастер не открывается, только объяснение. Черновик живёт в памяти вкладки: случайный жест «назад» его не стирает.
+// Системное «назад» (жест iPhone, кнопка Android) и Esc ведут себя как стрелка мастера (backRef): на телефоне — на прошлый шаг;
+// созданную, но не запущенную рассылку — в список, а не черновиком (иначе её создавали второй раз; находки проверки 19.10.2026).
 import { ChevronLeft, CircleAlert, Megaphone, RefreshCw, Rocket, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Confirm, toast } from "@/components/overlay";
@@ -12,19 +14,21 @@ import { cn, useMedia } from "@/lib/utils";
 import type { CampaignCheck, CampaignDetail, SegmentSpec } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
-import { CONFIRM_OVER, costEstimate, defaultCap, errorList, errText, MARKETING_PRICE_KZT, money } from "./common";
+import { CONFIRM_OVER, costEstimate, defaultCap, errorList, errText, MARKETING_PRICE_KZT, money, ownerOnly } from "./common";
 import { useLoad } from "./useLoad";
 import { ErrorList } from "./wizard/fields";
 import { baseState, checkKey, initialForm, nameOf, resolve, STEP_CHECK, STEP_LAUNCH, STEPS, toDraft, validate, type Errs, type Form } from "./wizard/form";
 import { CheckSection, HoursSection, LaunchSection, MessageSection, RecipientsSection, SectionTitle } from "./wizard/steps";
 
-type Props = { ws: string; preset?: { segment?: SegmentSpec; channel?: "main" | "bot" }; onClose(): void; onDone(id: string): void };
+/** backRef — сюда мастер кладёт свой ответ на системное «назад» и Esc: true — мастер (или лист созданной рассылки) остаётся открытым. */
+export type WizardBack = RefObject<(() => boolean) | null>;
+type Props = { ws: string; preset?: { segment?: SegmentSpec; channel?: "main" | "bot" }; onClose(): void; onDone(id: string): void; backRef?: WizardBack };
 
 /** Черновики по компаниям — только в памяти вкладки (не в localStorage: в списке могут быть номера клиентов). */
 const drafts = new Map<string, { form: Form; step: number }>();
 const nf = new Intl.NumberFormat("ru-RU");
 
-export default function Wizard({ ws, preset, onClose, onDone }: Props) {
+export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) {
   const md = useMedia("(min-width: 768px)");
   const ov = useLoad((s) => s.campaignsOverview(ws), [ws]);
   const crm = useLoad((s) => s.crmSegments(ws), [ws]);
@@ -36,13 +40,15 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
   const [step, setStep] = useState(() => (saved ? Math.min(saved.step, 2) : preset?.segment ? 1 : 0));
   const [restored, setRestored] = useState(!!saved);
   const [shown, setShown] = useState<number[]>([]); // шаги, у которых уже показываем ошибки
-  const life = useRef({ f, step, touched: false, done: false });
+  const life = useRef({ f, step, touched: false, done: false, created: false });
   life.current.f = f;
   life.current.step = step;
   useEffect(
     () => () => {
       const l = life.current;
-      if (l.touched && !l.done) drafts.set(ws, { form: l.f, step: l.step });
+      // рассылка уже создана — черновиком её не возвращаем: с отмеченным согласием её создали бы второй раз
+      if (l.created) drafts.delete(ws);
+      else if (l.touched && !l.done) drafts.set(ws, { form: l.f, step: l.step });
     },
     [ws],
   );
@@ -98,6 +104,7 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
   const [busy, setBusy] = useState<"" | "create" | "start">("");
   const [launchErrs, setLaunchErrs] = useState<string[]>([]);
   const [created, setCreated] = useState<CampaignDetail | null>(null);
+  life.current.created = !!created;
   const [ask, setAsk] = useState<null | { kind: "sum" } | { kind: "server"; question: string }>(null);
   /** Вопрос сервера, на который ответили «Отмена» (сигнал Meta), — показываем его как причину. */
   const [declined, setDeclined] = useState("");
@@ -120,6 +127,8 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
         // сигнал Meta: сервер спрашивает — рассылка уже создана, дальше только «запустить» или «открыть в списке»
         setCreated(c);
         setBusy("");
+        // запуск при сигнале снимает его для всего номера — это решает владелец; сотруднику вопрос — как причина
+        if (!ov.data?.owner) return setLaunchErrs([ownerOnly(res.question)]);
         setDeclined(res.question);
         setAsk({ kind: "server", question: res.question });
         return;
@@ -130,6 +139,13 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
       setCreated(c);
       setBusy("");
       setLaunchErrs([errText(e)]);
+      // рассылка на сервере могла встать на паузу (очередь отправки не записалась) — показываем её как есть: тогда кнопка «Продолжить»,
+      // как в тексте ошибки сервера (находка проверки 19.10.2026)
+      try {
+        setCreated(await src.campaign(ws, c.id));
+      } catch {
+        // не перечиталась — остаётся как была
+      }
     }
   };
   /** Создать (если ещё не создана) и, если startNow, запустить. Повторное нажатие после ошибки запуска не создаёт вторую рассылку. */
@@ -187,6 +203,25 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
   };
   const close = () => (created ? leave(created, "Рассылка создана, но не запущена — она в списке рассылок.") : onClose());
   const prev = () => (step > 0 && !created ? setStep(step - 1) : close());
+  // системное «назад» и Esc — как стрелка мастера; true — что-то осталось открытым (мастер на прошлом шаге или лист созданной рассылки)
+  useEffect(() => {
+    if (!backRef) return;
+    backRef.current = () => {
+      if (created) {
+        close();
+        return true;
+      }
+      if (!md && step > 0 && ov.data?.main.ready) {
+        setStep(step - 1);
+        return true;
+      }
+      onClose();
+      return false;
+    };
+    return () => {
+      backRef.current = null;
+    };
+  });
   // на компьютере «Проверить» проверяет и поля всех разделов
   const checkAll = () => {
     const bad = firstErrorStep(STEP_CHECK - 1);
@@ -283,7 +318,7 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
         footer={
           <Actions md={md}>
             <Button variant="primary" size="lg" icon={Rocket} busy={busy === "start"} onClick={() => void start(created)} className="max-md:w-full">
-              Запустить
+              {created.status === "paused" ? "Продолжить" : "Запустить"}
             </Button>
             <Button variant="outline" size="lg" disabled={!!busy} onClick={close} className="max-md:w-full">
               Открыть в списке рассылок
@@ -317,9 +352,9 @@ export default function Wizard({ ws, preset, onClose, onDone }: Props) {
     <LaunchSection key={4} {...p} ov={ovd} res={fresh ? chk!.res : null} name={nameOf(f, r, now)} errors={launchErrs} />,
   ];
   const restoredNote = restored && (
-    <p className="mb-4 flex flex-wrap items-center gap-x-2 rounded-[0.875rem] bg-selected px-4 py-2.5 text-sm text-selected-fg">
+    <p className="mb-4 flex flex-wrap items-center gap-x-2 rounded-[0.875rem] bg-selected px-4 py-2.5 text-sm text-selected-fg pointer-coarse:py-0">
       Продолжаем черновик.
-      <button type="button" onClick={restart} className="font-medium underline-offset-2 hover:underline">
+      <button type="button" onClick={restart} className="inline-flex items-center font-medium underline-offset-2 hover:underline pointer-coarse:min-h-11">
         Начать заново
       </button>
     </p>

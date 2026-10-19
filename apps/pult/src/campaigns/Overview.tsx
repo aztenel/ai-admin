@@ -39,9 +39,19 @@ function NumberHead({ icon, phone, sub, badge, tone }: { icon: LucideIcon; phone
   );
 }
 
-/** Качество номера: зелёное — точка и «высокое»; жёлтое — треугольник (жёлтого цвета в палитре нет: смысл — словами); красное — красным. */
+/** Качество номера: зелёное — точка и «высокое»; жёлтое — треугольник (жёлтого цвета в палитре нет: смысл — словами); красное — красным.
+ *  Над плашкой — подпись «Качество», как у чисел ниже: одно «высокое» непонятно о чём (находка проверки 19.10.2026). Подпись — над
+ *  плашкой, а не в ней: иначе на телефоне не помещался номер. */
 function QualityBadge({ q }: { q: NumberQuality }) {
   const label = QUALITY[q].label.split(" — ")[0];
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-0.5">
+      <span className="text-xs text-fg-3">Качество</span>
+      <QualityPill q={q} label={label} />
+    </span>
+  );
+}
+function QualityPill({ q, label }: { q: NumberQuality; label: string }) {
   return (
     <span
       className={cn(
@@ -53,10 +63,7 @@ function QualityBadge({ q }: { q: NumberQuality }) {
       )}
     >
       {q === "yellow" ? <TriangleAlert aria-hidden className="size-3.5" strokeWidth={2.25} /> : <span aria-hidden className={cn("size-2 rounded-full", q === "green" ? "bg-positive" : q === "red" ? "bg-critical" : "bg-fg-3")} />}
-      <span>
-        <span className="sr-only">Качество: </span>
-        {label}
-      </span>
+      <span>{label}</span>
     </span>
   );
 }
