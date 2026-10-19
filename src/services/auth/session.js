@@ -64,7 +64,10 @@ export async function loginBlocked(env, request, failed) {
   const ip = ipKey(request.headers.get("cf-connecting-ip") || "local"), slot = Math.floor(Date.now() / 600e3), k = `lg:${ip}:${slot}`;
   let n = loginFails.get(k) || 0;
   if (!failed) { if (n >= 8) return true; try { n = Math.max(n, +(await env.KV.get(k)) || 0); } catch (e) {} return n >= 8; }
-  n++; loginFails.set(k, n); if (loginFails.size > 2000) loginFails.clear();
+  // большее из памяти и KV: попытки могли идти через другие экземпляры Worker — иначе их счётчик перезаписался бы меньшим (19.10.2026)
+  try { n = Math.max(n, +(await env.KV.get(k)) || 0); } catch (e) {}
+  n++; loginFails.set(k, n);
+  if (loginFails.size > 2000) { for (const old of loginFails.keys()) if (!old.endsWith(":" + slot)) loginFails.delete(old); if (loginFails.size > 2000) loginFails.clear(); } // сначала прошлые 10 минут, а не всё
   try { await env.KV.put(k, String(n), { expirationTtl: 1200 }); } catch (e) {}
   return n >= 8;
 }
