@@ -1,8 +1,9 @@
 // Демо-режим: вымышленные компании для показа пульта и проверки вида. Включается только явно (VITE_PULT_DATA=demo, адрес /demo
 // или ?demo) и никогда не подменяет настоящие данные. Номера — заведомо несуществующие (+7 700 000 …), люди и переписки придуманы.
+// ?staff в адресе — вид сотрудника компании (без кнопок владельца: «Обновить базу», автосценарий, «Снять сигнал Meta»).
+// Рассылки, база клиентов и автосценарий — data/demo-campaigns.ts.
 import type {
   BotState,
-  Campaign,
   Channel,
   ChannelReport,
   ChatRequest,
@@ -16,6 +17,7 @@ import type {
   Workspace,
 } from "@/model/types";
 import { ApiError } from "./errors";
+import { createDemoCampaigns } from "./demo-campaigns";
 import type { DataSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
@@ -36,16 +38,17 @@ type Conv = {
   /** Окно WhatsApp 24 ч закрыто (клиент давно не писал). */
   windowClosed?: boolean;
 };
-type Fixture = { ws: Workspace; payment?: string; convs: Conv[]; campaigns: Campaign[]; done: Lead[] };
+type Fixture = { ws: Workspace; payment?: string; convs: Conv[]; done: Lead[] };
 
 function build(now: number): Fixture[] {
   let n = 0;
   const id = () => `m${++n}`;
   const msg = (from: Message["from"], text: string, ago: number, extra?: Partial<Message>): Message => ({ id: id(), from, text, at: now - ago, ...extra });
 
+  // как у Winchester: основной номер — Meta (шаблоны, рассылки по базе), номер бота — Green-API (только ответы, без рассылок)
   const barberChannels: Channel[] = [
-    { id: "wa", kind: "wa_cloud", name: "ИИ-администратор", phone: "+77000001234", health: { level: "ok", text: "подключён" } },
-    { id: "ga", kind: "green_api", name: "Основной WhatsApp", phone: "+77000005678", health: { level: "ok", text: "подключён" } },
+    { id: "wa", kind: "wa_cloud", name: "Основной номер", phone: "+77000001234", health: { level: "ok", text: "подключён" } },
+    { id: "ga", kind: "green_api", name: "Номер бота", phone: "+77000005678", health: { level: "ok", text: "подключён" } },
     { id: "web", kind: "web", name: "" },
   ];
   const barber: Fixture = {
@@ -187,11 +190,6 @@ function build(now: number): Fixture[] {
         ],
       },
     ],
-    campaigns: [
-      { id: "b3", name: "Скидка 20% в будни до 14:00", status: "done", total: 120, sent: 117, failed: 3, createdAt: now - 4 * DAY, channelId: "wa" },
-      { id: "b2", name: "Новый мастер в команде", status: "done", total: 340, sent: 336, failed: 4, createdAt: now - 16 * DAY, channelId: "ga" },
-      { id: "b4", name: "Подарочные сертификаты к Новому году", status: "ready", total: 0, sent: 0, failed: 0, createdAt: now - 1 * DAY, channelId: "wa" },
-    ],
     done: [
       { id: "l-old1", kind: "cancel", name: "Нурлан", phone: "+77000902135", service: "Детская стрижка", time: "вчера, 19:00", note: "Отменил администратор, клиенту сообщено", status: "выполнена", channelId: "wa", at: now - 26 * HOUR },
       { id: "l-old2", kind: "lead", name: "Канат", phone: "+77000144089", service: "Бритьё опасной бритвой", time: "16 октября, 15:30", note: "", status: "выполнена", channelId: "ga", at: now - 2 * DAY },
@@ -264,7 +262,6 @@ function build(now: number): Fixture[] {
         ],
       },
     ],
-    campaigns: [],
     done: [],
   };
 
@@ -278,7 +275,6 @@ function build(now: number): Fixture[] {
       capabilities: { booking: null, campaigns: false },
     },
     convs: [],
-    campaigns: [],
     done: [],
   };
   return [barber, service, empty];
@@ -289,6 +285,8 @@ const digits = (s?: string) => String(s || "").replace(/\D/g, "");
 
 export function createDemoSource(): DataSource {
   const fx = build(Date.now());
+  const role = () => (new URLSearchParams(location.search).has("staff") ? "staff" : "owner") as "owner" | "staff";
+  const campaigns = createDemoCampaigns(role);
   const find = (ws: string) => {
     const f = fx.find((x) => x.ws.id === ws);
     if (!f) throw new ApiError("Нет доступа к этому клиенту.", 403);
@@ -345,7 +343,7 @@ export function createDemoSource(): DataSource {
     async session() {
       await wait(80);
       const q = new URLSearchParams(location.search).get("c");
-      return { role: "owner", workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo" };
+      return { role: role(), workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo" };
     },
     async workspaces() {
       return fx.map((f) => ({ id: f.ws.id, name: f.ws.name, kind: f.ws.id === "demo" ? "Барбершоп" : f.ws.id === "demo-service" ? "Ремонт и продажа телефонов" : "Без чатов" }));
@@ -359,7 +357,8 @@ export function createDemoSource(): DataSource {
     async channelReport(ws): Promise<ChannelReport> {
       await wait(700);
       const f = find(ws);
-      return { channels: structuredClone(f.ws.channels), optouts: f.ws.id === "demo" ? 1 : 0, campaigns: f.campaigns, owner: true };
+      const idOf = (ch: "main" | "bot") => f.ws.channels.find((c) => c.kind === (ch === "bot" ? "green_api" : "wa_cloud"))?.id;
+      return { channels: structuredClone(f.ws.channels), optouts: f.ws.id === "demo" ? 3 : 0, campaigns: campaigns.rows(f.ws.id, idOf), owner: role() === "owner" };
     },
     async conversation(ws, ref) {
       await wait(220);
@@ -419,6 +418,7 @@ export function createDemoSource(): DataSource {
       );
       return [...open, ...f.done];
     },
+    ...campaigns.api,
     externalUrl() {
       return null;
     },

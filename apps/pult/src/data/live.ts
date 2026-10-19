@@ -23,7 +23,7 @@ import type {
 } from "@/model/types";
 import { channelKind } from "@/model/channels";
 import { ApiError } from "./errors";
-import type { DataSource } from "./source";
+import type { CampaignSource, DataSource } from "./source";
 import { readMarks } from "./read-marks";
 
 // ---------- ответы сервера ----------
@@ -49,8 +49,9 @@ type BcRaw = {
 };
 
 // ---------- запросы ----------
-const enc = encodeURIComponent;
-async function call<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+export const enc = encodeURIComponent;
+/** Запрос к API бота. Ошибка — ApiError с текстом сервера; список ошибок формы (`errors`) и вопрос (`confirm`) — в её полях. */
+export async function call<T>(path: string, body?: Record<string, unknown>): Promise<T> {
   let r: Response;
   try {
     r = await fetch(path, body ? { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { credentials: "same-origin" });
@@ -62,15 +63,21 @@ async function call<T>(path: string, body?: Record<string, unknown>): Promise<T>
     location.href = "/login?next=" + enc(location.pathname + location.search + location.hash);
     throw new ApiError("Нужно войти заново.", 401);
   }
-  let j: (T & { error?: string }) | null = null;
+  let j: (T & { error?: string; errors?: unknown; confirm?: unknown }) | null = null;
   try {
-    j = (await r.json()) as T & { error?: string };
+    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown };
   } catch {
     /* не JSON — ниже общая ошибка */
   }
   if (!j) throw new ApiError(`Сервер ответил ошибкой ${r.status}. Попробуйте ещё раз через минуту.`, r.status);
   if (j.error) throw new ApiError(j.error, r.status);
-  if (!r.ok) throw new ApiError(`Сервер ответил ошибкой ${r.status}.`, r.status);
+  if (!r.ok) {
+    // рассылки: 400 { ok: false, errors: [...] } — ошибки формы списком; 409 { confirm } — вопрос перед запуском при сигнале Meta
+    const errors = Array.isArray(j.errors) ? j.errors.map(String).filter(Boolean) : [];
+    if (errors.length) throw new ApiError(errors.join("; "), r.status, false, { errors });
+    if (typeof j.confirm === "string" && j.confirm) throw new ApiError(j.confirm, r.status, false, { confirm: j.confirm });
+    throw new ApiError(`Сервер ответил ошибкой ${r.status}.`, r.status);
+  }
   return j;
 }
 
@@ -171,6 +178,10 @@ const fmtGaState: Record<string, string> = {
   yellowCard: "ограничен WhatsApp",
 };
 
+// раздел «Рассылки» — отдельный файл (live-campaigns.ts): грузится при первом обращении, в первое открытие пульта не входит
+const campaignsApi = <K extends keyof CampaignSource>(k: K): CampaignSource[K] =>
+  ((...a: unknown[]) => import("./live-campaigns").then((m) => (m.liveCampaigns[k] as (...x: unknown[]) => unknown)(...a))) as CampaignSource[K];
+
 export function createLiveSource(): DataSource {
   const marks = readMarks();
   const studio = new Map<string, StudioClientRaw>();
@@ -261,6 +272,20 @@ export function createLiveSource(): DataSource {
       const d = await call<{ leads: LeadRaw[] }>(`/api/inbox/leads?c=${enc(ws)}`);
       return d.leads.map((l) => ({ id: l.id, kind: reqKind(l.kind), name: l.name, phone: l.phone, service: l.service, time: l.time, note: l.note, status: l.status, channelId: leadChannel(l.source), at: l.ts || 0 }));
     },
+    campaignsOverview: campaignsApi("campaignsOverview"),
+    campaign: campaignsApi("campaign"),
+    campaignBad: campaignsApi("campaignBad"),
+    checkCampaign: campaignsApi("checkCampaign"),
+    createCampaign: campaignsApi("createCampaign"),
+    campaignAct: campaignsApi("campaignAct"),
+    campaignTick: campaignsApi("campaignTick"),
+    testSend: campaignsApi("testSend"),
+    crmSegments: campaignsApi("crmSegments"),
+    crmList: campaignsApi("crmList"),
+    crmRefresh: campaignsApi("crmRefresh"),
+    autoGet: campaignsApi("autoGet"),
+    autoSet: campaignsApi("autoSet"),
+    clearMetaHold: campaignsApi("clearMetaHold"),
     externalUrl(page, ws) {
       const c = "?c=" + enc(ws);
       return { broadcast: "/broadcast" + c, studio: "/studio", launch: "/launch" + c, leads: "/leads" + c, logout: "/logout", site: "/" + c }[page];

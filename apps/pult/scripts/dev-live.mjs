@@ -1,45 +1,120 @@
 // Новый пульт на НАСТОЯЩЕМ коде бота, без сети: сервер бота из test/devserver.mjs (память вместо KV, заглушки Meta, Green-API,
-// Telegram и «ИИ») + Vite с пультом по адресу /app/. Запросы /api/*, /login и т. п. Vite передаёт серверу бота — как будет на сайте.
-// У компании «Демо Дент» (c=dent) два номера: Meta Cloud API (wa) и Green-API (ga). Сообщения «клиентов» приходят вебхуками.
-//   npm run dev:live            → http://127.0.0.1:5174/app/?c=dent , вход ключом owner-key-123456
+// Altegio, Telegram и «ИИ») + Vite с пультом по адресу /app/. Запросы /api/*, /login и т. п. Vite передаёт серверу бота — как будет на сайте.
+// Две компании, у каждой два номера: Meta Cloud API (wa, «основной номер») и Green-API (ga, «номер бота»):
+//   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов), рассылки с номера бота
+//                выключены кодом (gaNoBroadcast), ключ сотрудника staff-key-winch-0001;
+//   dent       — «Демо Дент»: без базы; сервер разрешает рассылки с номера бота (вебхук Green-API настроен), но пульт их не создаёт
+//                (решение владельца 19.10.2026: маркетинг — только с основного номера); маркетинг — вставленным списком.
+//   npm run dev:live            → адреса и ключи — в выводе; владелец входит ключом owner-key-123456
+//   фоновая отправка рассылок:  curl -X POST http://127.0.0.1:<порт пульта>/_cron   (или на порт бота — «прошла минута»)
 //   ещё сообщение клиента:      curl -X POST http://127.0.0.1:<порт бота>/_wa -d '{"c":"dent","from":"77001110001","text":"Привет"}'
-import { fileURLToPath } from "node:url";
+// Часы бота — как в проверках (test/clock.mjs): 3 октября 2026, 12:00 по Астане и дальше; даты журнала считаются от них.
+// Номера — вымышленные +7 700 000 xx xx (база) и +7 700 111 xx xx (чаты); имена придуманы.
+// Из другого скрипта (scripts/e2e-campaigns.mjs): const d = await startDevLive({ port }) → { app, bot, S, OWNER, STAFF_W, close }.
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "vite";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
 
-// номер Green-API компании «Демо Дент»: тот же способ, что в test/harness.mjs (gaText, пароль вебхука — HMAC токена)
+// номера Green-API: тот же способ, что в test/harness.mjs (gaText, пароль вебхука — HMAC токена)
 const GA = { id: "1101000001", token: "ga-token-dent" };
-const bot = await start(+(process.env.BOT_PORT || 0), {
-  WA_TOKEN_DENT: "tok-dent",
-  APP_SECRET_DENT: "sec-dent",
-  PHONE_NUMBER_ID_DENT: "900111",
-  GA_ID_DENT: GA.id,
-  GA_TOKEN_DENT: GA.token,
-});
-const { S } = bot;
+const GAW = { id: "1101000002", token: "ga-token-winch" };
+export const STAFF_W = "staff-key-winch-0001";
 
-// переписки: два номера одной компании, один клиент пишет на оба
-const wa = (from, text, name) => S.waText("/wa/dent", from, text, { secret: "sec-dent", pnid: "900111", names: { [from]: name || "" } });
-const ga = (from, text, name) => S.gaText("dent", GA, from, text, { name: name || "" });
-await wa("77001110001", "Здравствуйте, сколько стоит чистка зубов?", "Айгерим");
-await wa("77001110001", "Позовите администратора, пожалуйста", "Айгерим");
-await wa("77001110002", "Есть рассрочка на имплант?");
-await ga("77001110003", "Добрый день! Можно записаться на завтра?", "Данияр");
-await ga("77001110001", "Это Айгерим, продублирую сюда: нужен администратор", "Айгерим");
-await S.chat("dent", "web-guest-1", "Будет больно удалять зуб мудрости?");
+/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота. */
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0) } = {}) {
+  // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
+  const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
+  const { net, gaPass } = await import(new URL("../../../test/harness.mjs", import.meta.url).href);
+  const bot = await start(botPort, {
+    WA_TOKEN_DENT: "tok-dent",
+    APP_SECRET_DENT: "sec-dent",
+    PHONE_NUMBER_ID_DENT: "900111",
+    GA_ID_DENT: GA.id,
+    GA_TOKEN_DENT: GA.token,
+    // Winchester: номер Meta, номер Green-API, ключ журнала Altegio (заглушка принимает только usr-tok), ключ сотрудника
+    WA_TOKEN_WINCHESTER: "tok-winch",
+    APP_SECRET_WINCHESTER: "sec-winch",
+    PHONE_NUMBER_ID_WINCHESTER: "900333",
+    GA_ID_WINCHESTER: GAW.id,
+    GA_TOKEN_WINCHESTER: GAW.token,
+    ALTEGIO_USER_WINCHESTER: "usr-tok",
+    KEY_WINCHESTER: STAFF_W,
+  });
+  const { S } = bot;
 
-const vite = await createServer({
-  root,
-  base: "/app/",
-  configFile: fileURLToPath(new URL("../vite.config.ts", import.meta.url)),
-  server: {
-    host: "127.0.0.1",
-    port: +(process.env.PORT || 5174),
-    strictPort: true,
-    proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox"].map((p) => [p, { target: bot.url }])),
-  },
-});
-await vite.listen();
-console.log(`Бот на заглушках: ${bot.url}\nНовый пульт:      http://127.0.0.1:${vite.config.server.port}/app/?c=dent  (ключ входа: ${OWNER})`);
+  // вебхуки Green-API ведут в этого бота: без этого рассылку с номера бота не запустить (бот не увидел бы «стоп»)
+  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${bot.url}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
+  // сведения о номерах Meta: у Winchester качество высокое и предел 1000, у «Дента» — среднее и 250 (видно оба вида плашки)
+  net.graphReply = (url, init) => {
+    if ((init.method && init.method !== "GET") || !url.includes("fields=")) return null;
+    const w = url.includes("/900333?");
+    return new Response(JSON.stringify({ display_phone_number: w ? "+7 700 000 00 99" : "+7 700 000 00 11", verified_name: w ? "Winchester" : "Демо Дент",
+      quality_rating: w ? "GREEN" : "YELLOW", whatsapp_business_manager_messaging_limit: w ? "TIER_1K" : "TIER_250" }), { headers: { "content-type": "application/json" } });
+  };
+
+  // журнал Altegio Winchester: 40 вымышленных клиентов (≈ 70 записей), визиты 5–95 дней назад, у части — будущая запись, один скрытый номер, неявки
+  const NOW = Date.now(); // часы бота (test/clock.mjs)
+  const day = (n) => new Date(NOW - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+  const NAMES = ["Арман", "Данияр", "Ерлан", "Тимур", "Нурлан", "Самат", "Асхат", "Бекзат", "Дастан", "Ильяс", "Канат", "Мади", "Олжас", "Руслан", "Санжар", "Азамат", "Алихан", "Жандос", "Марат", "Ринат"];
+  const MASTERS = ["Арман", "Данияр", "Ерлан"];
+  const SERVICES = ["Мужская стрижка", "Стрижка и борода", "Оформление бороды", "Детская стрижка"];
+  let rid = 0;
+  const rec = (phone, name, n, o = {}) => ({ id: ++rid, datetime: `${day(n)}T${o.at || "12:00"}:00+05:00`, deleted: false, attendance: o.att ?? 1,
+    staff: { id: 1 + MASTERS.indexOf(o.staff), name: o.staff }, client: { id: 5000 + rid, phone, name }, services: [{ id: 1, title: o.svc || SERVICES[0] }] });
+  const journal = [];
+  for (let i = 1; i <= 40; i++) {
+    const phone = "+7700000" + String(2000 + i), name = i % 9 === 0 ? "" : NAMES[(i * 7) % NAMES.length], staff = MASTERS[i % 3], svc = SERVICES[(i * 5) % 4];
+    const last = 5 + ((i * 37) % 91); // 5–95 дней назад
+    const visits = 1 + (i % 4); // 1–4 визита, раз в 3–5 недель
+    for (let k = 0; k < visits; k++) {
+      const n = last + k * (21 + (i % 3) * 7);
+      if (n <= 95) journal.push(rec(phone, name, n, { staff, svc, att: i % 17 === 0 && k === 0 ? -1 : 1 }));
+    }
+    if (i % 11 === 0) journal.push(rec(phone, name, -(2 + (i % 5)), { staff, svc, att: 0 })); // будущая запись — в рассылки не попадёт
+  }
+  journal.push(rec("+7 700 XXX-X0-44", "Скрытый номер", 30, { staff: "Арман" })); // ключ журнала без права видеть телефоны — номер скрыт
+  net.altJournal = journal;
+  await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+
+  // переписки: два номера одной компании, один клиент пишет на оба
+  const wa = (from, text, name) => S.waText("/wa/dent", from, text, { secret: "sec-dent", pnid: "900111", names: { [from]: name || "" } });
+  const ga = (from, text, name) => S.gaText("dent", GA, from, text, { name: name || "" });
+  await wa("77001110001", "Здравствуйте, сколько стоит чистка зубов?", "Айгерим");
+  await wa("77001110001", "Позовите администратора, пожалуйста", "Айгерим");
+  await wa("77001110002", "Есть рассрочка на имплант?");
+  await ga("77001110003", "Добрый день! Можно записаться на завтра?", "Данияр");
+  await ga("77001110001", "Это Айгерим, продублирую сюда: нужен администратор", "Айгерим");
+  await S.chat("dent", "web-guest-1", "Будет больно удалять зуб мудрости?");
+  // Winchester: на основном номере бот молчит (waOff) — сообщение ждёт администратора
+  await S.waText("/wa/winchester", "77001112001", "Здравствуйте! Есть свободное время сегодня вечером?", { secret: "sec-winch", pnid: "900333", names: { "77001112001": "Ерлан" } });
+
+  const vite = await createServer({
+    root,
+    base: "/app/",
+    configFile: fileURLToPath(new URL("../vite.config.ts", import.meta.url)),
+    server: {
+      host: "127.0.0.1",
+      port,
+      strictPort: !!port,
+      // /_cron — «прошла минута» (фоновая отправка рассылок), чтобы проверке хватало одного адреса
+      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/_cron"].map((p) => [p, { target: bot.url }])),
+    },
+  });
+  await vite.listen();
+  const addr = vite.httpServer?.address();
+  const app = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : port}/app/`;
+  const close = async () => {
+    await vite.close();
+    await new Promise((r) => bot.server.close(() => r(undefined)));
+  };
+  return { app, bot, S, OWNER, STAFF_W, close };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { app, bot, OWNER } = await startDevLive();
+  console.log(`Бот на заглушках: ${bot.url}   (фоновая отправка рассылок: curl -X POST ${bot.url}/_cron)
+Новый пульт:
+  Winchester (база клиентов, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
+  Демо Дент (без базы, рассылка списком):             ${app}?c=dent   владелец: ${OWNER}`);
+}

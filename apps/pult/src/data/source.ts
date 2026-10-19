@@ -1,5 +1,5 @@
 // Откуда пульт берёт данные. Два источника с одним интерфейсом:
-//   live — настоящий API бота (/api/inbox/*, /api/bc/list, /api/studio/list), см. data/live.ts;
+//   live — настоящий API бота (/api/inbox/*, /api/bc/*, /api/crm/*, /api/studio/list), см. data/live.ts (рассылки — live-campaigns.ts);
 //   demo — вымышленные компании для показа и проверки вида, см. data/demo.ts.
 // Режим выбирается явно (сборка с VITE_PULT_DATA=demo или адрес /demo). Если сервер не ответил, пульт показывает ошибку —
 // подставлять демо вместо настоящих данных нельзя.
@@ -13,11 +13,64 @@ import type {
   Session,
   WorkspaceOption,
 } from "@/model/types";
+import type {
+  AutoInfo,
+  AutoSettings,
+  CampaignAct,
+  CampaignActResult,
+  CampaignCheck,
+  CampaignCreated,
+  CampaignDetail,
+  CampaignDraft,
+  CampaignFailures,
+  CampaignsOverview,
+  CampaignTickResult,
+  CrmInfo,
+  CrmOverview,
+  CrmPage,
+  SegmentSpec,
+} from "@/model/campaigns";
 import { createLiveSource } from "./live";
 
 export { ApiError } from "./errors";
 
-export interface DataSource {
+/**
+ * Раздел «Рассылки»: номера, рассылки, база клиентов из Altegio, автосценарий (model/campaigns.ts). ws — id компании (c=).
+ * Ошибки — ApiError: message — текст сервера; errors — список ошибок формы (create, autoSet); роль проверяет сервер
+ * (сотруднику crmRefresh, autoSet и clearMetaHold отвечают 403).
+ */
+export interface CampaignSource {
+  /** Номера компании и история рассылок. Дорогой запрос (сервер спрашивает Meta и Green-API) — не опрашивать часто; ход — campaign(). */
+  campaignsOverview(ws: string): Promise<CampaignsOverview>;
+  /** Одна рассылка целиком — дешёвый запрос, им опрашивать ход идущей рассылки. */
+  campaign(ws: string, id: string): Promise<CampaignDetail>;
+  /** «Не дошло — почему»: строки «номер — причина» (номера базы — маской). */
+  campaignBad(ws: string, id: string): Promise<CampaignFailures>;
+  /** Проверить черновик без сохранения: ошибки — в result.errors (не исключением). */
+  checkCampaign(ws: string, draft: CampaignDraft): Promise<CampaignCheck>;
+  /** Создать (статус ready, не запускает). Ошибки формы — ApiError.errors. */
+  createCampaign(ws: string, draft: CampaignDraft): Promise<CampaignCreated>;
+  /** Запустить / продолжить (start), пауза, остановить совсем, удалить. Сигнал Meta → { kind: "confirm" }: спросить и повторить с force = true. */
+  campaignAct(ws: string, id: string, act: CampaignAct, force?: boolean): Promise<CampaignActResult>;
+  /** Отправить порцию вручную — только когда campaign.stalled (фон молчит). */
+  campaignTick(ws: string, id: string): Promise<CampaignTickResult>;
+  /** Пробная отправка черновика на один номер (свой). Ответ — текст сервера «Шаблон отправлен на … — проверьте WhatsApp». */
+  testSend(ws: string, draft: CampaignDraft, to: string): Promise<string>;
+  /** База клиентов: числа, сегменты, исключения. */
+  crmSegments(ws: string): Promise<CrmOverview>;
+  /** Люди сегмента по 50 (page с 1), номера — маской. */
+  crmList(ws: string, spec: SegmentSpec, page?: number): Promise<CrmPage>;
+  /** Собрать базу из журнала Altegio сейчас — только владелец, до минуты. */
+  crmRefresh(ws: string): Promise<CrmInfo>;
+  /** Автосценарий «Пора на стрижку»: настройки и состояние. */
+  autoGet(ws: string): Promise<AutoInfo>;
+  /** Изменить автосценарий (только владелец), можно одно поле. Ошибки — ApiError.errors. Ответ — настройки после изменения. */
+  autoSet(ws: string, patch: Partial<AutoSettings>): Promise<AutoSettings>;
+  /** Снять сигнал Meta «остановиться» (только владелец). Остановленные рассылки остаются на паузе — их продолжают «Продолжить». */
+  clearMetaHold(ws: string): Promise<void>;
+}
+
+export interface DataSource extends CampaignSource {
   readonly mode: "live" | "demo";
   session(): Promise<Session>;
   /** Компании, между которыми может переключаться пользователь (владелец сервиса — все, сотрудник — своя). */
