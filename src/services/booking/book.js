@@ -7,12 +7,13 @@ import { altCall } from "../integrations/altegio/client.js";
 import { isoDay, mins, hm, TZ, local } from "../../lib/time.js";
 import { altUserKey } from "./journal.js";
 import { altDay } from "./replies.js";
-import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike, altServiceHint } from "./pick.js";
-import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr, withDurations } from "./fit.js";
+import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesLike, altServiceHint, altStaffWish } from "./pick.js";
+import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr, withDurations, withFreed, tStr } from "./fit.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
 import { svTrim } from "../../lib/names.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
+import { altDateOf, dowsIn } from "../conversation/tags.js";
 
 // ================= Altegio: запись в расписание =================
 // Кто отменяет и переносит записи. По умолчанию — администратор: бот в расписании ничего не удаляет, а передаёт ему просьбу клиента.
@@ -38,8 +39,13 @@ export const altTrial = (env, c) => {
   const v = env["ALTEGIO_TRIAL_" + String(c.id).toUpperCase()];
   return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.trialNextMonth);
 };
-// дни следующего месяца, открытые для записи, без единой записи в журнале. Без ключа пользователя журнал не прочитать — дней нет:
-// иначе проба легла бы на день с живыми записями (проверка 19.10.2026)
+// пометка пробной записи бота (comment в Altegio, altBook): по ней altTrialDates узнаёт свои пробы в журнале — только целиком
+export const TRIAL_NOTE = "ПРОБНАЯ запись (проверка AI-администратора) — можно удалить";
+// дни следующего месяца, открытые для записи, без единой записи живых клиентов. Без ключа пользователя журнал не прочитать — дней нет:
+// иначе проба легла бы на день с живыми записями (проверка 19.10.2026).
+// Пробные записи самого бота день не закрывают: после пробы «пн 12:00» понедельник пропадал из пробных дней (через 2 минуты — кэш —
+// или на другом экземпляре Worker), и пробную запись нельзя было перенести в тот же день, а «ещё на 15:00 к Рауану Отец и сын» — записать
+// (живая проверка владельца 19.10.2026). Журнал без поля comment или пометка не целиком — день закрыт, как раньше
 // userKey — ключ пользователя, если его ещё нет в переменных (страница /altegio/user)
 /** @param {Env} env @param {Client} c @param {number} loc @param {number} nowMs @param {number} [max] @param {string} [userKey] @returns {Promise<string[]>} */
 export async function altTrialDates(env, c, loc, nowMs, max = ALT_DAYS, userKey = "") {
@@ -52,7 +58,7 @@ export async function altTrialDates(env, c, loc, nowMs, max = ALT_DAYS, userKey 
   if (!user) return [];
   for (let pg = 1; pg <= 10; pg++) {
     const arr = await altCall(env, "GET", `/records/${loc}?start_date=${from}&end_date=${to}&count=200&page=${pg}`, null, user), list = Array.isArray(arr) ? arr : [];
-    for (const r of list) if (r && r.deleted !== true && r.deleted !== 1) busy.add(String(r.datetime || r.date || "").slice(0, 10));
+    for (const r of list) if (r && r.deleted !== true && r.deleted !== 1 && String(r.comment || "").trim() !== TRIAL_NOTE) busy.add(String(r.datetime || r.date || "").slice(0, 10));
     if (list.length < 200) break;
   }
   const v = dates.filter(/** @param {string} d */ d => !busy.has(d)).slice(0, max);
@@ -66,6 +72,22 @@ export const altLoc = (env, c) => {
   if (v != null && String(v).trim() !== "") return /^\d{1,12}$/.test(String(v).trim()) && +v > 0 ? +v : -1; // опечатка в номере — это сбой настройки, а не «расписания нет»
   return +((c.altegio && c.altegio.location) || 0) || 0;
 };
+
+// Время, которое запись клиента занимает у мастера: { staffId, date, from, to } (минуты) и её услуги и мастер из прайса (sv, staff) —
+// для переноса на время, которое с ней пересекается (живая проверка владельца 19.10.2026). Услуги — по номерам (sids, их помнит запись
+// бота), иначе по названиям (журнал Altegio отдаёт названия без цены); мастер — по номеру, иначе по имени. Длительность — из прайса
+// с таблицей длительностей (withDurations); неизвестна — час, как обычно у услуги в Altegio. Мастер неизвестен — staffId ""
+/** @param {any[]} services @param {any[]} staff @param {any} rec */
+export function ownSpan(services, staff, rec) {
+  if (!rec || !/^\d{4}-\d{2}-\d{2}$/.test(rec.date || "") || !/^\d{1,2}:\d{2}$/.test(rec.time || "")) return null;
+  const bare = /** @param {string} t */ t => svTrim(t).replace(/\s*\([^()]*\)\s*$/, "");
+  const m = (rec.staffId && staff.find(x => String(x.id) === String(rec.staffId))) || (rec.staffName && staff.find(x => x.name === rec.staffName || x.base === rec.staffName)) || null;
+  /** @type {any[]} */
+  const sv = Array.isArray(rec.sids) && rec.sids.length ? rec.sids.map(/** @param {any} id */ id => services.find(x => String(x.id) === String(id)))
+    : String(rec.services || "").split(" + ").map(t => services.find(x => svTrim(x.title) === svTrim(t)) || services.find(x => bare(x.title) === bare(t)));
+  const known = sv.length > 0 && sv.every(Boolean), dur = known ? sv.reduce(/** @param {number} n @param {any} x */ (n, x) => n + (+x.minutes || 0), 0) : 0, from = mins(rec.time);
+  return { staffId: m ? String(m.id) : "", date: rec.date, from, to: from + (dur || 60), sv: known ? sv : null, staff: m };
+}
 
 // Время без услуги — любое свободное начало. Если по услуге Altegio время не отдал, оставляем только начала, после которых мастер
 // свободен всю длительность услуги: следующие начала с шагом расписания идут подряд (11:00 при записи в 11:30 на час — не подходит)
@@ -102,7 +124,10 @@ export function thin(times, max = 16) {
 
 // снимок расписания для одного сообщения: услуги, мастера, свободное время
 // mode.trial — пробный чат: дни следующего месяца без записей (altTrialDates)
-/** @param {Env} env @param {Client} c @param {number} nowMs @param {string} userText @param {{ trial?: boolean }} [mode] */
+// mode.mine — свои записи бота в этом чате, когда клиент просит перенос: их время у их мастеров в «Проверке длительности» и в защите
+// ответа — свободно (перенос «пн 12:00 → 12:30» иначе выглядел как «в 12:00 у мастера уже занято», живая проверка владельца 19.10.2026).
+// Для записи (fit → altBook) время остаётся занятым: ещё одну запись поверх своей Altegio не даст, а перенос освобождает его сам (q.freed)
+/** @param {Env} env @param {Client} c @param {number} nowMs @param {string} userText @param {{ trial?: boolean, mine?: any[], moveSaid?: boolean }} [mode] */
 export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
   const loc = altLoc(env, c);
   const base0 = await altBase(env, loc, nowMs), base = { ...base0, services: withDurations(base0.services, c.altegio && c.altegio.durations) }; // длительность — из кода, если задана
@@ -161,16 +186,32 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
   // подходят услуге каждой длительности (fit.js). Нужно и для записи (altBook)
   /** @type {{ step: number, staff: Record<string, Record<string, string[]>> } | null} */
   let fit = null; /** @type {any[]} */ let fitDays = []; /** @type {Map<string, any> | null} */ let fitBad = null;
+  /** @type {any[]} */ let fitStaff = []; /** @type {any} */ let fitWho = null; // fitStaff — чьи списки в fitDays (по порядку); fitWho — время каждого мастера по дням для защиты ответа
+  /** @type {string[]} */ let fitRead = []; // дни, на которые читалось время мастеров (в fitDays — только дни, где прочитано у всех)
+  // при переносе: время своих записей (mode.mine) и списки мастеров, где оно свободно
+  /** @type {any[]} */
+  let mineSpans = [];
+  /** @type {Record<string, Record<string, string[]>>} */
+  let view = {};
   if (c.altegio && c.altegio.fitCheck && base.services.some(/** @param {any} x */ x => x.minutes)) {
-    const who = named ? [named] : base.staff.length <= 8 ? base.staff : [];
-    const relDays = !named && rel ? dates.filter(/** @param {string} d */ d => altDay(d, [], nowMs).rel === rel) : [], days = relDays.length ? relDays : dates;
+    const who = fitStaff = named ? [named] : base.staff.length <= 8 ? base.staff : [];
+    const relDays = !named && rel ? dates.filter(/** @param {string} d */ d => altDay(d, [], nowMs).rel === rel) : [], days = fitRead = relDays.length ? relDays : dates;
+    // клиент назвал мастера — время остальных (не больше 8 мастеров) читаем на один день, о котором речь (день из сообщения, иначе первый
+    // открытый): ИИ предлагает «у Тони выходной, к Айдосу в 15:00», а защита ответа и запись должны знать, свободен ли Айдос (проверка 19.10.2026:
+    // предложение занятого мастера проходило, а запись потом не проходила). В «Проверку длительности» — по-прежнему только названный мастер
+    const dayIn = /** @param {string} x */ x => { const iso = altDateOf(x, nowMs), dw = dowsIn(x); return iso && dates.includes(iso) ? iso : dw.length === 1 ? dates.find(/** @param {string} d */ d => new Date(d + "T00:00:00Z").getUTCDay() === dw[0]) || "" : ""; };
+    const askDay = named && base.staff.length <= 8 ? dayIn(msgs[msgs.length - 1] || "") || dayIn(msgs[msgs.length - 2] || "") || dates[0] || "" : "";
     const jobs = /** @type {{ d: string, id: string }[]} */ (days.flatMap(/** @param {string} d */ d => who.map(/** @param {any} m */ m => ({ d, id: String(m.id) }))));
+    if (askDay) for (const m of base.staff) if (m !== named) jobs.push({ d: askDay, id: String(m.id) });
     const rs = await settledBy(jobs.map(j => () => altTimes(env, loc, j.id, j.d, null, nowMs)), 3);
     /** @type {Record<string, Record<string, string[]>>} */
     const byStaff = {};
     rs.forEach((r, i) => { if (r.status === "fulfilled") (byStaff[jobs[i].id] = byStaff[jobs[i].id] || {})[jobs[i].d] = r.value.map(/** @param {any} x */ x => x.time); });
-    for (const d of days) if (who.length && who.every(/** @param {any} m */ m => byStaff[String(m.id)] && byStaff[String(m.id)][d])) fitDays.push({ ...altDay(d, [], nowMs), lists: who.map(/** @param {any} m */ m => byStaff[String(m.id)][d]) });
-    if (who.length) fit = { step: gridStep(Object.values(byStaff).flatMap(o => Object.values(o))), staff: byStaff };
+    const step = gridStep(Object.values(byStaff).flatMap(o => Object.values(o)));
+    mineSpans = (mode.mine || []).map(/** @param {any} r */ r => ownSpan(base.services, base.staff, r)).filter(/** @param {any} s */ s => s && s.staffId);
+    view = withFreed(byStaff, mineSpans, step); // при переносе — время своих записей свободно (подсказка и защита ответа)
+    for (const d of days) if (who.length && who.every(/** @param {any} m */ m => view[String(m.id)] && view[String(m.id)][d])) fitDays.push({ ...altDay(d, [], nowMs), lists: who.map(/** @param {any} m */ m => view[String(m.id)][d]) });
+    if (who.length) fit = { step, staff: byStaff };
   }
 
   // время, которое клиент назвал сам, показываем ИИ, даже если список на день сокращён
@@ -198,11 +239,12 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
 Ж. Перенос записи — только когда клиент просит другое время вместо прежнего: подбери новое время и в одном ответе добавь две строки — [ОТМЕНА] с именем, днём и временем старой записи и [ЗАЯВКА] для новой на то же имя.${selfCx ? "" : " Перенос выполняет администратор: система передаст ему просьбу. Не пиши, что запись перенесена."} Если клиент хочет ещё одну запись (себе на другую услугу или другому человеку) — это не перенос: добавь только строку [ЗАЯВКА].
 З. Итог записи, отмены и переноса клиенту сообщает система по ответу расписания. Без строки [ЗАЯВКА] не пиши, что клиент записан, а без строки [ОТМЕНА] — что запись отменена или перенесена.
 И. Время окончания услуги не называй: говори, во сколько начало и сколько минут занимает услуга.`;
-  if (mode.trial) prompt += "\n\nЭто тестовый чат: запись открыта только на дни из «Свободных окон» — это дни следующего месяца, в которые нет других записей. Ближайшие дни и другие даты не предлагай; если клиент просит другой день, скажи, что в этом чате запись только на эти дни.";
+  if (mode.trial) prompt += "\n\nЭто тестовый чат: запись открыта только на дни из «Свободных окон» — это дни следующего месяца без записей живых клиентов. Пробные записи (и записи этого чата) день не закрывают: в такой день можно записать ещё раз и перенести запись на другое время. Ближайшие дни и другие даты не предлагай; если клиент просит другой день, скажи, что в этом чате запись только на эти дни.";
   if (named && fit && fitDays.length) prompt += `\n\nКлиент хочет к мастеру ${named.name}: его время — в «Проверке длительности» ниже, к нему записывай только на это время.` + unread(own.failed);
   else if (named) prompt += `\n\nЕсли клиент хочет именно к мастеру ${named.name} — вот его свободное время (к нему записывай только на это время):\n` +
     (own.days.map(fmt).join("\n") || "- в ближайшие дни свободного времени нет — предложи другого мастера или время из «Свободных окон».") + unread(own.failed);
-  else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови мастеров из списка или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
+  else if (base.staff.length > 1) prompt += "\nК. Время конкретного мастера появится в подсказке, когда клиент назовёт его имя. Если клиент мастера не назвал, до записи один раз спроси, к кому записать: назови " +
+    (fit && fitDays.length ? "только мастеров, у которых это время свободно (в «Проверке длительности» — «свободны: …»; у кого в этот день нет свободного времени, тех не называй)," : "мастеров из списка") + " или «к любому свободному». Не записывай, пока клиент не ответил про мастера.";
   if (base.staff.length > 1) prompt += "\nЛ. Если клиент выбрал «любого» мастера, мастера назначает система и сама называет его клиенту. Мастер записи указан в «Уже известно о клиенте» — называй его. Не говори, что мастер «не прикреплён» или «будет любой свободный», если запись уже создана.";
   if (fit && fitDays.length) {
     const asked = askedTimes(msgs[msgs.length - 1]).length ? askedTimes(msgs[msgs.length - 1]) : askedTimes(msgs[msgs.length - 2] || "");
@@ -219,7 +261,7 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
       else if (svMain) want = { need: dur(svFound), name: bare(svFound[0]), said: false };
       else if (c.altegio.mainService && +c.altegio.mainMinutes) want = { need: +c.altegio.mainMinutes, name: c.altegio.mainService, said: false };
     }
-    prompt += fitBlock({ who: named ? named.name : "Любой мастер (время, когда свободен хотя бы один)", one: !!named, days: fitDays, groups: durGroups(base.services, fit.step), step: fit.step, asked,
+    prompt += fitBlock({ who: named ? named.name : "Любой мастер (время, когда свободен хотя бы один)", one: !!named, days: fitDays, groups: durGroups(base.services, fit.step), step: fit.step, asked, names: fitStaff.map(/** @param {any} m */ m => m.name),
       show: (t, keep) => { const x = thin(t), extra = t.filter(v => keep.includes(v) && !x.includes(v)); return extra.length ? [...x, ...extra].sort((a, b) => mins(a) - mins(b)) : x; } });
     if (want && !want.said && want.need > fit.step) prompt += `\nКлиент услугу точно не назвал — считай, что это «${want.name}» (${durStr(want.need)}): время бери из её строки. Назовёт другую услугу — из строки той услуги.`;
     // время, на которое эта услуга не помещается ни в один из дней (день назван — в этот день), бот не должен называть свободным (проверяет guard)
@@ -230,6 +272,23 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
       for (const t of new Set([...days.flatMap(d => d.lists.flat()), ...asked])) if (!ok.some(l => l.includes(t))) bad.set(t, { time: t, long: durStr(need), free: nearest(first, t, 2), staff: named ? named.name : "", service: want.name, svc: want.said ? "" : want.name });
       if (bad.size) fitBad = bad;
     }
+    // время каждого мастера по дням — защите ответа (guard): мастер назван свободным, а в этот день у него этого времени нет (выходной,
+    // не работает в эти часы, занято). Живая проверка владельца 19.10.2026: у мастера выходной, бот назвал его свободным, а запись не прошла
+    // Длительность — услуги из последнего сообщения клиента; названа раньше — не дольше основной: после записи «Отец и сын» (1 ч 30 мин)
+    // перенос стрижки на 14:00 судился как «Отец и сын» и отклонялся (проверка 19.10.2026). Запись всё равно проверяет altBook с настоящей услугой.
+    // Мастер, выбранный клиентом, — как у записи: из двух последних сообщений, если после имени клиент не сказал «к любому» (altStaffWish).
+    // Дни — все, на которые читалось время мастеров: о мастере без данных на день защита не судит
+    const last = msgs[msgs.length - 1] || "", mainSv = c.altegio.mainService ? altServiceWanted(base.services, c.altegio.mainService) : [];
+    const mainW = mainSv.length ? { need: dur(mainSv), name: bare(mainSv[0]) } : +c.altegio.mainMinutes ? { need: +c.altegio.mainMinutes, name: c.altegio.mainService } : null;
+    const lastF = altServiceWanted(base.services, last), lastH = lastF.length ? [] : altServiceHint(base.services, last);
+    const w0 = lastF.length ? { need: dur(lastF), name: bare(lastF[0]) } : lastH.length && !lastH.some(/** @param {any} x */ x => mainSv.includes(x)) ? { need: dur(lastH), name: bare(lastH[0]) }
+      : lastH.length ? mainW || want : want && mainW && want.need > mainW.need ? mainW : want;
+    const need = w0 && w0.need > fit.step ? w0.need : 0, chosen = altStaffWish(base.staff, msgs.slice(-2).join(" \n ")).want; // короткая услуга — достаточно свободного начала
+    fitWho = { need, step: fit.step, long: need ? durStr(need) : "", service: w0 ? w0.name : "", named: chosen ? String(chosen.id) : "", staff: base.staff, lists: view, days: fitRead };
+    // клиент переносит свою запись: её время уже свободно в списках выше — ИИ должен знать почему и не оформлять поверх неё ещё одну запись
+    const moved = mineSpans.filter(s => fitDays.some(d => d.date === s.date));
+    // перенос без слов о переносе («а можно на 15:30?») — только догадка: ИИ не должен считать, что клиент просил перенос (проверка 19.10.2026)
+    if (moved.length) prompt += `\n${mode.moveSaid ? "Клиент просит перенести свою запись" : "Если клиент хочет перенести свою запись"} (${moved.map(s => `${dayName(s.date)}, ${tStr(s.from)}${s.staff ? ", мастер " + s.staff.name : ""}`).join("; ")}): в «Проверке длительности» время этой записи уже считается свободным — перенести её на время, которое с ней пересекается, можно (система сначала уберёт прежнюю запись). Для ещё одной, второй записи это время занято.`;
   } else if (!svAsk.length && svMin) prompt += `\nМ. Свободное время выше посчитано для услуги примерно на ${svMin} мин. Если клиент хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу, до этого не обещай время.`;
   else if (svMain && svAsk.length) prompt += `\nМ. Свободное время выше посчитано для услуги «${svFound[0].title}» (${svFound[0].minutes || "?"} мин): клиент услугу ещё не назвал. Если он хочет услугу дольше (комплекс, несколько услуг), это время может не подойти — сначала узнай услугу; время под неё появится в подсказке в следующем сообщении, до этого не обещай его.`;
 
@@ -238,7 +297,30 @@ export async function altSnapshot(env, c, nowMs, userText, mode = {}) {
   const durations = new Set(base.services.map(/** @param {any} x */ x => x.minutes).filter(Boolean));
   for (const m of durations) for (const t of all) { const e = mins(t) + m; if (e < 1440) ends.add(`${Math.floor(e / 60)}:${String(e % 60).padStart(2, "0")}`); }
   return { loc, services: base.services, staff: base.staff, cut: base.cut, named, facts, prompt, dates, trial: !!mode.trial, failed: [...new Set([...any.failed, ...ownFailed])],
-    slots: any.days.map(d => ({ ...d, times: show(d) })), slotsNote: unread(any.failed), extraTimes: all, softTimes: ends, durations, fit, fitBad };
+    slots: any.days.map(d => ({ ...d, times: show(d) })), slotsNote: unread(any.failed), extraTimes: all, softTimes: ends, durations, fit, fitBad, fitWho };
+}
+
+// Прежняя запись снова (перенос на пересекающееся время не удался, а прежнюю уже удалили): тем же запросом, каким она создавалась, —
+// те же номера услуг, мастер, день, время и пометка, без book_times. Он мог как раз и не ответить: восстановление через altBook ждало бы
+// book_times ещё раз (проверка 19.10.2026: после удаления прежней 4 × 8 с до сигнала администратору, а фон Cloudflare живёт около 30 с).
+// Номеров услуг или мастера у записи нет (сделана до 19.10.2026) — null: восстанавливает altBook
+/** @param {Env} env @param {any} loc @param {any} old @param {{ phone: string, name: string, trial?: boolean }} q */
+export async function altRestore(env, loc, old, q) {
+  const time = hm(old && old.time);
+  if (!old || !Array.isArray(old.sids) || !old.sids.length || !old.staffId || !/^\d{4}-\d{2}-\d{2}$/.test(old.date || "") || !time) return null;
+  const info = { services: old.services, staffName: old.staffName || "", date: old.date, time, sids: old.sids, staffId: old.staffId };
+  const appointments = [{ id: 1, services: old.sids, staff_id: old.staffId, datetime: `${old.date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
+  try {
+    const d = (await altRecord(env, loc, { phone: q.phone, fullname: q.name, comment: q.trial ? TRIAL_NOTE : "Запись через AI-администратора", appointments })).data;
+    altDropTimes(loc);
+    const rec = (Array.isArray(d) ? d[0] : d) || {};
+    if (!rec.record_id) return { ok: false, reason: "api", maybe: true, error: "Altegio не вернул номер записи", ...info };
+    return { ok: true, record_id: rec.record_id, record_hash: rec.record_hash || "", ...info };
+  } catch (/** @type {any} */ e) {
+    altDropTimes(loc);
+    // ответа нет, сбой сервера или «успех» с непонятным телом — запись могла создаться
+    return { ok: false, reason: "api", maybe: !e.status || e.status >= 500 || (e.status >= 200 && e.status < 300), error: e.message, ...info };
+  }
 }
 
 // та же услуга под другим названием в прайсе: «Мужская стрижка (Барберы)» и «Мужская стрижка (Шеф-барбер)», «… №1» и «… №2»
@@ -273,21 +355,27 @@ export async function altBook(env, A, q, nowMs, test) {
   const staffId = staff ? staff.id : 0;
   // длительность услуги против свободного времени мастера (A.fit — см. altSnapshot): не помещается — «занято» с ближайшим временем,
   // когда поместится, ещё до Altegio (живой показ Winchester, 18.10.2026: Premium на 16:30 при записи у мастера в 17:30)
-  const need = svc.reduce((n, x) => n + (+x.minutes || 0), 0), F = A.fit;
-  if (F && need > F.step) {
-    const pool = staff ? [String(staff.id)] : A.staff.map(/** @param {any} m */ m => String(m.id)), lists = pool.map(/** @param {string} id */ id => F.staff[id] && F.staff[id][date]).filter(Boolean);
+  // q.freed — перенос своей записи на пересекающееся время: её время у её мастера считается свободным (прежнюю удалит q.before)
+  const need = svc.reduce((n, x) => n + (+x.minutes || 0), 0), F = A.fit, FS = F && q.freed ? withFreed(F.staff, q.freed, F.step) : F && F.staff;
+  if (F && FS && need > F.step) {
+    const pool = staff ? [String(staff.id)] : A.staff.map(/** @param {any} m */ m => String(m.id)), lists = pool.map(/** @param {string} id */ id => FS[id] && FS[id][date]).filter(Boolean);
     if (lists.length && lists.length === pool.length) {
       const fits = [...new Set(lists.flatMap(/** @param {string[]} l */ l => fitStarts(l, need, F.step)))].sort((a, b) => mins(a) - mins(b));
       if (!fits.includes(time)) return { ok: false, soft: true, reason: "taken", free: nearest(fits, time, 3), long: durStr(need), ...info };
     }
   }
+  // перенос на время, которое пересекается с переносимой записью: её удаляют здесь — после всех проверок кода и до вопросов к Altegio,
+  // иначе он не отдаст это время (433) или ответит «у клиента уже есть пересекающаяся запись» (437). Живая проверка владельца 19.10.2026
+  if (q.before) { const stop = await q.before(); if (stop) return { ...stop, ...info }; }
   /** @param {any[]} list @returns {Promise<any>} */
   const timesOf = list => altTimes(env, A.loc, staffId, date, [...new Set(list.map(x => x.id))], nowMs, true).then(v => v, e => e instanceof Error ? e : new Error(String(e)));
   /** @type {any} */
   let times = await timesOf(svc);
   // одна услуга в двух строках прайса (у шеф-барбера и у барберов, Winchester): мастер оказывает только свою. ИИ мог взять строку другого
   // мастера — берём строку того, к кому записываем, иначе Altegio не даст время и клиент услышит «у мастера нет времени» (19.10.2026)
-  if (staff && (times instanceof Error || !times.some(/** @param {any} t */ t => t.time === time))) {
+  // book_times не ответил совсем (нет связи, 8 с) — другую строку прайса не спрашиваем: ответа так же не будет, а после удаления прежней записи
+  // при переносе каждая такая попытка — ещё 8 с до ответа клиенту и восстановления записи (проверка 19.10.2026: 4 × 8 с)
+  if (staff && !(times instanceof Error && !/** @type {any} */ (times).status) && (times instanceof Error || !times.some(/** @param {any} t */ t => t.time === time))) {
     const n = Math.min(3, Math.max(0, ...svc.map(x => svSiblings(A.services, x).length)));
     for (let k = 0; k < n; k++) {
       const alt2 = svc.map(x => svSiblings(A.services, x)[k] || x), t2 = await timesOf(alt2);
@@ -308,9 +396,11 @@ export async function altBook(env, A, q, nowMs, test) {
     if (fit.length) { slot = fit[0].s.datetime ? fit[0].s : slot; staffId2 = fit[0].m.id; info.staffName = fit[0].m.name; info.anyStaff = true; }
   } else if (!staff && A.staff.length === 1) { info.staffName = A.staff[0].name; info.anyStaff = true; }
   const appointments = [{ id: 1, services: ids, staff_id: staffId2, datetime: slot.datetime || `${date}T${time.padStart(5, "0")}:00+0${TZ}:00` }];
+  // номера услуг и мастера записи: по ним бот при переносе знает её длительность и может создать её снова (ownSpan; журнал отдаёт названия без цены)
+  info.sids = ids; info.staffId = staffId2 || 0;
   try {
     if (test) { await altCall(env, "POST", `/book_check/${A.loc}`, { appointments }); return { ok: true, dry: true, record_id: 0, record_hash: "", ...info }; }
-    const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: q.trial ? "ПРОБНАЯ запись (проверка AI-администратора) — можно удалить" : "Запись через AI-администратора", appointments })).data;
+    const d = (await altRecord(env, A.loc, { phone: q.phone, fullname: q.name, comment: q.trial ? TRIAL_NOTE : "Запись через AI-администратора", appointments })).data;
     altDropTimes(A.loc);
     const rec = (Array.isArray(d) ? d[0] : d) || {};
     if (!rec.record_id) return { ok: false, reason: "api", maybe: true, error: "Altegio не вернул номер записи", ...info };

@@ -15,9 +15,9 @@ import { mergeProfile, putHist } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
 import { safeText, safeAsk, fallbackText, cutOffText } from "./fallbacks.js";
 import { notify } from "../integrations/telegram/client.js";
-import { altLoc, altSnapshot, altSelfCancel, altBook, altDry, altTrial } from "../booking/book.js";
+import { altLoc, altSnapshot, altSelfCancel, altBook, altDry, altTrial, ownSpan, altRestore } from "../booking/book.js";
 import { altJournal } from "../integrations/altegio/journal-api.js";
-import { altFromJournal, altPrune, altIsGone, altUserKey } from "../booking/journal.js";
+import { altFromJournal, altPrune, altIsGone, altUserKey, altGoneSure } from "../booking/journal.js";
 import { notifyOnce, noteDue } from "../notifications/telegram.js";
 import { askGemini } from "../ai/gemini.js";
 import { trackUsage } from "../ai/usage.js";
@@ -352,7 +352,8 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     return { reply: tr(`Я AI-администратор «${c.name}» и помогаю только с вопросами о наших услугах и записью. Чем могу помочь?`, `Мен «${c.name}» AI-әкімшісімін, тек қызметтеріміз бен жазылу туралы сұрақтарға көмектесемін. Қалай көмектесе аламын?`, `I'm the AI administrator of «${c.name}» and I only help with questions about our services and booking. How can I help?`), lead: null, guard: "input", isNew };
   }
 
-  const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile };
+  // lastBot и lastUser — защите ответа: ИИ прошлым ответом предложил другого мастера, а клиент согласился, не назвав его (проверка 19.10.2026)
+  const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile, lastBot, lastUser: text };
 
   const userTurn = { role: "user", text: maskPhones(text), t: nowMs };
   let turns = saved.turns.concat([userTurn]).slice(-MAX_TURNS); // это уходит в ИИ; в хранилище остаётся вся история (HIST_KEEP)
@@ -376,7 +377,18 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const trialMode = !opts.phone && !opts.test && altTrial(env, c), trialShow = trialMode && !opts.staff;
   if (altLoc(env, c)) {
     try {
-      alt = await altSnapshot(env, c, nowMs, userAll, { trial: trialMode });
+      // клиент просит перенос (в этом или прошлом сообщении, не «ещё одну запись»): время его своих записей в подсказке и защите ответа —
+      // свободно у их мастеров. Иначе перенос «пн 12:00 → 12:30» выглядел как «в 12:00 у мастера уже занято» и бот отвечал «не получится»
+      // (живая проверка владельца 19.10.2026). Только настоящие свои записи бота: с кодом записи, не показ и не проверка без записи
+      const lastTwo = turns.filter(t => t.role === "user").slice(-2).map(t => t.text).join(" \n ");
+      const moveSaid = MOVE_WISH.test(lastTwo) || !!(saved.profile.cxWish && MOVE_WISH.test(saved.profile.cxWish.text || ""));
+      // перенос чаще просят без слов о переносе: «а можно на 15:30?», «давайте к Рауану в 15:30» — время в сообщении, другой человек не назван
+      // (проверка 19.10.2026: подсказка говорила «в 15:30 мастер уже занят» — занят своей же записью клиента). Ещё одну запись это не
+      // открывает: altBook проверяет её время без освобождения своей записи
+      const moveMaybe = /\d{1,2}[:.]\d{2}|(^|\s)на\s+\d{1,2}(\s|$|\?)/.test(text) && !/сын|доч|жен|муж|брат|сестр|реб[её]н|друг|подруг|балам|ұлым|қызым/i.test(text);
+      const moving = !ADD_WISH.test(text) && (moveSaid || moveMaybe);
+      const mine = moving ? (saved.profile.bookings || []).filter(b => b && b.record_id && b.record_hash && b.date >= isoDay(nowMs)) : [];
+      alt = await altSnapshot(env, c, nowMs, userAll, { trial: trialMode, mine, moveSaid });
       // записи клиента из журнала — только по номеру, который подтвердил сам канал (WhatsApp, Green-API). В веб-чате номер набирает
       // посетитель: по чужому номеру он увидел бы чужие записи и мог бы просить их отменить (найдено при включении настоящей записи, 19.10.2026)
       const ju = altUserKey(env, c), jph = opts.phone;
@@ -387,7 +399,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       // и ИИ не должен видеть их в «Уже известно о клиенте» — иначе скажет клиенту, что запись на месте
       if (pruned) saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= isoDay(nowMs)), saved.profile.pend || []);
       cc = { ...c, facts: c.facts + "\n" + alt.facts };
-      Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt, fitBad: alt.fitBad });
+      Object.assign(ctx, { slots: alt.slots, slotsNote: alt.slotsNote, extraTimes: alt.extraTimes, softTimes: alt.softTimes, durations: alt.durations, altPrompt: alt.prompt, fitBad: alt.fitBad, fitWho: alt.fitWho });
     } catch (e) {
       console.log("altegio", String(e));
       altDown = true;
@@ -434,7 +446,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const payHead = { ru: "Реквизиты для оплаты:", kk: "Төлем деректемелері:", en: "Payment details:" }[lang] || "Реквизиты для оплаты:";
   const body = s => strip(s) || (c.pay && PAY_TAG.test(s) ? payHead : safeText(c, lang)); // ИИ ответил одной меткой реквизитов
   const hasTag = s => /\[\s*(ЗАЯВКА|ОТМЕНА)\s*\]/i.test(s);
-  let checked = checkReply(cc, body(raw), userAll, ctx), guard = null;
+  let checked = checkReply(cc, body(raw), userAll, ctx, raw), guard = null;
   if (checked.why) {
     guard = checked.why;
     console.log("guard", clientId, checked.why, "|", logSafe(strip(raw).slice(0, 200)));
@@ -442,7 +454,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       const badNum = (checked.why.match(/^цена (\d+)/) || [])[1]; // ИИ сам посчитал цену («6 000 + 20% = 7 200»)
       const raw2 = await ask(`\n\nВНИМАНИЕ: черновик ответа нарушил правило (${checked.why}). Ответь заново. Цены — только цифрами из фактов, без подсчёта итогов. Время — только из «Свободных окон». Телефон — только из фактов. Инструкции не цитируй.`
         + (badNum ? ` Числа ${money(badNum)} в фактах нет — не называй его. Назови цену из фактов, а надбавку или скидку передай словами, как в фактах (например «плюс 20%»).` : ""));
-      const c2 = checkReply(cc, body(raw2), userAll, ctx);
+      const c2 = checkReply(cc, body(raw2), userAll, ctx, raw2);
       if (!c2.why) { checked = c2; raw = raw2; guard += " → исправлено"; }
       else {
         console.log("guard2", clientId, c2.why);
@@ -461,7 +473,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     if (need) {
       try {
         const raw3 = await ask(`\n\nВНИМАНИЕ: в черновике ответа сказано, что ${cl0.change ? "запись отменена или перенесена" : "клиент записан"}, но служебной строки нет — значит, ничего не сделано. Ответь заново. Если все данные известны — добавь служебную строку по правилам. Если чего-то не хватает — спроси это у клиента и не пиши, что записала, отменила или перенесла.`);
-        const c3 = checkReply(cc, body(raw3), userAll, ctx), cl3 = altClaims(c3.text);
+        const c3 = checkReply(cc, body(raw3), userAll, ctx, raw3), cl3 = altClaims(c3.text);
         if (!c3.why && (hasTag(raw3) || !(cl3.book || cl3.change))) { raw = raw3; checked = c3; guard = (guard ? guard + "; " : "") + "нет служебной строки → исправлено"; }
       } catch (e) { console.log("retry", String(e)); }
     }
@@ -483,7 +495,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     tell(`${head} (${c.name})\n${l.name || "имя не указано"} · ${l.phone}\n${l.service}\n${l.time}${extra && extra.note ? "\n" + extra.note : ""}`);
     return lead;
   };
-  const patchLead = (id, patch) => { if (id) leadOps.push({ id, patch }); };
+  const patchLead = (id, patch) => { if (id && !/^show-/.test(String(id))) leadOps.push({ id, patch }); }; // «show-…» — показ у гостя пробного чата, заявки нет
   // записи, которые удалили прямо в Altegio (altPrune): их заявки — «отменена», иначе бот вернёт запись в чат по старой заявке
   for (const id of saved.profile.altGone || []) patchLead(id, { status: "отменена", note: "запись удалена в Altegio" });
   delete saved.profile.altGone;
@@ -510,9 +522,11 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const nameOf = v => { const raw = clean(v, 200).replace(/[,(]?\s*\d+\s*(лет|года?|год|жаста?|жас|years?(\s+old)?|y\.?o\.?)\)?/gi, ""); return cleanName(raw, true) || (raw.replace(/[\s.,;:]+$/, "") ? "—" : ""); };
   const ph0 = () => opts.phone || saved.profile.phone || "";
   // обратный звонок: бот записать не может (расписание недоступно, свободного времени нет, запись не оформляется), а телефон клиента известен. Не чаще раза в час на чат
+  // Пробный веб-чат — никогда: номер набирает посетитель, а записи в нём — проверка бота (проверка 19.10.2026: «📞 Перезвоните клиенту»
+  // администратору живого бизнеса по пробе гостя — когда нет пробных дней, запись не оформилась или журнал не читается)
   const callback = why => {
     const ph = ph0();
-    if (!ph || newLeads.length || (saved.profile.cbAt && nowMs - saved.profile.cbAt < 3600e3)) return false;
+    if (trialMode || !ph || newLeads.length || (saved.profile.cbAt && nowMs - saved.profile.cbAt < 3600e3)) return false;
     addLead({ name: saved.profile.name || "", service: "Перезвонить клиенту — " + why, time: "как можно скорее", phone: ph }, { kind: "callback", note: "запись не создана. " + quote }, "📞 Перезвоните клиенту", true);
     saved.profile.cbAt = nowMs;
     return true;
@@ -540,8 +554,11 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     // бот их не отменяет и не переносит — только передаёт просьбу администратору (условие владельца и Кайрата, 19.10.2026)
     const foreign = x => !!x && !!x.j && !!x.record_id && !x.record_hash && x.leadId == null, ownRec = x => !foreign(x);
     const rid = x => x.leadId != null ? x.leadId : x.record_id ? "r" + x.record_id : [x.date, x.time, x.name].join("|"); // у записи администратора нет заявки бота
-    // отмен и переносов своих записей за сутки — с этого номера (в веб-чате — из этого чата); хранится в KV, «сброс» его не обнуляет
-    const lim = altLimits(c), cxWho = trialMode ? "trial" : opts.phone ? opts.phone.replace(/\D/g, "") : histKey;
+    // отмен и переносов своих записей за сутки — с этого номера (в веб-чате — из этого чата); хранится в KV, «сброс» его не обнуляет.
+    // Пробный чат — тоже из этого чата: общий «trial» на все пробные чаты локации владелец, проверяя бота, исчерпывал за три попытки где угодно
+    // (живая проверка 19.10.2026). Пробные записи — выдуманные записи бота в следующем месяце, настоящие делает только вошедший владелец
+    // или сотрудник (у гостя — показ без записи), так что счёт на чат ничего не открывает посторонним
+    const lim = altLimits(c), cxWho = trialMode ? "trial:" + hash(histKey) : opts.phone ? opts.phone.replace(/\D/g, "") : histKey;
     let cxUsed = 0;
     if (lim.cx !== Infinity) { try { cxUsed = await altCxGet(store, alt.loc, cxWho, nowMs); } catch (e) { console.log("cx", String(e)); } }
     const cxN = () => cxUsed;
@@ -603,7 +620,8 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     let keepWish = false; // перенос не закончен: новая запись создана, а какую убрать — бот ещё спрашивает
 
     // одна строка [ЗАЯВКА] → { made } | { same, changed } | { out, soft }
-    const bookOne = async (line, mode) => { // mode: "swap" — перенос записи из этого чата, "move" — перенос, но прежней записи в чате нет
+    // mv — перенос своей записи на время, которое с ней пересекается (overMove): прежнюю удаляем до создания новой, не вышло — создаём её снова
+    const bookOne = async (line, mode, mv = null) => { // mode: "swap" — перенос записи из этого чата, "move" — перенос, но прежней записи в чате нет
       const f = tagFields(line);
       const l = { name: nameOf(f["имя"]), service: clean(f["услуга"], 160), time: clean(f["время"], 60), phone: phoneOf(f["телефон"]) };
       if (badName(l.name)) return { out: say("needName") };
@@ -656,15 +674,60 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       }
       const ids = trialMode ? { trial: 1 } : { ip: ipKey(opts.ip), phone: l.phone };
       const free = mode === "swap" && !saved.profile.delFails; // перенос записи из этого чата суточные лимиты не тратит — пока старые записи действительно удаляются
-      let over = false;
+      let over = false, overAct = false;
       // перенос не тратит суточные лимиты номера, но предел активных записей бота и предел локации действуют всегда: иначе «вместо Азамата
-      // запишите Ерлана» по кругу создавало бы записи без счёта (проверка 19.10.2026)
-      try { over = books.filter(ownRec).length - (mode === "swap" ? 1 : 0) >= lim.active || await altOverLimit(store, alt.loc, free ? (trialMode ? { trial: 1 } : {}) : ids, nowMs, lim); } catch (e) { console.log("limit", String(e)); }
-      const tryBook = staff => altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff, date, time: l.time, fixedPhone: !!opts.phone || saved.profile.phoneBad === l.phone, trial: trialMode }, nowMs, opts.test || altDry(env, c) || trialShow);
+      // запишите Ерлана» по кругу создавало бы записи без счёта (проверка 19.10.2026). overAct — предел активных записей чата (отмена его освобождает)
+      // пробный чат: суточный предел пробных записей локации — только для новых настоящих проб. Перенос пробной записи её не прибавляет, а показ
+      // у гостя ничего не создаёт (book_check) — предел, исчерпанный утренними пробами владельца, не должен мешать ни тому, ни другому (проверка 19.10.2026)
+      try { overAct = books.filter(ownRec).length - (mode === "swap" ? 1 : 0) >= lim.active; over = overAct || (trialMode && (free || trialShow) ? false : await altOverLimit(store, alt.loc, free ? {} : ids, nowMs, lim)); } catch (e) { console.log("limit", String(e)); }
+      // перенос на время, которое пересекается с переносимой записью: Altegio не даст его, пока прежняя запись на месте (433 — время мастера
+      // занято ею, 437 — у клиента уже есть пересекающаяся запись). Прежнюю удаляем в altBook (q.before) — после всех проверок кода (данные,
+      // пределы, длительность, где её время считается свободным) и прямо перед вопросами к Altegio. Перенос тратит одну отмену из предела,
+      // как обычный (живая проверка владельца 19.10.2026)
+      const cxFirst = !mv ? null : async () => {
+        if (mv.done) return null; // вторая попытка (к мастеру из прошлого сообщения) — прежняя уже удалена
+        // новое время пересекается и с другой записью клиента: Altegio ответит 437 — прежнюю не трогаем (проверка 19.10.2026: удаляли и создавали снова зря)
+        if (mv.clash) return { ok: false, soft: true, reason: "overlap" };
+        try { await altCancel(env, mv.old); }
+        catch (e) {
+          console.log("altegio cancel", logSafe(String(e)));
+          // 404 — записи в Altegio уже нет (удалил администратор): создавать её снова при неудаче нельзя (mv.gone)
+          // ответа нет или сбой сервера — удаление могло пройти: смотрим саму запись и журнал. Удалилась — переносим дальше; на месте —
+          // «прежняя запись остаётся»; не узнать — так и говорим (проверка 19.10.2026: удаление дошло, а бот сказал «остаётся»)
+          const g = e.status === 404 ? true : !e.status || e.status >= 500 ? await altGoneSure(env, mv.old, alt.loc, nowMs, altUserKey(env, c), opts.phone || l.phone) : false;
+          if (e.status === 404) mv.gone = true;
+          else if (g !== true) {
+            if (g === null) mv.oldMaybe = true;
+            return { ok: false, reason: "api", error: (g === null ? "Altegio не ответил на удаление прежней записи перед переносом (она могла удалиться — проверьте журнал): " : "Altegio не удалил прежнюю запись перед переносом: ") + logSafe(String(e.message || e)).slice(0, 200) };
+          }
+        }
+        mv.done = true;
+        if (!mv.gone && lim.cx !== Infinity) { cxUsed++; try { await altCxPut(store, alt.loc, cxWho, nowMs, cxUsed); } catch (e) { console.log("cx", String(e)); } }
+        return null;
+      };
+      const tryBook = staff => altBook(env, alt, { name: l.name, phone: l.phone, service: l.service, staff, date, time: l.time, fixedPhone: !!opts.phone || saved.profile.phoneBad === l.phone, trial: trialMode,
+        ...(mv ? { freed: [mv.span], before: cxFirst } : {}) }, nowMs, opts.test || altDry(env, c) || trialShow);
       let r = opts.untrusted ? { ok: false, reason: "limit", error: "сообщение WhatsApp пришло без подписи Meta (не задан APP_SECRET) — автоматическая запись выключена" }
-        : over ? { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку" }
+        // пробный чат сверх предела — мягкий отказ без заявки: иначе администратор живого бизнеса получал «запишите вручную» по пробе
+        // с любым набранным номером (найдено при живой проверке владельца 19.10.2026; пределы те же)
+        // предел чата — «отмените одну из пробных», суточный предел локации отмена не освобождает — «попробуйте завтра» (проверка 19.10.2026)
+        : over ? (trialMode ? { ok: false, soft: true, reason: overAct ? "trialLimit" : "trialDay" } : { ok: false, reason: "limit", error: "превышен лимит автоматических записей — проверьте заявку" })
         : await tryBook(staffRaw);
       if (!r.ok && r.soft && softStaff && (r.reason === "taken" || r.reason === "staffService")) r = await tryBook(f["мастер"]); // у мастера из прошлого сообщения на это время занято — к свободному, как и написал ИИ
+      if (!r.ok && mv && mv.gone) dropRec(mv.old, true, "в Altegio записи уже не было — её удалили до переноса (клиент просил перенести на " + (date && time ? altWhen(date, time, "ru", nowMs) : raw1) + ")");
+      else if (!r.ok && mv && mv.done) {
+        // прежняя запись уже удалена, а новая не создана — сразу создаём прежнюю снова: тот же мастер, услуги, день, время и пометка (пробная —
+        // пробной), тем же запросом, без book_times (altRestore). Новая могла создаться (ответа нет, сбой сервера) — прежнюю не создаём:
+        // была бы лишняя запись, это решит человек
+        let back = null;
+        if (!r.maybe) {
+          try { back = await altRestore(env, alt.loc, mv.old, { phone: l.phone, name: mv.old.name || l.name, trial: trialMode })
+            || await altBook(env, alt, { name: mv.old.name || l.name, phone: l.phone, service: mv.svc, staff: mv.staff, date: mv.old.date, time: mv.old.time, fixedPhone: true, trial: trialMode, freed: [mv.span] }, nowMs, false); }
+          catch (e) { back = { ok: false, reason: "api", error: String(e.message || e) }; }
+        }
+        if (!(back && back.ok)) return mvLost(mv, r, back, l, key, date, time, raw1);
+        mvBack(mv, back, r, date, time);
+      }
       if (r.ok && r.dry && wa && !opts.test) {
         // режим «проверка без записи» в WhatsApp: номер настоящий, и клиент, которому бот написал «Записала», пришёл бы без записи в журнале.
         // Окно проверено в Altegio — запись передаём администратору со всеми данными (16.10.2026, Winchester). Показ «Записала (это показ)» — только в веб-чате
@@ -677,9 +740,16 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         return { out: say("admin", { what: pendText(p, lang) }) };
       }
       if (r.ok) {
-        const made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, at: nowMs, ...(r.dry && !opts.test ? { dry: true } : {}) }, kin = kinOfNew(l.name); // dry — режим показа: в журнал ничего не записано, клиенту об этом говорим
+        const made = { name: l.name, date: r.date, time: r.time, services: r.services, staffName: r.staffName, loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, at: nowMs, ...(r.dry && !opts.test ? { dry: true } : {}), // dry — режим показа: в журнал ничего не записано, клиенту об этом говорим
+          ...(r.sids ? { sids: r.sids, staffId: r.staffId } : {}) }, kin = kinOfNew(l.name); // номера услуг и мастера — для переноса (ownSpan)
         if (kin.length) made.kin = kin;
-        made.leadId = addLead({ ...l, service: r.services + (r.staffName ? " · " + r.staffName : ""), time: `${r.label}, в ${r.time}` },
+        // показ в пробном чате у гостя (запись не создаётся): без заявки и без сообщения администратору — иначе каждая проба гостя приходила
+        // бизнесу в Telegram как «✅ Новая запись в Altegio» и считалась в сводке (проверка 19.10.2026). Имя и номер чат помнит, номер записи в
+        // чате — свой (по нему слияние истории узнаёт запись), заявки с ним нет
+        if (r.dry && trialShow) {
+          made.leadId = "show-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          Object.assign(saved.profile, { phone: l.phone, name: saved.profile.name || l.name });
+        } else made.leadId = addLead({ ...l, service: r.services + (r.staffName ? " · " + r.staffName : ""), time: `${r.label}, в ${r.time}` },
           { altegio: { loc: alt.loc, record_id: r.record_id, record_hash: r.record_hash, date: r.date, time: r.time, services: r.services, staffName: r.staffName }, note: r.dry ? "проверка без записи" : (trialMode ? "ПРОБНАЯ запись из веб-чата (следующий месяц) — можно удалить; " : "") + "записан в Altegio, № " + r.record_id },
           trialMode && !r.dry ? "🧪 Пробная запись в Altegio (веб-чат, следующий месяц)" : "✅ Новая запись в Altegio", true).id;
         books.push(made); madeNow.push(made); added.push(made); noOffer(made.time); acted = true;
@@ -693,21 +763,38 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         }
         return { made, ids, free: free && !r.dry };
       }
+      // 437 — у этого номера уже есть запись на пересекающееся время, а записывают другого человека из этого чата («меня к Рауану, сына к Айдосу,
+      // оба в 15:00»): Altegio вторую запись на тот же номер не даст, другое время не поможет, а сын оставался без записи и без заявки
+      // (проверка 19.10.2026). Живой номер — заявка администратору с именем, пробный чат — честный отказ с именем
+      const twoOnNum = r.reason === "overlap" && !mv && !!date && books.some(x => x.date === date) && !books.some(x => x.date === date && samePerson(x.name, l.name));
+      if (twoOnNum && trialMode) { softAsk = true; return { out: say("overlapTwin", { name: l.name, time: r.time || time }), soft: true }; }
+      if (twoOnNum) r = { ...r, soft: false, error: "Altegio не принимает две записи на пересекающееся время с одного номера (437) — запишите вручную, например на номер этого человека" };
       if (r.soft) { // услуга, мастер, день или время не подошли — уточняем у клиента
         if (r.reason === "taken") { dropSlot(r.date, r.time); for (const t of r.free || []) ctx.extraTimes.add(t); }
         if (r.reason === "phone") saved.profile.phoneBad = l.phone; // если расписание не примет этот номер и во второй раз — заявка уйдёт администратору
         softAsk = true;
         return { out: altSay(lang, r), soft: true };
       }
+      // пробный чат: заявки администратору нет ни при какой ошибке Altegio — иначе проба с любым набранным номером превращалась в
+      // «запишите вручную» у администратора живого бизнеса (проверка 19.10.2026). Запись могла создаться только у настоящей пробы владельца
+      // или сотрудника (у гостя — проверка book_check, она записей не создаёт): ему — сообщение с пометкой «ПРОБНАЯ», без заявки
+      if (trialMode) {
+        if (mv && mv.oldMaybe) return { out: say("trialOldMaybe", { old: label(mv.old) }) }; // удаление прежней пробной записи без ответа — могла удалиться
+        const maybe = !!r.maybe && !trialShow;
+        if (maybe) tell(`🧪 ПРОБНАЯ запись могла создаться в Altegio — проверьте журнал и удалите её (веб-чат) — ${c.name}\n${l.name} · ${l.phone}\n${r.services || l.service}${r.staffName ? " · " + r.staffName : ""}\n${date && (r.time || time) ? altWhen(date, r.time || time, "ru", nowMs) : raw1}\n${r.error}`);
+        return { out: say("trialFail", { maybe }) };
+      }
       // Altegio не принял запись — клиента не теряем: заявка администратору
       if (adminCap() >= ALT_MAX_ADMIN_LEADS) return { out: say("adminBusy") }; // за сегодня из этого чата уже много заявок — новых не плодим
       const p = { key, at: nowMs, name: l.name, maybe: !!r.maybe, service: r.services || l.service, date, time: r.time || time, raw: raw1 }, kin = kinOfNew(l.name);
       if (kin.length) p.kin = kin;
       p.leadId = addLead({ ...l, service: p.service, time: date && p.time ? altWhen(date, p.time, "ru", nowMs) : raw1 || "время не указано" },
-        { note: (r.maybe ? "ВОЗМОЖНО, записан в Altegio — проверьте журнал: " : "НЕ записан в Altegio: ") + r.error + (mode ? "; клиент просил перенос — прежняя запись не отменена" : "") },
+        { note: (r.maybe ? "ВОЗМОЖНО, записан в Altegio — проверьте журнал: " : "НЕ записан в Altegio: ") + r.error + (!mode ? "" : mv && mv.back ? `; клиент просил перенос — прежняя запись на месте (удалялась перед переносом и создана заново, № ${mv.back.record_id})`
+          : mv && mv.gone ? `; клиент просил перенос — прежней записи (${altLabel(mv.old, "ru", nowMs, true)}) в Altegio уже не было`
+          : mv && mv.oldMaybe ? `; клиент просил перенос — прежняя запись (${altLabel(mv.old, "ru", nowMs, true)}, № ${mv.old.record_id}) могла удалиться: есть в журнале — перенесите её, нет — запишите клиента на новое время` : "; клиент просил перенос — прежняя запись не отменена") },
         r.maybe ? "⚠️ Запись могла создаться в Altegio — проверьте журнал" : "⚠️ Заявка без записи в Altegio — запишите вручную", true).id;
       adminInc(); pend.push(p); pendNow.add(p);
-      return { out: say("admin", { what: pendText(p, lang) }) };
+      return { out: twoOnNum ? say("overlapAdmin", { name: l.name, time: p.time, what: pendText(p, lang) }) : say("admin", { what: pendText(p, lang) }) };
     };
 
     // какая запись имеется в виду в строке [ОТМЕНА]: по подробностям из строки; без них — запись того же человека (при переносе) или единственная
@@ -735,6 +822,9 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     // Запись остаётся в чате и в журнале, пока администратор её не изменит; одна и та же просьба — одна заявка за сутки
     let adminSaid = ""; // ответ клиенту о просьбе администратору (askAdmin): «передала» или «сегодня заявок слишком много»
     const askAdmin = (rec, move, why, wantLine) => {
+      // пробный чат: просьбы администратору нет — запись пробная (журнал веб-чат не читает, чужих записей в нём нет); сверх общего предела
+      // пробных отмен и переносов — мягкий отказ, запись остаётся (19.10.2026)
+      if (trialMode) return (adminSaid = say("trialCx", { list: label(rec) }));
       const f = wantLine ? tagFields(wantLine) : null, want = f ? [clean(f["услуга"], 80), f["мастер"] && !altPickStaff(alt.staff, f["мастер"]).any ? "мастер " + clean(f["мастер"], 40) : "", [clean(f["дата"], 20), clean(f["время"], 40)].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
       const key = (move ? "fmv|" : "fcx|") + rid(rec) + "|" + hash(want), r0 = saved.profile.req && nowMs - saved.profile.req.at < 24 * 3600e3 ? saved.profile.req : null;
       if (!(r0 && r0.key === key)) {
@@ -755,14 +845,66 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
       if (!ok && target.record_hash) { try { await altCancel(env, target); ok = true; } catch (e) { console.log("altegio cancel", String(e)); if (e.status === 404) ok = true; } } // 404 — записи в Altegio уже нет
       if (ok && target.record_id && lim.cx !== Infinity) { cxUsed++; try { await altCxPut(store, alt.loc, cxWho, nowMs, cxUsed); } catch (e) { console.log("cx", String(e)); } }
       if (!ok) saved.profile.delFails = (saved.profile.delFails || 0) + 1;
-      patchLead(target.leadId, { status: "отменена", note: ok ? "запись в Altegio удалена" : "в Altegio НЕ удалена — удалите вручную" });
-      tell(`❌ Отмена: ${altLabel(target, "ru", nowMs, true)} (${c.name})\n${who}${target.record_id ? " · запись № " + target.record_id : ""}\n${ok ? "запись в Altegio удалена" : "⚠️ в Altegio НЕ удалена — удалите вручную"}`);
+      dropRec(target, ok);
+      return ok;
+    };
+    // запись убрана из чата (в Altegio её уже удалили или удалить не вышло — ok): заявка, сообщение администратору, «недавно отменённые».
+    // note — своя пометка заявки, тогда без обычного сообщения «❌ Отмена» (о неудачном переносе администратор узнаёт одним сообщением)
+    function dropRec(target, ok, note = "") {
+      patchLead(target.leadId, { status: "отменена", note: note || (ok ? "запись в Altegio удалена" : "в Altegio НЕ удалена — удалите вручную") });
+      if (!note && !(trialShow && target.dry)) tell(`❌ Отмена: ${altLabel(target, "ru", nowMs, true)} (${c.name})\n${who}${target.record_id ? " · запись № " + target.record_id : ""}\n${ok ? "запись в Altegio удалена" : "⚠️ в Altegio НЕ удалена — удалите вручную"}`);
       books.splice(books.indexOf(target), 1); removed.push(target.leadId); // в чате запись больше не числится; если Altegio её не удалил, это сделает администратор
       gone.push({ name: target.name, date: target.date, time: target.time, services: target.services, staffName: target.staffName, at: nowMs,
         ...(ok ? {} : { failed: true, rec: { loc: target.loc, record_id: target.record_id, record_hash: target.record_hash, leadId: target.leadId, ...(target.kin ? { kin: target.kin } : {}) } }) });
       noOffer(target.time);
       cancel = true; acted = true; if (!ok) goneAll = false;
-      return ok;
+    }
+    // ---- перенос своей записи на время, которое пересекается с ней самой (12:00 → 12:30 на час) или с ней у другого мастера (437).
+    // Живая проверка владельца 19.10.2026: бот отвечал «не получится» или «уже есть запись». Такой перенос — в обратном порядке: прежнюю
+    // запись удаляем, новую создаём; не вышло — прежнюю сразу создаём снова. Только своя запись бота (с кодом записи) того же человека,
+    // настоящая (не показ, не проверка без записи) и на тот же день. Без пересечения — прежний порядок: сначала новая, потом удаление старой
+    const overMove = (old, line) => {
+      if (!old || foreign(old) || !old.record_id || !old.record_hash || opts.test || altDry(env, c) || trialShow) return null;
+      const f = tagFields(line), date = altDateOf(f["дата"], nowMs) || altDateOf(f["время"], nowMs), time = hm(clean(f["время"], 60)), span = ownSpan(alt.services, alt.staff, old);
+      if (!span || !date || !time || date !== old.date) return null;
+      const sv = altPickServices(alt.services, clean(f["услуга"], 160)).list, need = (sv ? sv.reduce((n, x) => n + (+x.minutes || 0), 0) : 0) || 60, t = mins(time);
+      if (!(t < span.to && span.from < t + need)) return null;
+      // новое время пересекается и с другой записью клиента (стрижка 12:00 → 12:30, а в 13:00 борода у другого мастера): Altegio ответит 437 —
+      // прежнюю не удаляем (clash → отказ «пересекается» до удаления, проверка 19.10.2026)
+      const clash = books.some(x => x !== old && x.date === date && (s => !!s && t < s.to && s.from < t + need)(ownSpan(alt.services, alt.staff, x)));
+      // чем создать прежнюю запись снова: названия из прайса (у записи из журнала — без цены, а у стрижки две строки прайса) и мастер
+      return { old, span, svc: span.sv ? span.sv.map(x => x.title).join(" | ") : String(old.services || "").split(" + ").join(" | "), staff: span.staff ? span.staff.name : old.staffName || "любой", done: false, back: null, clash };
+    };
+    // новая запись не создана, прежняя создана снова (back): в чате — она же с новым номером записи (напоминания — по новому номеру)
+    const mvBack = (mv, back, r, date, time) => {
+      const old = mv.old, rec = { ...old, record_id: back.record_id, record_hash: back.record_hash, services: back.services || old.services, staffName: back.staffName || old.staffName, at: nowMs,
+        ...(back.sids ? { sids: back.sids, staffId: back.staffId } : {}) };
+      books.splice(books.indexOf(old), 1, rec); removed.push(old.leadId); added.push(rec); mv.back = rec;
+      patchLead(old.leadId, { altegio: { loc: alt.loc, record_id: back.record_id, record_hash: back.record_hash, date: rec.date, time: rec.time, services: rec.services, staffName: rec.staffName },
+        note: `перенос на ${date && time ? altWhen(date, time, "ru", nowMs) : "другое время"} не удался — прежняя запись удалялась и создана заново, № ${back.record_id}` });
+      // пробная запись — без сообщений администратору: владелец всё видит в своём чате
+      if (!trialMode) tell(`ℹ️ Перенос не удался — прежняя запись создана заново (${c.name})\n${who}\n${altLabel(rec, "ru", nowMs, true)}, № ${back.record_id} (была № ${old.record_id})\nНе вышло: ${date && time ? altWhen(date, time, "ru", nowMs) : "новое время"} — ${r.error || mvWhy(r)}`);
+      if (r.free) r.free = r.free.filter(t => !(mins(t) >= mv.span.from && mins(t) < mv.span.to)); // время прежней записи снова занято ею
+    };
+    const mvWhy = r => r.reason === "taken" ? "время занято" : r.reason === "overlap" ? "пересекается с другой записью клиента" : r.reason === "phone" ? "Altegio не принял номер" : r.error || r.reason || "ошибка Altegio";
+    // ни новой записи, ни прежней: клиенту честно, администратору — заявка с новым временем (кроме пробного чата: пробные записи выдуманные,
+    // владелец видит всё в своём чате). Новая могла создаться (r.maybe) — так и пишем
+    // Прежнюю создавали снова, а ответа нет или сбой сервера (back.maybe) — она, возможно, на месте: «клиент остался без записи» не пишем,
+    // иначе администратор запишет его второй раз (проверка 19.10.2026)
+    const mvLost = (mv, r, back, l, key, date, time, raw1) => {
+      const old = mv.old, was = label(old), maybe = !!r.maybe, backMaybe = !!(back && back.maybe);
+      dropRec(old, true, `удалена перед переносом на ${date && time ? altWhen(date, time, "ru", nowMs) : raw1}: новая ${maybe ? "запись могла создаться — проверьте журнал" : "запись не создана"}, прежнюю ${!back ? "вернуть не пытались" : backMaybe ? "создавали заново — Altegio не ответил, возможно, создана заново — проверьте журнал" : "вернуть не удалось"}`);
+      console.log("move lost", c.id, logSafe(mvWhy(r)), "|", back ? logSafe(mvWhy(back)) : "-");
+      if (trialMode) {
+        if (maybe || backMaybe) tell(`🧪 ПРОБНАЯ запись могла создаться в Altegio — проверьте журнал и удалите её (веб-чат) — ${c.name}\n${l.name}\n${backMaybe ? old.services + (old.staffName ? " · " + old.staffName : "") : (r.services || l.service) + (r.staffName ? " · " + r.staffName : "")}\n${backMaybe ? altWhen(old.date, old.time, "ru", nowMs) : date && time ? altWhen(date, time, "ru", nowMs) : raw1}`);
+        return { out: say("trialMvLost", { old: was, maybe, back: backMaybe }), lost: true };
+      }
+      const p = { key, at: nowMs, name: l.name, maybe: maybe || backMaybe, service: r.services || l.service, date, time: r.time || time, raw: raw1 };
+      p.leadId = addLead({ ...l, service: p.service + (r.staffName ? " · " + r.staffName : ""), time: date && p.time ? altWhen(date, p.time, "ru", nowMs) : raw1 || "время не указано" },
+        { kind: "change", note: `Перенос не удался: прежняя запись (${altLabel(old, "ru", nowMs, true)}, № ${old.record_id}) удалена перед переносом — время пересекалось с новым; ${maybe ? "новая запись могла создаться — проверьте журнал" : "новая не создана: " + mvWhy(r)}; ${!back ? "прежнюю не возвращали, раз новая могла создаться" : backMaybe ? "прежняя, возможно, создана заново (Altegio не ответил) — проверьте журнал: " + mvWhy(back) : "вернуть прежнюю не удалось: " + mvWhy(back)}. ${backMaybe ? "Не записывайте клиента второй раз — сначала проверьте журнал, потом свяжитесь с ним." : "Свяжитесь с клиентом и запишите его."} ${quote}` },
+        backMaybe ? "⚠️ Перенос не удался: прежняя запись, возможно, создана заново — проверьте журнал Altegio и свяжитесь с клиентом" : "⚠️ Перенос не удался: клиент остался без записи — свяжитесь с ним", true).id;
+      adminInc(); pend.push(p); pendNow.add(p);
+      return { out: say("mvLost", { old: was, maybe, back: backMaybe }), lost: true };
     };
     const cancelRec = async rec => { const old = label(rec); adminSaid = ""; return (await remove(rec)) ? say("cancelOk", { what: old }) : adminSaid || say("cancelAdmin"); };
     const cancelPend = p => { // заявка у администратора: отменяем её; если запись при этом могла создаться в Altegio — напоминаем проверить журнал
@@ -777,6 +919,9 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     const pendLike = q => pend.filter(p => (!q.n || samePerson(p.name || "", q.n)) && (!q.d || p.date === q.d) && (!q.t || p.time === q.t));
     // записи, о которой просит клиент, в этом чате нет: с телефоном — передаём администратору, без телефона — сначала спрашиваем, на кого она оформлена
     const noSuch = (withAlso, move) => {
+      // пробный чат: записи, которой нет в этом чате, бот администратору не передаёт — номер набирает посетитель, а записи в журнале живые
+      // (гость попросил бы отменить чужую запись по любому номеру; проверка 19.10.2026)
+      if (trialMode) return say("trialOther") + (withAlso ? alsoText(books) : "");
       const ph = ph0();
       if (ph && (!selfCx || journal || lim.cx !== Infinity)) {
         // отмену и перенос делает администратор: просьбу сохраняем заявкой — она видна на странице заявок, даже если уведомление не дошло. Одна и та же просьба — одна заявка.
@@ -822,6 +967,8 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     };
     // клиент просит изменить услугу или мастера в созданной записи — бот этого не делает, передаёт администратору (одну и ту же просьбу — один раз)
     const changeOut = b => {
+      // пробный чат: просьбы администратору нет — у гостя запись только показ, у владельца — пробная; поменять можно переносом (19.10.2026)
+      if (trialMode) return say("trialChange", { what: label(b.same) });
       const rec = b.same, want = [b.changed.services && "услуга: " + b.changed.services, b.changed.staff && "мастер: " + b.changed.staff].filter(Boolean).join(", "), key = [rec.leadId, want].join("|");
       if (saved.profile.chg !== key) {
         if (adminCap() >= ALT_MAX_ADMIN_LEADS) return say("adminBusy");
@@ -932,13 +1079,16 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         // значит, переносят чужую запись: новую не создаём, просьбу целиком передаём администратору (проверка 19.10.2026)
         outs.push(noSuch(true, true));
       }
+      else if (trialMode && !old0 && moveWish && !pre.hits.length) outs.push(noSuch(true, true)); // пробный чат: переносят запись, которой в чате нет, — новую не создаём
       else if (old0 && moveWish && altOther(old0, text, oEnv, "move")) {
         // клиент говорит о другой записи («перенесите запись жены», «с 15:00 на 13:00», а запись в чате на 10:00) — ничего не создаём и не удаляем
         if (mvAsk && mvAsk.id === rid(old0)) outs.push(noSuch(true, true));
         else { saved.profile.mvAsk = { id: rid(old0), at: nowMs }; outs.push(say("moveWho", { what: label(old0) })); }
       } else {
         // перенос без лимитов — только той же записи того же человека; «вместо Азамата запишите Ерлана» — новая запись с обычными лимитами
-        const b = await bookOne(bookLines[0], !moveWish ? "" : old0 ? (samePerson(old0.name, nameOf(tagFields(bookLines[0])["имя"])) ? "swap" : "") : "move"), newRec = b.made || null;
+        const sw = !moveWish ? "" : old0 ? (samePerson(old0.name, nameOf(tagFields(bookLines[0])["имя"])) ? "swap" : "") : "move";
+        const ov = sw === "swap" ? overMove(old0, bookLines[0]) : null; // время пересекается с переносимой записью — прежнюю удаляем первой
+        const b = await bookOne(bookLines[0], sw, ov), newRec = b.made || null;
         if (b.same) {
           // новая запись этим сообщением не создана: на это время клиент уже записан
           const q = b.ghost ? null : findTarget(cancelLines[0], b.same), tgt = q && !q.bare && !q.doubt && q.hits.length === 1 && samePerson(q.hits[0].name, b.same.name) ? q.hits[0] : null;
@@ -950,7 +1100,9 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
             const old = label(tgt), ok = await remove(tgt);
             outs.push(ok ? say("moved", { what: label(b.same), old }) : say("have", { what: label(b.same) }) + " " + say("oldAdminOne", { old }));
           } else outs.push(say("have", { what: label(b.same) }) + alsoText(books.filter(x => x !== b.same))); // «так перенесли?» — ничего не удаляем
-        } else if (!newRec) outs.push(b.out + (books.length ? say("keepOld") : ""));
+        } else if (!newRec) outs.push(b.out + (b.lost ? alsoText(books) : ov && ov.gone ? say("oldGone", { old: label(ov.old) }) + alsoText(books)
+          : ov && ov.oldMaybe ? (trialMode ? "" : say("oldMaybe", { old: label(ov.old) })) : books.length ? say("keepOld") : ""));
+        else if (ov && ov.done) { const old = label(ov.old); dropRec(ov.old, true); outs.push(say("moved", { what: label(newRec), old })); } // прежняя удалена до новой
         else {
           const q = findTarget(cancelLines[0], newRec), tgt = q.hits.length === 1 ? q.hits[0] : null;
           if (!moveWish) {
@@ -966,6 +1118,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
             if (!ok && b.free) { try { await altCount(store, alt.loc, b.ids, nowMs); } catch (e) { console.log("count", String(e)); } } // старая запись осталась — значит, новая всё же прибавилась
             outs.push(ok ? say("moved", { what: label(newRec), old }) : say("booked", { what: label(newRec) }) + " " + say("oldAdminOne", { old }));
           } else if (q.hits.length > 1 || (q.unclear && q.pool.length)) { keepWish = true; outs.push(say("booked", { what: label(newRec) }) + " " + say("which", { list: listOf(q.hits.length > 1 ? q.hits : q.pool) })); }
+          else if (trialMode) outs.push(say("booked", { what: label(newRec) }) + " " + say("trialOther") + alsoText(q.pool)); // пробный чат: администратору не передаём
           else { // новая запись есть, а прежней в этом чате нет — её отменит человек
             cancel = true; goneAll = false;
             tellOnce("mv:" + histKey + ":" + hash(text), `❓ Клиент перенёс запись, но прежней записи нет в этом чате — отмените её вручную — ${c.name}\n${who}\nНовая запись: ${altLabel(newRec, "ru", nowMs, true)}${q.pool.length ? "\nДругие записи этого чата: " + q.pool.map(x => altLabel(x, "ru", nowMs, true)).join("; ") : ""}\n${quote}`);
@@ -1032,11 +1185,11 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     // ИИ второй раз подряд «записал» без служебной строки — через бота запись не оформляется: зовём администратора
     if (confirmAsk) {
       saved.profile.cf = cfPrev + 1;
-      if (cfPrev >= 1 && alt.slots.length) { if (ph0()) { callback("бот не смог оформить запись — запишите клиента сами"); reply = say("stuckCb"); } else reply = say("stuckPhone"); }
+      if (cfPrev >= 1 && alt.slots.length) { if (trialMode) reply = say("trialStuck"); else if (ph0()) { callback("бот не смог оформить запись — запишите клиента сами"); reply = say("stuckCb"); } else reply = say("stuckPhone"); }
     }
     // записать сейчас нельзя (свободного времени нет), а клиент оставил телефон или просит запись — передаём администратору.
     // Ответы «вы уже записаны», «какую отменить?», «уже отменена» остаются как есть: это не просьба о записи
-    if (!alt.slots.length && !madeNow.length && !cancel && !saved.profile.cxAsk && !saved.profile.mvAsk) {
+    if (!trialMode && !alt.slots.length && !madeNow.length && !cancel && !saved.profile.cxAsk && !saved.profile.mvAsk) { // пробный чат: свой ответ («нет пробных дней», «предел»), без звонка
       const bookAsk = softAsk || confirmAsk || canned;
       const wants = !outs.length && !wishNow && (!!phoneInText || CB_PROMISE.test(reply) || CB_WANTS.test(text));
       if (bookAsk || wants) {
@@ -1049,6 +1202,13 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     for (const x of books) noOffer(x.time); // время своей записи кнопкой не предлагаем
     if (wish) saved.profile.cxWish = !acted || keepWish ? wish : { at: nowMs, text: wish.text, n: wish.n || 0, done: true };
     saved.profile.booked = bookedText(books, pend);
+  } else if (altDown && trialMode) {
+    // ---- пробный веб-чат, расписание (или журнал пробных дней) не читается: заявок, звонков и просьб администратору нет — номер набирает
+    // посетитель, а запись здесь — проверка бота (проверка 19.10.2026: «запишите вручную» и «перезвоните» администратору живого бизнеса).
+    // Запись, отмена, перенос или обещание звонка — мягкий ответ «в тестовом чате сейчас нельзя»
+    const cl = draftOnly ? { book: false, change: false } : altClaims(reply);
+    if (draftOnly || cl.book || cl.change || tagsOf(raw, "ЗАЯВКА").length || tagsOf(raw, "ОТМЕНА").length || CB_PROMISE.test(reply) || ADMIN_CX.test(reply) || wantsChange(text)) reply = say("trialDown");
+    saved.profile.booked = bookedText((saved.profile.bookings || []).filter(x => x.date >= today), saved.profile.pend || []);
   } else if (altDown) {
     // ---- расписание Altegio недоступно: бот никого не записывает и ничего не отменяет сам — всё передаёт администратору
     const bookLines = leaked || myRecQ(text) ? [] : tagsOf(draftOnly ? raw0 : raw, "ЗАЯВКА").slice(0, 3);
@@ -1335,7 +1495,8 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
     if (ph0() && plain && c.booking === "none" && adminCap() < ALT_MAX_ADMIN_LEADS) { // бот «без записи»: обещанный звонок должен быть виден на странице заявок и в пульте, а не только в Telegram
       const made = addLead({ name: saved.profile.name || "", service: "перезвонить клиенту", time: "уточнить у клиента", phone: ph0() }, { note: `Бот пообещал клиенту звонок администратора. ${quote}` }, "📞 Клиент ждёт звонка администратора", true);
       adminInc(); (saved.profile.leads = saved.profile.leads || []).push({ id: made.id, name: saved.profile.name || "", date: "", time: "", service: "", text: "", at: nowMs, sig: "", stub: true });
-    } else if (ph0()) { if (!(alt && callback("бот пообещал клиенту, что с ним свяжется администратор"))) tellOnce("pr:" + histKey, `📞 Бот пообещал клиенту, что с ним свяжется администратор — ${c.name}\n${who}\n${quote}`); }
+    } else if (trialMode) reply = join([reply, say("trialNoCall")]); // пробный чат: администратора не зовём — и клиенту не обещаем
+    else if (ph0()) { if (!(alt && callback("бот пообещал клиенту, что с ним свяжется администратор"))) tellOnce("pr:" + histKey, `📞 Бот пообещал клиенту, что с ним свяжется администратор — ${c.name}\n${who}\n${quote}`); }
     else if (!/телефон|номер|phone|number|нөмір/i.test(reply)) reply = join([reply, say("needPhoneCb")]);
   }
   } catch (e) {

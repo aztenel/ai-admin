@@ -28,6 +28,9 @@ export function altLabel(b, lang, nowMs, abs) {
   return abs ? `${b.name}: ${what} — ${d.label} (${b.date}), в ${b.time}` : `${what} — ${d.rel ? d.rel + ", " : ""}${d.label}, в ${b.time}`;
 }
 
+// «1 ч 30 мин» (durStr) на языке клиента: «1 сағ 30 мин», «1 h 30 min»
+/** @param {any} s @param {number} L */
+const durL = (s, L) => L === 1 ? String(s).replace(/(\d+)\s*ч(?![а-яё])/g, "$1 сағ") : L === 2 ? String(s).replace(/(\d+)\s*ч(?![а-яё])/g, "$1 h").replace(/(\d+)\s*мин/g, "$1 min") : String(s);
 // ответы, которые бот даёт сам, без ИИ: на русском, казахском и английском
 /** @param {string} lang @param {Record<string, any>} b */
 export function altSay(lang, b) {
@@ -36,7 +39,13 @@ export function altSay(lang, b) {
   if (b.reason === "staff") return b.noAny ? [`Уточните, пожалуйста, к какому мастеру записать: ${b.list}.`, `Қай шеберге жазайын: ${b.list}?`, `Which specialist would you like: ${b.list}?`][L]
     : [`Уточните, пожалуйста, к какому мастеру записать: ${b.list} или любой свободный.`, `Қай шеберге жазайын: ${b.list} немесе кез келген бос шебер?`, `Which specialist would you like: ${b.list}, or anyone available?`][L];
   if (b.reason === "staffService") return [`Мастер ${b.staffName} эту услугу не оказывает. Записать к другому мастеру или к любому свободному?`, `${b.staffName} шебері бұл қызметті көрсетпейді. Басқа шеберге немесе кез келген бос шеберге жазайын ба?`, `${b.staffName} does not provide this service. Shall I book another specialist or anyone available?`][L];
+  // защита ответа: ИИ назвал свободным мастера, у которого это время занято, а клиент мастера не выбирал — называем, кто свободен
+  // (проверка 19.10.2026: иначе «на 15:00 не получится», хотя в 15:00 свободны три других мастера)
+  if (b.reason === "taken" && b.others && b.others.length) { const o = b.others.join(", ");
+    return [`В ${b.time} у мастера ${b.staffName} нет свободного времени, а свободны: ${o}. Записать к кому-то из них?`, `Сағат ${b.time} ${b.staffName} шеберінде бос уақыт жоқ, бос шеберлер: ${o}. Солардың біріне жазайын ба?`,
+      `${b.staffName} is not available at ${b.time}, but ${o} ${b.others.length > 1 ? "are" : "is"} free. Shall I book one of them?`][L]; }
   if (b.reason === "taken" && b.long) { // услуга не помещается: дальше у мастера занято — ближайшее время, когда поместится
+    b = { ...b, long: durL(b.long, L) }; // длительность считает код по-русски («1 ч 30 мин»)
     const who = b.staffName ? [" у мастера " + b.staffName, " " + b.staffName + " шеберінде", " with " + b.staffName][L] : "";
     // svc — услуга, которую бот предположил сам (клиент написал «в 12:30 можно?» без услуги): называем её, чтобы клиент мог поправить
     const svc = String(b.svc || "").replace(/\s*\([^()]*\)\s*$/, "").replace(/[«»"]/g, "");
@@ -53,6 +62,65 @@ export function altSay(lang, b) {
   if (b.reason === "trialNone") return ["В этом тестовом чате сейчас нет свободных дней для пробной записи: в следующем месяце все открытые дни уже с записями. Попробуйте позже.",
     "Бұл сынақ чатында қазір сынақ жазбасына бос күн жоқ: келесі айдың ашық күндерінің бәрінде жазба бар. Кейінірек көріңіз.",
     "There are no free days for a test booking in this test chat right now: every open day next month already has bookings. Please try later."][L];
+  // пробный чат сверх пределов: без заявки администратору (19.10.2026)
+  // trialLimit — предел активных записей чата (отмена освобождает место); trialDay — пробных записей на локацию за сутки (отмена счётчик
+  // не уменьшает: совет «отмените одну» не помогал, проверка 19.10.2026)
+  if (b.reason === "trialLimit") return ["В тестовом чате сейчас больше записать нельзя: в этом чате уже предельное число пробных записей. Отмените одну из них — и можно записаться снова.",
+    "Бұл сынақ чатында қазір жаңа жазба жасау мүмкін емес: осы чаттағы сынақ жазбаларының саны шегіне жетті. Біреуін болдырмаңыз — сонда қайта жазылуға болады.",
+    "No more bookings can be made in this test chat right now: this chat already has the maximum number of test bookings. Cancel one of them and you can book again."][L];
+  if (b.reason === "trialDay") return ["В тестовом чате на сегодня исчерпан предел пробных записей. Попробуйте завтра.",
+    "Сынақ чатында бүгінгі сынақ жазбаларының шегі таусылды. Ертең көріңіз.",
+    "The test booking limit for today has been reached in this test chat. Please try again tomorrow."][L];
+  // пробный чат: смена мастера или услуги, запись не оформилась, расписание не читается, обещание звонка — без администратора (19.10.2026)
+  if (b.reason === "trialChange") return [`В тестовом чате мастера и услугу в пробной записи я не меняю. Пробная запись остаётся: ${b.what}. Чтобы поменять, попросите перенести её или отмените и запишитесь заново.`,
+    `Сынақ чатында сынақ жазбасындағы шеберді және қызметті өзгертпеймін. Сынақ жазбасы сақталады: ${b.what}. Өзгерту үшін оны ауыстыруды сұраңыз немесе болдырмай, қайта жазылыңыз.`,
+    `In this test chat I don't change the specialist or service of a test booking. The test booking stays: ${b.what}. To change it, ask me to move it, or cancel it and book again.`][L];
+  if (b.reason === "trialStuck") return ["В тестовом чате запись так и не оформилась. Напишите, пожалуйста, одним сообщением имя, телефон, услугу, мастера, день и время из свободных окон — попробую ещё раз.",
+    "Сынақ чатында жазба рәсімделмеді. Атыңызды, телефоныңызды, қызметті, шеберді, күн мен бос терезелерден уақытты бір хабарламамен жазыңызшы — тағы көремін.",
+    "The booking still didn't go through in this test chat. Please send your name, phone, service, specialist, day and a time from the free slots in one message and I'll try again."][L];
+  if (b.reason === "trialDown") return ["В тестовом чате запись сейчас недоступна: расписание не отвечает. Попробуйте, пожалуйста, позже.",
+    "Сынақ чатында қазір жазылу мүмкін емес: кесте жауап бермей тұр. Кейінірек көріңізші.",
+    "Booking isn't available in this test chat right now: the schedule isn't responding. Please try again later."][L];
+  if (b.reason === "trialNoCall") return ["(Это тестовый чат: администратор по нему не перезванивает.)", "(Бұл сынақ чаты: әкімші ол бойынша қоңырау шалмайды.)", "(This is a test chat: the administrator doesn't call back from it.)"][L];
+  if (b.reason === "trialCx") return [`В тестовом чате сегодня уже много отмен и переносов. Пробная запись остаётся: ${b.list}. Попробуйте завтра.`,
+    `Бұл сынақ чатында бүгін болдырмау мен ауыстыру тым көп болды. Сынақ жазбасы сақталады: ${b.list}. Ертең көріңіз.`,
+    `There have been too many cancellations and changes in this test chat today. The test booking stays: ${b.list}. Please try again tomorrow.`][L];
+  // перенос на время, которое пересекается с прежней записью: прежнюю удалили первой, новая не создалась и прежнюю вернуть не вышло —
+  // говорим как есть (живая проверка владельца 19.10.2026). В пробном чате — без администратора: пробные записи выдуманные
+  // прежнюю создавали снова, а Altegio не ответил (back): она, возможно, уже на месте — проверит администратор (проверка 19.10.2026)
+  if (b.reason === "mvLost" && b.back) return [`Перенести запись не получилось: новое время расписание не приняло. Прежнюю запись (${b.old}) я сняла перед переносом и сразу записала заново, но расписание этого не подтвердило. Администратор проверит и свяжется с вами — извините за неудобство.`,
+    `Жазбаны ауыстыру мүмкін болмады: кесте жаңа уақытты қабылдамады. Бұрынғы жазбаны (${b.old}) ауыстыру алдында алып тастап, бірден қайта жаздым, бірақ кесте мұны растамады. Әкімші тексеріп, сізбен хабарласады — қолайсыздық үшін кешіріңіз.`,
+    `I couldn't move your booking: the schedule didn't accept the new time. I removed your previous booking (${b.old}) before the move and booked it again right away, but the schedule didn't confirm it. The administrator will check and contact you — sorry for the inconvenience.`][L];
+  if (b.reason === "mvLost") return b.maybe
+    ? [`Не удалось подтвердить перенос: прежняя запись (${b.old}) уже снята, а новая могла не сохраниться. Администратор проверит расписание и свяжется с вами — извините за неудобство.`,
+      `Ауыстыруды растау мүмкін болмады: бұрынғы жазба (${b.old}) алынып тасталды, ал жаңасы сақталмауы мүмкін. Әкімші кестені тексеріп, сізбен хабарласады — қолайсыздық үшін кешіріңіз.`,
+      `I couldn't confirm the change: your previous booking (${b.old}) has already been removed, and the new one may not have been saved. The administrator will check the schedule and contact you — sorry for the inconvenience.`][L]
+    : [`Перенести запись не получилось: новое время расписание не приняло, а прежняя запись (${b.old}) уже снята. Администратор свяжется с вами и запишет — извините за неудобство.`,
+      `Жазбаны ауыстыру мүмкін болмады: кесте жаңа уақытты қабылдамады, ал бұрынғы жазба (${b.old}) алынып тасталды. Әкімші сізбен хабарласып, жазып береді — қолайсыздық үшін кешіріңіз.`,
+      `I couldn't move your booking: the schedule didn't accept the new time, and your previous booking (${b.old}) has already been removed. The administrator will contact you and book you in — sorry for the inconvenience.`][L];
+  if (b.reason === "trialMvLost" && b.back) return [`В тестовом чате перенести пробную запись не получилось: новое время расписание не приняло. Прежнюю пробную запись (${b.old}) я удалила и записала заново, но расписание этого не подтвердило — если она есть в журнале, её можно удалить (она помечена как пробная). Можно записаться заново на время из свободных окон.`,
+    `Сынақ чатында сынақ жазбасын ауыстыру мүмкін болмады: кесте жаңа уақытты қабылдамады. Бұрынғы сынақ жазбасын (${b.old}) жойып, қайта жаздым, бірақ кесте мұны растамады — ол журналда болса, оны жоюға болады (ол сынақ деп белгіленген). Бос терезелерден қайта жазылуға болады.`,
+    `I couldn't move the test booking in this test chat: the schedule didn't accept the new time. I deleted the previous test booking (${b.old}) and booked it again, but the schedule didn't confirm it — if it is in the calendar, it can be deleted (it is marked as a test booking). You can book again for a time from the free slots.`][L];
+  // перенос: прежней записи в Altegio уже не было (удалил администратор) или её удаление осталось без ответа (могла удалиться) — 19.10.2026
+  if (b.reason === "oldGone") return [` Прежней записи (${b.old}) в расписании уже нет.`, ` Бұрынғы жазба (${b.old}) кестеде енді жоқ.`, ` Your previous booking (${b.old}) is no longer in the schedule.`][L];
+  if (b.reason === "oldMaybe") return [` Прежняя запись (${b.old}) могла уже сняться — администратор проверит расписание.`, ` Бұрынғы жазба (${b.old}) алынып тасталған болуы мүмкін — әкімші кестені тексереді.`, ` Your previous booking (${b.old}) may already have been removed — the administrator will check the schedule.`][L];
+  if (b.reason === "trialOldMaybe") return [`В тестовом чате перенести пробную запись не получилось: расписание не ответило на удаление прежней пробной записи (${b.old}) — она могла удалиться. Если её нет в журнале, запишитесь заново на время из свободных окон.`,
+    `Сынақ чатында сынақ жазбасын ауыстыру мүмкін болмады: кесте бұрынғы сынақ жазбасын (${b.old}) жоюға жауап бермеді — ол жойылған болуы мүмкін. Журналда болмаса, бос терезелерден қайта жазылыңыз.`,
+    `I couldn't move the test booking in this test chat: the schedule didn't respond to deleting the previous test booking (${b.old}) — it may have been deleted. If it is not in the calendar, book again for a time from the free slots.`][L];
+  if (b.reason === "trialMvLost") return [`В тестовом чате перенести пробную запись не получилось: ${b.maybe ? "расписание не ответило вовремя" : "новое время расписание не приняло"}, а прежняя пробная запись (${b.old}) уже удалена.${b.maybe ? " Если новая всё же появилась в журнале, её можно удалить — она помечена как пробная." : ""} Можно записаться заново на время из свободных окон.`,
+    `Сынақ чатында сынақ жазбасын ауыстыру мүмкін болмады: ${b.maybe ? "кесте уақытында жауап бермеді" : "кесте жаңа уақытты қабылдамады"}, ал бұрынғы сынақ жазбасы (${b.old}) жойылды.${b.maybe ? " Жаңасы журналда пайда болса, оны жоюға болады — ол сынақ деп белгіленген." : ""} Бос терезелерден қайта жазылуға болады.`,
+    `I couldn't move the test booking in this test chat: ${b.maybe ? "the schedule didn't respond in time" : "the schedule didn't accept the new time"}, and the previous test booking (${b.old}) has already been deleted.${b.maybe ? " If the new one did appear in the calendar, it can be deleted — it is marked as a test booking." : ""} You can book again for a time from the free slots.`][L];
+  // пробный чат: запись, которой в чате нет, и ошибка Altegio — без заявки администратору (19.10.2026)
+  if (b.reason === "trialOther") return ["В тестовом чате можно отменить или перенести только пробные записи, сделанные в этом чате, — такой записи здесь нет.",
+    "Сынақ чатында тек осы чатта жасалған сынақ жазбаларын болдырмауға немесе ауыстыруға болады — мұнда ондай жазба жоқ.",
+    "In this test chat, only test bookings made in this chat can be cancelled or moved — there is no such booking here."][L];
+  if (b.reason === "trialFail") return b.maybe
+    ? ["В тестовом чате не удалось подтвердить пробную запись: расписание не ответило вовремя. Если она всё же появилась в журнале, её можно удалить — она помечена как пробная.",
+      "Сынақ чатында сынақ жазбасын растау мүмкін болмады: кесте уақытында жауап бермеді. Ол журналда пайда болса, оны жоюға болады — ол сынақ деп белгіленген.",
+      "I couldn't confirm the test booking in this test chat: the schedule didn't respond in time. If it did appear in the calendar, it can be deleted — it is marked as a test booking."][L]
+    : ["В тестовом чате пробная запись не прошла: расписание её не приняло. Назовите, пожалуйста, ещё раз день и время из свободных окон — попробую снова.",
+      "Сынақ чатында сынақ жазбасы өтпеді: кесте оны қабылдамады. Бос терезелерден күн мен уақытты қайта атаңызшы — тағы көремін.",
+      "The test booking didn't go through in this test chat: the schedule didn't accept it. Please name the day and time from the free slots again and I'll try once more."][L];
   if (b.reason === "date") return [`Через чат запись открыта на ближайшие дни: ${b.list}. Какой день вам подойдёт?`, `Чат арқылы жазылу жақын күндерге ашық: ${b.list}. Қай күн ыңғайлы?`, `Booking via chat is open for the nearest days: ${b.list}. Which day suits you?`][L];
   if (b.reason === "phone") return ["Расписание не приняло номер телефона. Напишите его, пожалуйста, ещё раз полностью, например +7 701 123 45 67.", "Кесте телефон нөмірін қабылдамады. Нөміріңізді толық жазыңызшы, мысалы +7 701 123 45 67.", "The schedule did not accept the phone number. Please send it again in full, for example +7 701 123 45 67."][L];
   if (b.reason === "needName") return ["Подскажите, пожалуйста, ваше настоящее имя — оно нужно для записи.", "Жазылу үшін шын атыңызды айтыңызшы.", "Please tell me your real name — I need it for the booking."][L];
@@ -107,6 +175,15 @@ export function altSay(lang, b) {
   if (b.reason === "needPhoneCb") return ["Оставьте, пожалуйста, номер телефона — без него администратор не сможет с вами связаться.", "Телефон нөміріңізді қалдырыңызшы — онсыз әкімші сізбен хабарласа алмайды.", "Please leave your phone number — without it the administrator can't contact you."][L];
   if (b.reason === "needPhone2") return ["Не получилось распознать номер. Напишите его, пожалуйста, полностью, с кодом — например +7 701 123 45 67.", "Нөмірді тани алмадым. Оны толық, кодымен жазыңызшы — мысалы +7 701 123 45 67.", "I couldn't read the number. Please send it in full with the country code, for example +7 701 123 45 67."][L];
   if (b.reason === "noChange") return ["В расписании я ничего не меняла. Чем могу помочь?", "Кестеде ештеңе өзгерткен жоқпын. Қалай көмектесе аламын?", "I haven't changed anything in the schedule. How can I help?"][L];
+  // на один номер Altegio не даёт две записи на пересекающееся время (437), а записывают другого человека с этого номера («меня к Рауану,
+  // сына к Айдосу, оба в 15:00»): «выберите другое время» не помогало, сын оставался без записи (проверка 19.10.2026). Живой номер — заявка
+  // администратору, пробный чат — без неё
+  if (b.reason === "overlapAdmin") return [`${b.name}: на ${b.time} записать сама не могу — на один номер расписание не принимает две записи на одно время. Передала администратору: ${b.what} — он запишет и подтвердит.`,
+    `${b.name}: сағат ${b.time}-ге өзім жаза алмаймын — бір нөмірге кесте бір уақытқа екі жазбаны қабылдамайды. Әкімшіге бердім: ${b.what} — ол жазып, растайды.`,
+    `${b.name}: I can't make the ${b.time} booking myself — the schedule doesn't accept two bookings at the same time on one phone number. I've passed it to the administrator: ${b.what} — they will book and confirm it.`][L];
+  if (b.reason === "overlapTwin") return [`${b.name}: на ${b.time} записать не получилось — на один номер расписание не принимает две записи на одно время. В тестовом чате выберите, пожалуйста, другое время.`,
+    `${b.name}: сағат ${b.time}-ге жазу мүмкін болмады — бір нөмірге кесте бір уақытқа екі жазбаны қабылдамайды. Сынақ чатында басқа уақытты таңдаңызшы.`,
+    `${b.name}: the ${b.time} booking didn't go through — the schedule doesn't accept two bookings at the same time on one phone number. In this test chat, please choose another time.`][L];
   if (b.reason === "overlap") return ["В расписании у вас уже есть запись, которая пересекается с этим временем. Выберите, пожалуйста, другое время.", "Кестеде осы уақытпен қабаттасатын жазбаңыз бар. Басқа уақытты таңдаңызшы.", "You already have a booking that overlaps with this time. Please choose another time."][L];
   if (b.reason === "unsavedCx") return ["Не получилось передать отмену. Напишите, пожалуйста, ещё раз через минуту или позвоните нам.", "Болдырмауды жеткізу мүмкін болмады. Бір минуттан кейін қайта жазыңызшы немесе бізге қоңырау шалыңыз.", "I couldn't pass on the cancellation. Please write again in a minute or call us."][L];
   if (b.reason === "confirm") return ["Почти готово. Подтвердите, пожалуйста, услугу, день и время — и я оформлю запись.", "Дайын дерлік. Қызметті, күнді және уақытты растаңызшы — сонда жазбаны рәсімдеймін.", "Almost done. Please confirm the service, day and time, and I'll complete the booking."][L];

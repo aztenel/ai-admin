@@ -45,6 +45,24 @@ export function fitStarts(times, m, step) {
   return times.filter(t => { const s = mins(t); for (let k = step; k < m; k += step) if (!set.has(s + k)) return false; return true; });
 }
 
+// Списки свободных начал мастеров ({ мастер: { день: начала } }), где время своих записей клиента считается свободным: spans —
+// [{ staffId, date, from, to }] (минуты). Нужно при переносе записи на время, которое пересекается с ней самой: «пн 12:00 к Рауану» →
+// «на 12:30» — 12:00–13:00 занято самой переносимой записью, и бот отвечал «не получится» (живая проверка владельца 19.10.2026).
+// Списка мастера на этот день нет (время не читалось) — не придумываем его
+/** @param {Record<string, Record<string, string[]>>} lists @param {{ staffId: string, date: string, from: number, to: number }[]} spans @param {number} step */
+export function withFreed(lists, spans, step) {
+  if (!spans.length) return lists;
+  /** @type {Record<string, Record<string, string[]>>} */
+  const out = { ...lists };
+  for (const s of spans) {
+    const day = s.staffId && lists[s.staffId] && lists[s.staffId][s.date];
+    if (!day) continue;
+    const add = []; for (let t = s.from; t < s.to; t += step) add.push(tStr(t));
+    out[s.staffId] = { ...out[s.staffId], [s.date]: [...new Set([...out[s.staffId][s.date], ...add])].sort((a, b) => mins(a) - mins(b)) };
+  }
+  return out;
+}
+
 // с какого времени у мастера дальше занято, если начать в t (t свободно); "" — t само занято
 /** @param {string[]} times @param {string} t @param {number} step @returns {string} */
 export function busyFrom(times, t, step) {
@@ -98,27 +116,34 @@ export function askedTimes(text) {
 // Блок для ИИ: по мастеру (или по всем мастерам, если клиент мастера не назвал) — с какого времени можно начать услугу каждой
 // длительности, и вывод по времени, которое назвал клиент: помещается или нет, почему и ближайшее подходящее.
 // days: [{ date, rel, label, lists: string[][] }] — lists: свободные начала каждого мастера (один список — один мастер)
-/** @param {{ who: string, one: boolean, days: any[], groups: any[], step: number, asked: string[], show: (t: string[], keep: string[]) => string[] }} o */
+// names — имена мастеров по порядку списков (d.lists[i] — время мастера names[i]): кто в этот день не работает и кто свободен в названное время.
+// Живая проверка владельца 19.10.2026: у мастера выходной, а бот назвал его свободным — «не помещается» в каждой строке ИИ не понял,
+// а «Любой мастер» не говорил, у кого именно свободно
+/** @param {{ who: string, one: boolean, days: any[], groups: any[], step: number, asked: string[], show: (t: string[], keep: string[]) => string[], names?: string[] }} o */
 export function fitBlock(o) {
-  const { who, one, days, groups, step, asked, show } = o;
+  const { who, one, days, groups, step, asked, show, names = [] } = o;
   if (!days.length || !groups.length) return "";
   const dayName = /** @param {any} d */ d => `${d.rel ? d.rel[0].toUpperCase() + d.rel.slice(1) + ", " : ""}${d.label}`;
   /** @param {any} d @param {number} m */
   const startsFor = (d, m) => [...new Set(d.lists.flatMap(/** @param {string[]} l */ l => fitStarts(l, m, step)))].sort((a, b) => mins(a) - mins(b));
+  const offOf = /** @param {any} d */ d => names.filter((n, i) => !(d.lists[i] || []).length); // ни одного свободного начала — выходной или всё занято
   let out = `\n\nПроверка длительности — считает система по свободному времени ${one ? "мастера" : "мастеров"}; если она расходится со списками выше, верь ей.\n${who} — с какого времени можно начать услугу:`;
   for (const d of days) {
-    out += `\n- ${dayName(d)} (${d.date}):`;
+    const off = offOf(d);
+    if (one && off.length) { out += `\n- ${dayName(d)} (${d.date}): у мастера ${off[0]} в этот день нет свободного времени (выходной или всё занято) — на этот день к нему не записывай.`; continue; }
+    out += `\n- ${dayName(d)} (${d.date}):${off.length ? ` нет свободного времени весь день у мастеров: ${off.join(", ")} — их на этот день не предлагай.` : ""}`;
     for (const g of groups) {
-      const s = startsFor(d, g.m), names = g.titles.slice(0, 4).join(", ") + (g.titles.length > 4 ? ", …" : "");
-      out += `\n  · ${g.label} (${names}): ${s.length ? show(s, asked).join(", ") : "не помещается"}`;
+      const s = startsFor(d, g.m), titles = g.titles.slice(0, 4).join(", ") + (g.titles.length > 4 ? ", …" : "");
+      out += `\n  · ${g.label} (${titles}): ${s.length ? show(s, asked).join(", ") : "не помещается"}`;
     }
   }
   if (asked.length) {
     out += `\nКлиент назвал ${asked.join(" и ")}:`;
     for (const t of asked) for (const d of days) {
+      if (one && offOf(d).length) { out += `\n- ${t}, ${dayName(d)}: у мастера в этот день нет свободного времени (выходной или всё занято).`; continue; }
       const parts = groups.map(g => {
-        const s = startsFor(d, g.m);
-        if (s.includes(t)) return `${g.label} — можно`;
+        const s = startsFor(d, g.m), free = one ? [] : names.filter((n, i) => fitStarts(d.lists[i] || [], g.m, step).includes(t));
+        if (s.includes(t)) return `${g.label} — можно${free.length ? ` (свободны: ${free.join(", ")})` : ""}`;
         const near = nearest(s, t, 2), why = one ? (b => b ? `в ${b} у мастера уже занято` : `в ${t} мастер уже занят`)(busyFrom(d.lists[0] || [], t, step)) : "ни у одного мастера не помещается";
         return `${g.label} — нельзя: ${why}; ${near.length ? "ближайшее подходящее — " + near.join(" или ") : "в этот день подходящего времени нет"}`;
       });

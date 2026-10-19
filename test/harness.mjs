@@ -101,7 +101,7 @@ function altStub(url, init) {
     // журнал как вживую: удалённая через API запись помечена deleted, удалённая администратором — пропадает из списка
     const data = net.altRecords.map((r, i) => { const a = (r.appointments || [])[0] || {}, st = D.staff.find(x => x.id === a.staff_id) || D.staff[0], id = String(777001 + i);
       return (net.altGone || []).includes(id) ? null : { id: +id, company_id: +m[1], staff_id: st.id, datetime: a.datetime, staff: { id: st.id, name: st.name }, client: { phone: r.phone, name: r.fullname },
-        services: (a.services || []).map(sid => ({ id: sid, title: (D.services.find(x => x.id === sid) || {}).title || "?" })), deleted: net.altDeleted.includes(id), attendance: 0 }; }).filter(Boolean);
+        services: (a.services || []).map(sid => ({ id: sid, title: (D.services.find(x => x.id === sid) || {}).title || "?" })), comment: r.comment || "", deleted: net.altDeleted.includes(id), attendance: 0 }; }).filter(Boolean); // comment — как в настоящем журнале (пометка пробной записи бота)
     return J({ success: true, data, meta: { count: data.length } });
   }
   if (/^\/book_check\/\d+/.test(path)) {

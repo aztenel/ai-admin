@@ -56,6 +56,18 @@ export async function altIsGone(env, b, loc, nowMs) {
   return g;
 }
 
+// Удалилась ли запись, когда Altegio не ответил на её удаление (перенос на пересекающееся время, проверка 19.10.2026: удаление дошло,
+// ответ — нет; бот говорил «прежняя запись остаётся», а записи уже не было). Сначала сама запись (altIsGone; вживую чтение записи ключом
+// разработчика бывает недоступно — 405), потом журнал по номеру клиента (ключ пользователя). true — удалена, false — на месте, null — не узнать
+/** @param {Env} env @param {Record<string, any>} b @param {any} loc @param {number} nowMs @param {string} user @param {string} phone @returns {Promise<boolean | null>} */
+export async function altGoneSure(env, b, loc, nowMs, user, phone) {
+  let g = null;
+  try { g = await altIsGone(env, b, loc, nowMs); } catch (e) { console.log("alt gone", String(e)); }
+  if (g !== null || !user || !phone) return g;
+  try { const j = await altJournal(env, user, loc, phone, nowMs); return j ? !j.some(x => String(x.record_id) === String(b.record_id)) : null; }
+  catch (e) { console.log("alt gone journal", String(e)); return null; }
+}
+
 // Записи этого чата, которые удалили прямо в Altegio: бот о них забывает. Сбой связи — запись остаётся
 /** @param {Env} env @param {Profile} prof @param {number} nowMs @param {any} loc */
 export async function altPrune(env, prof, nowMs, loc) {

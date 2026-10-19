@@ -133,7 +133,11 @@ export function altOther(rec, text, o = {}, mode = "") {
   // o.booking — кого и на какое время записывают этим же сообщением («перенесите на 13:00 и сына Алихана запишите на 11:00»): эти имена, время и дни — не о другой записи
   const bkAll = Array.isArray(o.booking) ? o.booking : [], bk = mode === "move" ? [] : bkAll, bkNames = bkAll.map(x => x.name).filter(n => n && !samePerson(n, rec.name || ""));
   const bkTimes = bk.map(x => x.time).filter(Boolean).map(mins), bkDay = /** @param {string} d */ d => bk.some(x => x.date && x.date === d);
-  const kins = [...new Set(kinHits(raw).filter(h => !bkNames.some(n => (h.nw && caseName(n, h.nw)) || (h.pw && caseName(n, h.pw) && !(h.nw && isName(h.nw))))).map(h => h.k))];
+  // «Отец и сын» — название услуги (Winchester), а не родство: «Отец и сын перенесите на 17:00» читалось как запись сына — бот переспрашивал,
+  // а на повтор отвечал «такой записи нет» и звал администратора (проверка 19.10.2026). Только если такая услуга есть у компании или в записи
+  const fsSvc = [...(o.services || []), rec.services || ""].some(/** @param {any} t */ t => /отец\s+и\s+сын/i.test(String(t)));
+  const rawK = fsSvc ? raw.replace(/(^|[^а-яёА-ЯЁ])от(ец|ца|цу|цом)\s+и\s+сын(а|у|ом)?(?![а-яёА-ЯЁ])/gi, "$1 ") : raw;
+  const kins = [...new Set(kinHits(rawK).filter(h => !bkNames.some(n => (h.nw && caseName(n, h.nw)) || (h.pw && caseName(n, h.pw) && !(h.nw && isName(h.nw))))).map(h => h.k))];
   const named = nameToks(raw).some(t => t.length >= 3 && isName(t));
   const notOwn = (Array.isArray(rec.kin) && rec.kin.length > 0) || (!!rec.name && !!o.owner && !samePerson(rec.name, o.owner));
   const kinFit = kins.length > 0 && !kins.includes("other") && Array.isArray(rec.kin) && kins.every(k => rec.kin.some(/** @param {string} z */ z => kinSame(k, z)));
