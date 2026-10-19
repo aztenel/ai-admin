@@ -70,6 +70,12 @@ export async function bcApi(request, env, url, s) {
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
   if (P === "/api/bc/auto") { // включить, выключить, изменить — только владелец: автосценарий пишет клиентам каждый день сам
     if (s.role !== "owner") return jsonP({ error: "Настраивать автосценарий может только владелец." }, 403);
+    // снять сигнал Meta, когда остановленной рассылки нет (сигнал пришёл после завершения): иначе он держал бы автосценарий 14 дней,
+    // а снять его можно было только запуском новой рассылки (находка проверки 19.10.2026)
+    if (body.clearHold === true) {
+      try { await bcHoldEdit(env, cid, h => { delete h.all; delete h.tpl; }); } catch (e) { console.log("bc hold clear", String(e)); return jsonP({ error: BUSY }, 503); }
+      return jsonP({ ok: true });
+    }
     let r; try { r = await autoSet(env, c, body); } catch (e) { console.log("bc auto set", String(e)); return jsonP({ error: BUSY }, 503); }
     return r.ok ? jsonP(r) : jsonP({ ok: false, errors: r.errors }, 400);
   }
@@ -117,7 +123,8 @@ export async function bcApi(request, env, url, s) {
       if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Всё равно продолжить?` }, 409);
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
       if (past) { cur.status = "stopped"; cur.note = "Сигнал снят. " + PAST; await bcPut(env, cid, cur); await bcRun(env, cid, id, false); return jsonP({ ok: true, b: pub(cur) }); }
-      bcStarting(cur, now); await bcPut(env, cid, cur); await bcStarted(env, cid, cur, now);
+      bcStarting(cur, now); await bcPut(env, cid, cur);
+      if (!(await bcStarted(env, cid, cur, now))) return jsonP({ error: "Рассылка не попала в очередь отправки — хранилище не отвечает. Она на паузе, нажмите «Продолжить» через минуту." }, 503);
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "stop") { if (cur.status !== "done") { cur.status = "stopped"; delete cur.note; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "delete") { // вместе с рассылкой удаляется и список номеров
@@ -185,7 +192,7 @@ function load(){api('/api/bc/list?c='+C).then(function(d){var L=$('list'),I=$('i
  HINT['']='У нового номера предел Meta — 250 получателей за 24 часа, после проверки компании — 2 000.';
  if(d.health){if(d.health.error)I.appendChild(el('div','msg w',d.health.error));else{var h=d.health,t='Номер '+(h.phone||'')+(h.name?' «'+h.name+'»':'')+(QL[h.quality]?' · качество: '+QL[h.quality]:'')+(h.limit>0?' · предел Meta: '+h.limit+' получателей за 24 часа':h.limit<0?' · предел Meta: без ограничений':'');
   I.appendChild(el('div','msg '+(h.quality==='RED'?'e':h.quality==='YELLOW'?'w':'g'),t));if(h.limit>0){CAP['']=Math.max(1,Math.floor(h.limit*0.95));HINT['']='Предел Meta для этого номера — '+h.limit+' получателей за 24 часа. Оставьте небольшой запас.'}else if(h.limit<0)HINT['']='У этого номера нет суточного предела Meta. Начинайте с небольших рассылок: жалобы клиентов снижают качество номера.'}}
- if(d.hold&&d.hold.length)I.appendChild(el('div','msg e','Сигнал от Meta: '+d.hold.join('; ')+'. Рассылки остановлены.'));
+ if(d.hold&&d.hold.length){var hm=el('div','msg e','Сигнал от Meta: '+d.hold.join('; ')+'. Рассылки остановлены. ');I.appendChild(hm);if(d.owner){var hb=el('button','btn','Снять сигнал Meta');hb.onclick=function(){if(!confirm('Снять сигнал Meta? Делайте это, только если причина устранена (например, шаблон снова одобрен). Остановленные рассылки останутся на паузе — их продолжают кнопкой «Продолжить».'))return;hb.disabled=true;api('/api/bc/auto',{c:C,clearHold:true}).then(function(r){hb.disabled=false;if(r.error){msg(I,'e',[r.error]);return}load()}).catch(function(e){hb.disabled=false;fail(e)})};hm.appendChild(hb)}}
  if(g){I.appendChild(el('div','msg '+(g.ready?'g':'e'),'WhatsApp через Green-API: '+(g.ready?'номер '+(g.phone||'')+' привязан':g.why)));if(g.warn){var wn=el('div','msg w',g.warn);if(d.owner){var la=el('a','',' Открыть проверку запуска');la.href='/launch?c='+C;wn.appendChild(la)}I.appendChild(wn)}
   if(g.hold)I.appendChild(el('div','msg e','Сигнал от Green-API: '+g.hold+'. Рассылки через Green-API остановлены.'))}
  $('chbox').hidden=!(g&&d.ready);if(!$('form').dataset.ch){$('form').dataset.ch=1;setCh(g&&!d.ready?'ga':'')}else $('caphint').textContent=HINT[CH];

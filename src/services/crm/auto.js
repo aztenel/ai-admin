@@ -16,8 +16,9 @@ import { AUTO_HOUR, CRM_FRESH_AUTO, CRM_QUIET_DAYS, CRM_PAST_DAYS } from "../../
 import { autoLoad, autoSave, autoDayMark, autoSkipSave, autoSkipLoad } from "../../db/kv/crm.js";
 import { notify } from "../integrations/telegram/client.js";
 import { bcRoute } from "../broadcast/sender.js";
-import { bcHold, bcHoldFor } from "../broadcast/holds.js";
-import { qualityGet } from "../broadcast/quality.js";
+import { bcHoldRead, bcHoldFor } from "../broadcast/holds.js";
+import { qualityGet, qualityFetch } from "../broadcast/quality.js";
+import { crmBookedNow } from "./snapshot.js";
 import { bcCreate } from "../broadcast/create.js";
 import { crmView, crmPick } from "./segments.js";
 
@@ -25,6 +26,7 @@ import { crmView, crmPick } from "./segments.js";
 /** @type {Readonly<AutoCfg>} */
 export const AUTO_DEF = Object.freeze({ on: false, days: 28, tpl: "", lang: "ru", cap: 20, from: 11, to: 20, text: "" });
 const QBAD = /** @type {Record<string, string>} */ ({ YELLOW: "жёлтое (жалобы клиентов растут)", RED: "красное (номер могут ограничить)" });
+const QOK = /** @type {Record<string, number>} */ ({ GREEN: 1, HIGH: 1 }); // маркетинг — только при зелёном: UNKNOWN, NA и прочее — не «хорошо»
 
 /** @param {Env} env @param {string} cid @returns {Promise<AutoCfg>} */
 export const autoGet = async (env, cid) => ({ ...AUTO_DEF, ...((await autoLoad(env, cid)) || {}) });
@@ -117,16 +119,24 @@ export async function autoOne(env, c, now) {
 async function autoDay(env, c, cfg, now, skip) {
   const route = bcRoute(env, c.id, "");
   if (route.error) return skip(route.error);
-  const q = await qualityGet(env, c.id), L = local(now), day0 = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate()) - TZ * 3600e3;
-  if (q && QBAD[q.quality]) return skip(`Качество номера WhatsApp — ${QBAD[q.quality]}: маркетинг сейчас может привести к ограничению номера.`);
-  // качество не узнали сегодня (проверка в 10:00 не удалась, Meta или Wazzapo не сообщили качество) — не «всё хорошо»: через Wazzapo
-  // вебхуков о качестве нет, и эта проверка — единственный сигнал, а номер Winchester уже блокировали (находка проверки 19.10.2026)
-  if (!q || !(q.at >= day0)) return skip("Номер WhatsApp сегодня не проверен: проверка в 10:00 не получила ответа от Meta (или Wazzapo). Без проверки качества номера маркетинг не отправляю.");
+  const L = local(now), day0 = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate()) - TZ * 3600e3;
+  // качество номера — сегодняшнее: через Wazzapo вебхуков о качестве нет, эта проверка — единственный сигнал, а номер Winchester уже
+  // блокировали. Проверка в 10:00 не удалась — ещё одна попытка сейчас (один сбой Meta не отменяет день); не узнали — не «всё хорошо»
+  // (находки проверки 19.10.2026)
+  let q = await qualityGet(env, c.id);
+  if (!q || !(q.at >= day0)) q = (await qualityFetch(env, c, now)).q;
+  if (!q) return skip("Номер WhatsApp сегодня не проверен: Meta (или Wazzapo) не ответили ни в 10:00, ни сейчас. Без проверки качества номера маркетинг не отправляю.");
+  if (QBAD[q.quality]) return skip(`Качество номера WhatsApp — ${QBAD[q.quality]}: маркетинг сейчас может привести к ограничению номера.`);
   if (!q.quality) return skip("Номер WhatsApp сегодня не проверен: Meta (или Wazzapo) не сообщили качество номера. Без него маркетинг не отправляю — если так каждый день, скажите разработчику.");
-  const hold = bcHoldFor(await bcHold(env, c.id), { tpl: cfg.tpl });
-  if (hold) return skip(`Сигнал от Meta: ${hold.why}. Когда причина устранена, нажмите «Продолжить» у остановленной рассылки на странице рассылок — сигнал снимется, и автосценарий продолжит со следующего дня.`);
+  if (!QOK[q.quality]) return skip(`Качество номера WhatsApp — «${clean(q.quality, 20)}», а не зелёное: маркетинг отправляю только при зелёном.`);
+  const hold = bcHoldFor(await bcHoldRead(env, c.id), { tpl: cfg.tpl }); // сбой чтения — ошибка → пропуск дня (autoOne), а не «сигнала нет»
+  if (hold) return skip(`Сигнал от Meta: ${hold.why}. Когда причина устранена, снимите сигнал на странице рассылок (кнопка «Снять сигнал Meta») — автосценарий продолжит со следующего дня.`);
   const view = await crmView(env, c, now);
   if (!view.snap || now - view.snap.at > CRM_FRESH_AUTO) return skip("База клиентов из Altegio не обновлялась больше 36 часов (ночное обновление не сработало): по старой базе можно написать тому, кто уже записался. Обновите базу в разделе сегментов.");
+  /** @type {Set<string>} */ let booked;
+  try { booked = await crmBookedNow(env, c, now); }
+  catch (/** @type {any} */ e) { console.log("auto booked", c.id, logSafe(String((e && e.message) || e))); return skip("Altegio не ответил при проверке свежих записей — по ночной базе можно написать тому, кто записался утром."); }
+  for (const x of view.rows) if (!x.why && booked.has(x.p)) x.why = "fut"; // записался после ночного снимка
   const seg = { id: "all", days: cfg.days };
   if (!((await crmPick(env, c, seg.id, now, { days: cfg.days, view })) || []).length) return { state: "none" };
   // предел рассылки за 24 часа — предел номера Meta с запасом, а не cfg.cap: cfg.cap уже ограничил получателей, а общий счётчик номера (bcq:)

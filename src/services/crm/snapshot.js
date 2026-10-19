@@ -101,6 +101,21 @@ const altFail = e => {
     : st ? `Altegio не отдал журнал записей (ошибка ${st}) — попробуйте через несколько минут.` : "Нет связи с Altegio — попробуйте через несколько минут.");
 };
 
+// записи с сегодняшнего дня на 60 дней вперёд — свежие из Altegio, прямо перед автосценарием: снимок ночной, а кто записался утром
+// (или пришёл сегодня), не должен получить «пора на стрижку» (находка проверки 19.10.2026). → номера (цифры без «+») с записью.
+// Сбой Altegio — ошибка: автосценарий в такой день не пишет
+/** @param {Env} env @param {Client} c @param {number} nowMs @returns {Promise<Set<string>>} */
+export async function crmBookedNow(env, c, nowMs) {
+  const r = await altRecordsRange(env, altUserKey(env, c), altLoc(env, c), isoDay(nowMs), isoDay(nowMs + CRM_FUTURE_DAYS * 86400e3));
+  const out = new Set();
+  for (const x of r.list) {
+    if (!x || x.deleted === true || x.deleted === 1 || !x.client || typeof x.client !== "object") continue;
+    const p = normPhone(String(x.client.phone ?? "")).slice(1);
+    if (p) out.add(p);
+  }
+  return out;
+}
+
 // ночное обновление: 04:00–04:09 по Астане, встроенные клиенты с c.crm (Winchester), локацией и ключом журнала; раз в день (отметка до работы)
 /** @param {Env} env @param {number} now @returns {Promise<number>} сколько снимков собрано */
 export async function crmRun(env, now) {

@@ -5,7 +5,8 @@ import { clean } from "../../lib/text.js";
 import { TZ, local, hhmm, isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
 import { bcChunkKey, bcPut, bcGet } from "../../db/kv/broadcasts.js";
-import { bcmAdd } from "../../db/kv/crm.js";
+import { bcmAdd, autoLoad } from "../../db/kv/crm.js";
+import { logSafe } from "../../lib/phone.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/constants.js";
 import { hStr } from "../schedule/slots.js";
@@ -80,15 +81,27 @@ export async function bcHealth(env, route) {
     return { phone: clean(j.display_phone_number || "", 24), name: clean(j.verified_name || "", 60), quality: String(j.quality_rating || "").toUpperCase(), limit: m ? +m[1] * (m[2] ? 1000 : 1) : /UNLIMITED/i.test(tier) ? -1 : 0 };
   } catch (e) { return { error: "Meta не отвечает — сведения о номере получить не удалось." }; }
 }
-/** @param {Env} env @param {string} cid @param {string} id @param {boolean} on */
-export async function bcRun(env, cid, id, on) { // список рассылок, которые сейчас идут: по нему работает фоновая отправка
+// список рассылок, которые сейчас идут: по нему работает фоновая отправка. false — не записался (запуск без него не отправит ничего)
+/** @param {Env} env @param {string} cid @param {string} id @param {boolean} on @returns {Promise<boolean>} */
+export async function bcRun(env, cid, id, on) {
   try {
     await kvRetry(async () => {
       const cur = JSON.parse((await env.KV.get("bcrun")) || "[]") || [], rest = cur.filter(/** @param {any} x */ x => !(x.c === cid && x.id === id));
       if (on) rest.push({ c: cid, id });
       if (JSON.stringify(rest) !== JSON.stringify(cur)) await env.KV.put("bcrun", JSON.stringify(rest.slice(-40)));
     });
-  } catch (e) { console.log("bcrun", String(e)); }
+    return true;
+  } catch (e) { console.log("bcrun", String(e)); return false; }
+}
+// получатели рассылки с номера from, n человек (части bcr: по BC_CHUNK)
+/** @param {Env} env @param {string} cid @param {string} id @param {number} from @param {number} n @returns {Promise<any[]>} */
+async function bcRange(env, cid, id, from, n) {
+  const out = [];
+  for (let k = Math.floor(from / BC_CHUNK); n > 0 && k <= Math.floor((from + n - 1) / BC_CHUNK); k++) {
+    const ch = JSON.parse((await env.KV.get(bcChunkKey(cid, id, k))) || "[]");
+    for (let i = 0; i < ch.length; i++) { const at = k * BC_CHUNK + i; if (at >= from && at < from + n) out.push(ch[i]); }
+  }
+  return out;
 }
 // когда отправлять нельзя: вне часов отправки или после временного отказа Meta → { note, till }
 /** @param {any} b @param {number} now */
@@ -107,22 +120,35 @@ export async function bcTick(env, cid, id, gaBusy) {
   let b = await bcGet(env, cid, id);
   if (!b) return { error: "Рассылка не найдена." };
   if (b.status !== "running") return { b, state: b.status };
-  // рассылка автосценария «Пора на стрижку» — только в день создания: ждала предела номера за сутки и не успела — назавтра её получателям
-  // уже не «ровно N дней», а с новой рассылкой автосценария за день ушло бы больше его предела (находка проверки 19.10.2026)
-  if (b.by === "auto" && isoDay(b.created) < isoDay(now)) {
-    b.status = "stopped"; b.note = "Остановлена: не успела уйти в день создания (пауза, ошибки Meta или предел номера за сутки) — назавтра автосценарий собирает новый список."; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
-    await bcPut(env, cid, b); await bcRun(env, cid, id, false);
-    try { await notify(env, `⏹ Автосценарий «${b.name}» не успел отправить всем — ${CLIENTS[cid].name}\nОтправлено ${b.sent} из ${b.total} в день создания (мешали пауза, ошибки Meta или предел номера за сутки). Остальным — нет: им уже не «ровно N дней».`, cid); } catch (e) { console.log("bc tg", String(e)); }
-    return { b, state: "stopped" };
-  }
   const ga = b.ch === "ga";
   if (ga && gaBusy) return { b, state: "busy" };
   /** @param {string} text */
   const tell = async text => { try { await notify(env, text, cid); } catch (e) { console.log("bc tg", String(e)); } };
+  // рассылка автосценария «Пора на стрижку» — только в день создания (находки проверки 19.10.2026): не успела — назавтра её получателям
+  // уже не «ровно N дней», а с новой рассылкой автосценария за день ушло бы больше его предела. Останавливаем сразу, как стало ясно,
+  // что сегодня не уйдёт (часы закончились, предел номера — до завтра), а не в полночь; выключил владелец автосценарий — тоже стоп
+  /** @param {string} why @param {string} tg */
+  const stopAuto = async (why, tg) => {
+    b.status = "stopped"; b.note = "Остановлена: " + why; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
+    await bcPut(env, cid, b); await bcRun(env, cid, id, false);
+    if (tg) await tell(`⏹ Автосценарий «${b.name}» — ${CLIENTS[cid].name}\n${tg}\nОтправлено ${b.sent} из ${b.total}.`);
+    return { b, state: "stopped" };
+  };
+  const LATE = "в день создания уйти не успела (часы отправки закончились, предел номера за сутки или пауза) — завтра автосценарий соберёт новый список.",
+    LATE_TG = "Не успел отправить всем в день создания: закончились часы отправки, предел номера за сутки занят или рассылка стояла на паузе. Остальным завтра уже не «ровно N дней» — автосценарий соберёт новый список.";
+  if (b.by === "auto") {
+    if (isoDay(b.created) < isoDay(now)) return stopAuto(LATE, LATE_TG);
+    const a = await autoLoad(env, cid);
+    if (!a || !a.on) return stopAuto("автосценарий выключен.", "");
+  }
   /** @param {any} w */
-  const waitFor = async w => { if (b.waitNote !== w.note) { b.waitNote = w.note; b.waitTill = w.till; try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); } } return { b, state: "wait" }; };
+  const waitFor = async w => {
+    if (b.by === "auto" && isoDay(w.till) > isoDay(b.created)) return stopAuto(LATE, LATE_TG);
+    if (b.waitNote !== w.note) { b.waitNote = w.note; b.waitTill = w.till; try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); } } return { b, state: "wait" };
+  };
   /** @param {string} note */
   const stopFor = async note => {
+    note = logSafe(note); // текст ошибки Meta/Wazzapo может содержать номер получателя — заметку видят сотрудники и Telegram (находка проверки 19.10.2026)
     b.status = "paused"; b.note = note; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     await bcPut(env, cid, b); await bcRun(env, cid, id, false);
     await tell(`⚠️ Рассылка «${b.name}» остановлена — ${CLIENTS[cid].name}\n${note}\nОтправлено ${b.sent} из ${b.total}. Когда причина устранена, нажмите «Продолжить» на странице рассылок.`);
@@ -165,14 +191,15 @@ export async function bcTick(env, cid, id, gaBusy) {
   try {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
-    if (b.cur) { b.unsure = (b.unsure || 0) + b.cur[1]; delete b.cur; } // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
+    if (b.cur) { // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
+      b.unsure = (b.unsure || 0) + b.cur[1];
+      // шаблон мог уйти любому из неё — отметка «писали маркетинг» всем: иначе следующая рассылка по базе или автосценарий напишут второй раз (находка проверки 19.10.2026)
+      if (!ga) { try { await bcmAdd(env, cid, isoDay(now), (await bcRange(env, cid, id, b.cur[0], b.cur[1])).map(x => String(x[0]))); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
+      delete b.cur;
+    }
     // Green-API: одно сообщение за раз (смотрим до 25 человек вперёд, чтобы пропустить попросивших не писать); Meta — порция
     const batch = ga ? 25 : Math.max(1, Math.min(Math.round(+env.BC_BATCH) || 20, 200)), take = Math.min(batch, ga ? b.total - b.pos : b.cap - used, b.total - b.pos);
-    const from = b.pos, items = [];
-    for (let k = Math.floor(from / BC_CHUNK); take > 0 && k <= Math.floor((from + take - 1) / BC_CHUNK); k++) {
-      const ch = JSON.parse((await env.KV.get(bcChunkKey(cid, id, k))) || "[]");
-      for (let i = 0; i < ch.length; i++) { const at = k * BC_CHUNK + i; if (at >= from && at < from + take) items.push(ch[i]); }
-    }
+    const from = b.pos, items = take > 0 ? await bcRange(env, cid, id, from, take) : [];
     if (take > 0 && !items.length) return await stopFor("Список получателей не читается из хранилища — попробуйте «Продолжить» через несколько минут.");
     const stop = take > 0 ? await bcOptouts(env, cid) : new Set();
     // рассылка по базе Altegio: исключения — ещё раз перед отправкой, по свежему снимку и отметкам bcm:, а не только при создании (находка

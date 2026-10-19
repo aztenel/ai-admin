@@ -108,7 +108,7 @@ export async function bcCreate(env, c, body, now, by, o = {}) {
   if (o.start) bcStarting(b, now);
   try { await bcChunksSave(env, c.id, b.id, rc.list); await bcPut(env, c.id, b); }
   catch (e) { console.log("bc create", String(e)); return { ok: false, errors: ["не удалось сохранить список — хранилище не отвечает, попробуйте ещё раз"], status: 500 }; }
-  if (o.start) await bcStarted(env, c.id, b, now);
+  if (o.start && !(await bcStarted(env, c.id, b, now))) return { ok: false, errors: [BC_NOT_QUEUED], status: 503 };
   return { ok: true, b, dup: rc.dup, bad: rc.badN, cut: rc.cut };
 }
 
@@ -120,14 +120,22 @@ export async function bcCrmStale(env, c, b, now) {
   return snap && now - snap.at <= CRM_FRESH_BC ? "" : "База клиентов из Altegio не обновлялась больше 3 дней — по ней не видно, кто уже записался. Обновите базу в разделе сегментов, потом запустите рассылку.";
 }
 
+export const BC_NOT_QUEUED = "рассылка не попала в очередь отправки — хранилище не отвечает; она на паузе, нажмите «Продолжить» через минуту";
 // запуск: отметки «идёт» — до записи рассылки (bcPut делает вызывающий), очередь фоновой отправки и текст для ИИ и пульта — после
 /** @param {Record<string, any>} b @param {number} now */
 export function bcStarting(b, now) {
   b.status = "running"; b.startedAt = now; b.streak = 0; b.tmp = 0;
   for (const k of ["note", "retryAt", "retryWhy", "waitNote", "waitTill", "nextAt"]) delete b[k];
 }
-/** @param {Env} env @param {string} cid @param {Record<string, any>} b @param {number} now */
+// очередь не записалась — рассылка «идёт», но фоновая отправка её не видит и молчит: ставим на паузу с объяснением (находка проверки
+// 19.10.2026). false — не запущена
+/** @param {Env} env @param {string} cid @param {Record<string, any>} b @param {number} now @returns {Promise<boolean>} */
 export async function bcStarted(env, cid, b, now) {
-  await bcRun(env, cid, b.id, true);
+  if (!(await bcRun(env, cid, b.id, true))) {
+    b.status = "paused"; b.note = "Не попала в очередь отправки: хранилище не ответило. Нажмите «Продолжить».";
+    try { await bcPut(env, cid, b); } catch (e) { console.log("bc save", String(e)); }
+    return false;
+  }
   try { await bcLastSave(env, cid, { at: now, name: b.name, text: snip(b.text, 600) }); } catch (e) { console.log("bclast", String(e)); } // текст рассылки увидят ИИ (клиент может ответить на неё) и администратор в пульте
+  return true;
 }

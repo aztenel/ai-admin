@@ -12,7 +12,10 @@ import { BC_HINT, BC_ACCOUNT } from "./errors.js";
 export const bcClientOf = (env, wx) => (wx && wx.client) || (hasClient(env.WA_CLIENT) ? env.WA_CLIENT : ""); // чей это номер WhatsApp
 // сигнал Meta «остановиться»: { all: { at, why }, tpl: { <шаблон>: { at, why } } }
 /** @param {Env} env @param {string} cid */
-export const bcHold = async (env, cid) => { try { return JSON.parse((await env.KV.get("bchold:" + cid)) || "null"); } catch (e) { return null; } };
+export const bcHold = async (env, cid) => { try { return await bcHoldRead(env, cid); } catch (e) { return null; } };
+// то же, но сбой чтения — ошибка, а не «сигнала нет»: автосценарий в такой день не пишет (находка проверки 19.10.2026)
+/** @param {Env} env @param {string} cid */
+export const bcHoldRead = async (env, cid) => JSON.parse((await env.KV.get("bchold:" + cid)) || "null");
 /** @param {any} h @param {any} b */
 export const bcHoldFor = (h, b) => (h && (b.ch === "ga" ? h.ga : h.all || (h.tpl && h.tpl[b.tpl]))) || null; // сигналы Meta не касаются номера Green-API, и наоборот
 /** @param {any} b */

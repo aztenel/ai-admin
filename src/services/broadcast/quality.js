@@ -24,10 +24,9 @@ export async function qualityRun(env, now) {
     if (c.off || !env["WA_TOKEN_" + c.id.toUpperCase()]) continue; // свой номер Meta или Wazzapo
     const route = waRoute(env, c.id);
     if (!route) continue;
-    const mk = `qch:${c.id}:${isoDay(now)}`, qk = `qual:${c.id}`;
+    const mk = `qch:${c.id}:${isoDay(now)}`;
     try { if (await env.KV.get(mk)) continue; await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 }); } catch (e) { console.log("quality mark", String(e)); continue; }
-    let h; try { h = await bcHealth(env, route); } catch (e) { h = { error: "сведения о номере не получены" }; }
-    /** @type {any} */ let prev = null; try { prev = JSON.parse((await env.KV.get(qk)) || "null"); } catch (e) {}
+    const { h, prev } = await qualityFetch(env, c, now);
     const L = [];
     if (h.error) L.push(`Не удалось проверить номер WhatsApp: ${h.error}`);
     else {
@@ -36,11 +35,22 @@ export async function qualityRun(env, now) {
       if (prev && QL[prev.quality] && h.quality === "GREEN") L.push("Качество номера снова зелёное ✅");
       // качество не пришло (поле ответа Wazzapo вживую не проверено) — автосценарий без него не пишет; включённый — пусть владелец знает почему
       if (!h.quality && c.crm) { /** @type {any} */ let a = null; try { a = await autoLoad(env, c.id); } catch (e) {} if (a && a.on) L.push("Meta (или Wazzapo) не сообщили качество номера — автосценарий «Пора на стрижку» сегодня не отправит. Если так каждый день, скажите разработчику."); }
-      try { await env.KV.put(qk, JSON.stringify({ quality: h.quality || "", limit: h.limit || 0, at: now }), { expirationTtl: 60 * 86400 }); } catch (e) { console.log("quality save", String(e)); }
     }
     if (L.length && await notify(env, `📶 Номер WhatsApp — ${c.name}${h.phone ? " (" + h.phone + ")" : ""}\n${L.join("\n")}`, c.id)) n++;
   }
   return n;
+}
+// спросить качество и предел номера сейчас и записать qual:<клиент> → { h, prev, q }: h.error — не узнали; prev — прошлая проверка;
+// q — что записано (null — не узнали). Им пользуются проверка в 10:00 и автосценарий в 11:00, если утренняя не удалась
+/** @param {Env} env @param {any} c @param {number} now @returns {Promise<{ h: any, prev: any, q: { quality: string, limit: number, at: number } | null }>} */
+export async function qualityFetch(env, c, now) {
+  const route = waRoute(env, c.id), qk = `qual:${c.id}`;
+  /** @type {any} */ let h; try { h = route ? await bcHealth(env, route) : { error: "номер WhatsApp не подключён" }; } catch (e) { h = { error: "сведения о номере не получены" }; }
+  /** @type {any} */ let prev = null; try { prev = JSON.parse((await env.KV.get(qk)) || "null"); } catch (e) {}
+  if (h.error) return { h, prev, q: null };
+  const q = { quality: String(h.quality || ""), limit: +h.limit || 0, at: now };
+  try { await env.KV.put(qk, JSON.stringify(q), { expirationTtl: 60 * 86400 }); } catch (e) { console.log("quality save", String(e)); }
+  return { h, prev, q };
 }
 // последняя проверка номера (qual:<клиент>, пишет qualityRun в 10:00): { quality, limit, at } или null — не проверяли.
 // Сбой чтения — ошибка, а не «всё хорошо»: автосценарий в такой день лучше пропустить

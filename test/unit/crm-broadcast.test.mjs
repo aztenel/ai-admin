@@ -309,7 +309,7 @@ test("рассылка автосценария — только в день с�
   const b = s.kv.json(`bc:winchester:${r.id}`);
   assert.equal(tpls().length, 0); assert.equal(b.status, "stopped"); assert.ok(/в день создания/.test(b.note));
   assert.ok(!(s.kv.json("bcrun") || []).some(x => x.id === r.id));
-  assert.ok(net.tg.some(x => /не успел отправить всем/.test(x.text || "")), JSON.stringify(net.tg));
+  assert.ok(net.tg.some(x => /не успел отправить всем/i.test(x.text || "")), JSON.stringify(net.tg));
   const t = await autoOne(s.env, W, AT); await s.cron();
   assert.equal(t.state, "sent"); assert.deepEqual(tpls().map(x => x.body.to).sort(), [dg(201), dg(202), dg(203)].sort(), "сегодняшняя — как обычно");
 });
@@ -356,4 +356,105 @@ test("«Продолжить» у вчерашней рассылки автос
   const b2 = s.kv.json(`bc:winchester:${r.id}`); b2.status = "paused"; s.kv.mem.set(`bc:winchester:${r.id}`, JSON.stringify(b2));
   const c3 = await own.post("/api/bc/act", { c: "winchester", id: r.id, act: "start" });
   assert.equal(c3.status, 409); assert.ok(/за прошлый день/.test((await c3.json()).error));
+});
+
+// находки третьей проверки 19.10.2026 (трое проверяющих, каждую находку перепроверили двое)
+test("оборванная порция: шаблон мог уйти каждому из неё — отметка «писали маркетинг» всем, следующая рассылка по базе им не пишет", async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const d = await (await own.post("/api/bc/create", { ...FORM, segment: "pora" })).json();
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
+  const b = s.kv.json(`bc:winchester:${d.b.id}`); Object.assign(b, { pos: 3, cur: [0, 3] }); s.kv.mem.set(`bc:winchester:${d.b.id}`, JSON.stringify(b)); // экземпляр Worker оборвался посреди порции
+  await s.cron();
+  const b2 = s.kv.json(`bc:winchester:${d.b.id}`);
+  assert.equal(b2.status, "done"); assert.equal(b2.unsure, 3); assert.equal(tpls().length, 0);
+  assert.deepEqual(s.kv.json(`bcm:winchester:${day(0)}`).sort(), [dg(101), dg(104), dg(109)].sort());
+  const again = await (await own.post("/api/bc/check", { ...FORM, segment: "pora" })).json();
+  assert.equal(again.valid, 0, "второй раз за 14 дней — нет");
+});
+
+test("автосценарий: записался после ночного снимка — не пишем (свежие записи из Altegio в 11:00); Altegio не ответил — день пропущен", async () => {
+  const s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  net.altJournal.push(rec(ph(201), -1)); // Арман записался утром, снимок ночной его не видит
+  const r = await autoOne(s.env, W, AT);
+  assert.equal(r.state, "sent"); assert.deepEqual(s.kv.json(`bcr:winchester:${r.id}:0`).map(x => x[0]), [dg(202), dg(203)]);
+  const s2 = await autoBase();
+  await autoSet(s2.env, W, { on: true, tpl: "pora_na_strizhku" });
+  net.altJournalFail = 503;
+  try { const r2 = await autoOne(s2.env, W, AT); assert.equal(r2.state, "skip"); assert.ok(/свежих записей/.test(r2.why)); assert.equal(bcs(s2).length, 0); }
+  finally { net.altJournalFail = 0; }
+});
+
+test("автосценарий выключили, пока рассылка дня идёт, — она останавливается, не уходит", async () => {
+  const s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  const r = await autoOne(s.env, W, AT);
+  await autoSet(s.env, W, { on: false });
+  await s.cron();
+  const b = s.kv.json(`bc:winchester:${r.id}`);
+  assert.equal(b.status, "stopped"); assert.ok(/выключен/.test(b.note)); assert.equal(tpls().length, 0);
+});
+
+test("автосценарий: качество не зелёное (UNKNOWN), сбой чтения сигнала Meta — день пропущен; проверка в 10:00 не удалась — ещё попытка в 11:00", async () => {
+  let s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  await checked(s, AT, "UNKNOWN", 250);
+  const u = await autoOne(s.env, W, AT);
+  assert.equal(u.state, "skip"); assert.ok(/UNKNOWN/.test(u.why) && /зелён/.test(u.why), u.why);
+
+  s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  s.kv.fail.get = k => k === "bchold:winchester";
+  const h = await autoOne(s.env, W, AT); s.kv.fail.get = null;
+  assert.equal(h.state, "skip"); assert.equal(bcs(s).length, 0);
+
+  s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  s.kv.mem.delete("qual:winchester"); // в 10:00 Meta не ответила
+  net.graphReply = (u2, init) => (init.method || "GET") === "GET" && /fields=/.test(u2) ? new Response(JSON.stringify({ display_phone_number: "+7 700 000 00 99", quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_1K" }), { status: 200 }) : null;
+  const ok = await autoOne(s.env, W, AT); net.graphReply = null;
+  assert.equal(ok.state, "sent", JSON.stringify(ok)); assert.equal(s.kv.json("qual:winchester").quality, "GREEN");
+});
+
+test("сигнал Meta пришёл, когда рассылки дня уже нет: владелец снимает его кнопкой «Снять сигнал Meta», сотрудник — нет", async () => {
+  const s = await autoBase(), own = await login(s, OWNER), sw = await login(s, STAFF_W);
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  await s.kv.api.put("bchold:winchester", JSON.stringify({ tpl: { pora_na_strizhku: { at: AT, why: "шаблон приостановлен Meta" } } }));
+  const r = await autoOne(s.env, W, AT);
+  assert.equal(r.state, "skip"); assert.ok(/Снять сигнал Meta/.test(r.why));
+  assert.equal((await sw.post("/api/bc/auto", { c: "winchester", clearHold: true })).status, 403);
+  assert.ok(s.kv.json("bchold:winchester"));
+  assert.equal((await (await own.post("/api/bc/auto", { c: "winchester", clearHold: true })).json()).ok, true);
+  assert.equal(s.kv.json("bchold:winchester"), null);
+  assert.ok((await (await own.go("/broadcast?c=winchester")).text()).includes("Снять сигнал Meta"));
+});
+
+test("очередь отправки не записалась — рассылка автосценария на паузе с объяснением, владелец узнаёт", async () => {
+  const s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
+  s.kv.fail.put = k => k === "bcrun";
+  const r = await autoOne(s.env, W, AT); s.kv.fail.put = null;
+  assert.equal(r.state, "skip"); assert.ok(/очередь отправки/.test(r.why), r.why);
+  const [b] = bcs(s); assert.equal(b.status, "paused"); assert.ok(/очередь/.test(b.note));
+});
+
+test("рассылка автосценария не успевает сегодня (часы закончились) — остановлена сразу, а не в полночь", async () => {
+  const s = await autoBase();
+  await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku", from: 11, to: 12 });
+  const r = await autoOne(s.env, W, AT);
+  await s.cron(); // 12:00 по Астане — часы 11–12 закончились, «продолжу завтра» для автосценария не бывает
+  const b = s.kv.json(`bc:winchester:${r.id}`);
+  assert.equal(b.status, "stopped"); assert.equal(tpls().length, 0); assert.ok(net.tg.some(x => /не успел отправить всем/i.test(x.text || "")));
+});
+
+test("ошибка Meta с номером получателя: в заметке рассылки и в Telegram номер скрыт", async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const d = await (await own.post("/api/bc/create", { ...FORM, segment: "all" })).json();
+  assert.equal(d.b.total, 5);
+  net.graphReply = (u, i, rr) => rr.body && rr.body.type === "template" ? new Response(JSON.stringify({ error: { code: 999001, message: `Recipient +${rr.body.to} failed` } }), { status: 400 }) : null;
+  await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json();
+  await s.cron(); net.graphReply = null;
+  const b = s.kv.json(`bc:winchester:${d.b.id}`), t = await (await own.go(`/api/bc/get?c=winchester&id=${d.b.id}`)).text();
+  assert.equal(b.status, "paused"); assert.ok(/\*\*\*/.test(b.note), b.note);
+  assert.ok(![101, 102, 104, 109, 110].some(i => b.note.includes(dg(i)) || t.includes(dg(i)) || net.tg.some(x => (x.text || "").includes(dg(i)))), b.note);
 });
