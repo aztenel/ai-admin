@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
 import { mk, net, ok, T, gaPass } from "../harness.mjs";
 import { PULT_APP } from "../../pult-app.gen.js";
+import { winchesterAlt } from "../fixtures/winchester-altegio.mjs";
 
 const SNAP = fileURLToPath(new URL("./routes.snap.json", import.meta.url));
 const OWNER_KEY = "owner-key-123456", STAFF_KEY = "staff-key-barber-0001", OTHER_KEY = "staff-key-dent-0002";
@@ -113,7 +114,12 @@ const R = [
   ["OPTIONS", "/api/site/winchester/book", undefined, { origin: "https://winchester.kz", "access-control-request-method": "POST" }],
   ["OPTIONS", "/api/site/winchester/book", undefined, { origin: "https://evil.example", "access-control-request-method": "POST" }],
   ["POST", "/api/site/winchester/book", {}, { origin: "https://winchester.kz" }],
-  ["GET", "/api/site/winchester/times?staff=0&services=x&date=2026-10-04", undefined, { origin: "https://winchester.kz" }]
+  ["GET", "/api/site/winchester/times?staff=0&services=x&date=2026-10-04", undefined, { origin: "https://winchester.kz" }],
+  // форма как онлайн-запись Altegio (22.10.2026): дни по месяцам и фото мастера (<img> шлёт запрос без Origin)
+  ["GET", "/api/site/winchester/dates?staff=0&month=2026-10", undefined, { origin: "https://winchester.kz" }],
+  ["GET", "/api/site/winchester/photo/2844400"], ["GET", "/api/site/winchester/photo/2844400?v=0123abcd", undefined, { origin: "https://winchester.kz" }],
+  ["GET", "/api/site/winchester/photo/abc", undefined, { origin: "https://winchester.kz" }],
+  ["OPTIONS", "/api/site/winchester/photo/2844400", undefined, { origin: "https://winchester.kz", "access-control-request-method": "GET" }]
 ];
 
 // страницы и данные, куда без входа нельзя; что можно только владельцу; что видно по клиенту (c=dent — чужой для сотрудника барбершопа)
@@ -148,8 +154,9 @@ for (const [method, path, body, hd] of R) {
     if (role !== "owner" && !hasKey(p, OWNER_KEY)) ok(`нет чужих данных в ответе: ${id}`, !o.body.includes(MARK), o.body.slice(0, 300));
     // 4. страницы с личными данными — без кэша, без встраивания, с CSP
     if (data && o.type === "text/html" && isProtected(p)) ok(`страница с данными без кэша и встраивания: ${id}`, o.cache === "no-store" && o.frame === "DENY" && o.csp, JSON.stringify(o));
-    // 5. ответы API с данными не кэшируются
-    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history|crm|site)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
+    // 5. ответы API с данными не кэшируются (кроме картинки — фото мастера для сайта, браузер хранит его день: не данные;
+    // исключение — по типу ответа, а не по адресу: JSON с адреса фото проверяется, как все — ревью 22.10.2026)
+    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history|crm|site)\b/.test(p) && !/^image\//.test(o.type)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
     // 6. неподписанный вебхук и вебхук без пароля не запускают бота
     if (/^\/(wa\/|ga\b|webhook|$)/.test(p) && method === "POST") ok(`вебхук без подписи/пароля не доходит до ИИ: ${id}`, o.status !== 200 && net.gemini.length === ai0, JSON.stringify(o));
   }
@@ -189,6 +196,28 @@ for (const [method, path, body, hd] of R.filter(([m, p]) => m === "POST" && /^\/
   const r = await go(fake, "GET", "/api/inbox/me");
   got["GET /api/inbox/me [поддельная cookie]"] = await shape(r);
   ok("поддельная cookie → 401", r.status === 401);
+}
+
+// 10. запись с сайта включена (ключ Altegio есть — в общем Worker выше его нет, там всё /api/site/* отвечает 503): данные — no-store,
+// фото мастера — картинка с кэшем на день, nosniff и vary: Origin и с Origin, и без него (ревью 22.10.2026). В снимок не идёт
+{
+  const was = net.altData, data = winchesterAlt();
+  net.altData = () => data;
+  try {
+    const W2 = mk({ ALTEGIO_PARTNER: "partner-key", ALTEGIO_LOC_WINCHESTER: "7990" }), SITE = "https://winchester.kz";
+    const call = (path, origin) => W2.call(path, { headers: { "cf-connecting-ip": ip(), ...(origin ? { origin } : {}) } });
+    const cat = await call("/api/site/winchester/catalog", SITE), cj = await cat.clone().json();
+    ok("сайт: каталог 200 без кэша", cat.status === 200 && cat.headers.get("cache-control") === "no-store", `${cat.status} ${cat.headers.get("cache-control")}`);
+    const photo = (cj.staff || []).find(m => m.photo);
+    ok("сайт: у мастера есть фото (заглушка)", !!photo, JSON.stringify((cj.staff || []).map(m => m.photo)));
+    for (const origin of [SITE, null]) {
+      const r = await call(photo.photo, origin), o = await shape(r), vary = r.headers.get("vary") || "";
+      ok(`сайт: фото мастера ${origin ? "с Origin" : "без Origin"} — картинка с кэшем на день, nosniff, vary: Origin`, o.status === 200 && /^image\//.test(o.type) && o.cache === "public, max-age=86400"
+        && r.headers.get("x-content-type-options") === "nosniff" && /\bOrigin\b/.test(vary) && (origin ? o.cors === origin : !o.cors), JSON.stringify({ ...o, vary }));
+    }
+    const none = await shape(await call("/api/site/winchester/photo/999", SITE));
+    ok("сайт: нет фото — JSON без кэша", none.status === 404 && none.type === "application/json" && none.cache === "no-store", JSON.stringify(none));
+  } finally { net.altData = was; }
 }
 
 // снимок

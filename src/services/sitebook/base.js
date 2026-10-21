@@ -6,11 +6,13 @@
 /** @import { Out } from "./texts.js" */
 import { altText } from "../integrations/altegio/client.js";
 import { altStaffRaw, altServicesRaw } from "../integrations/altegio/site-api.js";
+import { altPhotoUrl } from "../integrations/altegio/photo-api.js";
 import { settledBy } from "../booking/book.js";
 import { withDurations } from "../booking/fit.js";
 import { ALT_MAX_STAFF, ALT_MAX_SERVICES } from "../../config/constants.js";
 import { clean } from "../../lib/text.js";
 import { logSafe } from "../../lib/phone.js";
+import { hash } from "../../lib/crypto.js";
 import { svKey } from "./config.js";
 import { fail } from "./texts.js";
 
@@ -32,6 +34,19 @@ export const cachePut = (k, v, nowMs, ttl) => {
 };
 /** @param {string} k */
 export const cacheDrop = k => { siteCache.delete(k); };
+
+// одинаковые запросы в полёте — один запрос к Altegio: холодный экземпляр получает каталог, дни и пять фото почти одновременно
+// (без этого — по набору запросов на каждый: 3 одновременных каталога = 21 запрос к Altegio при пределе 5 в секунду)
+/** @type {Map<string, Promise<any>>} */
+const flying = new Map();
+/** @template T @param {string} k @param {() => Promise<T>} f @returns {Promise<T>} */
+export function once(k, f) {
+  const cur = flying.get(k);
+  if (cur) return cur;
+  const p = f().finally(() => { if (flying.get(k) === p) flying.delete(k); });
+  flying.set(k, p);
+  return p;
+}
 
 // готовый ответ вместо результата: бросается из глубины (сбой Altegio при чтении) и превращается в ответ в siteCatalog/siteTimes/…
 /** @param {Out} out */
@@ -69,10 +84,11 @@ export const altLog = (where, e) => console.log("site " + where, logSafe(String(
 
 /**
  * Каталог для сайта (внутренний вид):
- *   staff    — [{ id, name (без скобок), full, role, rating, reviews, services: [ключи] }] в порядке Altegio;
+ *   staff    — [{ id, name (без скобок), full, role, rating, reviews, services: [ключи], has_photo, photo }] в порядке Altegio;
  *   services — [{ key, name, desc, min, price: { from, to }, by: { [мастер]: { price, max, min } } }];
- *   sv       — те же услуги по ключу; ids — { [мастер]: { [ключ]: номер услуги Altegio } } (наружу не отдаётся)
- * @typedef {{ staff: any[], services: any[], sv: Record<string, any>, ids: Record<string, Record<string, number>>, partial: boolean }} Cat
+ *   sv       — те же услуги по ключу; ids — { [мастер]: { [ключ]: номер услуги Altegio } }, pics — { [мастер]: адрес фото в Altegio }
+ *              (ids и pics наружу не отдаются: у мастера только has_photo и photo — наш адрес /api/site/<клиент>/photo/<мастер>?v=<версия>)
+ * @typedef {{ staff: any[], services: any[], sv: Record<string, any>, ids: Record<string, Record<string, number>>, pics: Record<string, string>, partial: boolean }} Cat
  */
 
 // пояснение услуги из Altegio («- Стрижка\n- SPA…») → «Стрижка, SPA…»
@@ -87,10 +103,28 @@ const descOf = s => clean(String(s || "").split(/\n+/).map(x => x.replace(/^[\s\
 export async function loadCat(env, conf, nowMs) {
   const k = ck(conf, "sc"), hit = cacheGet(k, nowMs);
   if (hit) return hit;
+  return once(k, () => fetchCat(env, conf, nowMs, k));
+}
+// фото мастеров из ответа book_staff: { [мастер]: адрес в Altegio } (без фото — нет ключа)
+/** @param {any[]} staff0 @returns {Record<string, string>} */
+function picsOf(staff0) {
+  /** @type {Record<string, string>} */
+  const o = {};
+  for (const m of staff0) { const u = altPhotoUrl(m); if (u) o[m.id] = u; }
+  return o;
+}
+// версия фото для адреса картинки: другое фото в Altegio — другой адрес, браузер не покажет старое из своего кэша
+/** @param {string} url */
+export const photoVer = url => hash(url).toString(16).padStart(8, "0");
+/** @param {any} m */
+export const staffOk = m => m && m.id && altText(m.name) && !+m.fired && !+m.hidden;
+/** @param {Env} env @param {SiteConf} conf @param {number} nowMs @param {string} k @returns {Promise<Cat>} */
+async function fetchCat(env, conf, nowMs, k) {
   const [st, all] = await Promise.allSettled([altGate(conf).then(() => altStaffRaw(env, conf.loc)), altGate(conf).then(() => altServicesRaw(env, conf.loc))]);
   gateCheck([st, all]);
   if (st.status === "rejected") { altLog("staff", st.reason); throw stop(fail("altegio", conf)); }
-  const staff0 = st.value.filter(/** @param {any} m */ m => m && m.id && altText(m.name) && !+m.fired && !+m.hidden).slice(0, ALT_MAX_STAFF);
+  const staff0 = st.value.filter(staffOk).slice(0, ALT_MAX_STAFF), pics = picsOf(staff0);
+  cachePut(ck(conf, "sp"), pics, nowMs, 600e3); // фото мастеров — и отдельно: картинке на холодном экземпляре не нужен весь каталог
   const per = await settledBy(staff0.map(/** @param {any} m */ m => async () => { await altGate(conf); return altServicesRaw(env, conf.loc, m.id); }), 3);
   gateCheck(per);
   const notes = new Map((all.status === "fulfilled" ? all.value.services : []).map(/** @param {any} x */ x => [String(x && x.id), x && x.comment]));
@@ -126,7 +160,8 @@ export async function loadCat(env, conf, nowMs) {
     const rated = +m.show_rating > 0 && +m.rating > 0;
     staff.push({ id: +m.id, name: altText(m.name, 60).replace(/\s*\([^()]*\)\s*/g, " ").trim() || altText(m.name, 60), full: altText(m.name, 60),
       role: clean(m.specialization || (m.position && m.position.title) || "", 50), rating: rated ? Math.round(+m.rating * 100) / 100 : null,
-      reviews: rated ? Math.max(0, Math.round(+m.comments_count || 0)) : null, services: Object.keys(own) });
+      reviews: rated ? Math.max(0, Math.round(+m.comments_count || 0)) : null, services: Object.keys(own),
+      has_photo: !!pics[m.id], photo: pics[m.id] ? `/api/site/${conf.id}/photo/${+m.id}?v=${photoVer(pics[m.id])}` : null });
   });
   if (!staff.length) throw stop(fail("altegio", conf)); // не ответил никто
   for (const s of services) {
@@ -137,7 +172,7 @@ export async function loadCat(env, conf, nowMs) {
   }
   const partial = per.some(r => r.status === "rejected") || all.status === "rejected";
   /** @type {Cat} */
-  const cat = { staff, services, sv, ids, partial };
+  const cat = { staff, services, sv, ids, pics, partial };
   cachePut(k, cat, nowMs, partial ? 60e3 : 600e3);
   return cat;
 }

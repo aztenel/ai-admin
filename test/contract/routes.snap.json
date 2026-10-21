@@ -3092,6 +3092,153 @@
    "ok"
   ]
  },
+ "GET /api/site/winchester/dates?staff=0&month=2026-10 <origin https://winchester.kz> [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/dates?staff=0&month=2026-10 <origin https://winchester.kz> [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/dates?staff=0&month=2026-10 <origin https://winchester.kz> [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400 [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400 [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400 [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400?v=0123abcd <origin https://winchester.kz> [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400?v=0123abcd <origin https://winchester.kz> [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/2844400?v=0123abcd <origin https://winchester.kz> [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/abc <origin https://winchester.kz> [anon]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/abc <origin https://winchester.kz> [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/photo/abc <origin https://winchester.kz> [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "OPTIONS /api/site/winchester/photo/2844400 <origin https://winchester.kz> [anon]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
+ "OPTIONS /api/site/winchester/photo/2844400 <origin https://winchester.kz> [owner]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
+ "OPTIONS /api/site/winchester/photo/2844400 <origin https://winchester.kz> [staff]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
  "POST /api/studio/check {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",

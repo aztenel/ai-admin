@@ -4,4 +4,5 @@ export { siteConf, siteOrigins, svKey } from "./config.js";
 export { siteCatalog, siteNearest } from "./catalog.js";
 export { siteDates, siteTimes } from "./slots.js";
 export { siteBook } from "./book.js";
+export { sitePhoto, PHOTO } from "./photo.js";
 export { fail } from "./texts.js";

@@ -15,6 +15,11 @@ export const svKey = title => String(title || "").toLowerCase().replace(/ё/g, "
   .replace(/(^|[^a-zа-я0-9])комплекс(?=$|[^a-zа-я0-9])/g, "$1 ")
   .replace(/[^a-zа-я0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+// больше 120 дней вперёд не показываем, даже если Altegio разрешает (график на год — это 365 дней в календаре и в каждом ответе)
+export const MAX_DAYS = 120;
+// напоминание о визите — как в виджете Altegio (часы до визита; 0 — не напоминать): поле notify_by_sms в book_record
+export const NOTIFY = [0, 1, 2, 3, 4, 5, 6, 9, 12, 15, 18, 21, 24, 48, 72, 120, 168];
+
 const ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d+)?$/;
 // Сайты, с которых принимаем запросы. Text SITE_ORIGINS_<ID> (через запятую) заменяет список из кода целиком: для проверки на
 // своей машине (devserver, e2e) или нового адреса сайта без правки кода. Неверно записанный источник пропускается
@@ -45,7 +50,9 @@ export function siteConf(env, c) {
   const n = /** @param {any} x @param {number} d @param {number} lo @param {number} hi */ (x, d, lo, hi) => +x >= lo && +x <= hi ? Math.round(+x) : d;
   return {
     mode, origins: siteOrigins(env, c), loc, id: String(c.id), name: String(c.name || ""),
-    days: n(s.days, 30, 1, 60), step: n(s.step, 30, 5, 60), minLead: n(s.minLead, 30, 0, 240), maxServices: n(s.maxServices, 5, 1, 10),
+    // days — потолок горизонта записи, а не сам горизонт: дни отдаёт Altegio (book_dates без дат — весь горизонт онлайн-записи, как
+    // в виджете: 21.10.2026 — до 30.11, конца графика мастеров). Форма раньше показывала 30 дней (решение владельца 22.10.2026: «как в Altegio»)
+    days: n(s.maxDays, MAX_DAYS, 1, MAX_DAYS), step: n(s.step, 30, 5, 60), minLead: n(s.minLead, 30, 0, 240), maxServices: n(s.maxServices, 5, 1, 10),
     dayMax: n(s.dayMax, 15, 1, 500),
     address: String(s.address || ""), phone: String(s.phone || ""), tel: "+" + String(s.phone || "").replace(/\D/g, ""), wa: String(s.wa || ""),
     hours: String(c.hoursText || ""), near: String(s.near || ""),

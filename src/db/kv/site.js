@@ -4,6 +4,7 @@
 //                         и повтор формы после обрыва связи не создают вторую запись (book_record вслепую не повторяем, CLAUDE.md §5.2)
 //   sbh:<лок>:<адрес>:<ГГГГ-ММ-ДДTЧЧ> — попыток записи с одного адреса за час (2 часа хранения)
 //   bk:<лок>:…:<день>   — пределы записей (формат ключей — как у бота, services/booking/limits.js)
+//   sph:<клиент>:<лок>:<мастер>:<версия> — фото мастера (картинка base64), сутки
 // KV не атомарен: одновременные запросы читали одно значение и записывали одно и то же (проба 21.10.2026: остаток 1 из 15 с адреса,
 // 5 одновременных запросов — 5 записей, счётчик 15 вместо 19). Поэтому в памяти экземпляра — последнее записанное значение каждого
 // счётчика, брони запросов, которые ещё идут, и очередь записи по ключу: запросы одного экземпляра видят друг друга сразу и не теряют
@@ -94,4 +95,23 @@ export async function sbHold(store, list) {
       } finally { for (const [k] of list) { const c = C(k); c.p = Math.max(0, c.p - 1); } }
     }
   };
+}
+
+// ---- фото мастеров для сайта: sph:<клиент>:<лок>:<мастер>:<версия> = { t: тип, b: base64 }, сутки. Память экземпляра пуста после
+// перезапуска, а Cache API на *.workers.dev не работает — без KV каждый новый экземпляр заново качал бы фото из Altegio
+/** @param {string} cid @param {number} loc @param {number} staffId @param {string} v */
+const sphKey = (cid, loc, staffId, v) => `sph:${cid}:${loc}:${staffId}:${v}`;
+/** @param {Uint8Array} b */
+function toB64(b) { let s = ""; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(s); }
+/** @param {string} s */
+function fromB64(s) { const t = atob(s), b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i); return b; }
+/** @param {any} store @param {string} cid @param {number} loc @param {number} staffId @param {string} v @returns {Promise<{ bytes: Uint8Array, type: string } | null>} */
+export async function photoGet(store, cid, loc, staffId, v) {
+  const raw = await store.get(sphKey(cid, loc, staffId, v));
+  if (!raw) return null;
+  try { const o = JSON.parse(raw); return o && /^image\/[a-z]+$/.test(o.t) && typeof o.b === "string" ? { bytes: fromB64(o.b), type: o.t } : null; } catch (e) { return null; }
+}
+/** @param {any} store @param {string} cid @param {number} loc @param {number} staffId @param {string} v @param {{ bytes: Uint8Array, type: string }} img */
+export async function photoPut(store, cid, loc, staffId, v, img) {
+  await store.put(sphKey(cid, loc, staffId, v), JSON.stringify({ t: img.type, b: toB64(img.bytes) }), { expirationTtl: 86400 });
 }

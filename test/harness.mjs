@@ -3,6 +3,7 @@
 import "./clock.mjs"; // до загрузки бота: проверки идут по одним и тем же часам
 import worker from "../worker.js";
 import { createHmac } from "node:crypto";
+import { deflateSync } from "node:zlib";
 
 export { worker };
 export const wait = ms => new Promise(s => setTimeout(s, ms));
@@ -52,11 +53,33 @@ export const net = {
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
   wz: [],                      // запросы к API Wazzapo (партнёр Meta): { url, path, method, key, body }
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
-  reset() { this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; }
+  img: [],                     // запросы картинок Altegio (фото мастеров, assets.alteg.io и др.): адреса
+  imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
+  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
 export const D0 = iso(Date.now()), D1 = iso(Date.now() + 86400e3), D2 = iso(Date.now() + 2 * 86400e3);
+// PNG 220×220 «силуэт на цветном фоне» — фото мастера на заглушке (цвет — от адреса картинки); у no-master — серый
+const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = b => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+const chunk = (type, data) => { const t = Buffer.from(type), len = Buffer.alloc(4), crc = Buffer.alloc(4); len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([t, data]))); return Buffer.concat([len, t, data, crc]); };
+export function pngFace(key, size = 220) {
+  let h = 0; for (const ch of String(key)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const PAL = [[91, 107, 122], [109, 95, 85], [79, 107, 93], [122, 92, 102], [94, 90, 122]]; // спокойные тона, как у фото на тёмном фоне
+  const grey = /no-master/.test(key), bg = grey ? [200, 200, 200] : PAL[h % PAL.length], fg = grey ? [235, 235, 235] : [233, 226, 216];
+  const raw = Buffer.alloc((size * 3 + 1) * size), c = size / 2;
+  for (let y = 0; y < size; y++) {
+    raw[y * (size * 3 + 1)] = 0;
+    for (let x = 0; x < size; x++) {
+      const head = (x - c) ** 2 + (y - size * 0.4) ** 2 < (size * 0.2) ** 2, body = ((x - c) / (size * 0.38)) ** 2 + ((y - size) / (size * 0.36)) ** 2 < 1;
+      const px = head || body ? fg : bg, o = y * (size * 3 + 1) + 1 + x * 3;
+      raw[o] = px[0]; raw[o + 1] = px[1]; raw[o + 2] = px[2];
+    }
+  }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
+}
 export const ALT_DEFAULT = () => ({
   services: [
     { id: 101, title: "Мужская стрижка", category_id: 1, price_min: 6000, price_max: 6000, active: 1, seance_length: 3600 },
@@ -165,6 +188,13 @@ globalThis.fetch = async (u, init = {}) => {
     return J({ messaging_product: "whatsapp", messages: [{ id: "wamid.out." + net.graph.length }] });
   }
   if (url.startsWith("https://api.alteg.io/")) return altStub(url, init);
+  if (/^https?:\/\/([a-z0-9-]+\.)*alteg\.io\//.test(url)) { // картинки Altegio (фото мастеров): PNG, свой цвет у каждого адреса
+    net.img.push(url);
+    const own = net.imgReply && net.imgReply(url, init);
+    if (own) return own;
+    if (/\/(masters|images)\//.test(url)) return new Response(pngFace(url), { headers: { "content-type": "image/png" } });
+    return new Response("not found", { status: 404 });
+  }
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
   if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}
     const rec = { url, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null }; net.ga.push(rec);

@@ -1,5 +1,5 @@
 // @ts-check
-// API онлайн-записи на сайте клиента: /api/site/<клиент>/<действие> — catalog, nearest, dates, times (GET) и book (POST).
+// API онлайн-записи на сайте клиента: /api/site/<клиент>/<действие> — catalog, nearest, dates, times, photo/<мастер> (GET) и book (POST).
 // Сайт клиента статичный и лежит у другого хостинга (winchester.kz — hoster.kz), поэтому запросы идут с чужого источника:
 // отвечаем только сайтам из настроек клиента (CORS с точным источником, без cookie). Порядок проверок:
 //   клиент с блоком site → источник → предзапрос OPTIONS → действие и метод → режим (выключено) → предел чтения с адреса → обработчик.
@@ -10,9 +10,9 @@ import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { jsonP, withCors } from "../lib/http.js";
 import { logSafe } from "../lib/phone.js";
 import { ipKey } from "../services/booking/limits.js";
-import { siteConf, siteCatalog, siteNearest, siteDates, siteTimes, siteBook, fail } from "../services/sitebook/index.js";
+import { siteConf, siteCatalog, siteNearest, siteDates, siteTimes, siteBook, sitePhoto, PHOTO, fail } from "../services/sitebook/index.js";
 
-const READ = new Set(["catalog", "nearest", "dates", "times"]), WRITE = new Set(["book"]);
+const READ = new Set(["catalog", "nearest", "dates", "times", "photo"]), WRITE = new Set(["book"]);
 const READ_MAX = 90, BODY_MAX = 4096;
 
 // предел запросов с одного адреса (все действия сайта): в памяти экземпляра, 90 в минуту — форма делает несколько запросов на шаг,
@@ -50,9 +50,21 @@ async function bodyText(request, max) {
   return new TextDecoder().decode(all);
 }
 
+// картинка (фото мастера): браузер хранит день; nosniff и тип по байтам — картинка не станет страницей на нашем адресе; CORP — чтобы
+// <img> на сайте клиента её показывал. vary: Origin — и у ответа без Origin (ревью 22.10.2026): иначе браузер отдал бы из кэша ответ
+// без CORS запросу с Origin (<img crossorigin>, fetch), и картинка не показалась бы; с Origin его добавляет withCors
+/** @param {{ bytes: Uint8Array, type: string }} img @param {string} origin */
+const imageRes = (img, origin) => {
+  const r = new Response(/** @type {any} */ (img.bytes), { headers: { "content-type": img.type, "cache-control": `public, max-age=${PHOTO.maxAge}`, "x-content-type-options": "nosniff",
+    "cross-origin-resource-policy": "cross-origin", "content-security-policy": "default-src 'none'; sandbox" } });
+  if (origin) return withCors(r, origin);
+  r.headers.set("vary", "Origin");
+  return r;
+};
+
 /** @param {any} request @param {Env} env @param {any} ctx @param {URL} url @returns {Promise<Response>} */
 export async function siteApi(request, env, ctx, url) {
-  const m = /^\/api\/site\/([^/]*)\/([^/]*)$/.exec(url.pathname), cid = m ? m[1] : "";
+  const m = /^\/api\/site\/([^/]*)\/([^/]*)(?:\/([^/]*))?$/.exec(url.pathname), cid = m ? m[1] : "";
   const c = /^[a-z0-9_-]{1,40}$/.test(cid) && hasClient(cid) ? CLIENTS[cid] : null, conf = c ? siteConf(env, c) : null;
   /** @param {{ http: number, res: any }} o @param {string} [origin] @param {Record<string, string>} [extra] */
   const send = (o, origin, extra = {}) => { const r = jsonP(o.res, o.http); for (const [k, v] of Object.entries(extra)) r.headers.set(k, v); return origin ? withCors(r, origin) : r; };
@@ -60,7 +72,8 @@ export async function siteApi(request, env, ctx, url) {
   const M = request.method === "HEAD" ? "GET" : request.method, origin = request.headers.get("origin") || "";
   if (origin ? !conf.origins.includes(origin) : M !== "GET") return send(fail("origin", conf)); // без Origin — только чтение (проверка ссылкой), запись — нет
   try {
-    const act = m[2], known = READ.has(act) || WRITE.has(act);
+    // photo — с номером мастера третьей частью пути (/photo/<мастер>), остальные действия — без неё
+    const act = m[2], arg = m[3], known = (READ.has(act) || WRITE.has(act)) && (act === "photo" ? /^\d{1,12}$/.test(arg || "") : arg === undefined);
     if (M === "OPTIONS") return known ? withCors(new Response(null, { status: 204, headers: { "cache-control": "no-store" } }), origin, true) : send(fail("not_found", conf), origin);
     if (!known) return send(fail("not_found", conf), origin);
     if (READ.has(act) ? M !== "GET" : M !== "POST") return send(fail("method", conf), origin, { allow: READ.has(act) ? "GET, HEAD, OPTIONS" : "POST, OPTIONS" });
@@ -72,6 +85,11 @@ export async function siteApi(request, env, ctx, url) {
     if (act === "nearest") return send(await siteNearest(env, c, conf, now), origin);
     if (act === "dates") return send(await siteDates(env, c, conf, q, now), origin);
     if (act === "times") return send(await siteTimes(env, c, conf, q, now), origin);
+    if (act === "photo") {
+      const r = await sitePhoto(env, conf, +String(arg), String(q.get("v") || ""), now);
+      if (r.out) return send(r.out, origin);
+      return imageRes(r.img, origin);
+    }
     // book: тело не больше 4 КБ в байтах — длинное не дочитываем (и без content-length: передача по частям)
     const raw = await bodyText(request, BODY_MAX);
     const defer = ctx && typeof ctx.waitUntil === "function" ? /** @param {() => Promise<any>} f */ f => ctx.waitUntil(f()) : null;

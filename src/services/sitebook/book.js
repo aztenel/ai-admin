@@ -1,7 +1,7 @@
 // @ts-check
 // Онлайн-запись на сайте: POST book. Порядок (docs: CLAUDE.md §2.2 «Запись с сайта»): тело (≤ 4 КБ в байтах) → повтор того же rid
 // в памяти → ловушка website и подпись метки формы ft (до хранилища: мусор не стоит чтения KV) → повтор rid в KV → возраст метки →
-// попытки с адреса за час → поля → бронь пределов записей → отметка «идёт запись» → свежее время мастера → book_check →
+// поля формы (напоминание, согласие) → попытки с адреса за час → поля → бронь пределов записей → отметка «идёт запись» → свежее время мастера → book_check →
 // (режим «1») book_record → заявка, Telegram. book_record вслепую не повторяем (CLAUDE.md §5.2): повтор того же rid отдаёт
 // сохранённый ответ, без новых запросов к Altegio. В хранилище — только через db/kv (CLAUDE.md §5.1).
 /** @import { Env, Client } from "../../lib/types.js" */
@@ -23,7 +23,8 @@ import { isoDay, local, hhmm, mins } from "../../lib/time.js";
 import { loadCat, pickServices, staffPool, doesAll, sumOf, stopped, altLog, cacheDrop, ck, BUDGET } from "./base.js";
 import { openDates, staffStarts, daySlots, pad } from "./slots.js";
 import { ftCheck, ftTime, FT_MIN_MS } from "./token.js";
-import { fail, badField, limitHit, leadWhen, tgText } from "./texts.js";
+import { fail, badField, limitHit, leadWhen, tgText, notifyText } from "./texts.js";
+import { NOTIFY } from "./config.js";
 
 const BODY_MAX = 4096, HOUR_MAX = 8, CANDIDATES = 3;
 const PHONE_KZ = /^\+77(0[0-8]|47|71|7[5-8])\d{7}$/; // мобильные операторы Казахстана: городской номер («+7 7172 …») — нельзя, по нему не напишешь в WhatsApp
@@ -83,9 +84,21 @@ function limitKeys(c, conf, ip, phone, nowMs) {
   return [[`bk:${loc}:${ip}:${day}`, L.ip, "ip"], [`bk:${loc}:${phone}:${day}`, L.day, "phone"], [`bk:${loc}:site:${day}`, conf.dayMax, "day"]];
 }
 
+// поля самой формы — до счётчика попыток за час (ревью 22.10.2026): копия формы без галочки согласия (21.10) получала 400 consent
+// на каждую запись, и после 8 таких попыток правильная запись с этого адреса получала 429 до конца часа. Altegio они не трогают
+/** @param {SiteConf} conf @param {any} b @returns {{ out: Out, remindH?: undefined } | { remindH: number | null, out?: undefined }} */
+function readForm(conf, b) {
+  // напоминание: часы до визита из списка виджета Altegio (число или строка с числом); нет поля — Altegio решает сам (как раньше)
+  const nv = b.notify, remindH = nv === undefined || nv === null ? null : (typeof nv === "number" || (typeof nv === "string" && /^\d{1,3}$/.test(nv))) && NOTIFY.includes(+nv) ? +nv : NaN;
+  if (Number.isNaN(remindH)) return { out: badField("notify", conf) };
+  // согласие на обработку персональных данных (галочка формы, как в виджете Altegio) — только true
+  if (b.consent !== true) return { out: fail("consent", conf, { field: "consent" }) };
+  return { remindH };
+}
+
 // поля заявки → данные записи или ответ-ошибка (bad_request)
-/** @param {Env} env @param {SiteConf} conf @param {any} b @param {number} nowMs */
-async function readFields(env, conf, b, nowMs) {
+/** @param {Env} env @param {SiteConf} conf @param {any} b @param {number | null} remindH @param {number} nowMs */
+async function readFields(env, conf, b, remindH, nowMs) {
   const name = String(b.name ?? "").replace(/\s+/g, " ").trim();
   if (name.length < 2 || name.length > 60 || !NAME_RE.test(name)) return { out: badField("name", conf) };
   const phone = normPhone(b.phone);
@@ -100,7 +113,7 @@ async function readFields(env, conf, b, nowMs) {
   const m = st.pool[0], date = String(b.date ?? ""), time = String(b.time ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(await openDates(env, conf, m.id, nowMs)).includes(date)) return { out: badField("date", conf) };
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return { out: badField("time", conf) };
-  return { name, phone, comment, cat, keys, m, any: b.any === true, date, time };
+  return { name, phone, comment, remindH, cat, keys, m, any: b.any === true, date, time };
 }
 
 // кандидаты: выбранный мастер; при «любом мастере» — ещё до двух, кто делает все услуги не дороже показанной суммы и по последней
@@ -176,10 +189,11 @@ function makeLead(c, conf, kind, full, rec, why) {
     : kind === "unknown" ? "Altegio не ответил — запись могла создаться, проверьте журнал"
     : kind === "fail" ? `Онлайн-запись с сайта не прошла: ${why} — в журнале записи нет, свяжитесь с клиентом и запишите вручную`
     : "Записан онлайн с сайта" + (any ? " · мастер на выбор" : "");
+  const remind = typeof full.notify === "number" ? (full.notify ? ` · напомнить ${notifyText(full.notify)} до визита` : " · без напоминания") : "";
   // src: "site" — запись с сайта; кода записи (record_hash) нет: бот такую запись видит чужой и не отменяет сам (решение №10, проверка 21.10.2026)
   return { id: now.toString(36) + Math.random().toString(36).slice(2, 6), ts: now, src: "site", name: full.name, phone: full.phone,
     service: full.services.map(/** @param {any} s */ s => s.name).join(" + ") + ` (мастер ${full.staff.name})`, time: leadWhen(full.date, full.time, full.end),
-    source: c.name + " · сайт", at: hhmm(local(now)) + " " + isoDay(now), note: note + (comment ? ` · комментарий: «${comment}»` : ""),
+    source: c.name + " · сайт", at: hhmm(local(now)) + " " + isoDay(now), note: note + remind + (comment ? ` · комментарий: «${comment}»` : ""), consent: true,
     ...(kind === "live" ? { altegio: { loc: conf.loc, record_id: rec.record_id, date: full.date, time: full.time, services: full.services.map(/** @param {any} s */ s => s.name).join(" + "), staffName: full.staff.name } } : {}) };
 }
 
@@ -225,14 +239,16 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
     if (kv) return release(fail("in_progress", conf));
     if (ft === "fast") return release(fail("too_fast", conf, { retry: Math.max(1, Math.ceil((FT_MIN_MS - (nowMs - ftTime(b.ft))) / 1000)) }));
     if (ft === "old") return release(fail("expired", conf));
-    // 5. попытки записи с адреса за час (повтор того же rid выше не считается)
+    // 5. поля самой формы (напоминание, согласие), затем попытки записи с адреса за час (повтор того же rid выше не считается)
+    const form = readForm(conf, b);
+    if (form.out) return release(form.out);
     const ip = ipKey(meta.ip || "local");
     if (await sbHourHit(env.KV, conf.loc, ip, local(nowMs).toISOString().slice(0, 13), HOUR_MAX) >= HOUR_MAX)
       return release(fail("rate", conf, { retry: Math.max(1, Math.ceil((3600e3 - (nowMs % 3600e3)) / 1000)) }));
     // 6. поля
-    const f = await readFields(env, conf, b, nowMs);
+    const f = await readFields(env, conf, b, form.remindH, nowMs);
     if (f.out) return release(f.out);
-    const { name, phone, comment, cat, keys, m, any, date, time } = /** @type {any} */ (f);
+    const { name, phone, comment, remindH, cat, keys, m, any, date, time } = /** @type {any} */ (f);
     // 7. пределы записей: бронь (одновременные запросы этого экземпляра её видят)
     const lim = limitKeys(c, conf, ip, phone, nowMs), h = await sbHold(env.KV, lim.map(([k, max]) => /** @type {[string, number]} */ ([k, max])));
     if (h.over) return finish(limitHit(/** @type {string} */ ((lim.find(x => x[0] === h.over) || [])[2] || "day"), conf));
@@ -245,7 +261,7 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
     const x = ch.pick.x, sum = ch.pick.sum, end = pad(tStr(mins(time) + sum.min));
     const booking = { id: /** @type {any} */ (null), staff: { id: x.id, name: x.name, role: x.role }, any,
       services: keys.map(/** @param {string} k */ k => ({ key: k, name: cat.sv[k].name, price: cat.sv[k].by[x.id].price, min: cat.sv[k].by[x.id].min })),
-      date, time, end, min: sum.min, total: sum.price, name, phone: maskPhone(phone) };
+      date, time, end, min: sum.min, total: sum.price, name, phone: maskPhone(phone), notify: remindH };
     const full = { ...booking, phone, comment };
     /** @type {"live" | "dry" | "unknown"} */ let kind = conf.mode === "live" ? "live" : "dry";
     /** @type {any} */ let rec = null;
@@ -255,7 +271,11 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
       sent = true;
       const host = siteHost(c), note = `Запись с сайта${host ? " " + host : ""}` + (any ? " · мастер на выбор" : "") + (comment ? " · " + comment : "");
       try {
-        const d = (await altRecord(env, conf.loc, { phone, fullname: name, comment: note, appointments: ch.pick.appointments })).data;
+        // notify_by_sms — напоминание за столько часов (0 — не напоминать), как в виджете Altegio; отправит ли Altegio SMS, зависит от
+        // настроек и баланса SMS компании (вживую не проверено). is_personal_data_processing_allowed — галочка согласия, как в виджете
+        // (проверена выше); is_newsletter_allowed не передаём: согласия на рассылки форма не спрашивает, а false стёр бы прежнее в карточке
+        const d = (await altRecord(env, conf.loc, { phone, fullname: name, comment: note, ...(remindH === null ? {} : { notify_by_sms: remindH }),
+          is_personal_data_processing_allowed: true, appointments: ch.pick.appointments })).data;
         rec = (Array.isArray(d) ? d[0] : d) || null;
         if (!rec || !rec.record_id) kind = "unknown";
       } catch (/** @type {any} */ e) {

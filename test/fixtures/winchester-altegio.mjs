@@ -2,6 +2,8 @@
 // Услуги, цены, длительности, мастера и кто что делает — как в открытой онлайн-записи Winchester (локация 133486, разведка 21.10.2026:
 // book_services, book_services?staff_id=, book_staff). Две строки прайса одной услуги: шеф-барбер (Тони) и барберы, четыре категории
 // с одинаковым названием «Мужские стрижки и бритьё» — как вживую. Плюс две старые строки, которых нет ни у одного мастера.
+// Открытые дни: book_dates без дат отдаёт весь горизонт онлайн-записи (как вживую: виджет 21.10 получил дни до 30.11 — конец графика),
+// здесь — days дней от сегодня (по умолчанию 40).
 // Даты и занятость считаются от Date.now() в момент вызова (часы проверок — суббота, 3.10.2026, 12:00 по Астане; «день n» — n дней после).
 // Используется в test/unit/site-booking.test.mjs, test/devserver.mjs (--site) и e2e формы записи (test/site-booking-e2e.mjs).
 
@@ -34,11 +36,21 @@ const EXTRA = [
 // старые строки прайса: в общем списке есть, у мастеров — нет (на сайте их быть не должно)
 const OLD = [sv(13023801, "Мужская стрижка", CAT_OLD1, 5000, 3600, 4), sv(13023802, "Мужская стрижка", CAT_OLD2, 7000, 3600, 8)];
 
-const person = (id, name, specialization, position, rating, comments_count, weight) =>
-  ({ id, name, specialization, position: { id: 1, title: position }, rating, show_rating: 1, comments_count, votes_count: 0, avatar: "", avatar_big: "", weight, bookable: true, fired: 0, hidden: 0, status: 0 });
+// фото мастера — как в book_staff Winchester (разведка 21.10.2026): avatar (100×100), avatar_big (800×800) и image_group с тремя
+// размерами (sm 100, norm 220, origin 800) на assets.alteg.io; без фото — заглушка Altegio no-master на be.cdn.alteg.io и image_group []
+// (у Тони и Руслана). Пути картинок выдуманы, форма как у настоящих
+export const PIC = tag => ({ sm: `https://assets.alteg.io/masters/sm/a/a1/${tag}0sm_20250610094625.png`, norm: `https://assets.alteg.io/masters/norm/a/a1/${tag}0nm_20250610094625.png`,
+  origin: `https://assets.alteg.io/masters/origin/a/a1/${tag}0or_20250610094626.png` });
+const pics = tag => {
+  if (!tag) return { avatar: "https://be.cdn.alteg.io/images/no-master-sm.png", avatar_big: "https://be.cdn.alteg.io/images/no-master.png", image_group: [] };
+  const p = PIC(tag), img = (path, w, version) => ({ id: 1, path, width: String(w), height: String(w), type: "png", image_group_id: 1, version });
+  return { avatar: p.sm, avatar_big: p.origin, image_group: { id: 1, entity: "master", entity_id: "1", images: { sm: img(p.sm, 100, "sm"), norm: img(p.norm, 220, "norm"), origin: img(p.origin, 800, "origin") } } };
+};
+const person = (id, name, specialization, position, rating, comments_count, weight, photo = "") =>
+  ({ id, name, specialization, position: { id: 1, title: position }, rating, show_rating: 1, comments_count, votes_count: 0, ...pics(photo), weight, bookable: true, fired: 0, hidden: 0, status: 0 });
 const STAFF = [
-  person(W.TONI, "Тони (Рауан М.)", "Шеф-барбер", "Шеф барбер", 5, 249, 48), person(W.AIDOS, "Айдос", "Барбер", "Барбер ", 4.92, 199, 47),
-  person(W.AIDYN, "Айдын", "Барбер", "Барбер ", 4.95, 283, 46), person(W.ALISHER, "Алишер", "Барбер", "Барбер ", 0, 0, 45),
+  person(W.TONI, "Тони (Рауан М.)", "Шеф-барбер", "Шеф барбер", 5, 249, 48), person(W.AIDOS, "Айдос", "Барбер", "Барбер ", 4.92, 199, 47, "aidos"),
+  person(W.AIDYN, "Айдын", "Барбер", "Барбер ", 4.95, 283, 46, "aidyn"), person(W.ALISHER, "Алишер", "Барбер", "Барбер ", 0, 0, 45, "alisher"),
   person(W.RUSLAN, "Руслан", "Барбер", "Барбер ", 0, 0, 43)];
 const without = (list, ...ids) => list.filter(x => !ids.includes(x.id));
 const OFFERS = {
@@ -69,7 +81,7 @@ export function winchesterAlt({ busy = BUSY, days = 40 } = {}) {
     services: [...CHEF, ...BARBER, ...OLD, ...EXTRA],
     category: [{ id: CAT_CHEF, title: "Мужские стрижки и бритьё", weight: 5 }, { id: CAT_BARBER, title: "Мужские стрижки и бритьё", weight: 4 },
       { id: CAT_OLD1, title: "Мужские стрижки и бритьё", weight: 3 }, { id: CAT_OLD2, title: "Мужские стрижки и бритьё", weight: 2 }, { id: CAT_EXTRA, title: "Дополнительные услуги", weight: 1 }],
-    staff: STAFF.map(x => ({ ...x, position: { ...x.position } })),
+    staff: STAFF.map(x => JSON.parse(JSON.stringify(x))),
     dates: all, times: {},
     // услуги мастера (book_services?staff_id=)
     servicesFor: staff => (OFFERS[staff] || []).map(x => ({ ...x })),

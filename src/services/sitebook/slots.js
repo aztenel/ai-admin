@@ -12,25 +12,29 @@ import { altDatesRaw } from "../integrations/altegio/site-api.js";
 import { settledBy } from "../booking/book.js";
 import { fitStarts, tStr } from "../booking/fit.js";
 import { isoDay, local, mins } from "../../lib/time.js";
-import { cacheGet, cachePut, ck, altGate, gateCheck, loadCat, pickServices, staffPool, sumOf, stop, stopped, altLog } from "./base.js";
+import { cacheGet, cachePut, ck, altGate, gateCheck, loadCat, pickServices, staffPool, sumOf, stop, stopped, altLog, once } from "./base.js";
 import { fail, badField } from "./texts.js";
 
 /** @param {string} t «9:00» → «09:00» */
 export const pad = t => t.padStart(5, "0");
-// окно записи: сегодня … сегодня + days − 1 (по Астане)
+// потолок горизонта записи: сегодня … сегодня + days − 1 (по Астане, days — до 120). Сам горизонт — сколько дней отдаёт Altegio
 /** @param {SiteConf} conf @param {number} nowMs */
 export const dayRange = (conf, nowMs) => ({ from: isoDay(nowMs), to: isoDay(nowMs + (conf.days - 1) * 864e5) });
 
-// открытые дни мастера (book_dates по мастеру, без услуг), кэш 5 минут. Помещаются ли выбранные услуги, решает сетка времени
-// (staffStarts): с номерами услуг каждый набор был бы своим запросом к Altegio — 78 наборов давали 390 запросов (проба 21.10.2026)
+// открытые дни мастера на весь горизонт онлайн-записи (book_dates по мастеру, без услуг и без дат — как виджет Altegio), кэш 5 минут;
+// одинаковые запросы в полёте — один. Помещаются ли выбранные услуги, решает сетка времени (staffStarts): с номерами услуг каждый
+// набор был бы своим запросом к Altegio — 78 наборов давали 390 запросов (проба 21.10.2026). Месяцы календаря формы — из этого же
+// ответа: листание месяцев к Altegio не ходит
 /** @param {Env} env @param {SiteConf} conf @param {number} staffId @param {number} nowMs @returns {Promise<string[]>} */
 export async function openDates(env, conf, staffId, nowMs) {
   const { from, to } = dayRange(conf, nowMs), k = ck(conf, "sd", staffId, from), hit = cacheGet(k, nowMs);
   if (hit) return hit;
-  await altGate(conf);
-  const v = altDates(await altDatesRaw(env, conf.loc, staffId, from, to), nowMs).filter(d => d >= from && d <= to);
-  cachePut(k, v, nowMs, 300e3);
-  return v;
+  return once(k, async () => {
+    await altGate(conf);
+    const v = altDates(await altDatesRaw(env, conf.loc, staffId), nowMs).filter(d => d >= from && d <= to);
+    cachePut(k, v, nowMs, 300e3);
+    return v;
+  });
 }
 
 // Свободные начала мастера на день, где помещаются need минут: { starts: ["ЧЧ:ММ"], free: начал сетки за день (у кого день свободнее) }.
@@ -83,25 +87,53 @@ export async function poolDates(env, conf, pool, nowMs) {
 /** @param {Map<number, string[]>} per */
 const unionOf = per => [...new Set([...per.values()].flat())].sort();
 
-// разбор запроса dates/times: услуги и мастер → { cat, keys, pool } или готовый ответ-ошибка
-/** @param {Env} env @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs */
-async function parse(env, conf, q, nowMs) {
+// разбор запроса dates/times: услуги и мастер → { cat, keys, pool } или готовый ответ-ошибка. noServices — у dates можно без параметра
+// services (мастер выбран, услуги ещё нет: форма заранее берёт дни мастера); пустой services= — ошибка, как раньше
+/** @param {Env} env @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs @param {boolean} [noServices] */
+async function parse(env, conf, q, nowMs, noServices) {
   const cat = await loadCat(env, conf, nowMs);
-  const sv = pickServices(cat, conf, q.get("services") || "");
+  const sv = noServices && !q.has("services") ? { keys: /** @type {string[]} */ ([]) } : pickServices(cat, conf, q.get("services") || "");
   if (!sv.keys) return { out: badField("services", conf, sv.why) };
   const st = staffPool(cat, q.get("staff") ?? "", sv.keys);
   if (!st.pool) return { out: badField(st.field, conf, st.why) };
   return { cat, keys: sv.keys, pool: st.pool };
 }
 
-// GET dates: открытые дни мастера (или объединение по всем, кто делает выбранные услуги)
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+// month=ГГГГ-ММ или from=…&to=… (оба) → { lo, hi, month } | { out } (ошибка поля month или range); без них — весь горизонт
+/** @param {SiteConf} conf @param {URLSearchParams} q */
+function rangeOf(conf, q) {
+  if (q.has("month")) {
+    const m = String(q.get("month"));
+    return MONTH.test(m) ? { lo: m + "-01", hi: m + "-31", month: m } : { out: badField("month", conf) };
+  }
+  if (!q.has("from") && !q.has("to")) return { lo: "", hi: "", month: null };
+  const lo = String(q.get("from") || ""), hi = String(q.get("to") || "");
+  return DAY.test(lo) && DAY.test(hi) && lo <= hi ? { lo, hi, month: null } : { out: badField("range", conf) };
+}
+// месяцы календаря «ГГГГ-ММ»: от месяца сегодня до месяца последнего открытого дня
+/** @param {string} from @param {string | null} to */
+export function monthsOf(from, to) {
+  const out = [];
+  let y = +from.slice(0, 4), m = +from.slice(5, 7);
+  const end = (to || from).slice(0, 7);
+  for (let i = 0; i < 13; i++) { const s = `${y}-${String(m).padStart(2, "0")}`; out.push(s); if (s >= end) break; if (++m > 12) { m = 1; y++; } }
+  return out;
+}
+
+// GET dates: открытые дни мастера (или объединение по всем, кто делает выбранные услуги; без services — по всем мастерам) на весь
+// горизонт онлайн-записи Altegio (до 120 дней). from — сегодня, to — последний открытый день, months — месяцы календаря; dates —
+// открытые дни, а с month (или from/to) — только в этом месяце (периоде). Всё из одного ответа Altegio на мастера (кэш 5 минут)
 /** @param {Env} env @param {Client} c @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs @returns {Promise<Out>} */
 export async function siteDates(env, c, conf, q, nowMs) {
   try {
-    const p = await parse(env, conf, q, nowMs);
+    const rg = rangeOf(conf, q);
+    if (rg.out) return rg.out;
+    const p = await parse(env, conf, q, nowMs, true);
     if (p.out) return p.out;
-    const per = await poolDates(env, conf, p.pool, nowMs);
-    return { http: 200, res: { ok: true, dates: unionOf(per), ...dayRange(conf, nowMs) } };
+    const all = unionOf(await poolDates(env, conf, p.pool, nowMs)), from = isoDay(nowMs), to = all.length ? all[all.length - 1] : null;
+    const dates = all.filter(d => (!rg.lo || d >= rg.lo) && (!rg.hi || d <= rg.hi));
+    return { http: 200, res: { ok: true, dates, from, to, months: monthsOf(from, to), month: rg.month } };
   } catch (e) { const o = stopped(e); if (o) return o; throw e; }
 }
 

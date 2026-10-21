@@ -191,7 +191,7 @@ export const CLIENTS = {
     site: {
       origins: ["https://winchester.kz", "https://www.winchester.kz", "http://winchester.kz", "http://www.winchester.kz"],
       booking: "dry",
-      days: 30, step: 30, minLead: 30, maxServices: 5, dayMax: 15,
+      step: 30, minLead: 30, maxServices: 5, dayMax: 15, // дни вперёд — сколько разрешает Altegio (до 120), как в его виджете
       address: "Астана, проспект Кабанбай Батыра, 18",
       phone: "+7 700 505 05 03", wa: "77066940608",
       near: "мужская-стрижка",

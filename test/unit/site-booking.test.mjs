@@ -9,12 +9,13 @@ import { net, mk, D0 } from "../harness.mjs";
 import { altCache } from "../../src/services/integrations/altegio/booking-api.js";
 import { svKey } from "../../src/services/sitebook/config.js";
 import * as siteBase from "../../src/services/sitebook/base.js";
+import * as sitePhoto from "../../src/services/sitebook/photo.js";
 import { readFileSync, readdirSync } from "node:fs";
-import { winchesterAlt, W, WS, dayN } from "../fixtures/winchester-altegio.mjs";
+import { winchesterAlt, W, WS, dayN, PIC } from "../fixtures/winchester-altegio.mjs";
 
 const SITE = "https://winchester.kz", OWNER_KEY = "owner-key-123456", PHONE = "+77071234567";
 let LOC = 7400;
-const reset = (data = winchesterAlt()) => { net.reset(); Object.assign(net, { altGone: [], altBusy: false, altCheckBusy: false }); net.altData = () => data; altCache.clear(); siteBase.siteCache.clear(); LOC++; return data; };
+const reset = (data = winchesterAlt()) => { net.reset(); Object.assign(net, { altGone: [], altBusy: false, altCheckBusy: false }); net.altData = () => data; altCache.clear(); siteBase.siteCache.clear(); sitePhoto.photoMem.clear(); LOC++; return data; };
 let ipN = 0;
 const newIp = () => `10.9.${Math.floor(++ipN / 250)}.${ipN % 250}`;
 let ridN = 0;
@@ -30,7 +31,7 @@ function site(extra = {}) {
   s.getJ = async (act, q, o) => { const r = await s.get(act, q, o); return { r, j: await r.json() }; };
   s.book = async (b = {}, o = {}) => {
     const body = typeof b === "string" ? b : JSON.stringify({ staff: W.AIDOS, any: false, services: ["мужская-стрижка", "глиняная-маска"], date: dayN(1), time: "12:00",
-      name: "Азамат", phone: PHONE, comment: "", website: "", ft: ftOf(), rid: rid(), ...b });
+      name: "Азамат", phone: PHONE, comment: "", consent: true, website: "", ft: ftOf(), rid: rid(), ...b });
     const r = await s.call(`/api/site/winchester/book`, { method: "POST", headers: { ...hd(o), "content-type": "application/json" }, body });
     return { r, j: await r.json() };
   };
@@ -74,7 +75,7 @@ test("каталог: свой сайт и источники, мастера, �
   assert.equal(plain.status, 200); assert.equal(cors(plain), null);
   assert.equal(j.ok, true); assert.equal(j.mode, "dry");
   assert.equal(j.company.name, "Winchester"); assert.equal(j.company.tel, "+77005050503"); assert.equal(j.company.wa, "77066940608"); assert.equal(j.company.hours, "ежедневно 10:00–21:00");
-  assert.equal(j.today, D0); assert.match(j.now, /^\d{2}:\d{2}$/); assert.equal(j.days, 30); assert.equal(j.step, 30); assert.equal(j.maxServices, 5);
+  assert.equal(j.today, D0); assert.match(j.now, /^\d{2}:\d{2}$/); assert.equal(j.days, 120); assert.equal(j.step, 30); assert.equal(j.maxServices, 5);
   assert.match(j.ft, /^\d{13}\.[A-Za-z0-9_-]{22}$/);
   assert.deepEqual(j.staff.map(m => m.id), [W.TONI, W.AIDOS, W.AIDYN, W.ALISHER, W.RUSLAN]);
   const toni = j.staff[0], alisher = j.staff.find(m => m.id === W.ALISHER);
@@ -155,13 +156,13 @@ test("открытые дни: выходные мастера исключен�
   reset();
   const s = site();
   const { j } = await s.getJ("dates", `staff=${W.TONI}&services=${encodeURIComponent("мужская-стрижка")}`);
-  assert.equal(j.ok, true, JSON.stringify(j)); assert.equal(j.from, D0); assert.equal(j.to, dayN(29));
+  assert.equal(j.ok, true, JSON.stringify(j)); assert.equal(j.from, D0); assert.equal(j.to, dayN(39)); // горизонт — сколько отдал Altegio (40 дней в заглушке), не 30
   assert.ok(j.dates.length > 20 && j.dates.every(d => new Date(d + "T00:00:00Z").getUTCDay() !== 5), JSON.stringify(j.dates)); // у Тони выходной — пятница
-  assert.ok(j.dates.every(d => d >= D0 && d <= dayN(29)));
+  assert.ok(j.dates.every(d => d >= D0 && d <= dayN(39)));
   const aidos = (await s.getJ("dates", `staff=${W.AIDOS}&services=premium`)).j;
   assert.ok(aidos.dates.every(d => ![1, 2].includes(new Date(d + "T00:00:00Z").getUTCDay())));
   const any = (await s.getJ("dates", "staff=0&services=premium")).j;
-  assert.equal(any.dates.length, 30); // у Алишера выходных нет
+  assert.equal(any.dates.length, 40); // у Алишера выходных нет
   const bad = await s.getJ("dates", "staff=0&services=nope");
   assert.equal(bad.r.status, 400); assert.equal(bad.j.code, "bad_request"); assert.equal(bad.j.field, "services");
   const notHis = await s.getJ("dates", `staff=${W.TONI}&services=${encodeURIComponent("химическая-завивка")}`);
@@ -366,7 +367,7 @@ test("проверка полей: имя, телефон, услуги, ком�
   await bad({ staff: W.TONI, services: ["химическая-завивка"] }, "services", "Эту услугу нельзя записать к выбранному мастеру.");
   await bad({ staff: 0 }, "staff", "Выбери мастера.");
   await bad({ comment: "к".repeat(151) }, "comment", "Комментарий — не длиннее 150 знаков.");
-  await bad({ date: dayN(35) }, "date", "Выбери другой день.");
+  await bad({ date: dayN(45) }, "date", "Выбери другой день."); // за горизонтом Altegio (в заглушке — 40 дней)
   await bad({ staff: W.AIDOS, date: dayN(2) }, "date"); // понедельник — выходной Айдоса
   await bad({ time: "9:5" }, "time", "Выбери время.");
   await bad({ rid: "short" }, "body", "Не получилось прочитать заявку. Обнови страницу и попробуй ещё раз.");
@@ -671,4 +672,292 @@ test("находка 8 формы: «Ближайший день» у пусто
   resetAll(winchesterAlt({ busy: [1, 2, 3, 4].map(d => ({ staff: W.ALISHER, day: d, from: "10:00", to: "21:00" })) }));
   const { j } = await site().getJ("times", `staff=${W.ALISHER}&services=${encodeURIComponent("глиняная-маска")}&date=${dayN(1)}`);
   assert.deepEqual(j.slots, []); assert.equal(j.next, dayN(5), JSON.stringify(j));
+});
+
+// ======== Форма как онлайн-запись Altegio (22.10.2026): весь горизонт дней (календарь месяца), фото мастеров, напоминание, согласие
+const monthOf = d => d.slice(0, 7);
+const datesReq = () => net.alt.filter(x => /^GET \/book_dates\//.test(x));
+const photoOf = (cat, id) => cat.staff.find(m => m.id === id).photo;
+const photoGet = (s, path, o = {}) => s.call(path, { method: o.method || "GET", headers: { "cf-connecting-ip": o.ip || newIp(), ...(o.origin ? { origin: o.origin } : {}) } });
+const bytesOf = async r => new Uint8Array(await r.arrayBuffer());
+
+test("горизонт: дни — сколько отдаёт Altegio (book_dates без дат, как виджет), а не 30; потолок — 120 дней", async () => {
+  reset(winchesterAlt({ days: 60 }));
+  const s = site();
+  const { j } = await s.getJ("dates", `staff=${W.TONI}&services=${encodeURIComponent("мужская-стрижка")}`);
+  assert.equal(j.ok, true, JSON.stringify(j)); assert.equal(j.from, D0);
+  assert.ok(j.dates.includes(dayN(50)) || j.dates.includes(dayN(51)), JSON.stringify(j.dates.slice(-5))); // за 30 днями — тоже
+  assert.equal(j.to, j.dates.at(-1)); assert.ok(j.to >= dayN(58), j.to);
+  assert.equal(j.months[0], monthOf(D0)); assert.equal(j.months.at(-1), monthOf(j.to));
+  assert.ok(j.months.every((m, i) => i === 0 || m > j.months[i - 1]) && j.months.length >= 2, JSON.stringify(j.months));
+  assert.equal(j.month, null);
+  assert.ok(datesReq().length && datesReq().every(x => /\?staff_id=\d+$/.test(x)), datesReq().join(" | ")); // как виджет: без date_from/date_to — весь горизонт
+  // Altegio отдал 150 дней — показываем 120
+  reset(winchesterAlt({ days: 150 }));
+  const a = (await site().getJ("dates", `staff=${W.ALISHER}&services=${encodeURIComponent("мужская-стрижка")}`)).j;
+  assert.equal(a.dates.length, 120); assert.equal(a.to, dayN(119)); assert.equal(a.dates[0], D0);
+  // запись на день за 30-м днём (в горизонте) принимается
+  reset(winchesterAlt({ days: 60 }));
+  const b = await site().book({ staff: W.ALISHER, services: ["мужская-стрижка"], date: dayN(45), time: "12:00" });
+  assert.equal(b.r.status, 200, JSON.stringify(b.j)); assert.equal(b.j.booking.date, dayN(45));
+});
+
+test("дни по месяцам: month=ГГГГ-ММ и from/to — из того же кэша, без новых запросов к Altegio; неверный месяц или период — 400", async () => {
+  reset(winchesterAlt({ days: 60 }));
+  const s = site(), q = `staff=0&services=premium`;
+  const all = (await s.getJ("dates", q)).j;
+  const n = net.alt.length, m2 = monthOf(dayN(40));
+  const mo = (await s.getJ("dates", `${q}&month=${m2}`)).j;
+  assert.equal(mo.ok, true, JSON.stringify(mo)); assert.equal(mo.month, m2);
+  assert.deepEqual(mo.dates, all.dates.filter(d => monthOf(d) === m2));
+  assert.equal(mo.to, all.to); assert.deepEqual(mo.months, all.months); // горизонт целиком — и при выборе месяца
+  const rg = (await s.getJ("dates", `${q}&from=${dayN(10)}&to=${dayN(12)}`)).j;
+  assert.deepEqual(rg.dates, all.dates.filter(d => d >= dayN(10) && d <= dayN(12)));
+  assert.equal(net.alt.length, n, net.alt.slice(n).join(" | "));
+  for (const [bad, field] of [["month=2026-13", "month"], ["month=10-2026", "month"], [`from=${dayN(3)}`, "range"], [`from=${dayN(5)}&to=${dayN(3)}`, "range"], ["from=2026-1-1&to=2026-01-05", "range"]]) {
+    const r = await s.getJ("dates", `${q}&${bad}`);
+    assert.equal(r.r.status, 400, bad); assert.equal(r.j.code, "bad_request"); assert.equal(r.j.field, field, bad); assert.equal(cors(r.r), SITE);
+  }
+});
+
+test("дни без услуг: выбран только мастер — дни сразу (упреждающая загрузка); «любой» — объединение; nearest уже прогрел дни", async () => {
+  reset();
+  const s = site();
+  await s.getJ("nearest");
+  const n = net.alt.length;
+  const toni = (await s.getJ("dates", `staff=${W.TONI}`)).j;
+  assert.equal(toni.ok, true, JSON.stringify(toni));
+  assert.ok(toni.dates.length > 20 && toni.dates.every(d => new Date(d + "T00:00:00Z").getUTCDay() !== 5));
+  assert.deepEqual(toni.dates, (await s.getJ("dates", `staff=${W.TONI}&services=premium`)).j.dates);
+  const any = (await s.getJ("dates", "staff=0")).j;
+  assert.equal(any.dates.length, 40);
+  assert.equal(net.alt.length, n, "после nearest дни мастеров — из кэша: " + net.alt.slice(n).join(" | "));
+  assert.equal((await s.getJ("dates", "staff=999")).j.field, "staff");
+  assert.equal((await s.getJ("dates", "staff=0&services=")).r.status, 400); // пустые услуги — по-прежнему ошибка
+});
+
+test("холодный экземпляр: одновременные запросы каталога — один набор запросов к Altegio", async () => {
+  reset();
+  const s = site();
+  await Promise.all([s.getJ("catalog"), s.getJ("catalog"), s.getJ("catalog"), s.getJ("dates", "staff=0")]);
+  assert.equal(net.alt.filter(x => /^GET \/book_staff\//.test(x)).length, 1, net.alt.join(" | "));
+  assert.equal(net.alt.filter(x => /^GET \/book_services\/\d+$/.test(x)).length, 1);
+});
+
+test("фото мастеров: в каталоге has_photo и наш адрес (адресов Altegio наружу нет); картинка — с CORS, nosniff, кэшем на день", async () => {
+  reset();
+  const s = site();
+  const { j } = await s.getJ("catalog");
+  const by = Object.fromEntries(j.staff.map(m => [m.id, m]));
+  assert.equal(by[W.TONI].has_photo, false); assert.equal(by[W.TONI].photo, null); // у Тони в Altegio заглушка no-master — форма рисует букву
+  assert.equal(by[W.RUSLAN].has_photo, false);
+  for (const id of [W.AIDOS, W.AIDYN, W.ALISHER]) { assert.equal(by[id].has_photo, true); assert.match(by[id].photo, new RegExp(`^/api/site/winchester/photo/${id}\\?v=[0-9a-f]{8}$`)); }
+  assert.ok(!JSON.stringify(j).includes("alteg.io"), "адрес картинки Altegio в каталоге");
+  assert.equal(new Set(j.staff.filter(m => m.photo).map(m => m.photo.split("v=")[1])).size, 3);
+  const r = await photoGet(s, by[W.AIDOS].photo, { origin: SITE });
+  assert.equal(r.status, 200, await r.clone().text()); assert.equal(r.headers.get("content-type"), "image/png"); assert.equal(cors(r), SITE);
+  assert.equal(r.headers.get("cache-control"), "public, max-age=86400"); assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(r.headers.get("cross-origin-resource-policy"), "cross-origin");
+  const b = await bytesOf(r);
+  assert.deepEqual([...b.slice(0, 4)], [137, 80, 78, 71]);
+  assert.deepEqual(net.img, [PIC("aidos").norm]); // норм-размер 220×220 из image_group, а не 800×800
+  // <img> без crossorigin не шлёт Origin — картинка всё равно отдаётся (без CORS)
+  const plain = await photoGet(s, by[W.AIDOS].photo);
+  assert.equal(plain.status, 200); assert.equal(cors(plain), null); assert.deepEqual(await bytesOf(plain), b);
+  assert.equal(net.img.length, 1, "второй раз — из памяти");
+  // новый экземпляр (память пуста) — из KV, без запроса к Altegio
+  sitePhoto.photoMem.clear(); siteBase.siteCache.clear();
+  const n = net.alt.length;
+  const kvHit = await photoGet(s, by[W.AIDOS].photo, { origin: SITE });
+  assert.equal(kvHit.status, 200); assert.deepEqual(await bytesOf(kvHit), b);
+  assert.equal(net.img.length, 1); assert.equal(net.alt.length, n, net.alt.slice(n).join(" | "));
+  const key = [...s.kv.mem.keys()].find(k => k.startsWith(`sph:winchester:${LOC}:${W.AIDOS}:`));
+  assert.ok(key, "картинка в KV"); assert.equal(s.kv.ttl.get(key), 86400);
+  // без фото и чужой номер — 404 с CORS; неверный путь — 404
+  for (const id of [W.TONI, 999]) {
+    const x = await photoGet(s, `/api/site/winchester/photo/${id}`, { origin: SITE });
+    assert.equal(x.status, 404); assert.equal((await x.json()).code, "no_photo"); assert.equal(cors(x), SITE);
+  }
+  for (const p of ["/api/site/winchester/photo/abc", "/api/site/winchester/photo/", "/api/site/winchester/photo/1/2", "/api/site/winchester/catalog/1"]) {
+    const x = await photoGet(s, p, { origin: SITE });
+    assert.equal(x.status, 404, p); assert.equal((await x.json()).code, "not_found");
+  }
+  const opt = await photoGet(s, by[W.AIDOS].photo, { method: "OPTIONS", origin: SITE });
+  assert.equal(opt.status, 204);
+  const evil = await photoGet(s, by[W.AIDOS].photo, { origin: "https://evil.example" });
+  assert.equal(evil.status, 403); assert.equal(cors(evil), null);
+});
+
+test("фото: адрес картинки — только из каталога Altegio, не из запроса (SSRF); только Altegio по https; svg, html, больше 512 КБ, перенаправление — нет фото", async () => {
+  const d = reset();
+  const set = (id, url) => { const m = d.staff.find(x => x.id === id); m.avatar = url; m.avatar_big = url; m.image_group = []; };
+  set(W.AIDOS, "https://evil.example/a.png"); set(W.AIDYN, "http://assets.alteg.io/masters/sm/x/x1/aidyn.png"); set(W.ALISHER, "https://assets.alteg.io.evil.example/masters/sm/a.png");
+  const s = site();
+  const { j } = await s.getJ("catalog");
+  assert.ok(j.staff.every(m => m.has_photo === false && m.photo === null), JSON.stringify(j.staff.map(m => [m.id, m.photo])));
+  for (const id of [W.AIDOS, W.AIDYN, W.ALISHER]) {
+    const r = await photoGet(s, `/api/site/winchester/photo/${id}?url=${encodeURIComponent("https://evil.example/x.png")}&v=00000000`, { origin: SITE });
+    assert.equal(r.status, 404); assert.equal((await r.json()).code, "no_photo");
+  }
+  assert.deepEqual(net.img, []); assert.deepEqual(net.other, []);
+  // ответ Altegio — не картинка: html, svg (скрипт на нашем адресе), подпись не PNG, больше 512 КБ, перенаправление
+  const big = new Uint8Array(600 * 1024); big.set([137, 80, 78, 71, 13, 10, 26, 10]);
+  const cases = [
+    () => new Response("<html>не картинка</html>", { headers: { "content-type": "text/html" } }),
+    () => new Response('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', { headers: { "content-type": "image/svg+xml" } }),
+    () => new Response("<html>не картинка</html>", { headers: { "content-type": "image/png" } }),
+    () => new Response(big, { headers: { "content-type": "image/png" } }),
+    () => new Response(big, { headers: { "content-type": "image/png", "content-length": String(big.length) } }),
+    () => new Response(null, { status: 302, headers: { location: "https://evil.example/x.png" } }),
+    () => new Response("нет", { status: 404 })];
+  for (const [i, f] of cases.entries()) {
+    reset(); net.imgReply = f;
+    const t = site();
+    const cat = (await t.getJ("catalog")).j;
+    const r = await photoGet(t, photoOf(cat, W.AIDOS), { origin: SITE });
+    assert.equal(r.status, 404, "случай " + i); assert.equal((await r.json()).code, "no_photo", "случай " + i);
+    assert.deepEqual(net.other, [], "случай " + i); // перенаправление не идём
+    // неудача помнится 10 минут: Altegio не дёргаем на каждый показ страницы
+    await photoGet(t, photoOf(cat, W.AIDOS), { origin: SITE });
+    assert.equal(net.img.length, 1, "случай " + i + ": " + net.img.join(" | "));
+  }
+  // JPEG и WebP — подходят, тип — по содержимому
+  reset(); net.imgReply = () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0]), { headers: { "content-type": "application/octet-stream" } });
+  const t = site(), cat = (await t.getJ("catalog")).j;
+  const jpg = await photoGet(t, photoOf(cat, W.AIDYN), { origin: SITE });
+  assert.equal(jpg.status, 200); assert.equal(jpg.headers.get("content-type"), "image/jpeg");
+});
+
+test("фото на холодном экземпляре: одновременные картинки — один запрос мастеров к Altegio (без всего каталога), одна загрузка на картинку", async () => {
+  reset();
+  const s = site();
+  const cat = (await s.getJ("catalog")).j;
+  siteBase.siteCache.clear(); altCache.clear(); sitePhoto.photoMem.clear();
+  const n = net.alt.length;
+  const urls = [W.AIDOS, W.AIDYN, W.ALISHER].map(id => photoOf(cat, id));
+  const rs = await Promise.all([...urls, ...urls].map(u => photoGet(s, u, { origin: SITE })));
+  assert.ok(rs.every(r => r.status === 200), rs.map(r => r.status).join(","));
+  const calls = net.alt.slice(n);
+  assert.equal(calls.filter(x => /book_staff/.test(x)).length, 1, calls.join(" | ")); assert.ok(!calls.some(x => /book_services|book_dates|book_times/.test(x)), calls.join(" | "));
+  assert.equal(net.img.length, 3, net.img.join(" | "));
+});
+
+test("напоминание: notify (часы до визита, как в виджете Altegio) уходит в book_record как notify_by_sms; неверное — 400; без поля — не передаём", async () => {
+  reset();
+  const s = site({ SITE_BOOKING_WINCHESTER: "1" });
+  const recs = () => net.altRecords;
+  const a = await s.book({ notify: 1 });
+  assert.equal(a.r.status, 200, JSON.stringify(a.j)); assert.equal(a.j.booking.notify, 1);
+  assert.equal(recs().at(-1).notify_by_sms, 1); assert.ok(!("notify_by_email" in recs().at(-1)));
+  const day = await s.book({ notify: 24, time: "15:00", phone: "+77011110021" }, { ip: newIp() });
+  assert.equal(day.r.status, 200, JSON.stringify(day.j)); assert.equal(recs().at(-1).notify_by_sms, 24);
+  const none = await s.book({ notify: 0, time: "16:00", phone: "+77011110022" }, { ip: newIp() });
+  assert.equal(none.r.status, 200, JSON.stringify(none.j)); assert.equal(recs().at(-1).notify_by_sms, 0); assert.equal(none.j.booking.notify, 0);
+  const old = await s.book({ time: "17:00", phone: "+77011110023" }, { ip: newIp() }); // старая форма без поля — как раньше
+  assert.equal(old.r.status, 200, JSON.stringify(old.j)); assert.ok(!("notify_by_sms" in recs().at(-1))); assert.equal(old.j.booking.notify, null);
+  for (const bad of [7, -1, 1.5, "час", true, 1000]) {
+    const r = await s.book({ notify: bad, time: "18:00", phone: "+77011110024" }, { ip: newIp() });
+    assert.equal(r.r.status, 400, String(bad)); assert.equal(r.j.code, "bad_request"); assert.equal(r.j.field, "notify");
+  }
+  assert.equal((await s.book({ notify: "2", time: "18:00", phone: "+77011110025" }, { ip: newIp() })).r.status, 200);
+  assert.equal(recs().at(-1).notify_by_sms, 2);
+  const cat = (await s.getJ("catalog")).j;
+  assert.deepEqual(cat.notify, { def: 1, options: [0, 1, 2, 3, 4, 5, 6, 9, 12, 15, 18, 21, 24, 48, 72, 120, 168] });
+  // режим проверки: в журнал не пишем — напоминание видно администратору в заявке и в Telegram
+  reset();
+  const dry = site();
+  const b = await dry.book({ notify: 24 });
+  assert.equal(b.r.status, 200, JSON.stringify(b.j));
+  assert.match(dry.leads("winchester").at(-1).note, /напомнить за 1 день/);
+  assert.match(net.tg.map(m => m.text).join("\n"), /Напоминание: за 1 день до визита/);
+});
+
+test("согласие: без consent: true — 400 consent, к Altegio не обращаемся; заявка помнит согласие", async () => {
+  reset();
+  const s = site();
+  for (const consent of [false, undefined, "true", 1, null]) {
+    const { r, j } = await s.book({ consent }, { ip: newIp() });
+    assert.equal(r.status, 400, String(consent)); assert.equal(j.code, "consent"); assert.equal(j.field, "consent"); assert.equal(cors(r), SITE);
+    assert.match(j.error, /согласие/i);
+  }
+  assert.equal(checks().length, 0);
+  const ok = await s.book();
+  assert.equal(ok.r.status, 200, JSON.stringify(ok.j));
+  assert.equal(s.leads("winchester").at(-1).consent, true);
+});
+
+test("ближайшее время сразу отдаёт и открытые дни каждого мастера на весь горизонт — календарь формы без лишних запросов", async () => {
+  reset(winchesterAlt({ days: 60 }));
+  const s = site();
+  const { j } = await s.getJ("nearest");
+  assert.equal(j.ok, true, JSON.stringify(j)); assert.equal(j.from, D0);
+  for (const id of [W.TONI, W.AIDOS, W.AIDYN, W.ALISHER, W.RUSLAN]) {
+    const d = (await s.getJ("dates", `staff=${id}`)).j;
+    assert.deepEqual(j.days[id], d.dates, "мастер " + id);
+  }
+  const any = (await s.getJ("dates", "staff=0")).j;
+  assert.equal(j.to, any.to); assert.deepEqual(j.months, any.months);
+  // сбой дней у одного мастера — у него null, у остальных дни есть
+  reset();
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, init = {}) => /book_dates\/\d+\?staff_id=3087825/.test(String(u)) ? new Response('{"success":false,"meta":{"message":"err"}}', { status: 500 }) : real(u, init);
+  try {
+    const k = (await site().getJ("nearest")).j;
+    assert.equal(k.ok, true); assert.equal(k.days[W.RUSLAN], null); assert.ok(k.days[W.TONI].length > 20);
+  } finally { globalThis.fetch = real; }
+});
+
+// ---- находки ревью сервера 22.10.2026
+test("ревью 22.10, 1: форма без галочки согласия (копия от 21.10) не тратит попытки часа — после 9 отказов consent запись с согласием проходит", async () => {
+  reset();
+  const s = site(), ip = newIp();
+  for (let k = 0; k < 9; k++) { const r = await s.book({ consent: undefined }, { ip }); assert.equal(r.j.code, "consent", "попытка " + (k + 1)); }
+  for (let k = 0; k < 3; k++) { const r = await s.book({ notify: 7 }, { ip }); assert.equal(r.j.field, "notify", "напоминание " + (k + 1)); }
+  assert.equal(checks().length, 0);
+  const ok = await s.book({}, { ip });
+  assert.equal(ok.r.status, 200, JSON.stringify(ok.j));
+});
+
+test("ревью 22.10, 2: согласие уходит в Altegio, как в виджете (is_personal_data_processing_allowed), рассылки — не трогаем", async () => {
+  reset();
+  const s = site({ SITE_BOOKING_WINCHESTER: "1" });
+  const a = await s.book({ notify: 1 });
+  assert.equal(a.r.status, 200, JSON.stringify(a.j));
+  const rec = net.altRecords.at(-1);
+  assert.equal(rec.is_personal_data_processing_allowed, true); assert.ok(!("is_newsletter_allowed" in rec), JSON.stringify(rec));
+});
+
+test("ревью 22.10, 3: в Telegram о SMS-напоминании — не как факт (уйдёт ли SMS, зависит от настроек Altegio)", async () => {
+  reset();
+  const s = site({ SITE_BOOKING_WINCHESTER: "1" });
+  const a = await s.book({ notify: 1 });
+  assert.equal(a.r.status, 200, JSON.stringify(a.j));
+  const tg = net.tg.map(m => m.text).join("\n");
+  assert.match(tg, /Напоминание: за 1 ч до визита \(SMS — если включено в Altegio\)/); assert.ok(!/SMS от Altegio/.test(tg), tg);
+});
+
+test("ревью 22.10, 4: фото без Origin — тоже vary: Origin (кэш браузера не отдаст ответ без CORS запросу с Origin)", async () => {
+  reset();
+  const s = site();
+  const { j } = await s.getJ("catalog");
+  const plain = await photoGet(s, photoOf(j, W.AIDOS));
+  assert.equal(plain.status, 200); assert.equal(cors(plain), null); assert.match(plain.headers.get("vary") || "", /Origin/);
+  const withO = await photoGet(s, photoOf(j, W.AIDOS), { origin: SITE });
+  assert.equal((withO.headers.get("vary") || "").split(/,\s*/).filter(v => /^origin$/i.test(v)).length, 1, withO.headers.get("vary"));
+});
+
+test("ревью 22.10, 6: ближайшее время из кэша не ходит в Altegio — каталог истёк, Altegio лежит, ответ тот же", async () => {
+  reset();
+  const s = site();
+  const first = (await s.getJ("nearest")).j;
+  assert.equal(first.ok, true, JSON.stringify(first));
+  for (const k of [...siteBase.siteCache.keys()]) if (!k.startsWith("sn:")) siteBase.siteCache.delete(k);
+  altCache.clear();
+  const n = net.alt.length, real = globalThis.fetch;
+  globalThis.fetch = async (u, init = {}) => /api\.alteg\.io/.test(String(u)) ? new Response('{"success":false,"meta":{"message":"down"}}', { status: 500 }) : real(u, init);
+  try {
+    const { r, j } = await s.getJ("nearest");
+    assert.equal(r.status, 200, JSON.stringify(j)); assert.deepEqual(j, first);
+  } finally { globalThis.fetch = real; }
+  assert.equal(net.alt.length, n, net.alt.slice(n).join(" | "));
 });

@@ -8,6 +8,8 @@ import { fmtPhone } from "../../lib/phone.js";
 /** @type {Record<string, [number, string]>} */
 export const ERR = {
   not_found: [404, "Онлайн-запись не найдена."],
+  no_photo: [404, "Фото мастера нет."],
+  consent: [400, "Отметь согласие на обработку персональных данных — без него записать не можем."],
   origin: [403, "Запрос с другого сайта не принят."],
   method: [405, "Метод не поддерживается."],
   off: [503, "Онлайн-запись сейчас недоступна. Напиши нам в WhatsApp или позвони: {tel}."],
@@ -43,6 +45,9 @@ export const FIELD = {
   date: "Выбери другой день.",
   time: "Выбери время.",
   comment: "Комментарий — не длиннее 150 знаков.",
+  notify: "Выбери, когда напомнить о визите.",
+  month: "Выбери месяц.",
+  range: "Выбери другие даты.",
   body: "Не получилось прочитать заявку. Обнови страницу и попробуй ещё раз."
 };
 
@@ -57,6 +62,15 @@ export function fail(code, conf, extra = {}, text) {
 export const badField = (field, conf, why) => ({ http: 400, res: { ok: false, code: "bad_request", error: (FIELD[why || field] || FIELD.body).replace("{max}", String(conf.maxServices || 5)), field } });
 /** @param {string} field @param {{ phone?: string }} conf @returns {Out} */
 export const limitHit = (field, conf) => ({ http: 429, res: { ok: false, code: "limit", error: LIMIT[field].replace("{tel}", conf.phone || ""), field } });
+
+// напоминание о визите (часы до визита, как в виджете Altegio): 0 → «не напоминать», 1 → «за 1 ч», 24 → «за 1 день», 48 → «за 2 дня»
+/** @param {number} h */
+export function notifyText(h) {
+  if (!h) return "не напоминать";
+  if (h < 24 || h % 24) return `за ${h} ч`;
+  const d = h / 24, w = d % 10 === 1 && d % 100 !== 11 ? "день" : [2, 3, 4].includes(d % 10) && ![12, 13, 14].includes(d % 100) ? "дня" : "дней";
+  return `за ${d} ${w}`;
+}
 
 const DOW = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 const MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
@@ -85,5 +99,6 @@ export function tgText(kind, company, b, why) {
     `Имя: ${b.name}`,
     `Телефон: ${fmtPhone(b.phone)}`,
     ...(b.comment ? [`Комментарий: «${b.comment}»`] : []),
+    ...(typeof b.notify === "number" ? [b.notify ? `Напоминание: ${notifyText(b.notify)} до визита${kind === "live" ? " (SMS — если включено в Altegio)" : ""}` : "Напоминание: не нужно"] : []),
     ...(kind === "live" && b.id ? [`Номер записи в Altegio: ${b.id}`] : [])].join("\n");
 }

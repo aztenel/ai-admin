@@ -20,10 +20,11 @@ export async function altServicesRaw(env, loc, staffId) {
 }
 
 // открытые дни мастера (без услуг: помещаются ли услуги, считает код по сетке времени — наборы услуг не умножают запросы, проба
-// 21.10.2026); ответ разбирает altDates (booking-api.js)
-/** @param {Env} env @param {number} loc @param {number} staffId @param {string} from @param {string} to @returns {Promise<any>} */
-export function altDatesRaw(env, loc, staffId, from, to) {
-  return altCall(env, "GET", `/book_dates/${loc}?staff_id=${encodeURIComponent(staffId)}&date_from=${from}&date_to=${to}`);
+// 21.10.2026) и без дат — как виджет Altegio: тогда Altegio отдаёт весь горизонт онлайн-записи (разведка 21.10.2026: дни до 30.11 —
+// до конца графика мастеров, schedule_till). Ответ разбирает altDates (booking-api.js)
+/** @param {Env} env @param {number} loc @param {number} staffId @returns {Promise<any>} */
+export function altDatesRaw(env, loc, staffId) {
+  return altCall(env, "GET", `/book_dates/${loc}?staff_id=${encodeURIComponent(staffId)}`);
 }
 
 // проверка записи без создания: свободно ли время мастера под эти услуги (ошибка — исключение altCall с .status и .code)
