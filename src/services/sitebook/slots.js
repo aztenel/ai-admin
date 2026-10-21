@@ -1,0 +1,136 @@
+// @ts-check
+// Онлайн-запись на сайте: открытые дни и свободное время. Логика та же, что у бота (services/booking/fit.js): Altegio без услуги отдаёт
+// свободные начала мастера сеткой (30 мин), а помещается ли услуга, считает код — начало подходит, если мастер свободен всю длительность
+// выбранных услуг подряд (живой показ Winchester, 18.10.2026: Premium на 16:30 при записи у Тони в 17:30). Время не по сетке
+// («12:05», «20:40») не показываем; сегодня — не раньше чем через minLead минут.
+/** @import { Env, Client } from "../../lib/types.js" */
+/** @import { SiteConf } from "./config.js" */
+/** @import { Cat } from "./base.js" */
+/** @import { Out } from "./texts.js" */
+import { altDates, altTimes, altTimesHit } from "../integrations/altegio/booking-api.js";
+import { altDatesRaw } from "../integrations/altegio/site-api.js";
+import { settledBy } from "../booking/book.js";
+import { fitStarts, tStr } from "../booking/fit.js";
+import { isoDay, local, mins } from "../../lib/time.js";
+import { cacheGet, cachePut, ck, altGate, gateCheck, loadCat, pickServices, staffPool, sumOf, stop, stopped, altLog } from "./base.js";
+import { fail, badField } from "./texts.js";
+
+/** @param {string} t «9:00» → «09:00» */
+export const pad = t => t.padStart(5, "0");
+// окно записи: сегодня … сегодня + days − 1 (по Астане)
+/** @param {SiteConf} conf @param {number} nowMs */
+export const dayRange = (conf, nowMs) => ({ from: isoDay(nowMs), to: isoDay(nowMs + (conf.days - 1) * 864e5) });
+
+// открытые дни мастера (book_dates по мастеру, без услуг), кэш 5 минут. Помещаются ли выбранные услуги, решает сетка времени
+// (staffStarts): с номерами услуг каждый набор был бы своим запросом к Altegio — 78 наборов давали 390 запросов (проба 21.10.2026)
+/** @param {Env} env @param {SiteConf} conf @param {number} staffId @param {number} nowMs @returns {Promise<string[]>} */
+export async function openDates(env, conf, staffId, nowMs) {
+  const { from, to } = dayRange(conf, nowMs), k = ck(conf, "sd", staffId, from), hit = cacheGet(k, nowMs);
+  if (hit) return hit;
+  await altGate(conf);
+  const v = altDates(await altDatesRaw(env, conf.loc, staffId, from, to), nowMs).filter(d => d >= from && d <= to);
+  cachePut(k, v, nowMs, 300e3);
+  return v;
+}
+
+// Свободные начала мастера на день, где помещаются need минут: { starts: ["ЧЧ:ММ"], free: начал сетки за день (у кого день свободнее) }.
+// fresh — мимо кэша и без очереди (перед записью)
+/** @param {Env} env @param {SiteConf} conf @param {number} staffId @param {string} date @param {number} need @param {number} nowMs @param {boolean} [fresh] */
+export async function staffStarts(env, conf, staffId, date, need, nowMs, fresh) {
+  let list = fresh ? null : altTimesHit(conf.loc, staffId, date, null, nowMs);
+  if (!list) { if (!fresh) await altGate(conf); list = /** @type {any[]} */ (await altTimes(env, conf.loc, staffId, date, null, nowMs, fresh)); }
+  const grid = [...new Set(list.map(x => String(x.time)))].filter(t => mins(t) % conf.step === 0).sort((a, b) => mins(a) - mins(b));
+  let starts = fitStarts(grid, need, conf.step);
+  if (date === isoDay(nowMs)) { const n = local(nowMs), lim = n.getUTCHours() * 60 + n.getUTCMinutes() + conf.minLead; starts = starts.filter(t => mins(t) >= lim); }
+  return { starts: starts.map(pad), free: grid.length };
+}
+
+// время дня по мастерам pool: у каждого начала — назначенный мастер: дешевле сумма, потом у кого день свободнее, потом порядок Altegio
+// (клиент до записи видит, кто будет мастером и сколько стоит; шеф-барбера вместо барбера молча не подставляем).
+// Мастер, по которому Altegio не ответил, пропускается; не ответил никто — ответ «расписание не отвечает»
+/** @param {Env} env @param {SiteConf} conf @param {Cat} cat @param {any[]} pool @param {string[]} keys @param {string} date @param {number} nowMs @param {boolean} [fresh] */
+export async function daySlots(env, conf, cat, pool, keys, date, nowMs, fresh) {
+  if (!pool.length) return [];
+  const res = await settledBy(pool.map(m => () => staffStarts(env, conf, m.id, date, sumOf(cat, m.id, keys).min, nowMs, fresh)), 3);
+  gateCheck(res);
+  /** @type {Map<string, any>} */
+  const best = new Map();
+  let got = 0;
+  res.forEach((r, i) => {
+    if (r.status === "rejected") { altLog("times " + pool[i].id, r.reason); return; }
+    got++;
+    const m = pool[i], sum = sumOf(cat, m.id, keys), idx = cat.staff.indexOf(m);
+    for (const t of r.value.starts) {
+      const cur = best.get(t), c = { time: t, staff: m.id, price: sum.price, min: sum.min, free: r.value.free, idx };
+      if (!cur || c.price < cur.price || (c.price === cur.price && (c.free > cur.free || (c.free === cur.free && c.idx < cur.idx)))) best.set(t, c);
+    }
+  });
+  if (!got) throw stop(fail("altegio", conf));
+  return [...best.values()].sort((a, b) => mins(a.time) - mins(b.time)).map(x => ({ time: x.time, end: pad(tStr(mins(x.time) + x.min)), staff: x.staff, price: x.price, min: x.min }));
+}
+
+// открытые дни каждого мастера из pool: Map мастер → дни; мастер, по которому Altegio не ответил, пропускается (не ответил никто — ошибка)
+/** @param {Env} env @param {SiteConf} conf @param {any[]} pool @param {number} nowMs */
+export async function poolDates(env, conf, pool, nowMs) {
+  const res = await settledBy(pool.map(m => () => openDates(env, conf, m.id, nowMs)), 3);
+  gateCheck(res);
+  /** @type {Map<number, string[]>} */
+  const out = new Map();
+  res.forEach((r, i) => { if (r.status === "fulfilled") out.set(pool[i].id, r.value); else altLog("dates " + pool[i].id, r.reason); });
+  if (!out.size) throw stop(fail("altegio", conf));
+  return out;
+}
+/** @param {Map<number, string[]>} per */
+const unionOf = per => [...new Set([...per.values()].flat())].sort();
+
+// разбор запроса dates/times: услуги и мастер → { cat, keys, pool } или готовый ответ-ошибка
+/** @param {Env} env @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs */
+async function parse(env, conf, q, nowMs) {
+  const cat = await loadCat(env, conf, nowMs);
+  const sv = pickServices(cat, conf, q.get("services") || "");
+  if (!sv.keys) return { out: badField("services", conf, sv.why) };
+  const st = staffPool(cat, q.get("staff") ?? "", sv.keys);
+  if (!st.pool) return { out: badField(st.field, conf, st.why) };
+  return { cat, keys: sv.keys, pool: st.pool };
+}
+
+// GET dates: открытые дни мастера (или объединение по всем, кто делает выбранные услуги)
+/** @param {Env} env @param {Client} c @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs @returns {Promise<Out>} */
+export async function siteDates(env, c, conf, q, nowMs) {
+  try {
+    const p = await parse(env, conf, q, nowMs);
+    if (p.out) return p.out;
+    const per = await poolDates(env, conf, p.pool, nowMs);
+    return { http: 200, res: { ok: true, dates: unionOf(per), ...dayRange(conf, nowMs) } };
+  } catch (e) { const o = stopped(e); if (o) return o; throw e; }
+}
+
+// GET times: свободное время на день (date) или на первый из ближайших трёх открытых дней, где оно есть. next — ближайший следующий
+// день, где время есть (смотрим до AHEAD открытых дней; не нашли — следующий открытый): кнопка «Ближайший день» вела на рабочий день
+// без свободного времени, и так подряд (проверка формы 21.10.2026)
+const AHEAD = 4;
+/** @param {Env} env @param {Client} c @param {SiteConf} conf @param {URLSearchParams} q @param {number} nowMs @returns {Promise<Out>} */
+export async function siteTimes(env, c, conf, q, nowMs) {
+  try {
+    const want = q.get("date") || "";
+    if (want && !/^\d{4}-\d{2}-\d{2}$/.test(want)) return badField("date", conf);
+    const p = await parse(env, conf, q, nowMs);
+    if (p.out) return p.out;
+    const per = await poolDates(env, conf, p.pool, nowMs), days = unionOf(per);
+    const on = /** @param {string} d */ d => p.pool.filter(m => (per.get(m.id) || []).includes(d));
+    const slotsOn = /** @param {string} d */ d => daySlots(env, conf, p.cat, on(d), p.keys, d, nowMs);
+    let date = want || null, slots = /** @type {any[]} */ ([]);
+    if (want) { if (days.includes(want)) slots = await slotsOn(want); }
+    else {
+      for (const d of days.slice(0, 3)) { const s = await slotsOn(d); if (s.length) { date = d; slots = s; break; } }
+      if (!slots.length) date = days[0] || null;
+    }
+    const later = date ? days.filter(d => d > /** @type {string} */ (date)) : [];
+    let next = later[0] || null;
+    if (date && !slots.length) {
+      next = later[AHEAD] || null;
+      for (const d of later.slice(0, AHEAD)) if ((await slotsOn(d)).length) { next = d; break; }
+    }
+    return { http: 200, res: { ok: true, date, next, slots } };
+  } catch (e) { const o = stopped(e); if (o) return o; throw e; }
+}

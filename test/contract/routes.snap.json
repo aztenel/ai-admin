@@ -2792,6 +2792,306 @@
   "type": "text/plain",
   "text": "Bad signature"
  },
+ "GET /api/site/winchester/catalog [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://winchester.kz> [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://winchester.kz> [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://winchester.kz> [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://evil.example> [anon]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://evil.example> [owner]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/catalog <origin https://evil.example> [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/barber/catalog [anon]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/barber/catalog [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/barber/catalog [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/nope/catalog [anon]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/nope/catalog [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/nope/catalog [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/nope <origin https://winchester.kz> [anon]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/nope <origin https://winchester.kz> [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/nope <origin https://winchester.kz> [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "OPTIONS /api/site/winchester/book <origin https://winchester.kz> [anon]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
+ "OPTIONS /api/site/winchester/book <origin https://winchester.kz> [owner]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
+ "OPTIONS /api/site/winchester/book <origin https://winchester.kz> [staff]": {
+  "status": 204,
+  "type": "-",
+  "cache": "no-store",
+  "cors": "https://winchester.kz"
+ },
+ "OPTIONS /api/site/winchester/book <origin https://evil.example> [anon]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "OPTIONS /api/site/winchester/book <origin https://evil.example> [owner]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "OPTIONS /api/site/winchester/book <origin https://evil.example> [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "POST /api/site/winchester/book {} <origin https://winchester.kz> [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "POST /api/site/winchester/book {} <origin https://winchester.kz> [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "POST /api/site/winchester/book {} <origin https://winchester.kz> [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/times?staff=0&services=x&date=2026-10-04 <origin https://winchester.kz> [anon]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/times?staff=0&services=x&date=2026-10-04 <origin https://winchester.kz> [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
+ "GET /api/site/winchester/times?staff=0&services=x&date=2026-10-04 <origin https://winchester.kz> [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "cors": "https://winchester.kz",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
+ },
  "POST /api/studio/check {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
@@ -3009,6 +3309,16 @@
   "status": 403,
   "type": "text/plain",
   "text": "Forbidden: форма отправлена с другого адреса (https://evil.e"
+ },
+ "POST /api/site/winchester/book {} <origin https://winchester.kz> [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "ok"
+  ]
  },
  "POST /login [чужой сайт]": {
   "status": 403,

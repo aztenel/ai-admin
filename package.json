@@ -13,6 +13,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "build:pult": "node tools/build-pult.mjs",
     "build:app": "node tools/build-pult-app.mjs",
-    "check:app": "node tools/build-pult-app.mjs --check"
+    "check:app": "node tools/build-pult-app.mjs --check",
+    "e2e:site": "node test/site-booking-e2e.mjs /tmp/site-e2e"
   }
 }

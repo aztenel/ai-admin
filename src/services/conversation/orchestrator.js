@@ -665,15 +665,19 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
         if (old) { // статус в общем списке мог устареть (два чата сохраняли заявки одновременно) — сверяемся с отдельным ключом заявки
           try { const v = JSON.parse((await store.get(leadKey(c.id, old.id))) || "null"); if (v && v.status === "отменена") old = null; } catch (e) { console.log("lead key", String(e)); }
         }
+        // запись с сайта (services/sitebook, src: "site") для бота чужая, как запись администратора: видна, а отмена и перенос — просьбой
+        // администратору (решение №10 ТЗ формы; проверка 21.10.2026 — без журнала бот присваивал её себе и мог сам отменить)
+        const recOf = o => ({ name: o.name, date, time, services: o.altegio.services || o.service, staffName: o.altegio.staffName || "", loc: o.altegio.loc, record_id: o.altegio.record_id,
+          ...(o.src === "site" ? { record_hash: "", leadId: null, j: 1 } : { record_hash: o.altegio.record_hash, leadId: o.id }) });
         if (old) {
-          const rec = { name: old.name, date, time, services: old.altegio.services || old.service, staffName: old.altegio.staffName || "", loc: old.altegio.loc, record_id: old.altegio.record_id, record_hash: old.altegio.record_hash, leadId: old.id };
+          const rec = recOf(old);
           // вживую 10 октября: память чата очистили, запись удалили в Altegio, а бот по старой заявке ответил «Вы уже записаны» — сначала спрашиваем Altegio
           let gone = null;
           try { gone = await altIsGone(env, rec, alt.loc, nowMs); } catch (e) { console.log("ghost check", String(e)); }
           if (gone) { patchLead(old.id, { status: "отменена", note: "запись удалена в Altegio" }); old = null; }
         }
         if (old) {
-          const rec = { name: old.name, date, time, services: old.altegio.services || old.service, staffName: old.altegio.staffName || "", loc: old.altegio.loc, record_id: old.altegio.record_id, record_hash: old.altegio.record_hash, leadId: old.id };
+          const rec = recOf(old);
           if (opts.phone) { books.push(rec); added.push(rec); } // номер подтверждён самим WhatsApp — запись возвращается в этот чат
           return { same: rec, ghost: !books.includes(rec) };
         }

@@ -1,5 +1,5 @@
 // @ts-check
-// Ответы HTTP и проверка источника: html, json, jsonP, page (заголовки безопасности и CSP), csp, forbid, sameOrigin.
+// Ответы HTTP и проверка источника: html, json, jsonP, page (заголовки безопасности и CSP), csp, forbid, sameOrigin, withCors.
 /** @param {string} s @returns {Response} */
 export function html(s) { return new Response(s, { headers: { "content-type": "text/html; charset=utf-8" } }); }
 /** @param {any} o @param {number} [status] @returns {Response} */
@@ -24,3 +24,13 @@ export function page(body, status = 200, extra = {}) { // страницы с л
 }
 /** @param {string} s @returns {Response} */
 export function text(s) { return new Response(s, { headers: { "content-type": "text/plain; charset=utf-8" } }); }
+// CORS для API онлайн-записи на сайте клиента (/api/site/…, controllers/site.js): только точный разрешённый источник, без cookie
+// (Allow-Credentials не ставим — данные и запись идут без входа). preflight — ответ на предзапрос OPTIONS: методы, заголовки, кэш на 10 минут
+/** @param {Response} res @param {string} origin @param {boolean} [preflight] @returns {Response} */
+export function withCors(res, origin, preflight = false) {
+  const h = new Headers(res.headers);
+  h.set("access-control-allow-origin", origin);
+  h.append("vary", "Origin");
+  if (preflight) { h.set("access-control-allow-methods", "GET, POST, OPTIONS"); h.set("access-control-allow-headers", "content-type"); h.set("access-control-max-age", "600"); }
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}

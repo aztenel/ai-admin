@@ -24,6 +24,7 @@ import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhoo
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
 import { handleGreen } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
+import { siteApi } from "../controllers/site.js";
 
 /**
  * @param {any} request
@@ -165,6 +166,8 @@ export async function route(request, env, ctx, pult) {
       const i = url.searchParams.get("i");
       return jsonP(await runCase(env, i === null || i === "" ? -1 : +i)); // без номера сценарий не запускаем; не кэшировать
     }
+    // ---- онлайн-запись на сайте клиента (winchester.kz): CORS только для его сайтов, все методы (и OPTIONS) разбирает контроллер
+    if (P.startsWith("/api/site/")) return siteApi(request, env, ctx, url);
     if (M === "POST" && P === "/api/chat") return handleWebChat(request, env, ctx);
     if (M === "GET" && P === "/api/history") {
       const c = hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : "dent";

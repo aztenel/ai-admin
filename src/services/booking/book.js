@@ -103,7 +103,7 @@ export function altFits(v, m) {
 // задачи по n одновременно, результат — как у Promise.allSettled. Altegio принимает не больше 5 запросов в секунду с одного адреса
 // (developer.alteg.io): время каждого мастера на три дня одним залпом — это 20+ запросов и ответы 429
 /** @template T @param {(() => Promise<T>)[]} tasks @param {number} n @returns {Promise<PromiseSettledResult<T>[]>} */
-async function settledBy(tasks, n) {
+export async function settledBy(tasks, n) {
   /** @type {PromiseSettledResult<T>[]} */
   const out = new Array(tasks.length);
   let i = 0;

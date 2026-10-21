@@ -2,8 +2,12 @@
 // Telegram, Meta и Altegio — подменены). Сеть не нужна. Запуск: node test/devserver.mjs [порт]  →  http://127.0.0.1:8787/studio?key=owner-key-123456
 // Сообщение «клиента WhatsApp» можно прислать так: POST /_wa { "c": "acme", "from": "77051110001", "text": "Привет", "name": "Данияр" }
 // Фоновая задача (в Cloudflare она идёт раз в минуту сама): POST /_cron — отправляет очередную порцию рассылки
+// Онлайн-запись на сайте (форма apps/site-booking): node test/devserver.mjs [порт] --site http://127.0.0.1:5555 [--booking dry|1] —
+// API /api/site/winchester/* отвечает странице с этого адреса (SITE_ORIGINS_WINCHESTER), Altegio — расписание Winchester на заглушке
+// (test/fixtures/winchester-altegio.mjs). Боевые правила не меняются: список сайтов задаётся той же переменной, что в Cloudflare
 import http from "node:http";
 import { mk, net, worker, D1 } from "./harness.mjs";
+import { winchesterAlt } from "./fixtures/winchester-altegio.mjs";
 
 export const OWNER = "owner-key-123456";
 export function start(port = 0, envExtra = {}) {
@@ -46,6 +50,12 @@ export function start(port = 0, envExtra = {}) {
 }
 
 if (process.argv[1] && process.argv[1].endsWith("devserver.mjs")) {
-  const d = await start(+process.argv[2] || 8787);
+  /** @type {Record<string, string>} */
+  const opt = {}; let port = 8787;
+  for (let a = process.argv.slice(2), i = 0; i < a.length; i++) { if (a[i].startsWith("--")) opt[a[i].slice(2)] = a[++i] || ""; else if (/^\d+$/.test(a[i])) port = +a[i]; }
+  const site = opt.site ? { SITE_ORIGINS_WINCHESTER: opt.site, SITE_BOOKING_WINCHESTER: opt.booking === "1" ? "1" : "dry" } : {};
+  const d = await start(port, site);
+  if (opt.site) net.altData = () => winchesterAlt();
   console.log(`Бот на заглушках: ${d.url}/studio?key=${OWNER}\nВитрина: ${d.url}/   ·   остановить — Ctrl+C`);
+  if (opt.site) console.log(`Онлайн-запись: ${d.url}/api/site/winchester/catalog для ${opt.site} (режим ${site.SITE_BOOKING_WINCHESTER}), Altegio — заглушка Winchester`);
 }

@@ -67,6 +67,7 @@ async function shape(r) {
   if (r.headers.get("cache-control")) o.cache = r.headers.get("cache-control");
   if (r.headers.get("content-security-policy")) o.csp = true;
   if (r.headers.get("x-frame-options")) o.frame = r.headers.get("x-frame-options");
+  const ac = r.headers.get("access-control-allow-origin"); if (ac) o.cors = ac; // CORS (только /api/site/): старые записи снимка от этого не меняются
   const text = await r.text();
   Object.defineProperty(o, "body", { value: text }); // для проверки утечек; в снимок не идёт
   if (ct === "application/json" || ct === "application/manifest+json") {
@@ -105,7 +106,14 @@ const R = [
   ["GET", "/selftest"], ["POST", "/api/selftest", {}], ["GET", "/api/selftest"],
   ["POST", "/api/chat", {}], ["POST", "/api/chat", { c: "barber", sid: "contract-1", text: "Здравствуйте" }], ["GET", "/api/history?c=barber&sid=contract-1"], ["GET", "/api/history?c=barber"],
   ["POST", "/ga", GREEN], ["POST", "/ga?t=wrong", GREEN], ["POST", "/ga/barber", GREEN], ["POST", "/ga/barber?t=wrong", GREEN],
-  ["POST", "/", META], ["POST", "/", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/webhook", META]
+  ["POST", "/", META], ["POST", "/", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/webhook", META],
+  // онлайн-запись на сайте клиента (winchester.kz): CORS только для его сайтов. В контракте нет ключа Altegio — со своего сайта «выключено» (503)
+  ["GET", "/api/site/winchester/catalog"], ["GET", "/api/site/winchester/catalog", undefined, { origin: "https://winchester.kz" }], ["GET", "/api/site/winchester/catalog", undefined, { origin: "https://evil.example" }],
+  ["GET", "/api/site/barber/catalog"], ["GET", "/api/site/nope/catalog"], ["GET", "/api/site/winchester/nope", undefined, { origin: "https://winchester.kz" }],
+  ["OPTIONS", "/api/site/winchester/book", undefined, { origin: "https://winchester.kz", "access-control-request-method": "POST" }],
+  ["OPTIONS", "/api/site/winchester/book", undefined, { origin: "https://evil.example", "access-control-request-method": "POST" }],
+  ["POST", "/api/site/winchester/book", {}, { origin: "https://winchester.kz" }],
+  ["GET", "/api/site/winchester/times?staff=0&services=x&date=2026-10-04", undefined, { origin: "https://winchester.kz" }]
 ];
 
 // страницы и данные, куда без входа нельзя; что можно только владельцу; что видно по клиенту (c=dent — чужой для сотрудника барбершопа)
@@ -116,7 +124,8 @@ const OWNER_POST = /^\/api\/bc\/auto$/; // смотреть автосценар
 const FOREIGN = /[?&]c=dent\b|"c":"dent"/;
 const isProtected = p => PROTECTED.test(p) || PROTECTED_EXACT.has(p.split("?")[0]);
 
-const label = (body, hd) => (body === undefined ? "" : body === META ? " <сообщение Meta>" : body === GREEN ? " <сообщение Green-API>" : " " + (typeof body === "string" ? body : JSON.stringify(body))) + (hd ? " <неверная подпись>" : "");
+const label = (body, hd) => (body === undefined ? "" : body === META ? " <сообщение Meta>" : body === GREEN ? " <сообщение Green-API>" : " " + (typeof body === "string" ? body : JSON.stringify(body)))
+  + (hd && hd["x-hub-signature-256"] ? " <неверная подпись>" : "") + (hd && hd.origin ? ` <origin ${hd.origin}>` : ""); // origin — запросы с сайта клиента (/api/site/)
 // вход ключом в адресе (старый способ) — это не «гость»: ключ владельца — к любому клиенту, ключ сотрудника барбершопа — только к барбершопу
 const hasKey = (p, k) => new URL(p, "https://x").searchParams.get("key") === k;
 const validKey = p => hasKey(p, OWNER_KEY) || (hasKey(p, STAFF_KEY) && new URL(p, "https://x").searchParams.get("c") === "barber");
@@ -140,7 +149,7 @@ for (const [method, path, body, hd] of R) {
     // 4. страницы с личными данными — без кэша, без встраивания, с CSP
     if (data && o.type === "text/html" && isProtected(p)) ok(`страница с данными без кэша и встраивания: ${id}`, o.cache === "no-store" && o.frame === "DENY" && o.csp, JSON.stringify(o));
     // 5. ответы API с данными не кэшируются
-    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history|crm)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
+    if (data && /^\/api\/(inbox|launch|bc|studio|selftest|history|crm|site)\b/.test(p)) ok(`данные API не кэшируются: ${id}`, o.cache === "no-store", JSON.stringify(o));
     // 6. неподписанный вебхук и вебхук без пароля не запускают бота
     if (/^\/(wa\/|ga\b|webhook|$)/.test(p) && method === "POST") ok(`вебхук без подписи/пароля не доходит до ИИ: ${id}`, o.status !== 200 && net.gemini.length === ai0, JSON.stringify(o));
   }
@@ -162,7 +171,7 @@ for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=
 }
 
 // 7. изменяющие запросы с чужого сайта отклоняются даже с cookie владельца
-for (const [method, path, body, hd] of R.filter(([m, p]) => m === "POST" && /^\/(api\/(studio|inbox|launch|bc|crm)\/|altegio)/.test(p))) {
+for (const [method, path, body, hd] of R.filter(([m, p]) => m === "POST" && /^\/(api\/(studio|inbox|launch|bc|crm|site)\/|altegio)/.test(p))) {
   const r = await go(owner, method, path, body, { origin: "https://evil.example" });
   const id = `${method} ${path}${label(body, hd)} [owner, чужой сайт]`;
   got[id] = await shape(r);

@@ -90,6 +90,15 @@ export function altDates(d, nowMs) {
   return [...out].filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x) && x >= today).sort();
 }
 
+/** @param {any[] | null | undefined} serviceIds */
+const timesQ = serviceIds => (serviceIds || []).map(/** @param {any} id */ id => "service_ids%5B%5D=" + encodeURIComponent(id)).join("&");
+// время мастера из кэша altTimes или null — без запроса к Altegio (сайт ставит в очередь только запросы мимо кэша, services/sitebook)
+/** @param {any} loc @param {any} staffId @param {string} date @param {any[] | null | undefined} serviceIds @param {number} nowMs @returns {any[] | null} */
+export function altTimesHit(loc, staffId, date, serviceIds, nowMs) {
+  const hit = altCache.get(`t:${loc}:${staffId}:${date}:${timesQ(serviceIds)}`);
+  return hit && Math.abs(nowMs - hit.at) < ALT_TTL ? hit.v : null;
+}
+
 /** @param {any} loc */
 export const altDropTimes = loc => { for (const k of [...altCache.keys()]) if (k.startsWith(`t:${loc}:`)) altCache.delete(k); };
 
@@ -104,8 +113,7 @@ export const altDropTimes = loc => { for (const k of [...altCache.keys()]) if (k
  * @returns {Promise<any>}
  */
 export async function altTimes(env, loc, staffId, date, serviceIds, nowMs, fresh) {
-  const q = (serviceIds || []).map(/** @param {any} id */ id => "service_ids%5B%5D=" + encodeURIComponent(id)).join("&");
-  const k = `t:${loc}:${staffId}:${date}:${q}`, hit = altCache.get(k);
+  const q = timesQ(serviceIds), k = `t:${loc}:${staffId}:${date}:${q}`, hit = altCache.get(k);
   if (!fresh && hit && Math.abs(nowMs - hit.at) < ALT_TTL) return hit.v;
   let d;
   try { d = await altCall(env, "GET", `/book_times/${loc}/${staffId}/${date}${q ? "?" + q : ""}`); }

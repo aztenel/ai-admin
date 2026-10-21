@@ -18,6 +18,9 @@ export async function saveLeads(store, cid, leads) {
 // Статус заявки («отменена», «заменена») лежит в метаданных ключа: страница берёт его оттуда, даже если в общем списке он потерялся
 /** @param {string} cid @param {string} id */
 export const leadKey = (cid, id) => `lead:${cid}:${isoDay(leadTs({ id }))}:${id}`;
+// отдельный ключ новой заявки (30 дней)
+/** @param {any} store @param {string} cid @param {Record<string, any>} lead */
+export async function putLeadKey(store, cid, lead) { await store.put(leadKey(cid, lead.id), JSON.stringify(lead), { expirationTtl: LEAD_TTL / 1000 }); }
 /** @param {Env} env @param {string} cid @returns {Promise<any[]>} */
 export async function allLeads(env, cid) {
   /** @param {Record<string, any>} l */
