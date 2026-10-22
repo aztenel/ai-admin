@@ -4,6 +4,17 @@
 import { CLIENTS, hasClient } from "../../../config/builtin-clients.js";
 import { clean } from "../../../lib/text.js";
 
+// чаты уведомлений клиента: свой TG_CHAT_<ID> → поле tg паспорта → общий чат владельца TG_CHAT (через запятую — несколько)
+/** @param {Env} env @param {any} [clientId] @returns {string[]} */
+export const tgChats = (env, clientId) => String((clientId && env["TG_CHAT_" + String(clientId).toUpperCase()]) || (clientId && hasClient(clientId) && CLIENTS[clientId].tg) || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
+// почему уведомления клиента не уходят вовсе ("" — настроены): notify в этом случае просто возвращает false. У боевого сайта
+// и черновика dev переменные в Cloudflare свои (Production / Previews) — настроенный dev ещё не значит настроенный боевой
+/** @param {Env} env @param {any} [clientId] @returns {string} */
+export function tgOff(env, clientId) {
+  if (!env.TG_TOKEN) return "нет секрета TG_TOKEN";
+  return tgChats(env, clientId).length ? "" : `нет чата: не заданы ${clientId ? "TG_CHAT_" + String(clientId).toUpperCase() + " и " : ""}TG_CHAT`;
+}
+
 /**
  * @param {Env} env
  * @param {string} text
@@ -11,7 +22,7 @@ import { clean } from "../../../lib/text.js";
  * @returns {Promise<boolean>}
  */
 export async function notify(env, text, clientId) { // → true, если хотя бы один чат получил сообщение
-  const chats = String((clientId && env["TG_CHAT_" + String(clientId).toUpperCase()]) || (clientId && hasClient(clientId) && CLIENTS[clientId].tg) || env.TG_CHAT || "").split(/[,\s]+/).filter(Boolean);
+  const chats = tgChats(env, clientId);
   if (!env.TG_TOKEN || !chats.length) return false;
   let sent = false;
   /** @param {any} chat_id */
@@ -20,7 +31,7 @@ export async function notify(env, text, clientId) { // → true, если хот
     try { return await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id, text }), signal: ac.signal }); }
     finally { clearTimeout(timer); }
   };
-  for (const chat_id of chats) {
+  for (const [i, chat_id] of chats.entries()) {
     try {
       let r = await post(chat_id);
       if (r && r.status === 429) { // Telegram просит подождать — одна повторная попытка
@@ -29,6 +40,12 @@ export async function notify(env, text, clientId) { // → true, если хот
         r = await post(chat_id);
       }
       if (r && r.ok) sent = true;
+      else if (r) { // отказ Telegram (403 — бот заблокирован или не запущен, 400 — нет такого чата) раньше пропадал молча (22.10.2026);
+        // в журнал — код и описание Telegram, без ключа, номера чата и текста сообщения
+        // тело читаем со своим пределом 2 с: таймер запроса уже снят, а бот ждёт notify внутри think()
+        let d = ""; try { const j = await Promise.race([r.json(), new Promise(s => setTimeout(() => s(null), 2000))]); d = clean(String((j || {}).description || ""), 120); } catch (e) {}
+        console.log("tg", `Telegram не принял сообщение (чат ${i + 1} из ${chats.length}): ${r.status} ${d}`.trim());
+      }
     } catch (e) { console.log("tg", String(e)); }
   }
   return sent;

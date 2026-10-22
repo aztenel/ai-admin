@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { net, mk, D0 } from "../harness.mjs";
+import { net, mk, D0, worker } from "../harness.mjs";
 import { altCache } from "../../src/services/integrations/altegio/booking-api.js";
 import { svKey } from "../../src/services/sitebook/config.js";
 import * as siteBase from "../../src/services/sitebook/base.js";
@@ -969,4 +969,87 @@ test("ревью 22.10, 6: ближайшее время из кэша не хо
     assert.equal(r.status, 200, JSON.stringify(j)); assert.deepEqual(j, first);
   } finally { globalThis.fetch = real; }
   assert.equal(net.alt.length, n, net.alt.slice(n).join(" | "));
+});
+
+// ---- Живая проверка владельца 22.10.2026: прошёл запись на winchester.kz в режиме dry до конца, а сообщение в его Telegram не пришло.
+// Форма ходит в боевой Worker (ai-admin…); переменные Cloudflare у него и у черновика dev свои — одна из возможных причин, вживую не подтверждена.
+// Что делает код — ниже; почему не дошло, по коду не видно: notify молча возвращал false (нет TG_TOKEN / чата, Telegram отказал)
+const bookBody = (b = {}) => JSON.stringify({ staff: W.AIDOS, any: false, services: ["мужская-стрижка"], date: dayN(1), time: "12:00",
+  name: "Азамат", phone: PHONE, comment: "", consent: true, website: "", ft: ftOf(), rid: rid(), notify: 1, ...b });
+const captureLog = async fn => {
+  const logs = [], orig = console.log;
+  console.log = (...a) => logs.push(a.map(String).join(" "));
+  try { return { out: await fn(), logs }; } finally { console.log = orig; }
+};
+
+test("живая проверка 22.10: Telegram о заявке с сайта не задерживает ответ и доживает до конца в ctx.waitUntil", async () => {
+  reset();
+  const s = site();
+  // как в Cloudflare: ответ отдан, задачи waitUntil ещё идут. Telegram отвечает через 300 мс
+  const pending = [], ctx = { waitUntil: p => pending.push(p) }, real = globalThis.fetch;
+  let tgDone = 0;
+  globalThis.fetch = async (u, init = {}) => {
+    if (!/api\.telegram\.org/.test(String(u))) return real(u, init);
+    await new Promise(t => setTimeout(t, 300));
+    const r = await real(u, init); tgDone++; return r;
+  };
+  try {
+    const t0 = Date.now();
+    const r = await worker.fetch(new Request("https://bot.test/api/site/winchester/book", { method: "POST",
+      headers: { origin: SITE, "cf-connecting-ip": newIp(), "content-type": "application/json" }, body: bookBody() }), s.env, ctx);
+    const j = await r.json(), ms = Date.now() - t0;
+    assert.equal(r.status, 200, JSON.stringify(j)); assert.equal(j.ok, true); assert.equal(j.mode, "dry");
+    assert.equal(tgDone, 0, `ответ не ждёт Telegram: ${ms} мс, отправлено ${tgDone}`);
+    assert.equal(s.leads("winchester").length, 1, "заявка сохранена до ответа"); // пульт «Заявки» и /leads её видят, даже если Telegram не дошёл
+    assert.equal(pending.length, 1, "одна задача waitUntil — уведомление"); assert.ok(pending[0] && typeof pending[0].then === "function", "в waitUntil — промис");
+    await Promise.all(pending);
+    assert.equal(tgDone, 1, "промис из waitUntil — это и есть отправка: после него Telegram ответил");
+  } finally { globalThis.fetch = real; }
+  assert.equal(net.tg.length, 1, JSON.stringify(net.tg));
+  assert.equal(String(net.tg[0].chat_id), "1"); // TG_CHAT_WINCHESTER нет — общий чат владельца TG_CHAT
+  assert.match(net.tg[0].text, /^📝 Заявка с сайта — запишите вручную — Winchester/);
+});
+
+test("живая проверка 22.10: чат — TG_CHAT_WINCHESTER (если задан), не TG_CHAT владельца; повтор rid, предел — без второго сообщения", async () => {
+  reset();
+  const s = site({ TG_CHAT_WINCHESTER: "-1001, -1002" });
+  const id = rid(), a = await s.book({ rid: id });
+  assert.equal(a.r.status, 200, JSON.stringify(a.j));
+  assert.deepEqual(net.tg.map(m => String(m.chat_id)).sort(), ["-1001", "-1002"], "в чаты Winchester, в TG_CHAT владельца — нет");
+  const again = await s.book({ rid: id });
+  assert.deepEqual(again.j, a.j); assert.equal(net.tg.length, 2, "повтор того же rid — сохранённый ответ, без второго сообщения");
+  // предел номера (3 заявки с сайта в сутки): четвёртая — отказ «limit», ни заявки, ни Telegram; форма показывает текст отказа, не «Заявка принята»
+  await s.book({ time: "15:00" }); await s.book({ time: "17:00" });
+  const n = net.tg.length, leads = s.leads("winchester").length;
+  const over = await s.book({ time: "19:00" });
+  assert.equal(over.r.status, 429, JSON.stringify(over.j)); assert.equal(over.j.code, "limit"); assert.equal(over.j.ok, false);
+  assert.equal(net.tg.length, n); assert.equal(s.leads("winchester").length, leads);
+});
+
+test("живая проверка 22.10: Telegram не принял или не настроен — причина в журнале Worker (раньше notify молчал), без ключа и номера", async () => {
+  // Telegram отказал (403 — бот заблокирован, 400 — нет такого чата): ответ клиенту тот же, заявка сохранена, в журнале — код и описание
+  reset();
+  { const s = site();
+    net.tgStatus = 403;
+    const { out, logs } = await captureLog(() => s.book());
+    assert.equal(out.r.status, 200, JSON.stringify(out.j)); assert.equal(s.leads("winchester").length, 1);
+    const all = logs.join("\n");
+    assert.match(all, /tg.*403/, "в журнале — код ответа Telegram: " + all);
+    assert.match(all, /site tg/, "сайт пишет, что уведомление о заявке не дошло: " + all);
+    assert.ok(!all.includes("tgtoken") && !all.includes("77071234567"), all); }
+  // нет TG_TOKEN (у боевого сайта и черновика dev переменные свои — одна из возможных причин, вживую не подтверждена)
+  for (const extra of [{ TG_TOKEN: "" }, { TG_CHAT: "" }]) {
+    reset();
+    const s = site(extra);
+    const { out, logs } = await captureLog(() => s.book());
+    assert.equal(out.r.status, 200, JSON.stringify(out.j)); assert.equal(net.tg.length, 0);
+    const all = logs.join("\n");
+    assert.match(all, /site tg/, JSON.stringify(extra) + " — " + all);
+    assert.match(all, extra.TG_TOKEN === "" ? /TG_TOKEN/ : /TG_CHAT/, all);
+  }
+  // всё в порядке — ни слова в журнале
+  reset();
+  { const s = site();
+    const { logs } = await captureLog(() => s.book());
+    assert.equal(net.tg.length, 1); assert.ok(!logs.some(l => /tg/.test(l)), logs.join("\n")); }
 });

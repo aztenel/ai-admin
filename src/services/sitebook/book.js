@@ -11,7 +11,7 @@
 import { altDropTimes, altRecord } from "../integrations/altegio/booking-api.js";
 import { altCheck } from "../integrations/altegio/site-api.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
-import { notify } from "../integrations/telegram/client.js";
+import { notify, tgOff } from "../integrations/telegram/client.js";
 import { settledBy } from "../booking/book.js";
 import { nearest, tStr } from "../booking/fit.js";
 import { ipKey, altLimits } from "../booking/limits.js";
@@ -289,7 +289,7 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
           const t = tgText("fail", conf.name, full, whyAdmin(e));
           await saveLead(env, c, makeLead(c, conf, "fail", full, null, whyAdmin(e)));
           await count();
-          later(defer, () => notify(env, t, c.id));
+          later(defer, () => tell(env, c, t));
           return done(fail("refused", conf));
         } else {
           if (why === "service") cacheDrop(ck(conf, "sc"));
@@ -303,7 +303,7 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
     await count();
     await saveLead(env, c, makeLead(c, conf, kind, full, rec));
     const t = tgText(kind, conf.name, { ...full, id: booking.id });
-    later(defer, () => notify(env, t, c.id));
+    later(defer, () => tell(env, c, t));
     return done(kind === "unknown" ? fail("unknown", conf) : { http: 200, res: { ok: true, mode: kind, booking } });
   } catch (e) {
     const o = stopped(e);
@@ -314,6 +314,15 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
   } finally {
     if (hold) try { await hold.done(false); } catch (e) {} // бронь без записи снимается (после count — ничего не делает)
   }
+}
+
+// сообщение администратору о заявке с сайта. Не дошло — причина в журнал Worker (Cloudflare → ai-admin → Logs): заявка при этом
+// уже сохранена (пульт «Заявки», /leads), а молча пропавшее сообщение не объяснить (живая проверка 22.10.2026: прошёл запись — в Telegram пусто)
+/** @param {Env} env @param {Client} c @param {string} text */
+async function tell(env, c, text) {
+  const ok = await notify(env, text, c.id);
+  if (!ok) console.log("site tg", `сообщение о заявке с сайта (${c.id}) не дошло до Telegram: ${tgOff(env, c.id) || "Telegram не принял его (код — в строке «tg» выше) или не ответил"}`);
+  return ok;
 }
 
 // уведомление после ответа клиенту; без defer — сразу (сбой Telegram ответ не ломает)
