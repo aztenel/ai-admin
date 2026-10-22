@@ -237,7 +237,8 @@ test("запись в режиме проверки (по умолчанию): b
   assert.match(tg, /Заявка с сайта — запишите вручную — Winchester/); assert.match(tg, /Мастер: Айдос\n/); assert.match(tg, /Телефон: \+7 707 123 45 67/);
   assert.match(tg, /Услуги: Мужская стрижка 7 000 ₸ \+ Глиняная маска 2 000 ₸/); assert.match(tg, /итого 9 000 ₸/); assert.ok(!/Номер записи/.test(tg));
   assert.ok(!logs.join("\n").includes("77071234567") && !logs.join("\n").includes("87015554433"), logs.join("\n"));
-  assert.equal(+s.kv.json(`bk:${LOC}:${PHONE}:${D0}`), 1); // режим проверки тоже тратит предел (иначе — спам заявками)
+  assert.equal(+s.kv.json(`bk:${LOC}:site:${PHONE}:${D0}`), 1); // режим проверки тоже тратит предел (иначе — спам заявками)
+  assert.equal(s.kv.json(`bk:${LOC}:${PHONE}:${D0}`), null); // счётчик бота сайт не трогает: номер с сайта не подтверждён
 });
 
 test("журнал сервера без номера: сбой сохранения заявки пишется маской", async () => {
@@ -265,7 +266,8 @@ test("настоящая запись (SITE_BOOKING_<ID>=1): book_check, зат�
   assert.equal(a.j.booking.total, 11000);
   const raw = JSON.stringify(a.j);
   assert.ok(!/hash/i.test(raw) && !raw.includes("hash777001"), raw);
-  assert.equal(+s.kv.json(`bk:${LOC}:${PHONE}:${D0}`), 1);
+  assert.equal(+s.kv.json(`bk:${LOC}:site:${PHONE}:${D0}`), 1);
+  assert.equal(s.kv.json(`bk:${LOC}:${PHONE}:${D0}`), null);
   const lead = s.leads("winchester").at(-1);
   assert.equal(lead.altegio.record_id, 777001); assert.match(lead.note, /Записан онлайн с сайта/);
   assert.equal(lead.src, "site"); assert.equal(lead.altegio.record_hash, undefined); // кода записи в заявке нет: бот запись с сайта не отменяет сам (находка 8)
@@ -401,10 +403,17 @@ test("защита: ловушка website, метка формы моложе 4
   assert.equal(cat.ft, re);
 });
 
-test("пределы: 4-я запись с номера за день (общий счётчик с ботом), устройство, день сайта, 9-я попытка за час с IP", async () => {
+test("пределы: 4-я запись с номера за день (свой счётчик сайта), устройство, день сайта, 9-я попытка за час с IP", async () => {
   reset();
   const s = site();
+  // ревью безопасности 22.10.2026: номер с сайта не подтверждается — общий с ботом счётчик позволял чужими заявками
+  // закрыть живому клиенту запись через бота в WhatsApp. Записи бота сайт не останавливают, заявки сайта — бота
   await s.kv.api.put(`bk:${LOC}:${PHONE}:${D0}`, "3"); // три записи бота с этого номера сегодня
+  const bot = await s.book({}, { ip: newIp() });
+  assert.equal(bot.j.ok, true, JSON.stringify(bot.j));
+  assert.equal(s.kv.json(`bk:${LOC}:${PHONE}:${D0}`), 3);
+  const checked = checks().length; // эта заявка прошла book_check, отказы ниже до Altegio не доходят
+  await s.kv.api.put(`bk:${LOC}:site:${PHONE}:${D0}`, "3"); // три заявки с сайта на этот номер сегодня
   const p = await s.book({}, { ip: newIp() });
   assert.equal(p.r.status, 429, JSON.stringify(p.j)); assert.equal(p.j.code, "limit"); assert.equal(p.j.field, "phone"); assert.match(p.j.error, /С этого номера/);
   const ip = newIp();
@@ -414,7 +423,7 @@ test("пределы: 4-я запись с номера за день (общи�
   await s.kv.api.put(`bk:${LOC}:site:${D0}`, "15"); // у сайта свой предел дня (находка 2)
   const d = await s.book({ phone: "+77011110002" }, { ip: newIp() });
   assert.equal(d.j.code, "limit"); assert.equal(d.j.field, "day"); assert.match(d.j.error, /заполнена/);
-  assert.equal(checks().length, 0);
+  assert.equal(checks().length, checked);
   const one = newIp();
   for (let k = 0; k < 8; k++) { const r = await s.book({ name: "1" }, { ip: one }); assert.equal(r.j.code, "bad_request", "попытка " + (k + 1)); }
   const ninth = await s.book({}, { ip: one });

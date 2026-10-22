@@ -75,13 +75,14 @@ async function saveLead(env, c, lead) {
   }
 }
 
-// пределы записей с сайта: с адреса и с номера — общие с ботом (ключи как в services/booking/limits.js), на день — свой у сайта
-// (bk:<лок>:site:<день>, site.dayMax): номер никак не подтверждается, и выдуманные номера с сайта закрывали бы на день запись и боту
-// в WhatsApp (общий предел локации 25, проверка 21.10.2026). Режим проверки тоже тратит — иначе спам заявками
+// пределы записей с сайта: с адреса — общий с ботом (ключ как в services/booking/limits.js), с номера и на день — свои у сайта.
+// Номер с сайта никак не подтверждается: на общих ключах чужими заявками закрывалась бы запись боту в WhatsApp — на день для всей
+// локации (предел 25, проверка 21.10.2026) и для живого клиента по его номеру (bk:<лок>:<номер>:<день>, ревью безопасности
+// 22.10.2026). Поэтому номер — bk:<лок>:site:<номер>:<день>, день — bk:<лок>:site:<день> (site.dayMax). Режим проверки тоже тратит
 /** @param {Client} c @param {SiteConf} conf @param {string} ip @param {string} phone @param {number} nowMs @returns {[string, number, string][]} */
 function limitKeys(c, conf, ip, phone, nowMs) {
   const L = altLimits(c), day = isoDay(nowMs), loc = conf.loc;
-  return [[`bk:${loc}:${ip}:${day}`, L.ip, "ip"], [`bk:${loc}:${phone}:${day}`, L.day, "phone"], [`bk:${loc}:site:${day}`, conf.dayMax, "day"]];
+  return [[`bk:${loc}:${ip}:${day}`, L.ip, "ip"], [`bk:${loc}:site:${phone}:${day}`, L.day, "phone"], [`bk:${loc}:site:${day}`, conf.dayMax, "day"]];
 }
 
 // поля самой формы — до счётчика попыток за час (ревью 22.10.2026): копия формы без галочки согласия (21.10) получала 400 consent
