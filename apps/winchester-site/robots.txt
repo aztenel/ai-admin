@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://winchester.kz/sitemap.xml

@@ -21,7 +21,7 @@
 | Что | Где |
 |---|---|
 | Бот, пульт, все служебные страницы | GitHub `aztenel/ai-admin`. Работаем в ветке `dev` → черновик `https://dev-ai-admin.azikonps4.workers.dev`. `main` → боевой `https://ai-admin.azikonps4.workers.dev` |
-| Сайт барбершопа | GitHub `aztenel/landing` (ветка по умолчанию `claude/ui-ux-pro-max-cli-install-fwivjx`) → вручную загружается на hoster.kz → **https://winchester.kz** |
+| Сайт барбершопа | **`apps/winchester-site/`** в этом репозитории — копия живого сайта на 24.10.2026 → вручную загружается на hoster.kz → **https://winchester.kz**. `aztenel/landing` (ветка `claude/ui-ux-pro-max-cli-install-fwivjx`) отстал — не брать оттуда |
 | Пульт друга (дизайн) | ветка `pult-v2` в `aztenel/ai-admin`, PR #1 (база `main` — нужно сменить на `dev`; в демо-данных реалистичные номера — заменить на явно вымышленные). Пока не сливать |
 | Ветки, которые можно удалить | `winchester`, `panel`, `admin`, `demo18` (удаляет владелец в GitHub; прокси сессии удаление не даёт) |
 
@@ -146,6 +146,10 @@
   загрузить в `assets/photos/` файлы `hero.jpg`, `master-toni.jpg`, `master-aidos.jpg`, `master-aidyn.jpg`,
   `master-alisher.jpg`, `master-ruslan.jpg`, `interior-1.jpg` … `interior-4.jpg`. Реквизиты в подвале (БИН, юридический
   адрес, телефон ИП) — после документа для Meta и согласия Кайрата и Мадияра.
+  Копию 23.10 владелец не загрузил (живой сайт 24.10 — прежний, с подписями под фото в коде).
+- 24.10: живой сайт целиком (без фото — их нет; без `booking.*` — они в `apps/site-booking`) — в `apps/winchester-site/`.
+  Следующая задача — переделка без «ИИ-дизайна», стоковые фото, казахская версия: `docs/winchester-site-task.md`.
+  Форма записи на этой копии — `node test/site-booking-e2e.mjs <снимки> apps/winchester-site` (24.10: 175 из 175, на заглушках).
 - Живой сайт проверен 19.10: «ИП A.M.K» латиницей — совпадает с документом. Правку с кириллицей (ac82e3c, df655d7)
   загружать **не нужно**: она отменена (`8b568c8`).
 - Осталось: перенаправление HTTP → HTTPS (настройка в панели hoster.kz); `og:image`; фото мастеров и зала; Кайрат должен
