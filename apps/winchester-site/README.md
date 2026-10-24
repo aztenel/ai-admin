@@ -24,6 +24,9 @@
 `node test/site-booking-e2e.mjs <папка для снимков> apps/winchester-site` — страница сайта + форма записи на заглушках
 (скрипт сам берёт `booking.js`/`booking.css` из `apps/site-booking` и подменяет `data-api` в корневом `index.html`).
 
+`node apps/winchester-site/audit.cjs apps/winchester-site [/kk/]` — замер по правилам ui-ux-pro-max: контраст, размер кнопок,
+мелкий текст, горизонтальная прокрутка (телефон 390 px и компьютер 1440 px).
+
 ## Как попадает на сайт
 
 Владелец сам загружает файлы в `httpdocs` на hoster.kz (панель Plesk). Сессия отдаёт ему zip и список файлов.
