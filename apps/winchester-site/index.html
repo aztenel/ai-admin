@@ -26,7 +26,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/oswald-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/manrope-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/photos/hero-800.jpg" as="image" imagesrcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1600w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
+<link rel="preload" href="assets/photos/hero-800.jpg" as="image" imagesrcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1276w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
 <link rel="preconnect" href="https://ai-admin.azikonps4.workers.dev" crossorigin>
 <script type="application/ld+json">
 {
@@ -167,7 +167,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .hero-meta a:hover{color:var(--brass)}
 .hero-meta svg{width:18px;height:18px;color:var(--brass);flex:none}
 .hero-pic{position:relative;margin:0;background:var(--walnut)}
-.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 40%}
+/* кадр входа: вывеска слева вверху, дверь и столбы в середине — их и оставляем при обрезке */
+.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:20% 50%}
 /* Услуги и цены */
 .svc{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
 .svc-head{grid-column:1/5;align-self:start}
@@ -216,6 +217,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
+.m-pic{margin:0 0 clamp(32px,4vw,48px);aspect-ratio:16/7;overflow:hidden;background:var(--obsidian)}
+.m-pic img{width:100%;height:100%;object-fit:cover;object-position:50% 55%}
 .m-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px}
 .master{display:flex;flex-direction:column;align-items:flex-start;padding-top:24px;border-top:1px solid rgba(243,235,221,.2)}
 .av{position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;background:var(--burgundy);box-shadow:inset 0 0 0 1px rgba(201,166,107,.55);flex:none}
@@ -228,8 +231,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .m-note{margin-top:40px}
 /* Уход и обучение */
 .more{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px;align-items:center}
-.more-pic{grid-column:1/6;margin:0;aspect-ratio:925/817;overflow:hidden;background:var(--walnut)}
-.more-pic img{width:100%;height:100%;object-fit:cover}
+.more-pic{grid-column:1/6;margin:0;aspect-ratio:1/1;overflow:hidden;background:var(--walnut)}
+.more-pic img{width:100%;height:100%;object-fit:cover;object-position:42% 50%}
 .more-txt{grid-column:7/13}
 .blk+.blk{margin-top:44px;padding-top:44px;border-top:1px solid rgba(33,15,15,.2)}
 .blk .h2{font-size:clamp(1.7rem,3.2vw,2.6rem)}
@@ -292,6 +295,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .svc-book{display:none}
   .tog button{flex:1;padding:0 10px}
   .grp-pic{aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .m-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .m-list{grid-template-columns:minmax(0,1fr);gap:0}
   .master{display:grid;grid-template-columns:72px minmax(0,1fr) auto;column-gap:16px;align-items:center;padding:16px 0;border-top:1px solid rgba(243,235,221,.16)}
   .master:last-child{border-bottom:1px solid rgba(243,235,221,.16)}
@@ -358,7 +362,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     </p>
   </div>
   <figure class="hero-pic">
-    <img src="assets/photos/hero-800.jpg" srcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1600w" sizes="(max-width: 860px) 100vw, 1220px" width="1600" height="1067" alt="Кожаное кресло барбера" fetchpriority="high" decoding="async">
+    <img src="assets/photos/hero-800.jpg" srcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1276w" sizes="(max-width: 860px) 100vw, 1220px" width="1276" height="718" alt="Вход в Winchester: вывеска и полосатые столбы барбершопа" fetchpriority="high" decoding="async">
   </figure>
 </section>
 <section class="sec light" id="services" aria-labelledby="svc-h">
@@ -448,6 +452,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <h2 class="h2" id="m-h">Мастера</h2>
       <p class="lead">Выбери мастера — в онлайн-записи сразу видно его свободное время.</p>
     </div>
+    <figure class="m-pic opt"><img src="assets/photos/hall.jpg" width="1276" height="718" loading="lazy" decoding="async" alt="Зал Winchester: мастера за работой"></figure>
     <div class="m-list">
       <article class="master">
         <span class="av" data-l="Т"><img src="assets/photos/master-toni.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
@@ -480,7 +485,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 </section>
 <section class="sec light" id="care" aria-label="Средства для ухода и обучение">
   <div class="wrap more">
-    <figure class="more-pic"><img src="assets/photos/tools.jpg" width="925" height="817" loading="lazy" decoding="async" alt="Машинки для стрижки, ножницы и расчёска"></figure>
+    <figure class="more-pic"><img src="assets/photos/shelf.jpg" width="1276" height="718" loading="lazy" decoding="async" alt="Полки в зале: инструменты и средства для ухода"></figure>
     <div class="more-txt">
       <div class="blk">
         <h2 class="h2">Средства для ухода</h2>
@@ -539,6 +544,10 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   // долистали, Chrome отдаёт complete=true и naturalWidth=0 — по ним фото убиралось бы у всех.
   d.querySelectorAll('.av img').forEach(function(i){
     i.addEventListener('error',function(){if(i.parentNode)i.parentNode.removeChild(i);});
+  });
+  // Необязательное фото (кадр зала) не загружено на сайт — блок прячется, пустой рамки нет
+  d.querySelectorAll('.opt img').forEach(function(i){
+    i.addEventListener('error',function(){var f=i.parentNode;if(f)f.hidden=true;});
   });
   // Цены: барберы / шеф-барбер
   var tog=d.querySelectorAll('.tog button'), prices=d.querySelectorAll('.p[data-b]');

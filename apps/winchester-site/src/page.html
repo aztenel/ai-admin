@@ -30,7 +30,7 @@
 <link rel="preload" href="{{base}}assets/fonts/oswald-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{base}}assets/fonts/manrope-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 {{{preload_extra}}}
-<link rel="preload" href="{{base}}assets/photos/hero-800.jpg" as="image" imagesrcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1600w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
+<link rel="preload" href="{{base}}assets/photos/hero-800.jpg" as="image" imagesrcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1276w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
 <link rel="preconnect" href="https://ai-admin.azikonps4.workers.dev" crossorigin>
 <script type="application/ld+json">
 {{{jsonld}}}
@@ -134,7 +134,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .hero-meta a:hover{color:var(--brass)}
 .hero-meta svg{width:18px;height:18px;color:var(--brass);flex:none}
 .hero-pic{position:relative;margin:0;background:var(--walnut)}
-.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 40%}
+/* кадр входа: вывеска слева вверху, дверь и столбы в середине — их и оставляем при обрезке */
+.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:20% 50%}
 
 /* Услуги и цены */
 .svc{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
@@ -186,6 +187,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
+.m-pic{margin:0 0 clamp(32px,4vw,48px);aspect-ratio:16/7;overflow:hidden;background:var(--obsidian)}
+.m-pic img{width:100%;height:100%;object-fit:cover;object-position:50% 55%}
 .m-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px}
 .master{display:flex;flex-direction:column;align-items:flex-start;padding-top:24px;border-top:1px solid rgba(243,235,221,.2)}
 .av{position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;background:var(--burgundy);box-shadow:inset 0 0 0 1px rgba(201,166,107,.55);flex:none}
@@ -199,8 +202,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 
 /* Уход и обучение */
 .more{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px;align-items:center}
-.more-pic{grid-column:1/6;margin:0;aspect-ratio:925/817;overflow:hidden;background:var(--walnut)}
-.more-pic img{width:100%;height:100%;object-fit:cover}
+.more-pic{grid-column:1/6;margin:0;aspect-ratio:1/1;overflow:hidden;background:var(--walnut)}
+.more-pic img{width:100%;height:100%;object-fit:cover;object-position:42% 50%}
 .more-txt{grid-column:7/13}
 .blk+.blk{margin-top:44px;padding-top:44px;border-top:1px solid rgba(33,15,15,.2)}
 .blk .h2{font-size:clamp(1.7rem,3.2vw,2.6rem)}
@@ -269,6 +272,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .svc-book{display:none}
   .tog button{flex:1;padding:0 10px}
   .grp-pic{aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .m-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .m-list{grid-template-columns:minmax(0,1fr);gap:0}
   .master{display:grid;grid-template-columns:72px minmax(0,1fr) auto;column-gap:16px;align-items:center;padding:16px 0;border-top:1px solid rgba(243,235,221,.16)}
   .master:last-child{border-bottom:1px solid rgba(243,235,221,.16)}
@@ -332,7 +336,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   </div>
   <!-- sizes на компьютере — 1220px: фото обрезается по высоте экрана (object-fit: cover), и нужная ширина больше ширины колонки -->
   <figure class="hero-pic">
-    <img src="{{base}}assets/photos/hero-800.jpg" srcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1600w" sizes="(max-width: 860px) 100vw, 1220px" width="1600" height="1067" alt="{{alt_hero}}" fetchpriority="high" decoding="async">
+    <img src="{{base}}assets/photos/hero-800.jpg" srcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1276w" sizes="(max-width: 860px) 100vw, 1220px" width="1276" height="718" alt="{{alt_hero}}" fetchpriority="high" decoding="async">
   </figure>
 </section>
 
@@ -429,6 +433,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <h2 class="h2" id="m-h">{{m_h}}</h2>
       <p class="lead">{{m_lead}}</p>
     </div>
+    <!-- Кадр зала (люди) — из видео Winchester, в репозиторий не кладётся, только в zip. Нет файла — блок прячется. -->
+    <figure class="m-pic opt"><img src="{{base}}assets/photos/hall.jpg" width="1276" height="718" loading="lazy" decoding="async" alt="{{alt_hall}}"></figure>
     <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. Нет файла — первая буква имени. -->
     <div class="m-list">
       <article class="master">
@@ -463,7 +469,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 
 <section class="sec light" id="care" aria-label="{{more_label}}">
   <div class="wrap more">
-    <figure class="more-pic"><img src="{{base}}assets/photos/tools.jpg" width="925" height="817" loading="lazy" decoding="async" alt="{{alt_tools}}"></figure>
+    <figure class="more-pic"><img src="{{base}}assets/photos/shelf.jpg" width="1276" height="718" loading="lazy" decoding="async" alt="{{alt_shelf}}"></figure>
     <div class="more-txt">
       <div class="blk">
         <h2 class="h2">{{care_h}}</h2>
@@ -528,6 +534,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   // долистали, Chrome отдаёт complete=true и naturalWidth=0 — по ним фото убиралось бы у всех.
   d.querySelectorAll('.av img').forEach(function(i){
     i.addEventListener('error',function(){if(i.parentNode)i.parentNode.removeChild(i);});
+  });
+
+  // Необязательное фото (кадр зала) не загружено на сайт — блок прячется, пустой рамки нет
+  d.querySelectorAll('.opt img').forEach(function(i){
+    i.addEventListener('error',function(){var f=i.parentNode;if(f)f.hidden=true;});
   });
 
   // Цены: барберы / шеф-барбер
