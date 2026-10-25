@@ -1,0 +1,566 @@
+<!doctype html>
+<!-- Шаблон обеих страниц сайта (русской и казахской). Не открывать в браузере: собирается в index.html и kk/index.html
+     командой `node apps/winchester-site/build.mjs`. {{ключ}} — текст из словаря (экранируется), {{{ключ}}} — готовый HTML.
+     HTML-комментарии шаблона в готовые страницы не попадают. -->
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="canonical" href="{{canonical}}">
+<link rel="alternate" hreflang="ru" href="https://winchester.kz/">
+<link rel="alternate" hreflang="kk" href="https://winchester.kz/kk/">
+<link rel="alternate" hreflang="x-default" href="https://winchester.kz/">
+<meta name="theme-color" content="#210F0F">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="{{og_locale}}">
+<meta property="og:locale:alternate" content="{{og_locale_alt}}">
+<meta property="og:site_name" content="Winchester Barbershop">
+<meta property="og:title" content="{{og_title}}">
+<meta property="og:description" content="{{og_description}}">
+<meta property="og:url" content="{{canonical}}">
+<meta property="og:image" content="https://winchester.kz/og-image.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{og_image_alt}}">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="{{base}}favicon.svg" type="image/svg+xml">
+<link rel="preload" href="{{base}}assets/fonts/oswald-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{base}}assets/fonts/manrope-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+{{{preload_extra}}}
+<link rel="preload" href="{{base}}assets/photos/hero-800.jpg" as="image" imagesrcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1600w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
+<link rel="preconnect" href="https://ai-admin.azikonps4.workers.dev" crossorigin>
+<script type="application/ld+json">
+{{{jsonld}}}
+</script>
+<style>
+/* Шрифты лежат на сайте, внешних нет. Казахские буквы: в Oswald — из подмножества cyrillic-ext; в Manrope их нет совсем
+   (ә ғ қ ң ұ), поэтому только эти буквы берутся из Inter (тоже OFL), остальные — свои у Manrope. Rye — только латиница. */
+@font-face{font-family:Oswald;font-weight:500 600;font-display:swap;src:url({{base}}assets/fonts/oswald-cyrillic-600-normal.woff2) format("woff2");unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:Oswald;font-weight:500 600;font-display:swap;src:url({{base}}assets/fonts/oswald-cyrillic-ext-600-normal.woff2) format("woff2");unicode-range:U+0460-048F,U+0492-04AF,U+04B2-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F}
+@font-face{font-family:Oswald;font-weight:500 600;font-display:swap;src:url({{base}}assets/fonts/oswald-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:Rye;font-weight:400;font-display:swap;src:url({{base}}assets/fonts/rye-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:Manrope;font-weight:200 800;font-display:swap;src:url({{base}}assets/fonts/manrope-cyrillic-wght-normal.woff2) format("woff2-variations");unicode-range:U+0301,U+0400-045F,U+0490-0491,U+2116}
+@font-face{font-family:Manrope;font-weight:200 800;font-display:swap;src:url({{base}}assets/fonts/manrope-cyrillic-ext-wght-normal.woff2) format("woff2-variations");unicode-range:U+04AE-04AF,U+04BA-04BB,U+04E8-04E9}
+@font-face{font-family:Manrope;font-weight:200 800;font-display:swap;src:url({{base}}assets/fonts/inter-kazakh-ext-wght-normal.woff2) format("woff2-variations");unicode-range:U+0492-0493,U+049A-049B,U+04A2-04A3,U+04D8-04D9}
+@font-face{font-family:Manrope;font-weight:200 800;font-display:swap;src:url({{base}}assets/fonts/inter-kazakh-wght-normal.woff2) format("woff2-variations");unicode-range:U+04B0-04B1}
+@font-face{font-family:Manrope;font-weight:200 800;font-display:swap;src:url({{base}}assets/fonts/manrope-latin-wght-normal.woff2) format("woff2-variations");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
+/* Имена переменных читает форма записи (assets/booking.css): --obsidian --walnut --burgundy --ivory --brass --taupe --serif --sans --rye */
+:root{
+  --obsidian:#210F0F; --walnut:#321616; --burgundy:#5A1E1E; --ivory:#F3EBDD; --brass:#C9A66B; --taupe:#B7AA98;
+  --ink-soft:#5f5448; /* второстепенный текст на кремовом, 6,6:1 */
+  --night:#170a0a;
+  --serif:Oswald,"Arial Narrow",Impact,sans-serif;
+  --rye:Rye,Georgia,serif;
+  --sans:Manrope,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --gutter:clamp(20px,5vw,72px);
+  --max:1320px;
+  --hdr:68px;
+  --dock-h:76px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--hdr) + 12px);-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--obsidian);color:var(--ivory);font:400 16px/1.6 var(--sans);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+img,svg{display:block;max-width:100%}
+a{color:inherit}
+h1,h2,h3,p,ul,ol,figure,dl,dd{margin:0}
+ul,ol{padding:0;list-style:none}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--brass);outline-offset:3px;border-radius:2px}
+.light :focus-visible{outline-color:var(--burgundy)}
+.skip{position:absolute;left:12px;top:-60px;background:var(--brass);color:var(--obsidian);padding:12px 16px;z-index:100;font-weight:700;text-decoration:none}
+.skip:focus{top:12px}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gutter)}
+.sec{padding:clamp(64px,9vw,128px) 0}
+.light{background:var(--ivory);color:var(--obsidian)}
+
+/* Заголовки разделов — как надпись на кольце логотипа: Oswald заглавными. Всё остальное — обычными буквами. */
+h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-spacing:.01em;text-wrap:balance}
+.h2{font-size:clamp(2rem,4.6vw,3.6rem);line-height:1.08}
+.nw{white-space:nowrap}
+.lead{margin-top:18px;font-size:clamp(1.02rem,1.4vw,1.15rem);line-height:1.55;color:var(--taupe);max-width:44ch}
+.light .lead{color:var(--ink-soft)}
+.note{font-size:15px;color:var(--taupe);max-width:56ch}
+.light .note{color:var(--ink-soft)}
+
+/* Кнопки и ссылки */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 26px;border:1px solid transparent;border-radius:2px;font:700 16px/1.2 var(--sans);text-decoration:none;cursor:pointer;transition:background-color .2s,color .2s,border-color .2s}
+.btn svg{width:20px;height:20px;flex:none}
+.btn-brass{background:var(--brass);color:var(--obsidian)}
+.btn-brass:hover{background:var(--ivory)}
+.btn-line{border-color:rgba(243,235,221,.45);color:var(--ivory)}
+.btn-line:hover{border-color:var(--brass);color:var(--brass)}
+.btn-dark{background:var(--obsidian);color:var(--ivory)}
+.btn-dark:hover{background:var(--burgundy)}
+.lnk{display:inline-flex;align-items:center;min-height:44px;color:var(--brass);font-weight:600;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px;transition:color .2s}
+.lnk:hover{color:var(--ivory)}
+.light .lnk{color:var(--burgundy)}
+.light .lnk:hover{color:var(--obsidian)}
+
+/* Шапка */
+.hdr{position:fixed;inset:0 0 auto 0;z-index:50;border-bottom:1px solid transparent;transition:border-color .3s}
+/* фон — на ::before: backdrop-filter у самой .hdr запер бы в её рамке выезжающее меню телефона */
+.hdr::before{content:"";position:absolute;inset:0;z-index:-1;background:rgba(33,15,15,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;transition:opacity .3s}
+.hdr.solid::before,.hdr.menu-open::before{opacity:1}
+.hdr.solid{border-color:rgba(243,235,221,.1)}
+.hdr .wrap{display:flex;align-items:center;gap:clamp(16px,2.4vw,36px);height:var(--hdr)}
+.brand{margin-right:auto;display:flex;align-items:center;min-height:44px}
+.brand img{height:46px;width:auto}
+.nav{display:flex;align-items:center;gap:clamp(18px,2.4vw,36px)}
+.nav a:not(.btn),.lng{display:inline-flex;align-items:center;min-height:44px;font:600 15px/1 var(--sans);text-decoration:none;color:var(--taupe);transition:color .2s}
+.nav a:not(.btn):hover,.lng:hover{color:var(--ivory)}
+.nav .btn{min-height:44px;padding:0 20px;font-size:15px}
+.lng{color:var(--ivory);text-decoration:underline;text-decoration-color:rgba(201,166,107,.6);text-underline-offset:5px}
+.burger{display:none;width:44px;height:44px;background:none;border:0;position:relative;flex:none}
+.burger i{position:absolute;left:11px;right:11px;height:1.5px;background:var(--ivory);transition:transform .3s,top .3s,opacity .2s}
+.burger i:nth-child(1){top:16px}.burger i:nth-child(2){top:21px}.burger i:nth-child(3){top:26px}
+.burger[aria-expanded=true] i:nth-child(1){top:21px;transform:rotate(45deg)}
+.burger[aria-expanded=true] i:nth-child(2){opacity:0}
+.burger[aria-expanded=true] i:nth-child(3){top:21px;transform:rotate(-45deg)}
+
+/* Первый экран: текст слева, фото справа до края окна */
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:min(100svh,880px);padding-top:var(--hdr)}
+.hero-txt{display:flex;flex-direction:column;justify-content:center;padding:clamp(40px,7vh,88px) clamp(24px,4vw,64px) clamp(40px,7vh,88px) max(var(--gutter),calc((100vw - var(--max)) / 2 + var(--gutter)))}
+.hero h1{font-size:clamp(2.5rem,5vw,4.9rem);line-height:1.08} /* меньше — «й» и «Қ» задевают соседнюю строку */
+/* казахские слова длиннее: заголовок мельче, чтобы на компьютере был в 3–4 строки, а не в 5 */
+@media (min-width:861px){html[lang=kk] .hero h1{font-size:clamp(2.3rem,4.1vw,4rem)}}
+.hero-sub{margin-top:24px;font-size:clamp(1.05rem,1.5vw,1.25rem);line-height:1.5;color:var(--taupe);max-width:36ch}
+.hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:4px 28px;margin-top:28px}
+.hero-meta a{display:inline-flex;align-items:center;gap:10px;min-height:44px;color:var(--ivory);font-weight:600;text-decoration:none}
+.hero-meta a:hover{color:var(--brass)}
+.hero-meta svg{width:18px;height:18px;color:var(--brass);flex:none}
+.hero-pic{position:relative;margin:0;background:var(--walnut)}
+.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 40%}
+
+/* Услуги и цены */
+.svc{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
+.svc-head{grid-column:1/5;align-self:start}
+@media (min-width:1025px) and (min-height:700px){.svc-head{position:sticky;top:calc(var(--hdr) + 40px)}}
+.tog{display:inline-flex;margin-top:28px;padding:4px;gap:4px;border:1px solid rgba(33,15,15,.3);border-radius:2px}
+.tog button{min-height:44px;padding:0 18px;background:none;border:0;border-radius:1px;font:600 15px/1 var(--sans);color:var(--ink-soft);transition:background-color .2s,color .2s}
+.tog button[aria-pressed=true]{background:var(--obsidian);color:var(--ivory)}
+.tog button:focus-visible{outline-offset:0}
+.svc-book{display:flex;width:fit-content;margin-top:20px}
+.menu{grid-column:6/13}
+.grp+.grp{margin-top:56px}
+.grp-pic{margin-bottom:24px;aspect-ratio:16/7;overflow:hidden;background:var(--walnut)}
+.grp-pic img{width:100%;height:100%;object-fit:cover}
+.grp h3{font:500 clamp(1.5rem,2.4vw,1.9rem)/1.15 var(--serif);letter-spacing:.01em;padding-bottom:12px;border-bottom:1.5px solid var(--obsidian)}
+.row,.row .line{display:flex;align-items:baseline;gap:12px}
+.row{padding:16px 0;border-bottom:1px solid rgba(33,15,15,.16)}
+.row.row-2{display:block}
+.row-2 small{display:block;margin-top:4px;font-size:14px;line-height:1.45;color:var(--ink-soft)}
+.row .n{flex:0 1 auto;font-weight:600;font-size:17px;line-height:1.35}
+.row a.n{display:inline-block;padding:12px 0;margin:-12px 0;text-decoration:underline;text-decoration-color:rgba(90,30,30,.45);text-underline-offset:4px} /* область касания 44 px, строка не выше */
+.row a.n:hover{color:var(--burgundy)}
+.row .dots{flex:1;min-width:16px;border-bottom:1px dotted rgba(33,15,15,.42);transform:translateY(-5px)}
+.row .p{flex:none;font:500 1.25rem/1 var(--serif);letter-spacing:.02em;white-space:nowrap;font-variant-numeric:tabular-nums}
+.row .p.q{font:500 14px/1.3 var(--sans);color:var(--ink-soft)}
+.svc-cta{margin-top:44px}
+.svc-cta .acts{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;margin-top:18px}
+
+/* Premium */
+.prem{background:var(--burgundy)}
+.prem .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px;align-items:center}
+.prem-l{grid-column:1/7}
+.prem-r{grid-column:8/13}
+/* Название комплекса — шрифтом надписи логотипа и с той же тенью */
+.prem h2{font:400 clamp(3.4rem,7.4vw,6.2rem)/1 var(--rye);letter-spacing:.01em;color:var(--ivory);text-shadow:.05em .05em 0 var(--obsidian)}
+.prem .lead{color:#e8d9c8}
+.prices{display:flex;flex-wrap:wrap;gap:16px clamp(28px,5vw,56px);margin-top:30px}
+.prices p{font-size:15px;color:#e8d9c8}
+.prices b{display:block;font:500 clamp(1.8rem,3vw,2.4rem)/1.15 var(--serif);letter-spacing:.02em;color:var(--ivory)}
+.prem .btn{margin-top:32px}
+.prem .btn-brass:hover{background:var(--ivory)}
+.incl-t{font-size:15px;color:#e8d9c8;margin-bottom:12px}
+.incl{border-top:1px solid rgba(243,235,221,.3)}
+.incl li{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid rgba(243,235,221,.3);font:500 clamp(1.3rem,2vw,1.6rem)/1.2 var(--serif)}
+/* квадрат — как разделители в кольце логотипа */
+.incl li::before{content:"";width:8px;height:8px;background:var(--brass);transform:rotate(45deg);flex:none}
+
+/* Мастера */
+.masters{background:var(--walnut)}
+.m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
+.m-head .lead{margin-top:0}
+.m-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px}
+.master{display:flex;flex-direction:column;align-items:flex-start;padding-top:24px;border-top:1px solid rgba(243,235,221,.2)}
+.av{position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;background:var(--burgundy);box-shadow:inset 0 0 0 1px rgba(201,166,107,.55);flex:none}
+/* нет фото (или не загрузилось) — первая буква имени, как в форме записи */
+.av::before{content:attr(data-l);position:absolute;inset:0;display:grid;place-items:center;font:600 2.6rem/1 var(--serif);color:var(--brass)}
+.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(1) contrast(1.05)}
+.master h3{margin-top:20px;font:500 clamp(1.6rem,2.2vw,2rem)/1.1 var(--serif);letter-spacing:.01em}
+.master p{margin-top:4px;font-size:15px;color:var(--taupe)}
+.master .btn{margin-top:18px;min-height:44px;padding:0 18px;font-size:15px}
+.m-note{margin-top:40px}
+
+/* Уход и обучение */
+.more{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px;align-items:center}
+.more-pic{grid-column:1/6;margin:0;aspect-ratio:925/817;overflow:hidden;background:var(--walnut)}
+.more-pic img{width:100%;height:100%;object-fit:cover}
+.more-txt{grid-column:7/13}
+.blk+.blk{margin-top:44px;padding-top:44px;border-top:1px solid rgba(33,15,15,.2)}
+.blk .h2{font-size:clamp(1.7rem,3.2vw,2.6rem)}
+.blk p{margin-top:14px;color:var(--ink-soft);max-width:46ch}
+.blk .btn{margin-top:24px}
+
+/* Контакты */
+.cont .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
+.cont-l{grid-column:1/6}
+.cont-l .btn{margin-top:32px}
+.cont-l .wa{margin-top:10px}
+.cont dl{grid-column:7/13;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 24px;align-content:start}
+.cont dt{font-size:14px;color:var(--taupe);margin-bottom:4px}
+.cont dd{font-size:17px;font-weight:600;line-height:1.45}
+.cont dd a{display:inline-flex;align-items:center;min-height:44px;text-decoration:none}
+.cont dd a:hover{color:var(--brass)}
+.cont dd .lnk{text-decoration:underline}
+
+/* Подвал */
+.ftr{background:var(--night);border-top:1px solid rgba(243,235,221,.08);padding:24px 0}
+.ftr .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:4px 28px;font-size:14px;color:var(--taupe)}
+.ftr .wrap>:first-child{margin-right:auto}
+.ftr a{display:inline-flex;align-items:center;min-height:44px;text-decoration:none}
+.ftr a:hover{color:var(--brass)}
+
+/* Нижняя панель на телефоне */
+.dock{display:none}
+
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+}
+
+@media (max-width:1180px){
+  .m-list{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:40px}
+}
+@media (max-width:1024px){
+  .svc-head,.menu{grid-column:1/13}
+  .prem-l,.prem-r{grid-column:1/13}
+  .more-pic{grid-column:1/13;aspect-ratio:16/9}
+  .more-txt{grid-column:1/13}
+  .cont-l,.cont dl{grid-column:1/13}
+}
+
+/* Телефон */
+@media (max-width:860px){
+  :root{--gutter:20px;--hdr:64px}
+  body{padding-bottom:calc(var(--dock-h) + env(safe-area-inset-bottom))}
+  .brand img{height:40px}
+  .burger{display:block}
+  .hdr .wrap{gap:8px}
+  .nav{position:fixed;inset:var(--hdr) 0 0 0;background:var(--obsidian);flex-direction:column;align-items:stretch;justify-content:center;gap:0;padding:24px var(--gutter) calc(32px + env(safe-area-inset-bottom));transform:translateX(100%);visibility:hidden;transition:transform .3s cubic-bezier(.2,.7,.2,1),visibility 0s .3s;overflow:auto}
+  .nav.open{transform:none;visibility:visible;transition:transform .3s cubic-bezier(.2,.7,.2,1)}
+  .nav a:not(.btn){display:flex;font:500 clamp(2rem,9vw,2.6rem)/1.1 var(--serif);color:var(--ivory);padding:14px 0;border-bottom:1px solid rgba(243,235,221,.12)}
+  .nav .btn{margin-top:28px;min-height:56px;font-size:16px}
+  .lng{font-size:15px}
+  .hero{display:flex;flex-direction:column;min-height:0}
+  .hero-pic{order:-1;height:clamp(210px,36svh,340px)}
+  .hero-txt{padding:32px var(--gutter) 40px}
+  .hero h1{font-size:clamp(2.3rem,10.5vw,3.4rem);max-width:none}
+  .hero-sub{margin-top:16px}
+  .hero-cta{margin-top:24px;flex-direction:column}
+  .hero-cta .btn{width:100%}
+  .hero-meta{margin-top:18px;flex-direction:column}
+  .tog{display:flex}
+  .svc-book{display:none}
+  .tog button{flex:1;padding:0 10px}
+  .grp-pic{aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .m-list{grid-template-columns:minmax(0,1fr);gap:0}
+  .master{display:grid;grid-template-columns:72px minmax(0,1fr) auto;column-gap:16px;align-items:center;padding:16px 0;border-top:1px solid rgba(243,235,221,.16)}
+  .master:last-child{border-bottom:1px solid rgba(243,235,221,.16)}
+  .av{width:72px;height:72px}
+  .av::before{font-size:1.8rem}
+  .master h3{margin-top:0;font-size:1.6rem}
+  .master p{margin-top:2px}
+  .master .btn{margin-top:0;padding:0 16px}
+  .m-note{margin-top:28px}
+  .more-pic{margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .cont dl{grid-template-columns:minmax(0,1fr);gap:20px}
+  .cont-l .btn{width:100%}
+  .dock{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;gap:10px;padding:12px var(--gutter) calc(12px + env(safe-area-inset-bottom));background:rgba(33,15,15,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid rgba(243,235,221,.14);transform:translateY(110%);transition:transform .3s}
+  .dock .btn{flex:1;min-height:52px}
+  .dock .btn-line{flex:none;width:52px;padding:0}
+  body.dock-on .dock{transform:none}
+  body.menu-lock{overflow:hidden}
+}
+@media (max-width:400px){
+  .master{grid-template-columns:60px minmax(0,1fr) auto;column-gap:12px}
+  .av{width:60px;height:60px}
+  .master h3{font-size:1.4rem}
+  .row .n{font-size:16px}
+  .row .p{font-size:1.1rem}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#services">{{skip}}</a>
+
+<!-- Спрайт значков. #emblem, #cal и #wa берёт и форма записи — не удалять и не переименовывать. -->
+{{{sprite}}}
+
+<header class="hdr" id="hdr">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="{{brand_label}}"><img src="{{base}}logo.svg" alt="Winchester Barbershop" width="122" height="46"></a>
+    <nav class="nav" id="nav" aria-label="{{nav_label}}">
+      <a href="#services">{{nav_services}}</a>
+      <a href="#masters">{{nav_masters}}</a>
+      <a href="#contacts">{{nav_contacts}}</a>
+      <a class="btn btn-brass" data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608">{{book_short}}</a>
+    </nav>
+    <a class="lng" href="{{alt_href}}" hreflang="{{alt_lang}}" lang="{{alt_lang}}">{{alt_name}}</a>
+    <button class="burger" id="burger" type="button" aria-expanded="false" aria-controls="nav" aria-label="{{menu_open}}" data-open="{{menu_open}}" data-close="{{menu_close}}"><i></i><i></i><i></i></button>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero" aria-labelledby="h1">
+  <div class="hero-txt">
+    <h1 id="h1">{{{h1}}}</h1>
+    <p class="hero-sub">{{{hero_sub}}}</p>
+    <div class="hero-cta">
+      <a class="btn btn-brass" data-nodock data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{book_online}}</a>
+      <a class="btn btn-line" data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#wa"/></svg>{{write_wa}}</a>
+    </div>
+    <p class="hero-meta">
+      <a href="tel:+77005050503"><svg aria-hidden="true"><use href="#tel"/></svg>+7&nbsp;700&nbsp;505&nbsp;05&nbsp;03</a>
+      <a href="https://2gis.kz/astana/firm/70000001038239111" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#pin"/></svg>{{route}}</a>
+    </p>
+  </div>
+  <!-- sizes на компьютере — 1220px: фото обрезается по высоте экрана (object-fit: cover), и нужная ширина больше ширины колонки -->
+  <figure class="hero-pic">
+    <img src="{{base}}assets/photos/hero-800.jpg" srcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1600w" sizes="(max-width: 860px) 100vw, 1220px" width="1600" height="1067" alt="{{alt_hero}}" fetchpriority="high" decoding="async">
+  </figure>
+</section>
+
+<section class="sec light" id="services" aria-labelledby="svc-h">
+  <div class="wrap svc">
+    <div class="svc-head">
+      <h2 class="h2" id="svc-h">{{svc_h}}</h2>
+      <p class="lead">{{svc_lead}}</p>
+      <div class="tog" role="group" aria-label="{{tier_label}}">
+        <button type="button" data-tier="b" aria-pressed="true">{{tier_b}}</button>
+        <button type="button" data-tier="c" aria-pressed="false">{{tier_c}}</button>
+      </div>
+      <!-- на компьютере колонка с заголовком едет вместе с прайсом — запись под рукой; на телефоне для этого нижняя панель -->
+      <a class="btn btn-dark svc-book" data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{book_online}}</a>
+    </div>
+
+    <div class="menu">
+      <div class="grp">
+        <figure class="grp-pic"><img src="{{base}}assets/photos/cut.jpg" width="1400" height="770" loading="lazy" decoding="async" alt="{{alt_cut}}"></figure>
+        <h3>{{g_cuts}}</h3>
+        <ul>
+          <li class="row"><span class="n">{{s_men}}</span><span class="dots"></span><span class="p" data-b="7 000 ₸" data-c="9 000 ₸">7 000 ₸</span></li>
+          <li class="row"><span class="n">{{s_kid}}</span><span class="dots"></span><span class="p" data-b="5 000 ₸" data-c="6 000 ₸">5 000 ₸</span></li>
+          <li class="row"><span class="n">{{s_edge}}</span><span class="dots"></span><span class="p" data-b="2 500 ₸" data-c="2 500 ₸">2 500 ₸</span></li>
+          <li class="row"><span class="n">Down Perm</span><span class="dots"></span><span class="p" data-b="10 000 ₸" data-c="10 000 ₸">10 000 ₸</span></li>
+          <!-- У Тони химической завивки нет: data-c — прочерк -->
+          <li class="row"><span class="n">{{s_perm}}</span><span class="dots"></span><span class="p" data-b="20 000 ₸" data-c="—">20 000 ₸</span></li>
+        </ul>
+      </div>
+      <div class="grp">
+        <figure class="grp-pic"><img src="{{base}}assets/photos/beard.jpg" width="1400" height="788" loading="lazy" decoding="async" alt="{{alt_beard}}"></figure>
+        <h3>{{g_beard}}</h3>
+        <ul>
+          <li class="row"><span class="n">{{s_beard}}</span><span class="dots"></span><span class="p" data-b="4 500 ₸" data-c="5 000 ₸">4 500 ₸</span></li>
+          <li class="row"><span class="n">{{s_beard_cam}}</span><span class="dots"></span><span class="p" data-b="4 000 ₸" data-c="4 000 ₸">4 000 ₸</span></li>
+          <li class="row"><span class="n">{{s_grey_cam}}</span><span class="dots"></span><span class="p" data-b="5 500 ₸" data-c="5 500 ₸">5 500 ₸</span></li>
+        </ul>
+      </div>
+      <div class="grp">
+        <h3>{{g_sets}}</h3>
+        <ul>
+          <li class="row"><a class="n" data-book="s:отец-и-сын" data-wa="{{wa_father}}" href="https://wa.me/77066940608">{{s_father}}</a><span class="dots"></span><span class="p" data-b="10 000 ₸" data-c="14 000 ₸">10 000 ₸</span></li>
+          <li class="row row-2"><span class="line"><a class="n" href="#premium">Premium</a><span class="dots"></span><span class="p" data-b="12 000 ₸" data-c="13 000 ₸">12 000 ₸</span></span><small>{{s_premium_note}}</small></li>
+        </ul>
+      </div>
+      <div class="grp">
+        <h3>{{g_extra}}</h3>
+        <ul>
+          <li class="row"><span class="n">{{s_spa}}</span><span class="dots"></span><span class="p">4 000 ₸</span></li>
+          <li class="row"><span class="n">{{s_wax}}</span><span class="dots"></span><span class="p">1 500 ₸</span></li>
+          <li class="row"><span class="n">{{s_clay}}</span><span class="dots"></span><span class="p">2 000 ₸</span></li>
+          <li class="row"><span class="n">{{s_black}}</span><span class="dots"></span><span class="p">2 000 ₸</span></li>
+          <!-- Перкуссионный массаж: цену владелец не подтвердил (в источнике строка обрезана) — до подтверждения без цены -->
+          <li class="row"><span class="n">{{s_massage}}</span><span class="dots"></span><span class="p q">{{price_ask}}</span></li>
+        </ul>
+      </div>
+      <div class="svc-cta">
+        <p class="note">{{svc_help}}</p>
+        <div class="acts">
+          <a class="btn btn-dark" data-wa="{{wa_help}}" href="https://wa.me/77066940608">{{help_btn}}</a>
+          <a class="lnk" data-wa="{{wa_move}}" href="https://wa.me/77066940608">{{move_link}}</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec prem" id="premium" aria-labelledby="prem-h">
+  <div class="wrap">
+    <div class="prem-l">
+      <h2 id="prem-h">Premium</h2>
+      <p class="lead">{{prem_lead}}</p>
+      <div class="prices">
+        <p>{{prem_b}}<b>12 000 ₸</b></p>
+        <p>{{prem_c}}<b>13 000 ₸</b></p>
+      </div>
+      <a class="btn btn-brass" data-book="s:premium" data-wa="{{wa_premium}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{prem_btn}}</a>
+    </div>
+    <div class="prem-r">
+      <p class="incl-t" id="incl-t">{{incl_t}}</p>
+      <ul class="incl" aria-labelledby="incl-t">
+        <li>{{incl_1}}</li>
+        <li>{{incl_2}}</li>
+        <li>{{incl_3}}</li>
+        <li>{{incl_4}}</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec masters" id="masters" aria-labelledby="m-h">
+  <div class="wrap">
+    <div class="m-head">
+      <h2 class="h2" id="m-h">{{m_h}}</h2>
+      <p class="lead">{{m_lead}}</p>
+    </div>
+    <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. Нет файла — первая буква имени. -->
+    <div class="m-list">
+      <article class="master">
+        <span class="av" data-l="{{toni_l}}"><img src="{{base}}assets/photos/master-toni.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <div><h3>{{toni}}</h3><p>{{role_chef}}</p></div>
+        <a class="btn btn-brass" data-book="m:тони" data-wa="{{wa_toni}}" href="https://wa.me/77066940608" aria-label="{{book_toni}}">{{book_short}}</a>
+      </article>
+      <article class="master">
+        <span class="av" data-l="{{aidos_l}}"><img src="{{base}}assets/photos/master-aidos.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <div><h3>{{aidos}}</h3><p>{{role_barber}}</p></div>
+        <a class="btn btn-line" data-book="m:айдос" data-wa="{{wa_aidos}}" href="https://wa.me/77066940608" aria-label="{{book_aidos}}">{{book_short}}</a>
+      </article>
+      <article class="master">
+        <span class="av" data-l="{{aidyn_l}}"><img src="{{base}}assets/photos/master-aidyn.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <div><h3>{{aidyn}}</h3><p>{{role_barber}}</p></div>
+        <a class="btn btn-line" data-book="m:айдын" data-wa="{{wa_aidyn}}" href="https://wa.me/77066940608" aria-label="{{book_aidyn}}">{{book_short}}</a>
+      </article>
+      <article class="master">
+        <span class="av" data-l="{{alisher_l}}"><img src="{{base}}assets/photos/master-alisher.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <div><h3>{{alisher}}</h3><p>{{role_barber}}</p></div>
+        <a class="btn btn-line" data-book="m:алишер" data-wa="{{wa_alisher}}" href="https://wa.me/77066940608" aria-label="{{book_alisher}}">{{book_short}}</a>
+      </article>
+      <article class="master">
+        <span class="av" data-l="{{ruslan_l}}"><img src="{{base}}assets/photos/master-ruslan.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <div><h3>{{ruslan}}</h3><p>{{role_barber}}</p></div>
+        <a class="btn btn-line" data-book="m:руслан" data-wa="{{wa_ruslan}}" href="https://wa.me/77066940608" aria-label="{{book_ruslan}}">{{book_short}}</a>
+      </article>
+    </div>
+    <p class="note m-note">{{m_note}}</p>
+  </div>
+</section>
+
+<section class="sec light" id="care" aria-label="{{more_label}}">
+  <div class="wrap more">
+    <figure class="more-pic"><img src="{{base}}assets/photos/tools.jpg" width="925" height="817" loading="lazy" decoding="async" alt="{{alt_tools}}"></figure>
+    <div class="more-txt">
+      <div class="blk">
+        <h2 class="h2">{{care_h}}</h2>
+        <p>{{care_p}}</p>
+        <a class="btn btn-dark" data-wa="{{wa_care}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#wa"/></svg>{{care_btn}}</a>
+      </div>
+      <div class="blk" id="training">
+        <h2 class="h2">{{train_h}}</h2>
+        <p>{{train_p}}</p>
+        <a class="btn btn-dark" data-wa="{{wa_train}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#wa"/></svg>{{train_btn}}</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec cont" id="contacts" aria-labelledby="c-h">
+  <div class="wrap">
+    <div class="cont-l" data-nodock>
+      <h2 class="h2" id="c-h">{{c_h}}</h2>
+      <p class="lead">{{c_lead}}</p>
+      <a class="btn btn-brass" data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{book_online}}</a>
+      <p class="wa"><a class="lnk" data-wa="{{wa_book}}" href="https://wa.me/77066940608">{{write_wa}}</a></p>
+    </div>
+    <dl>
+      <div><dt>{{c_addr}}</dt><dd>{{c_addr_v}}<br><a class="lnk" href="https://2gis.kz/astana/firm/70000001038239111" target="_blank" rel="noopener">{{c_2gis}}</a></dd></div>
+      <div><dt>{{c_hours}}</dt><dd>{{c_hours_v}}</dd></div>
+      <div><dt>{{c_phone}}</dt><dd><a href="tel:+77005050503">+7&nbsp;700&nbsp;505&nbsp;05&nbsp;03</a></dd></div>
+      <div><dt>{{c_wa}}</dt><dd><a data-wa="{{wa_book}}" href="https://wa.me/77066940608">+7&nbsp;706&nbsp;694&nbsp;06&nbsp;08</a></dd></div>
+      <div><dt>Instagram</dt><dd><a href="https://instagram.com/barbershop.winchester" target="_blank" rel="noopener">@barbershop.winchester</a></dd></div>
+      <div><dt>{{c_mail}}</dt><dd><a href="mailto:info@winchester.kz">info@winchester.kz</a></dd></div>
+      <div><dt>{{c_reviews}}</dt><dd><a class="lnk" href="https://2gis.kz/astana/firm/70000001038239111/tab/reviews" target="_blank" rel="noopener">{{c_reviews_v}}</a></dd></div>
+    </dl>
+  </div>
+</section>
+</main>
+
+<footer class="ftr">
+  <div class="wrap">
+    <p>© 2019–2026 Winchester Barbershop. {{owner}} ИП A.M.K</p>
+    <a href="{{base}}privacy.html">{{privacy}}</a>
+    <a href="{{alt_href}}" hreflang="{{alt_lang}}" lang="{{alt_lang}}">{{alt_name}}</a>
+  </div>
+</footer>
+
+<div class="dock" id="dock">
+  <a class="btn btn-brass" data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{book_short}}</a>
+  <a class="btn btn-line" href="tel:+77005050503" aria-label="{{call}}"><svg aria-hidden="true"><use href="#tel"/></svg></a>
+</div>
+
+<script>
+(function(){
+  var NUM='77066940608', d=document;
+  d.documentElement.classList.add('js');
+
+  // Ссылки WhatsApp с готовым текстом (только текст из data-wa — без дат, времени и личных данных)
+  d.querySelectorAll('[data-wa]').forEach(function(a){
+    a.href='https://wa.me/'+NUM+'?text='+encodeURIComponent(a.getAttribute('data-wa'));
+    if(a.host==='wa.me'){a.target='_blank';a.rel='noopener';}
+  });
+
+  // Фото мастера нет на сайте — остаётся буква имени. Только по ошибке загрузки: у ленивой картинки, до которой ещё не
+  // долистали, Chrome отдаёт complete=true и naturalWidth=0 — по ним фото убиралось бы у всех.
+  d.querySelectorAll('.av img').forEach(function(i){
+    i.addEventListener('error',function(){if(i.parentNode)i.parentNode.removeChild(i);});
+  });
+
+  // Цены: барберы / шеф-барбер
+  var tog=d.querySelectorAll('.tog button'), prices=d.querySelectorAll('.p[data-b]');
+  tog.forEach(function(b){b.addEventListener('click',function(){
+    var t=b.getAttribute('data-tier');
+    tog.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
+    prices.forEach(function(p){p.textContent=p.getAttribute('data-'+t);});
+  });});
+
+  // Шапка и меню телефона
+  var hdr=d.getElementById('hdr'), nav=d.getElementById('nav'), burger=d.getElementById('burger');
+  function onScroll(){hdr.classList.toggle('solid',window.scrollY>24);}
+  onScroll();addEventListener('scroll',onScroll,{passive:true});
+  function setMenu(o){
+    nav.classList.toggle('open',o);burger.setAttribute('aria-expanded',String(o));
+    burger.setAttribute('aria-label',burger.getAttribute(o?'data-close':'data-open'));
+    hdr.classList.toggle('menu-open',o);d.body.classList.toggle('menu-lock',o);
+  }
+  burger.addEventListener('click',function(){setMenu(!nav.classList.contains('open'));});
+  nav.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){setMenu(false);});});
+  addEventListener('keydown',function(e){if(e.key==='Escape'&&nav.classList.contains('open')){setMenu(false);burger.focus();}});
+
+  // Нижняя панель телефона прячется, пока на экране другая кнопка записи (первый экран, контакты)
+  var vis=new Set();
+  function dock(){d.body.classList.toggle('dock-on',vis.size===0&&!nav.classList.contains('open'));}
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){e.isIntersecting?vis.add(e.target):vis.delete(e.target);});dock();});
+    d.querySelectorAll('[data-nodock]').forEach(function(el){io.observe(el);});
+  } else d.body.classList.add('dock-on');
+  burger.addEventListener('click',function(){setTimeout(dock,0);});
+})();
+</script>
+<script src="{{base}}assets/booking.js" data-api="https://ai-admin.azikonps4.workers.dev" data-client="winchester" data-privacy="{{base}}privacy.html" defer></script>
+</body>
+</html>

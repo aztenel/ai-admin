@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://winchester.kz/</loc>
-    <lastmod>2026-10-22</lastmod>
+    <lastmod>2026-10-24</lastmod>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://winchester.kz/"/>
+    <xhtml:link rel="alternate" hreflang="kk" href="https://winchester.kz/kk/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://winchester.kz/"/>
+  </url>
+  <url>
+    <loc>https://winchester.kz/kk/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://winchester.kz/"/>
+    <xhtml:link rel="alternate" hreflang="kk" href="https://winchester.kz/kk/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://winchester.kz/"/>
   </url>
   <url>
     <loc>https://winchester.kz/privacy.html</loc>

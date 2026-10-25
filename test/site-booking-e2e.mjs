@@ -4,7 +4,8 @@
 // Путь — как онлайн-запись Altegio (решение владельца 22.10.2026): мастер (фото, должность, звёзды и отзывы, «Любой специалист») →
 // услуги (категории, мультивыбор, «ещё») → календарь месяца и время → детали записи с «изменить», данные, напоминание, согласие → готово.
 // Запуск: node test/site-booking-e2e.mjs <папка для снимков> [папка сайта]  (по умолчанию apps/site-booking/demo; вторым прогоном —
-// правленая копия winchester.kz). SITE_ASSETS=<папка> — откуда брать шрифты и логотип сайта, если их нет в папке сайта (для снимков).
+// правленая копия winchester.kz; есть kk/index.html — и казахская страница). SITE_ASSETS=<папка> — откуда брать шрифты и логотип сайта,
+// если их нет в папке сайта (для снимков).
 import { start } from "./devserver.mjs";
 import { net, T, ok, pngFace } from "./harness.mjs";
 import { winchesterAlt, W, WS, dayN } from "./fixtures/winchester-altegio.mjs";
@@ -36,12 +37,12 @@ const API = `http://127.0.0.1:${/** @type {any} */ (proxy.address()).port}`;
 
 // ---- сайт: файлы из папки сайта, скрипт и стили формы — всегда из apps/site-booking, адрес API — заглушка
 const site = http.createServer((req, res) => {
-  const p = decodeURIComponent(new URL(req.url || "/", "http://x").pathname), rel = normalize(p === "/" ? "/index.html" : p).replace(/^(\.\.[/\\])+/, "");
+  const p = decodeURIComponent(new URL(req.url || "/", "http://x").pathname), rel = normalize(p.endsWith("/") ? p + "index.html" : p).replace(/^(\.\.[/\\])+/, "");
   let f = /^\/assets\/booking\.(js|css)$/.test(rel) ? join(ROOT, "apps/site-booking", rel.slice(8)) : join(SITE, rel);
   if (!existsSync(f) && ASSETS && existsSync(join(ASSETS, rel))) f = join(ASSETS, rel);
   if (!existsSync(f) || statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
   let body = readFileSync(f);
-  if (rel === "/index.html") body = Buffer.from(body.toString().replace(/data-api="[^"]*"/, `data-api="${API}"`));
+  if (/\/index\.html$/.test(rel)) body = Buffer.from(body.toString().replace(/data-api="[^"]*"/, `data-api="${API}"`));
   res.writeHead(200, { "content-type": TYPES[extname(f)] || "application/octet-stream", "cache-control": "no-store" });
   res.end(body);
 });
@@ -967,6 +968,35 @@ try {
     await p.context().close();
   }
   delete api.S.env.ALTEGIO_LOC_WINCHESTER;
+
+  // ---- 13. казахская страница сайта (kk/index.html, пути к файлам — «../»): форма та же (по-русски), ссылка на политику — общая
+  if (existsSync(join(SITE, "kk/index.html"))) {
+    const p = await page(PHONE, "s13");
+    const cat = p.waitForResponse(r => r.url().includes("/api/site/winchester/catalog"), { timeout: 15000 });
+    await p.goto(URL0 + "/kk/"); await cat;
+    ok("kk: страница на казахском, форма записи подключена", await p.evaluate(() => document.documentElement.lang === "kk" && !!document.querySelector('script[src="../assets/booking.js"]')));
+    await p.evaluate(() => document.fonts.ready);
+    ok("kk: казахские буквы — шрифтами сайта (Oswald cyrillic-ext, буквы ә ғ қ ң ұ для Manrope)", await p.evaluate(() =>
+      [...document.fonts].some(f => f.family.replace(/"/g, "") === "Oswald" && /U\+0?460/i.test(f.unicodeRange) && f.status === "loaded") &&
+      [...document.fonts].some(f => f.family.replace(/"/g, "") === "Manrope" && /U\+0?49A/i.test(f.unicodeRange) && f.status === "loaded")));
+    await p.click(".hero-cta [data-book]"); await step(p, "master");
+    ok("kk: «Онлайн жазылу» открывает форму", (await p.locator(".wbk.wbk-o").count()) === 1);
+    await p.click('[data-staff="0"]'); await step(p, "services");
+    await sv(p, "мужская-стрижка");
+    await next(p); await step(p, "time"); await times(p);
+    await p.click(SLOT(3));
+    await next(p); await step(p, "contacts");
+    await shot(p, "kk-contacts");
+    const priv = await p.evaluate(() => { const a = document.querySelector(".wbk-st:not(.wbk-lv) .wbk-agree a"); return a ? new URL(a.getAttribute("href"), location.href).pathname : ""; });
+    ok("kk: согласие ведёт на общую политику /privacy.html", priv === "/privacy.html", priv);
+    await p.keyboard.press("Escape"); await p.waitForTimeout(400);
+    const q = await page(PHONE, "s13b");
+    const cat2 = q.waitForResponse(r => r.url().includes("/api/site/winchester/catalog"), { timeout: 15000 });
+    await q.goto(URL0 + "/kk/#book=m:тони"); await cat2;
+    await step(q, "services");
+    ok("kk: ссылка #book=m:тони открывает услуги Тони", /Тони/.test(await txt(q, ".wbk-sub")));
+    await p.context().close(); await q.context().close();
+  }
 
   ok("в браузере нет ошибок JavaScript", errors.length === 0, errors.join(" | "));
   ok("внешних запросов не было (только 127.0.0.1)", outside.length === 0, [...new Set(outside)].join(" | "));
