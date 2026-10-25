@@ -32,6 +32,9 @@
 {{{preload_extra}}}
 <link rel="preload" href="{{base}}assets/photos/hero-800.jpg" as="image" imagesrcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1276w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
 <link rel="preconnect" href="https://ai-admin.azikonps4.workers.dev" crossorigin>
+<!-- Первый экран «оживает» при открытии — класс ставится до отрисовки, иначе заголовок мелькнул бы и спрятался.
+     «Уменьшить движение» в настройках телефона — без анимации. -->
+<script>if(window.matchMedia&&!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('intro');</script>
 <script type="application/ld+json">
 {{{jsonld}}}
 </script>
@@ -137,6 +140,23 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 /* кадр зала: мастер за работой и кольцевая лампа — в левой половине кадра, их и оставляем при обрезке */
 .hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:32% 50%}
 
+/* Одно движение на всю страницу — при открытии (идея «Hero Stagger» из примеров Motion, без библиотеки):
+   фото медленно приближается, строки заголовка выезжают по очереди, за ними текст, кнопки, телефон.
+   Без JS и при «уменьшить движение» класса intro нет — всё сразу на месте. */
+.intro .hero-pic{overflow:hidden}
+.intro .hero-pic img{opacity:0;transform:scale(1.08)}
+.intro .hero-pic.go img{opacity:1;transform:none;transition:opacity .9s ease-out,transform 1.8s cubic-bezier(.16,1,.3,1)}
+.intro .hero h1{visibility:hidden}
+.intro .hero h1.split{visibility:visible}
+.intro .hero .ln{display:block;overflow:hidden;padding:.1em 0;margin:-.1em 0} /* запас сверху и снизу: «Й», «Қ» не обрезаются */
+.intro .hero .ln>span{display:block;transform:translateY(135%)} /* с запасом: надстрочный знак «Й» не выглядывает раньше строки */
+.intro .hero.go .ln>span{transform:none;transition:transform .9s cubic-bezier(.16,1,.3,1) calc(var(--i) * 110ms)}
+.intro .hero .rise{opacity:0;transform:translateY(14px)}
+.intro .hero.go .rise{opacity:1;transform:none;transition:opacity .7s ease-out var(--d),transform .8s cubic-bezier(.16,1,.3,1) var(--d)}
+/* страховка: скрипт не сработал — через 2,5 с всё видно */
+.intro .hero h1,.intro .hero .rise,.intro .hero-pic img{animation:introSafe 0s 2.5s forwards}
+@keyframes introSafe{to{visibility:visible;opacity:1;transform:none}}
+
 /* Услуги и цены */
 .svc{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
 .svc-head{grid-column:1/5;align-self:start}
@@ -159,7 +179,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .row a.n{display:inline-block;padding:12px 0;margin:-12px 0;text-decoration:underline;text-decoration-color:rgba(90,30,30,.45);text-underline-offset:4px} /* область касания 44 px, строка не выше */
 .row a.n:hover{color:var(--burgundy)}
 .row .dots{flex:1;min-width:16px;border-bottom:1px dotted rgba(33,15,15,.42);transform:translateY(-5px)}
-.row .p{flex:none;font:500 1.25rem/1 var(--serif);letter-spacing:.02em;white-space:nowrap;font-variant-numeric:tabular-nums}
+.row .p{flex:none;font:500 1.25rem/1 var(--serif);letter-spacing:.02em;white-space:nowrap;font-variant-numeric:tabular-nums;overflow:hidden;padding:.15em 0;margin:-.15em 0} /* overflow — цена «перелистывается» внутри своей строки */
 .row .p.q{font:500 14px/1.3 var(--sans);color:var(--ink-soft)}
 .svc-cta{margin-top:44px}
 .svc-cta .acts{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;margin-top:18px}
@@ -269,7 +289,9 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .tog{display:flex}
   .svc-book{display:none}
   .tog button{flex:1;padding:0 10px}
-  .grp-pic{aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  /* фото группы — под её ценами: переключатель «Барберы / Тони» и цены на одном экране, видно, как они меняются */
+  .grp{display:flex;flex-direction:column}
+  .grp-pic{order:2;margin-top:24px;margin-bottom:0;aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .m-list{grid-template-columns:minmax(0,1fr);gap:0}
   .master{display:grid;grid-template-columns:72px minmax(0,1fr) auto;column-gap:16px;align-items:center;padding:16px 0;border-top:1px solid rgba(243,235,221,.16)}
   .master:last-child{border-bottom:1px solid rgba(243,235,221,.16)}
@@ -321,12 +343,12 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 <section class="hero" aria-labelledby="h1">
   <div class="hero-txt">
     <h1 id="h1">{{{h1}}}</h1>
-    <p class="hero-sub">{{{hero_sub}}}</p>
-    <div class="hero-cta">
+    <p class="hero-sub rise" style="--d:.42s">{{{hero_sub}}}</p>
+    <div class="hero-cta rise" style="--d:.52s">
       <a class="btn btn-brass" data-nodock data-book data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#cal"/></svg>{{book_online}}</a>
       <a class="btn btn-line" data-wa="{{wa_book}}" href="https://wa.me/77066940608"><svg aria-hidden="true"><use href="#wa"/></svg>{{write_wa}}</a>
     </div>
-    <p class="hero-meta">
+    <p class="hero-meta rise" style="--d:.62s">
       <a href="tel:+77005050503"><svg aria-hidden="true"><use href="#tel"/></svg>+7&nbsp;700&nbsp;505&nbsp;05&nbsp;03</a>
       <a href="https://2gis.kz/astana/firm/70000001038239111" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#pin"/></svg>{{route}}</a>
     </p>
@@ -532,12 +554,57 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     i.addEventListener('error',function(){if(i.parentNode)i.parentNode.removeChild(i);});
   });
 
-  // Цены: барберы / шеф-барбер
+  // Первый экран: строки заголовка — по местам переноса на этом экране (после загрузки шрифта), потом обратно обычным текстом
+  var hero=d.querySelector('.hero'), h1=hero&&hero.querySelector('h1'), pic=hero&&hero.querySelector('.hero-pic'), img=pic&&pic.querySelector('img');
+  if(hero&&d.documentElement.classList.contains('intro')){
+    var orig=h1.innerHTML, started=false;
+    var start=function(){
+      if(started)return;started=true;
+      var units=[];
+      Array.prototype.slice.call(h1.childNodes).forEach(function(n){
+        if(n.nodeType===3)n.textContent.split(/\s+/).forEach(function(w){if(w)units.push(d.createTextNode(w));});
+        else units.push(n.cloneNode(true));
+      });
+      h1.textContent='';
+      var words=units.map(function(u,i){var s=d.createElement('span');s.appendChild(u);h1.appendChild(s);if(i<units.length-1)h1.appendChild(d.createTextNode(' '));return s;});
+      var lines=[],top=null;
+      words.forEach(function(w){if(w.offsetTop!==top){top=w.offsetTop;lines.push([]);}lines[lines.length-1].push(w);});
+      h1.textContent='';
+      lines.forEach(function(ws,i){
+        var ln=d.createElement('span'),inner=d.createElement('span');ln.className='ln';ln.style.setProperty('--i',i);
+        ws.forEach(function(w,j){if(j)inner.appendChild(d.createTextNode(' '));while(w.firstChild)inner.appendChild(w.firstChild);});
+        ln.appendChild(inner);h1.appendChild(ln);
+      });
+      h1.classList.add('split');
+      requestAnimationFrame(function(){requestAnimationFrame(function(){hero.classList.add('go');});});
+      setTimeout(function(){h1.innerHTML=orig;h1.classList.remove('split');d.documentElement.classList.remove('intro');},2400);
+    };
+    if(d.fonts&&d.fonts.ready)d.fonts.ready.then(start);
+    setTimeout(start,400); // шрифт задержался — не ждём дольше
+    var shown=function(){pic.classList.add('go');};
+    if(img.complete&&img.naturalWidth)shown();else{img.addEventListener('load',shown);img.addEventListener('error',shown);}
+  }
+
+  // Цены: барберы / шеф-барбер. Меняющаяся цена «перелистывается» (старая уходит вверх, новая приходит снизу), одинаковая
+  // стоит на месте — так видно, что изменилось (идея «Number Price Switcher» из Motion, без библиотеки)
   var tog=d.querySelectorAll('.tog button'), prices=d.querySelectorAll('.p[data-b]');
+  var still=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:true};
+  function flip(p,txt,k){
+    var n=p._n=(p._n||0)+1;
+    if(still.matches||!p.animate||!p.getAnimations){p.textContent=txt;return;}
+    p.getAnimations().forEach(function(a){a.cancel();});
+    if(p.textContent===txt)return;
+    var out=p.animate([{transform:'none',opacity:1},{transform:'translateY(-70%)',opacity:0}],{duration:150,delay:k*28,easing:'cubic-bezier(.4,0,1,1)',fill:'forwards'});
+    out.onfinish=function(){
+      if(n!==p._n)return;
+      p.textContent=txt;out.cancel();
+      p.animate([{transform:'translateY(70%)',opacity:0},{transform:'none',opacity:1}],{duration:300,easing:'cubic-bezier(.16,1,.3,1)'});
+    };
+  }
   tog.forEach(function(b){b.addEventListener('click',function(){
-    var t=b.getAttribute('data-tier');
+    var t=b.getAttribute('data-tier'), k=0;
     tog.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
-    prices.forEach(function(p){p.textContent=p.getAttribute('data-'+t);});
+    prices.forEach(function(p){var v=p.getAttribute('data-'+t);flip(p,v,p.getAttribute('data-b')===p.getAttribute('data-c')?0:k++);});
   });});
 
   // Шапка и меню телефона
