@@ -134,8 +134,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .hero-meta a:hover{color:var(--brass)}
 .hero-meta svg{width:18px;height:18px;color:var(--brass);flex:none}
 .hero-pic{position:relative;margin:0;background:var(--walnut)}
-/* кадр входа: вывеска слева вверху, дверь и столбы в середине — их и оставляем при обрезке */
-.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:20% 50%}
+/* кадр зала: мастер за работой и кольцевая лампа — в левой половине кадра, их и оставляем при обрезке */
+.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:32% 50%}
 
 /* Услуги и цены */
 .svc{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:40px}
@@ -187,8 +187,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
-.m-pic{margin:0 0 clamp(32px,4vw,48px);aspect-ratio:16/7;overflow:hidden;background:var(--obsidian)}
-.m-pic img{width:100%;height:100%;object-fit:cover;object-position:50% 55%}
 .m-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px}
 .master{display:flex;flex-direction:column;align-items:flex-start;padding-top:24px;border-top:1px solid rgba(243,235,221,.2)}
 .av{position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;background:var(--burgundy);box-shadow:inset 0 0 0 1px rgba(201,166,107,.55);flex:none}
@@ -272,7 +270,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .svc-book{display:none}
   .tog button{flex:1;padding:0 10px}
   .grp-pic{aspect-ratio:16/9;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
-  .m-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .m-list{grid-template-columns:minmax(0,1fr);gap:0}
   .master{display:grid;grid-template-columns:72px minmax(0,1fr) auto;column-gap:16px;align-items:center;padding:16px 0;border-top:1px solid rgba(243,235,221,.16)}
   .master:last-child{border-bottom:1px solid rgba(243,235,221,.16)}
@@ -334,7 +331,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <a href="https://2gis.kz/astana/firm/70000001038239111" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#pin"/></svg>{{route}}</a>
     </p>
   </div>
-  <!-- sizes на компьютере — 1220px: фото обрезается по высоте экрана (object-fit: cover), и нужная ширина больше ширины колонки -->
+  <!-- sizes на компьютере — 1220px: фото обрезается по высоте экрана (object-fit: cover), и нужная ширина больше ширины колонки.
+       hero*.jpg на сайте — кадр зала с мастерами (люди: только в zip владельцу); в репозитории под теми же именами — полки зала без людей. -->
   <figure class="hero-pic">
     <img src="{{base}}assets/photos/hero-800.jpg" srcset="{{base}}assets/photos/hero-800.jpg 800w, {{base}}assets/photos/hero-1200.jpg 1200w, {{base}}assets/photos/hero.jpg 1276w" sizes="(max-width: 860px) 100vw, 1220px" width="1276" height="718" alt="{{alt_hero}}" fetchpriority="high" decoding="async">
   </figure>
@@ -433,8 +431,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <h2 class="h2" id="m-h">{{m_h}}</h2>
       <p class="lead">{{m_lead}}</p>
     </div>
-    <!-- Кадр зала (люди) — из видео Winchester, в репозиторий не кладётся, только в zip. Нет файла — блок прячется. -->
-    <figure class="m-pic opt"><img src="{{base}}assets/photos/hall.jpg" width="1276" height="718" loading="lazy" decoding="async" alt="{{alt_hall}}"></figure>
     <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. Нет файла — первая буква имени. -->
     <div class="m-list">
       <article class="master">
@@ -534,11 +530,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   // долистали, Chrome отдаёт complete=true и naturalWidth=0 — по ним фото убиралось бы у всех.
   d.querySelectorAll('.av img').forEach(function(i){
     i.addEventListener('error',function(){if(i.parentNode)i.parentNode.removeChild(i);});
-  });
-
-  // Необязательное фото (кадр зала) не загружено на сайт — блок прячется, пустой рамки нет
-  d.querySelectorAll('.opt img').forEach(function(i){
-    i.addEventListener('error',function(){var f=i.parentNode;if(f)f.hidden=true;});
   });
 
   // Цены: барберы / шеф-барбер
