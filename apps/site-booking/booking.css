@@ -31,7 +31,8 @@ html.wbk-lock{overflow:hidden}
 @keyframes wbk-in{from{opacity:0;transform:translateX(24px)}}
 @keyframes wbk-inr{from{opacity:0;transform:translateX(-24px)}}
 @keyframes wbk-up{from{opacity:0;transform:translateY(8px)}}
-.wbk-h,.wbk-mn,.wbk-gh,.wbk-sn b,.wbk-td,.wbk-cm,.wbk-h3,.wbk-dx b{text-transform:uppercase;font-family:var(--f);font-weight:600}
+.wbk-h,.wbk-mn,.wbk-gh,.wbk-sn b,.wbk-td,.wbk-cm,.wbk-h3,.wbk-dx b{font-family:var(--f);font-weight:600}
+.wbk-h{text-transform:uppercase}
 .wbk-h{font-size:clamp(1.6rem,4vw,2.4rem);line-height:1.05;letter-spacing:.015em;text-wrap:balance;outline:0}
 .wbk-h em{font-style:normal;color:var(--b)}
 .wbk .rye{font-family:var(--y);font-weight:400;text-transform:none;text-shadow:.045em .045em 0 var(--r)}
@@ -67,7 +68,7 @@ html.wbk-lock{overflow:hidden}
 .wbk-av.sm svg{width:24px;height:24px}
 [aria-pressed=true] .wbk-av:not(.wbk-ay){box-shadow:0 0 0 3px var(--o),0 0 0 5px var(--b)}
 .wbk-mn{display:block;font-size:1.5rem;line-height:1;letter-spacing:.04em;transition:color .2s}
-.wbk-mo,.wbk-nr>span:not(.wbk-sk),.wbk-to span,.wbk-sp small{font:500 11px/1.3 var(--f);letter-spacing:.17em;text-transform:uppercase;color:var(--t)}
+.wbk-mo,.wbk-nr>span:not(.wbk-sk),.wbk-to span,.wbk-sp small{font:500 13px/1.3 var(--s);color:var(--t)}
 .wbk-mo{display:block;margin-top:6px}
 .wbk-rt{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:13px;line-height:1.4;color:var(--t)}
 .wbk-s5{position:relative;display:block;flex:none;width:76px;height:14px;color:rgba(243,235,221,.2)}
@@ -90,7 +91,7 @@ html.wbk-lock{overflow:hidden}
 /* услуги: категории сверху (липкие), группы, строки — вся строка нажимается (подпись флажка растянута), «ещё» — поверх */
 .wbk-cats{position:sticky;top:calc(var(--pt)*-1);z-index:3;display:flex;gap:8px;margin:20px calc(var(--g)*-1) 0;padding:12px var(--g);overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;background:var(--o);box-shadow:0 1px 0 var(--l1)}
 .wbk-cats::-webkit-scrollbar{display:none}
-.wbk-chip{flex:none;min-height:40px;padding:0 16px;border:1px solid var(--l3);font:500 13px/1 var(--f);letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;color:var(--v);transition:background-color .2s,border-color .2s,color .2s,transform .25s}
+.wbk-chip{flex:none;min-height:40px;padding:0 16px;border:1px solid var(--l3);font:500 14px/1 var(--s);white-space:nowrap;color:var(--v);transition:background-color .2s,border-color .2s,color .2s,transform .25s}
 .wbk [aria-pressed=true].wbk-chip{background:var(--b);border-color:var(--b);color:var(--o)}
 .wbk-gr{margin-top:30px}
 .wbk-gh{display:flex;align-items:baseline;gap:12px;padding-bottom:12px;border-bottom:1.5px solid var(--l4);font-size:1.3rem;line-height:1;letter-spacing:.06em}
@@ -130,7 +131,7 @@ html.wbk-lock{overflow:hidden}
 @keyframes wbk-ld{from{transform:scaleX(0);opacity:1}to{transform:scaleX(1);opacity:0}}
 .wbk-wr{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
 .wbk-wr+.wbk-wr{margin-top:4px}
-.wbk-wr [role=columnheader]{padding:6px 0 8px;text-align:center;font:500 11px/1 var(--f);letter-spacing:.14em;text-transform:uppercase;color:var(--t)}
+.wbk-wr [role=columnheader]{padding:6px 0 8px;text-align:center;font:500 12px/1 var(--s);color:var(--t)}
 .wbk-c{position:relative;justify-self:center;width:100%;max-width:56px;height:44px;display:grid;place-items:center;padding:0;border:1px solid transparent;font:600 18px/1 var(--f);letter-spacing:.02em;color:var(--v);transition:background-color .2s,border-color .2s,color .2s,transform .25s}
 .wbk-c[aria-disabled=true]{font-weight:400;color:rgba(243,235,221,.28);cursor:default}
 .wbk-c.uk{color:rgba(243,235,221,.62)}
@@ -145,7 +146,7 @@ html.wbk-lock{overflow:hidden}
 .wbk-tg .label{display:flex;margin:0 0 12px}
 .wbk-ts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .wbk-t{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;gap:4px;padding:6px 2px;border:1px solid var(--l3);color:var(--v);font:500 16px/1 var(--f);letter-spacing:.04em;transition:background-color .2s,border-color .2s,color .2s,transform .25s}
-.wbk-t small{max-width:100%;overflow:hidden;text-overflow:ellipsis;font:500 10px/1 var(--f);letter-spacing:.08em;text-transform:uppercase;color:var(--t)}
+.wbk-t small{max-width:100%;overflow:hidden;text-overflow:ellipsis;font:500 12px/1 var(--s);color:var(--t)}
 .wbk [aria-pressed=true].wbk-t{background:var(--b);border-color:var(--b);color:var(--o)}
 [aria-pressed=true].wbk-t small{color:rgba(33,15,15,.72)}
 .wbk-skl{width:70px;height:12px;margin-bottom:12px}
@@ -161,11 +162,11 @@ html.wbk-lock{overflow:hidden}
 .wbk-dx b{display:block;font-size:1.2rem;line-height:1.2;letter-spacing:.04em}
 .wbk-dx small{display:block;font-size:13px;line-height:1.4;color:var(--t)}
 .wbk-dx small+b{margin-top:2px}
-.wbk-pen{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 2px;border:0;font:500 11px/1 var(--f);letter-spacing:.14em;text-transform:uppercase;color:var(--b);transition:color .2s}
+.wbk-pen{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 2px;border:0;font:500 13px/1 var(--s);color:var(--b);transition:color .2s}
 .wbk-pen svg{width:16px;height:16px}
 .wbk-dv{padding:14px 0 6px;border-top:1px solid var(--l1)}
 .wbk-dvh{display:flex;align-items:center;gap:10px;min-height:44px;margin:-8px 0 0}
-.wbk-dvh b,.wbk-dl dt,.wbk-fl dt{font:700 11px/1 var(--s);letter-spacing:.2em;text-transform:uppercase;color:var(--b)}
+.wbk-dvh b,.wbk-dl dt,.wbk-fl dt{font:600 13px/1.2 var(--s);color:var(--b)}
 .wbk-dvh small{font-size:13px;color:var(--t)}
 .wbk-dvh .wbk-pen{margin-left:auto}
 .wbk-dv li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:6px 0}
@@ -230,7 +231,7 @@ textarea.wbk-in{height:auto;min-height:92px;padding:14px 16px;resize:vertical}
 .wbk-bt small,.wbk-bt b{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .wbk-bt small{font-size:13px;line-height:1.4;color:var(--t)}
 .wbk-bt b{font:600 1.15rem/1.25 var(--f);letter-spacing:.03em}
-.wbk-bt .wbk-q{font-weight:500;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+.wbk-bt .wbk-q{font-weight:500;font-size:15px}
 .wbk-br .btn{flex:none;min-width:138px}
 .wbk:is([data-s=contacts],[data-s=done],[data-s=unknown]) .wbk-br{display:none}
 .wbk-wm{position:absolute;right:-70px;bottom:-60px;width:260px;height:260px;color:rgba(201,166,107,.07);pointer-events:none}
@@ -284,3 +285,5 @@ textarea.wbk-in{height:auto;min-height:92px;padding:14px 16px;resize:vertical}
   .wbk-br .btn{min-width:0;padding:0 20px}
 }
 @media (prefers-reduced-motion:reduce){.wbk,.wbk *,.wbk ::before,.wbk ::after{transition:none!important;animation:none!important}}
+/* 27.10.2026: капс и разрядка остались только у заголовка шага (.wbk-h) — как у заголовков разделов сайта; остальное — обычным регистром */
+.wbk-mn,.wbk-gh,.wbk-sn b,.wbk-td,.wbk-cm,.wbk-h3,.wbk-dx b{letter-spacing:0}

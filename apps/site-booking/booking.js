@@ -29,7 +29,7 @@ var SLOW='Расписание отвечает дольше обычного �
 var LOST='Расписание отвечает слишком долго. Запись могла создаться — администратор проверит и свяжется с тобой. Не записывайся повторно.';
 var AGREE='Отметь согласие на обработку данных — без него записать не можем.';
 var NOAGREE='Поставь галочку согласия — без неё записать не можем.';
-var ROM=['I','II','III','IV','V','VI','VII','VIII'];
+
 var CO={name:'Winchester',phone:'+7 700 505 05 03',tel:'+77005050503',wa:'77066940608',address:''};
 var mq=W.matchMedia('(prefers-reduced-motion: reduce)');
 function calm(){return mq.matches;}
@@ -336,7 +336,7 @@ function swap(html,dir,fade,st){
 function hdr(){
  var i=STEPS.indexOf(S.step),n=i<0?(S.step==='done'?5:3):i+1; // «не получили подтверждения» — запись не завершена: 3 из 4
  // одним элементом: у .label сайта flex с отступом, и «·» отрывалась от «Шаг 1 из 4» лишним промежутком
- lbl.innerHTML='<span>'+(i<0?(S.step==='done'?'Готово':'Онлайн-запись'):'Шаг '+n+' из 4<span class="wbk-ln"> · '+TIT[S.step]+'</span>')+'</span>';
+ lbl.innerHTML='<span>'+(i<0?(S.step==='done'?'Готово':'Онлайн-запись'):'Шаг '+n+' из 4<span class="wbk-ln">: '+TIT[S.step].toLowerCase()+'</span>')+'</span>';
  backB.classList.toggle('wbk-no',i<=0);
  prog.forEach(function(p,k){p.classList.toggle('on',k<n);});
 }
@@ -345,9 +345,9 @@ function bar(){
  if(S.step==='master'){ok=S.any||S.staff!=null;a=ok?'Мастер':'';b=S.any?'Любой специалист':ok?staffName(S.staff):'Выбери мастера';}
  else if(S.step==='services'){
   ok=S.keys.length>0;x=tot(S.any?null:S.staff);
-  a=ok?plur(S.keys.length,'услуга','услуги','услуг')+' · '+dur(x.min):'';b=ok?(x.from?'от ':'')+money(x.price):'Выбери услуги';
+  a=ok?plur(S.keys.length,'услуга','услуги','услуг')+', '+dur(x.min):'';b=ok?(x.from?'от ':'')+money(x.price):'Выбери услуги';
  }else if(S.step==='time'){
-  ok=!!S.slot;a=ok?dLong(S.date)+(S.any||S.slot.staff!==S.staff?' · '+staffName(S.slot.staff):''):'';
+  ok=!!S.slot;a=ok?dLong(S.date)+(S.any||S.slot.staff!==S.staff?', '+staffName(S.slot.staff):''):'';
   b=ok?S.time+'–'+S.slot.end:'Выбери время';
  }
  barT.innerHTML='<small>'+esc(a)+'</small><b'+(ok?'':' class="wbk-q"')+'>'+esc(b)+'</b>';
@@ -367,7 +367,7 @@ function sum(){
  var when=S.slot&&S.date?dLong(S.date)+', '+S.time+'–'+S.slot.end:no;
  return'<dl class="wbk-dl"><div><dt>Мастер</dt><dd>'+who+'</dd></div><div><dt>Услуги</dt><dd>'+list+
   '</dd></div><div><dt>Когда</dt><dd>'+when+'</dd></div></dl>'+
-  '<p class="wbk-to"><span>Итого'+(x.min?' · '+dur(x.min):'')+'</span><b>'+(S.keys.length?(x.from?'от ':'')+money(x.price):'—')+'</b></p>';
+  '<p class="wbk-to"><span>Итого'+(x.min?' за '+dur(x.min):'')+'</span><b>'+(S.keys.length?(x.from?'от ':'')+money(x.price):'—')+'</b></p>';
 }
 function head(t,sub){return'<h2 class="wbk-h" id="wbk-title" tabindex="-1">'+t+'</h2>'+(sub?'<p class="wbk-sub">'+sub+'</p>':'');}
 function waLine(){return'<p class="wbk-wa">Удобнее в WhatsApp? '+waA('Напиши нам')+'</p>';}
@@ -453,7 +453,7 @@ function nearHTML(id){
  if(!S.near)return'<span class="wbk-sk wbk-skn"></span>';
  var n=nearOf(id);
  if(!n)return'<small>Нет свободного времени в ближайшие дни</small>';
- return'<span>Ближайшее · '+dRel(n.date)+'</span>'+n.times.map(function(x){return'<i>'+x+'</i>';}).join('');
+ return'<span>Ближайшее: '+dRel(n.date)+'</span>'+n.times.map(function(x){return'<i>'+x+'</i>';}).join('');
 }
 // касание времени под мастером — пожелание дня и времени: на шаге времени они выбраны, если услуги помещаются (проверка 22.10.2026:
 // время выглядело кнопкой, а выбирался только мастер)
@@ -485,7 +485,7 @@ VIEW.services=function(){
   var rows=g.keys.filter(function(k){return S.sv[k]&&(!m||does(m.id,k));}).map(function(k){return svRow(k,idx[k],m,all);}).join('');
   if(!rows)return'';
   var gi=n++;chips.push('<button type="button" class="wbk-chip" data-cat="'+gi+'" aria-pressed="'+(gi===0)+'">'+esc(g.title)+'</button>');
-  var gh='<div class="wbk-gr" data-g="'+gi+'"><h3 class="wbk-gh"><i>'+(ROM[gi]||gi+1)+'</i>'+esc(g.title)+'</h3><div class="wbk-sg">'+rows+'</div></div>';
+  var gh='<div class="wbk-gr" data-g="'+gi+'"><h3 class="wbk-gh">'+esc(g.title)+'</h3><div class="wbk-sg">'+rows+'</div></div>';
   var later=rows0>4;rows0+=rows.split('class="wbk-sv').length-1;return later?'<!--later-->'+gh:gh;
  }).join('').split('<!--later-->');
  S.later=html.slice(1);html=html[0]+'<div class="wbk-lt"></div>';
@@ -497,7 +497,7 @@ VIEW.services=function(){
 function svRow(k,i,m,all){
  var s=S.sv[k],b=m&&s.by[m.id],on=S.keys.indexOf(k)>=0,cnt=doer([k]).length,id='wbk-s'+i,desc=s.desc||'',lg=desc.length>34;
  var p=b?(b.max>b.price?'<small>от</small>':'')+money(b.price):(s.price.to>s.price.from?'<small>от</small>':'')+money(s.price.from);
- var info='<span>'+dur(b?b.min:s.min)+'</span>'+(!m&&cnt<all?'<span> · есть не у всех мастеров</span>':'')+(desc?'<span> · '+esc(desc)+'</span>':'');
+ var info='<span>'+dur(b?b.min:s.min)+'</span>'+(!m&&cnt<all?'<span>, есть не у всех мастеров</span>':'')+(desc?'<span>. '+esc(desc)+'</span>':'');
  return'<div class="wbk-sv'+(lg?' lg':'')+'" data-key="'+esc(k)+'"><input type="checkbox" name="svc" value="'+esc(k)+'" id="'+id+'"'+(on?' checked':'')+' aria-describedby="'+id+'p '+id+'d">'+
   '<span class="wbk-cb" aria-hidden="true">'+I.ok+'</span><span class="wbk-sn"><label for="'+id+'"><b>'+esc(s.name)+'</b></label></span>'+
   '<span class="wbk-dt" aria-hidden="true"></span><span class="wbk-sp" id="'+id+'p">'+p+'</span>'+
@@ -910,14 +910,14 @@ function answer(r,body){
 
 // ---- готово: «Вы записаны» (настоящая запись) или «Заявка принята» (режим проверки — честно: запись внесёт администратор)
 VIEW.done=function(){
- var b=S.done,dry=S.mode==='dry',names=b.services.map(function(s){return esc(s.name)+' · '+money(s.price);}).join('<br>');
+ var b=S.done,dry=S.mode==='dry',names=b.services.map(function(s){return esc(s.name)+', '+money(s.price);}).join('<br>');
  return'<div class="wbk-dn"><span class="wbk-em">'+I.done+'</span>'+
   '<h2 class="wbk-h wbk-xl" id="wbk-title" tabindex="-1">'+(dry?'Заявка <em>принята</em>':'Вы <em>записаны</em>')+'</h2>'+
   '<p class="wbk-sub">'+(dry?'Время свободно, заявка у администратора: он внесёт запись в журнал мастера и подтвердит её звонком или в WhatsApp.'
    :'Ждём в <span class="rye">Winchester</span>. Запись уже в журнале мастера.')+'</p>'+
   '<dl class="wbk-fl"><div><dt>Мастер</dt><dd>'+esc(b.staff.name)+(b.any?' <small>— назначили на это время</small>':b.staff.role?' <small>'+esc(b.staff.role)+'</small>':'')+'</dd></div>'+
-  '<div><dt>Когда</dt><dd>'+dFull(b.date)+' · '+b.time+'\u00a0—\u00a0'+b.end+'</dd></div><div><dt>Услуги</dt><dd>'+names+'</dd></div>'+
-  '<div><dt>Итого</dt><dd>'+money(b.total)+' · '+dur(b.min)+'</dd></div><div><dt>Адрес</dt><dd>'+esc(CO.address)+'</dd></div></dl>'+
+  '<div><dt>Когда</dt><dd>'+dFull(b.date)+', '+b.time+'\u00a0—\u00a0'+b.end+'</dd></div><div><dt>Услуги</dt><dd>'+names+'</dd></div>'+
+  '<div><dt>Итого</dt><dd>'+money(b.total)+' за '+dur(b.min)+'</dd></div><div><dt>Адрес</dt><dd>'+esc(CO.address)+'</dd></div></dl>'+
   '<div class="wbk-ac">'+(dry?'':'<button class="btn btn-brass" data-wbk="ics">'+I.cal+'Добавить в календарь</button>')+
   '<a class="btn btn-line" href="'+esc(MAP)+'" target="_blank" rel="noopener">'+I.pin+'Как добраться</a>'+
   '<button class="btn '+(dry?'btn-brass':'btn-line')+'" data-wbk="close">Готово</button></div>'+

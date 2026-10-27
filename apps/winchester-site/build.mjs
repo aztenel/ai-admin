@@ -13,6 +13,13 @@ const SITE = "https://winchester.kz/";
 const template = readFileSync(join(DIR, "src/page.html"), "utf8");
 const sprite = readFileSync(join(DIR, "src/sprite.svg"), "utf8").trim();
 
+// Подтверждение домена в Meta (Business Settings → Безопасность бренда → Домены → мета-тег): только значение content="…".
+// Пусто — тега нет. Код не секретный: Meta проверяет его на открытой странице.
+const FB_DOMAIN_VERIFICATION = "";
+// Юридический адрес ИП для подвала — ровно как в документе, поданном в Meta (буква в букву), и только с согласия Кайрата и
+// Мадияра. Пусто — в подвале только «ИП A.M.K». ИИН на сайт не выводим.
+const LEGAL_ADDRESS = "";
+
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const preload = f => `<link rel="preload" href="../assets/fonts/${f}" as="font" type="font/woff2" crossorigin>`;
 
@@ -50,8 +57,10 @@ function jsonld(p) {
 
 function render(p) {
   const vals = { ...p.dict, lang: p.lang, base: p.base, canonical: p.canonical, og_locale: p.og_locale, og_locale_alt: p.og_locale_alt,
-    alt_href: p.alt_href, alt_lang: p.alt_lang, preload_extra: p.preload_extra, sprite, jsonld: jsonld(p) };
-  const used = new Set(["ld_description", "ld_street"]);
+    alt_href: p.alt_href, alt_lang: p.alt_lang, preload_extra: p.preload_extra, sprite, jsonld: jsonld(p),
+    fb_verify: FB_DOMAIN_VERIFICATION ? `<meta name="facebook-domain-verification" content="${esc(FB_DOMAIN_VERIFICATION)}">` : "",
+    legal_line: LEGAL_ADDRESS ? `, ${p.dict.legal_addr} ${LEGAL_ADDRESS}` : "" };
+  const used = new Set(["ld_description", "ld_street", "legal_addr"]);
   const get = k => { if (!(k in vals)) throw new Error(`${p.out}: в словаре нет ключа «${k}»`); used.add(k); return vals[k]; };
   let html = template
     .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*\n/gm, "") // комментарий на отдельных строках — вместе со строками

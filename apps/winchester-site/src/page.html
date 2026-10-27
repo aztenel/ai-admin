@@ -9,6 +9,7 @@
 <title>{{title}}</title>
 <meta name="description" content="{{description}}">
 <link rel="canonical" href="{{canonical}}">
+{{{fb_verify}}}
 <link rel="alternate" hreflang="ru" href="https://winchester.kz/">
 <link rel="alternate" hreflang="kk" href="https://winchester.kz/kk/">
 <link rel="alternate" hreflang="x-default" href="https://winchester.kz/">
@@ -409,8 +410,8 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
           <li class="row"><span class="n">{{s_wax}}</span><span class="dots"></span><span class="p">1 500 ₸</span></li>
           <li class="row"><span class="n">{{s_clay}}</span><span class="dots"></span><span class="p">2 000 ₸</span></li>
           <li class="row"><span class="n">{{s_black}}</span><span class="dots"></span><span class="p">2 000 ₸</span></li>
-          <!-- Перкуссионный массаж: цену владелец не подтвердил (в источнике строка обрезана) — до подтверждения без цены -->
-          <li class="row"><span class="n">{{s_massage}}</span><span class="dots"></span><span class="p q">{{price_ask}}</span></li>
+          <!-- Цена — из онлайн-записи Altegio (27.10.2026: 2 000 ₸ у всех мастеров), раньше было «цена уточняется» -->
+          <li class="row"><span class="n">{{s_massage}}</span><span class="dots"></span><span class="p">2 000 ₸</span></li>
         </ul>
       </div>
       <div class="svc-cta">
@@ -453,10 +454,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <h2 class="h2" id="m-h">{{m_h}}</h2>
       <p class="lead">{{m_lead}}</p>
     </div>
-    <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. Нет файла — первая буква имени. -->
+    <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. У Тони и Руслана фото нет ни в Altegio, ни на сайте — только
+         буква, без <img>: иначе каждый посетитель получал два ответа 404 (замечание 25.10.2026). Появится фото — вернуть <img> как у Айдоса. -->
     <div class="m-list">
       <article class="master">
-        <span class="av" data-l="{{toni_l}}"><img src="{{base}}assets/photos/master-toni.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <span class="av" data-l="{{toni_l}}"></span>
         <div><h3>{{toni}}</h3><p>{{role_chef}}</p></div>
         <a class="btn btn-brass" data-book="m:тони" data-wa="{{wa_toni}}" href="https://wa.me/77066940608" aria-label="{{book_toni}}">{{book_short}}</a>
       </article>
@@ -476,7 +478,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         <a class="btn btn-line" data-book="m:алишер" data-wa="{{wa_alisher}}" href="https://wa.me/77066940608" aria-label="{{book_alisher}}">{{book_short}}</a>
       </article>
       <article class="master">
-        <span class="av" data-l="{{ruslan_l}}"><img src="{{base}}assets/photos/master-ruslan.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
+        <span class="av" data-l="{{ruslan_l}}"></span>
         <div><h3>{{ruslan}}</h3><p>{{role_barber}}</p></div>
         <a class="btn btn-line" data-book="m:руслан" data-wa="{{wa_ruslan}}" href="https://wa.me/77066940608" aria-label="{{book_ruslan}}">{{book_short}}</a>
       </article>
@@ -526,7 +528,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 
 <footer class="ftr">
   <div class="wrap">
-    <p>© 2019–2026 Winchester Barbershop. {{owner}} ИП A.M.K</p>
+    <p>© 2019–2026 Winchester Barbershop. {{owner}} ИП&nbsp;A.M.K{{legal_line}}</p>
     <a href="{{base}}privacy.html">{{privacy}}</a>
     <a href="{{alt_href}}" hreflang="{{alt_lang}}" lang="{{alt_lang}}">{{alt_name}}</a>
   </div>

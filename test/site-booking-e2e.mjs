@@ -135,7 +135,7 @@ try {
     ok("шаг 2: «Дальше» неактивна без услуг", await p.locator(".wbk-br [data-wbk=next]").isDisabled());
     await sv(p, "мужская-стрижка"); await sv(p, "глиняная-маска");
     const bar = await txt(p, ".wbk-bt");
-    ok("шаг 2: плашка «2 услуги · 1 ч 15 мин · 11 000 ₸»", /2 услуги · 1 ч 15 мин/.test(bar) && /11 000 ₸/.test(bar), bar);
+    ok("шаг 2: плашка «2 услуги, 1 ч 15 мин» и «11 000 ₸»", /2 услуги, 1 ч 15 мин/.test(bar) && /11 000 ₸/.test(bar), bar);
     await shot(p, "phone-02-services");
     await next(p); await step(p, "time"); await times(p);
     ok("шаг 3: календарь месяца — название и сетка Пн–Вс", (await txt(p, `${STEP("time")} .wbk-cm`)).includes(monthTitle(dayN(0))) && (await p.locator(`${STEP("time")} [role=grid] [role=columnheader]`).count()) === 7 && (await txt(p, `${STEP("time")} [role=columnheader]`)) === "Пн", await txt(p, `${STEP("time")} .wbk-cm`));
