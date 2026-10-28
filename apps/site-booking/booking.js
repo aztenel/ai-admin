@@ -418,12 +418,13 @@ function phSrc(m){
 }
 function av(m,cls){
  if(!m)return'<span class="wbk-av wbk-ay'+(cls?' '+cls:'')+'" aria-hidden="true">'+(emblem()||I.ppl)+'</span>';
- var s=phSrc(m),ps=s?'':pageImg(m),pg=s||ps?'':pagePhoto(m.name);
+ var ps=pageImg(m),s=phSrc(m),src=ps||s,pg=src?'':pagePhoto(m.name);
  return'<span class="wbk-av'+(pg?' has':'')+(cls?' '+cls:'')+'" aria-hidden="true"'+(pg?' style="background-image:'+esc(pg)+'"':'')+'><b>'+esc(m.name.charAt(0).toUpperCase())+'</b>'+
-  (s||ps?'<img src="'+esc(s||ps)+'" alt="" width="64" height="64" loading="lazy" decoding="async" data-ph="'+(s?m.id:'p:'+m.id)+'">':'')+'</span>';
+  (src?'<img src="'+esc(src)+'" alt="" width="64" height="64" loading="lazy" decoding="async" data-ph="'+(ps?'p:'+m.id:m.id)+'"'+(ps&&s?' data-alt="'+esc(s)+'"':'')+'>':'')+'</span>';
 }
-// фото из блока мастеров на самой странице (.master: h3 «Тони», .av img) — если в Altegio фото нет. У Тони и Руслана в Altegio фото нет,
-// а на сайте есть (прислал Кайрат 28.10.2026). Файла на сайте нет — ошибка загрузки, остаётся буква (S.bad['p:'+id])
+// Сначала фото из блока мастеров на самой странице (.master: h3 «Тони», .av img), потом из Altegio: фото на сайте подбирает владелец
+// (28.10.2026: у Тони и Руслана в Altegio фото нет, у Айдоса в Altegio снимок наклонён — на сайте выровнен), и в окне записи они те же,
+// что в блоке мастеров. Файла на сайте нет — ошибка загрузки, дальше фото из Altegio (data-alt), нет и его — буква (S.bad['p:'+id])
 function firstName(n){return String(n||'').replace(/^\s+/,'').split(/[\s(,]/)[0].toLowerCase();}
 function pageImg(m){
  if(S.bad['p:'+m.id])return'';
@@ -444,7 +445,11 @@ function onImg(e){
  var t=e.target;
  if(!t||t.tagName!=='IMG'||!t.hasAttribute('data-ph'))return;
  if(e.type==='load')t.classList.add('on');
- else{S.bad[ga(t,'data-ph')]=1;if(t.parentNode)t.parentNode.removeChild(t);}
+ else{
+  var ph=ga(t,'data-ph'),alt=ga(t,'data-alt');S.bad[ph]=1;
+  if(alt){t.removeAttribute('data-alt');t.setAttribute('data-ph',ph.slice(2));t.src=alt;return;} // фото со страницы не загрузилось — из Altegio
+  if(t.parentNode)t.parentNode.removeChild(t);
+ }
 }
 function rate(m){
  if(!m.rating)return'';

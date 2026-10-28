@@ -3,6 +3,7 @@
 // Запуск: node apps/winchester-site/build.mjs           — собрать
 //         node apps/winchester-site/build.mjs --check   — проверить, что index.html и kk/index.html собраны из текущих исходников
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ru from "./src/ru.mjs";
@@ -19,6 +20,11 @@ const FB_DOMAIN_VERIFICATION = "";
 // Юридический адрес ИП для подвала — ровно как в документе, поданном в Meta (буква в букву), и только с согласия Кайрата и
 // Мадияра. Пусто — в подвале только «ИП A.M.K». ИИН на сайт не выводим.
 const LEGAL_ADDRESS = "";
+// Версии в адресах файлов (?v=…): хостинг не присылает cache-control, и браузер днями показывал старые booking.js и фото мастеров
+// (28.10.2026: на сайте уже новые файлы, а у владельца — прежние). Форма — по содержимому файлов; фото мастеров в репозитории нет —
+// поменяли или добавили фото мастера в zip — поднимите PHOTOS_V.
+const PHOTOS_V = "20261028";
+const ver = f => createHash("sha1").update(readFileSync(join(DIR, "../site-booking", f))).digest("hex").slice(0, 8);
 
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const preload = f => `<link rel="preload" href="../assets/fonts/${f}" as="font" type="font/woff2" crossorigin>`;
@@ -59,7 +65,8 @@ function render(p) {
   const vals = { ...p.dict, lang: p.lang, base: p.base, canonical: p.canonical, og_locale: p.og_locale, og_locale_alt: p.og_locale_alt,
     alt_href: p.alt_href, alt_lang: p.alt_lang, preload_extra: p.preload_extra, sprite, jsonld: jsonld(p),
     fb_verify: FB_DOMAIN_VERIFICATION ? `<meta name="facebook-domain-verification" content="${esc(FB_DOMAIN_VERIFICATION)}">` : "",
-    legal_line: LEGAL_ADDRESS ? `, ${p.dict.legal_addr} ${LEGAL_ADDRESS}` : "" };
+    legal_line: LEGAL_ADDRESS ? `, ${p.dict.legal_addr} ${LEGAL_ADDRESS}` : "",
+    bk_v: ver("booking.js"), bkc_v: ver("booking.css"), ph_v: PHOTOS_V };
   const used = new Set(["ld_description", "ld_street", "legal_addr"]);
   const get = k => { if (!(k in vals)) throw new Error(`${p.out}: в словаре нет ключа «${k}»`); used.add(k); return vals[k]; };
   let html = template

@@ -751,6 +751,8 @@ try {
       return r.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(pngFace("e2e-" + id)) });
     });
     await load(p);
+    // здесь — путь через Worker: фото из блока мастеров страницы (сайт Winchester) берёт раздел 17c
+    await p.evaluate(() => document.querySelectorAll(".master .av img").forEach(i => i.remove()));
     await p.click(".hero-cta [data-book]"); await step(p, "master");
     const box0 = await p.locator(`[data-staff="${W.AIDOS}"] .wbk-av`).boundingBox();
     const img = await p.$eval(`[data-staff="${W.AIDOS}"] .wbk-av img`, i => ({ lazy: i.loading, dec: i.decoding, w: i.getAttribute("width"), h: i.getAttribute("height"), alt: i.alt, src: i.getAttribute("src") })).catch(() => null);
@@ -783,21 +785,29 @@ try {
       ok("фото через Worker: у Айдына загрузилось", await q.$eval(`[data-staff="${W.AIDYN}"] .wbk-av img`, i => i.naturalWidth > 0).catch(() => false));
       await q.context().close();
     }
-    // в Altegio фото нет (Тони, Руслан), а в блоке мастеров сайта есть — форма берёт его со страницы (28.10.2026: Кайрат прислал фото,
-    // в форме оставались буквы). Файла на сайте нет (Руслан) — буква, без запроса к Worker
+    // 17c. окно записи берёт фото из блока мастеров страницы, потом из Altegio (28.10.2026: у Тони и Руслана в Altegio фото нет,
+    // у Айдоса там наклонённый снимок — в окне записи были буквы и прежний Айдос). Файла на сайте нет (Алишер) — фото из Altegio,
+    // нет нигде (Руслан) — буква
     const r = await page(PHONE, "s17c"), asked2 = [];
-    await r.route("**/api/site/winchester/photo/**", x => { asked2.push(x.request().url().split("/photo/")[1].split("?")[0]); return x.fulfill({ status: 404, body: "" }); });
-    await r.route("**/assets/photos/master-toni.jpg", x => x.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(pngFace("page-toni")) }));
-    await r.route("**/assets/photos/master-ruslan.jpg", x => x.fulfill({ status: 404, body: "" }));
+    await r.route("**/api/site/winchester/photo/**", async x => { const id = x.request().url().split("/photo/")[1].split("?")[0]; asked2.push(id);
+      return x.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(pngFace("worker-" + id)) }); });
+    await r.route(u => /\/assets\/photos\/master-[a-z]+\.jpg$/.test(u.pathname), x => /toni|aidos/.test(x.request().url())
+      ? x.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(pngFace("page-" + x.request().url())) }) : x.fulfill({ status: 404, body: "" }));
     await load(r);
     if (await r.locator(".master .av img").count()) {
       await r.click(".hero-cta [data-book]"); await step(r, "master");
-      await r.waitForFunction(id => { const i = document.querySelector(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`); return i && i.complete && i.naturalWidth > 0; }, W.TONI, { timeout: 5000 }).catch(() => {});
-      const t = await r.$eval(`[data-staff="${W.TONI}"] .wbk-av img`, i => ({ src: i.getAttribute("src"), w: i.naturalWidth, op: getComputedStyle(i).opacity })).catch(() => null);
-      ok("нет фото в Altegio — фото Тони из блока мастеров сайта", t && /assets\/photos\/master-toni\.jpg$/.test(t.src) && t.w > 0 && t.op === "1", JSON.stringify(t));
+      const ph = id => r.$eval(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`, i => ({ src: i.getAttribute("src"), w: i.naturalWidth })).catch(() => null);
+      const loaded = id => r.waitForFunction(id => { const i = document.querySelector(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`); return i && i.complete && i.naturalWidth > 0; }, id, { timeout: 5000 }).catch(() => {});
+      await loaded(W.TONI); await loaded(W.AIDOS);
+      const t = await ph(W.TONI), a = await ph(W.AIDOS);
+      ok("в Altegio фото нет — у Тони фото из блока мастеров сайта", t && /assets\/photos\/master-toni\.jpg(\?|$)/.test(t.src) && t.w > 0, JSON.stringify(t));
+      ok("фото на сайте важнее Altegio — у Айдоса фото сайта", a && /assets\/photos\/master-aidos\.jpg(\?|$)/.test(a.src) && a.w > 0 && !asked2.includes(String(W.AIDOS)), JSON.stringify([a, asked2]));
       await r.locator(`${STEP("master")} [data-staff="${W.RUSLAN}"]`).scrollIntoViewIfNeeded();
+      await loaded(W.ALISHER);
       await r.waitForFunction(id => !document.querySelector(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`), W.RUSLAN, { timeout: 4000 }).catch(() => {});
-      ok("фото на сайте не загрузилось (Руслан) — буква «Р»", (await r.locator(`${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av img`).count()) === 0 && (await txt(r, `${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av b`)) === "Р");
+      const al = await ph(W.ALISHER);
+      ok("файла на сайте нет (Алишер) — фото из Altegio через Worker", al && al.src.startsWith(API + "/api/site/winchester/photo/") && al.w > 0, JSON.stringify(al));
+      ok("нет ни на сайте, ни в Altegio (Руслан) — буква «Р»", (await r.locator(`${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av img`).count()) === 0 && (await txt(r, `${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av b`)) === "Р");
       if (flag) ok("фото со страницы: к Worker за Тони и Русланом не ходим", !asked2.includes(String(W.TONI)) && !asked2.includes(String(W.RUSLAN)), asked2.join(","));
     }
     await r.context().close();
@@ -992,7 +1002,7 @@ try {
     const p = await page(PHONE, "s13");
     const cat = p.waitForResponse(r => r.url().includes("/api/site/winchester/catalog"), { timeout: 15000 });
     await p.goto(URL0 + "/kk/"); await cat;
-    ok("kk: страница на казахском, форма записи подключена", await p.evaluate(() => document.documentElement.lang === "kk" && !!document.querySelector('script[src="../assets/booking.js"]')));
+    ok("kk: страница на казахском, форма записи подключена", await p.evaluate(() => document.documentElement.lang === "kk" && !!document.querySelector('script[src^="../assets/booking.js"]')));
     await p.evaluate(() => document.fonts.ready);
     ok("kk: казахские буквы — шрифтами сайта (Oswald cyrillic-ext, буквы ә ғ қ ң ұ для Manrope)", await p.evaluate(() =>
       [...document.fonts].some(f => f.family.replace(/"/g, "") === "Oswald" && /U\+0?460/i.test(f.unicodeRange) && f.status === "loaded") &&
