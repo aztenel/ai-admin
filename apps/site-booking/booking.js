@@ -418,11 +418,23 @@ function phSrc(m){
 }
 function av(m,cls){
  if(!m)return'<span class="wbk-av wbk-ay'+(cls?' '+cls:'')+'" aria-hidden="true">'+(emblem()||I.ppl)+'</span>';
- var s=phSrc(m),pg=s?'':pagePhoto(m.name);
+ var s=phSrc(m),ps=s?'':pageImg(m),pg=s||ps?'':pagePhoto(m.name);
  return'<span class="wbk-av'+(pg?' has':'')+(cls?' '+cls:'')+'" aria-hidden="true"'+(pg?' style="background-image:'+esc(pg)+'"':'')+'><b>'+esc(m.name.charAt(0).toUpperCase())+'</b>'+
-  (s?'<img src="'+esc(s)+'" alt="" width="64" height="64" loading="lazy" decoding="async" data-ph="'+m.id+'">':'')+'</span>';
+  (s||ps?'<img src="'+esc(s||ps)+'" alt="" width="64" height="64" loading="lazy" decoding="async" data-ph="'+(s?m.id:'p:'+m.id)+'">':'')+'</span>';
 }
-// фото с самой страницы (.ph «Тони, …») — запасной путь, если на сервере фото нет
+// фото из блока мастеров на самой странице (.master: h3 «Тони», .av img) — если в Altegio фото нет. У Тони и Руслана в Altegio фото нет,
+// а на сайте есть (прислал Кайрат 28.10.2026). Файла на сайте нет — ошибка загрузки, остаётся буква (S.bad['p:'+id])
+function firstName(n){return String(n||'').replace(/^\s+/,'').split(/[\s(,]/)[0].toLowerCase();}
+function pageImg(m){
+ if(S.bad['p:'+m.id])return'';
+ var all=D.querySelectorAll('.master'),k=firstName(m.name);
+ for(var i=0;i<all.length;i++){
+  var h=all[i].querySelector('h3'),im=all[i].querySelector('.av img');
+  if(k&&h&&im&&im.src&&firstName(h.textContent)===k)return im.src;
+ }
+ return'';
+}
+// фото с самой страницы (.ph «Тони, …», прежний вид сайта) — запасной путь, если на сервере фото нет
 function pagePhoto(name){
  var all=D.querySelectorAll('.ph.has[aria-label]');
  for(var i=0;i<all.length;i++)if(ga(all[i],'aria-label').indexOf(name+',')===0&&all[i].style.backgroundImage)return all[i].style.backgroundImage;

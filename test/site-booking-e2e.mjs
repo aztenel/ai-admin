@@ -783,6 +783,24 @@ try {
       ok("фото через Worker: у Айдына загрузилось", await q.$eval(`[data-staff="${W.AIDYN}"] .wbk-av img`, i => i.naturalWidth > 0).catch(() => false));
       await q.context().close();
     }
+    // в Altegio фото нет (Тони, Руслан), а в блоке мастеров сайта есть — форма берёт его со страницы (28.10.2026: Кайрат прислал фото,
+    // в форме оставались буквы). Файла на сайте нет (Руслан) — буква, без запроса к Worker
+    const r = await page(PHONE, "s17c"), asked2 = [];
+    await r.route("**/api/site/winchester/photo/**", x => { asked2.push(x.request().url().split("/photo/")[1].split("?")[0]); return x.fulfill({ status: 404, body: "" }); });
+    await r.route("**/assets/photos/master-toni.jpg", x => x.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(pngFace("page-toni")) }));
+    await r.route("**/assets/photos/master-ruslan.jpg", x => x.fulfill({ status: 404, body: "" }));
+    await load(r);
+    if (await r.locator(".master .av img").count()) {
+      await r.click(".hero-cta [data-book]"); await step(r, "master");
+      await r.waitForFunction(id => { const i = document.querySelector(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`); return i && i.complete && i.naturalWidth > 0; }, W.TONI, { timeout: 5000 }).catch(() => {});
+      const t = await r.$eval(`[data-staff="${W.TONI}"] .wbk-av img`, i => ({ src: i.getAttribute("src"), w: i.naturalWidth, op: getComputedStyle(i).opacity })).catch(() => null);
+      ok("нет фото в Altegio — фото Тони из блока мастеров сайта", t && /assets\/photos\/master-toni\.jpg$/.test(t.src) && t.w > 0 && t.op === "1", JSON.stringify(t));
+      await r.locator(`${STEP("master")} [data-staff="${W.RUSLAN}"]`).scrollIntoViewIfNeeded();
+      await r.waitForFunction(id => !document.querySelector(`.wbk-st:not(.wbk-lv) [data-staff="${id}"] .wbk-av img`), W.RUSLAN, { timeout: 4000 }).catch(() => {});
+      ok("фото на сайте не загрузилось (Руслан) — буква «Р»", (await r.locator(`${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av img`).count()) === 0 && (await txt(r, `${STEP("master")} [data-staff="${W.RUSLAN}"] .wbk-av b`)) === "Р");
+      if (flag) ok("фото со страницы: к Worker за Тони и Русланом не ходим", !asked2.includes(String(W.TONI)) && !asked2.includes(String(W.RUSLAN)), asked2.join(","));
+    }
+    await r.context().close();
   }
 
   // ---- 18. услуги как в Altegio: категории сверху (переход к группе), «ещё» у длинного описания Premium
