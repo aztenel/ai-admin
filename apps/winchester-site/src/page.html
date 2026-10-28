@@ -454,11 +454,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       <h2 class="h2" id="m-h">{{m_h}}</h2>
       <p class="lead">{{m_lead}}</p>
     </div>
-    <!-- Фото мастеров — из Altegio (220×220), в репозиторий не кладутся. У Тони и Руслана фото нет ни в Altegio, ни на сайте — только
-         буква, без <img>: иначе каждый посетитель получал два ответа 404 (замечание 25.10.2026). Появится фото — вернуть <img> как у Айдоса. -->
+    <!-- Фото мастеров (живые люди) в репозиторий не кладутся — только в zip владельцу. Айдос, Айдын, Алишер — из Altegio (220×220);
+         Тони (Рауан) и Руслан — фото от Кайрата 28.10.2026 (в Altegio их нет). Нет файла на сайте — остаётся буква имени. -->
     <div class="m-list">
       <article class="master">
-        <span class="av" data-l="{{toni_l}}"></span>
+        <span class="av" data-l="{{toni_l}}"><img src="{{base}}assets/photos/master-toni.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
         <div><h3>{{toni}}</h3><p>{{role_chef}}</p></div>
         <a class="btn btn-brass" data-book="m:тони" data-wa="{{wa_toni}}" href="https://wa.me/77066940608" aria-label="{{book_toni}}">{{book_short}}</a>
       </article>
@@ -478,7 +478,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         <a class="btn btn-line" data-book="m:алишер" data-wa="{{wa_alisher}}" href="https://wa.me/77066940608" aria-label="{{book_alisher}}">{{book_short}}</a>
       </article>
       <article class="master">
-        <span class="av" data-l="{{ruslan_l}}"></span>
+        <span class="av" data-l="{{ruslan_l}}"><img src="{{base}}assets/photos/master-ruslan.jpg" width="220" height="220" loading="lazy" decoding="async" alt=""></span>
         <div><h3>{{ruslan}}</h3><p>{{role_barber}}</p></div>
         <a class="btn btn-line" data-book="m:руслан" data-wa="{{wa_ruslan}}" href="https://wa.me/77066940608" aria-label="{{book_ruslan}}">{{book_short}}</a>
       </article>
