@@ -201,7 +201,7 @@ function card(x: unknown): ContactCard {
       const o = obj(v);
       return { ...(consent(o) as ConsentRecord), purpose: (o.purpose === "service" ? "service" : "marketing") as ConsentPurpose };
     }),
-    consentRules: { refusedAt: tm(cr.refusedAt), chatAvailable: cr.chatAvailable === true, oralAllowed: cr.oralAllowed !== false },
+    consentRules: { refusedAt: tm(cr.refusedAt), chatAvailable: cr.chatAvailable === true, oralAllowed: cr.oralAllowed !== false, chatText: typeof cr.chatText === "string" ? cr.chatText : null, chatAt: tm(cr.chatAt) },
     restrictions: arr(d.restrictions).map(restriction),
     segments: arr(d.segments).map((v) => {
       const o = obj(v);

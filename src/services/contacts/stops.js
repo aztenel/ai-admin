@@ -46,9 +46,11 @@ async function d1Stop(env, x) {
   if (!db) return "fail";
   const ok = await tries(async () => {
     const id = await contactFor(db, x.ws, x.phone, newId(), x.at);
-    const added = await restrictionAdd(db, x.ws, { contactId: id, kind: "marketing_optout", reason: x.kind === "review" ? `Неоднозначно: «${String(x.text || "").slice(0, 120)}»` : "STOP", source: x.source, actor: x.actor || "webhook", review: x.kind === "review", at: x.at, eventKey: x.eventKey || undefined });
-    // ясный «стоп» — это и отказ клиента от рассылок: запись в истории согласий (снять запрет потом — только с его новым подтверждённым «да»)
-    if (added && x.kind === "stop") await consentAdd(db, x.ws, { contactId: id, purpose: "marketing", state: "denied", basis: "клиент написал «стоп»", source: x.source, actor: x.actor || "webhook", at: x.at, evidence: "client_stop", evidenceRef: x.text ? `«${String(x.text).slice(0, 60)}»` : null, confirmed: true, givenAt: x.at });
+    const r = await restrictionAdd(db, x.ws, { contactId: id, kind: "marketing_optout", reason: x.kind === "review" ? `Неоднозначно: «${String(x.text || "").slice(0, 120)}»` : "STOP", source: x.source, actor: x.actor || "webhook", review: x.kind === "review", at: x.at, eventKey: x.eventKey || undefined });
+    // ясный «стоп» — это и отказ клиента от рассылок: запись в истории согласий (снять запрет потом — только с его новым подтверждённым
+    // «да»). Пишется на каждое новое сообщение «стоп», даже если запрет уже стоял (например, его поставил человек): иначе отказ
+    // клиента терялся и запрет снимался без согласия (находка проверки безопасности 31.10.2026). Повтор того же вебхука — не пишется
+    if (r.fresh && x.kind === "stop") await consentAdd(db, x.ws, { contactId: id, purpose: "marketing", state: "denied", basis: "клиент написал «стоп»", source: x.source, actor: x.actor || "webhook", at: x.at, evidence: "client_stop", evidenceRef: x.text ? `«${String(x.text).slice(0, 60)}»` : null, confirmed: true, givenAt: x.at });
   }, [300]);
   return ok ? "ok" : "fail";
 }

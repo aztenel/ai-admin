@@ -85,9 +85,9 @@ function iphoneSafeArea() {
 }
 
 /** Вход (живой режим) и раздел «Клиенты». */
-async function session({ role = "owner", c, vp, scheme, tag }) {
+async function session({ role = "owner", c, vp, scheme, tag, tz = "Asia/Almaty" }) {
   const phone = vp.width < 500;
-  const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, deviceScaleFactor: phone ? 2 : 1, isMobile: phone, hasTouch: phone, locale: "ru-RU", timezoneId: "Asia/Almaty" });
+  const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, deviceScaleFactor: phone ? 2 : 1, isMobile: phone, hasTouch: phone, locale: "ru-RU", timezoneId: tz });
   await ctx.addInitScript(shiftClock, SHIFT);
   if (phone) await ctx.addInitScript(iphoneSafeArea);
   const page = await ctx.newPage();
@@ -310,7 +310,7 @@ async function owner(vp, scheme, tag) {
     await own.waitFor();
     const liftBtn = own.getByRole("button", { name: "Снять запрет" });
     ok(`${tag}: «стоп» от клиента — «Снять» неактивна`, await liftBtn.isDisabled());
-    ok(`${tag}: «стоп» от клиента — объяснение, почему нельзя`, /новое подтверждённое согласие/.test(await text(own)), await text(own));
+    ok(`${tag}: «стоп» от клиента — объяснение, почему нельзя`, /нов\S* подтверждённ\S* согласи/.test(await text(own)), await text(own));
     await reveal(own);
     await step(t, "client-stop");
     await tap(own.getByRole("button", { name: "Записать новое согласие" }));
@@ -476,6 +476,20 @@ async function staff(vp, scheme, tag) {
   await finish(t);
 }
 
+// телефон в другом часовом поясе (Нью-Йорк, UTC−5): «был N дней назад» и даты — всё равно по Астане, как считает сервер (31.10.2026)
+async function otherZone(vp, scheme, tag) {
+  const t = await session({ role: "staff", c: "winchester", vp, scheme, tag, tz: "America/New_York" });
+  const { page } = t;
+  await rows(page).first().waitFor({ timeout: 15_000 });
+  const api = await page.evaluate(async () => (await (await fetch("/api/contacts/list?c=winchester")).json()).items.slice(0, 8));
+  const word = (d) => (d <= 0 ? "сегодня" : d === 1 ? "вчера" : `${d} ${d % 10 === 1 && d % 100 !== 11 ? "день" : [2, 3, 4].includes(d % 10) && ![12, 13, 14].includes(d % 100) ? "дня" : "дней"} назад`);
+  const texts = await rows(page).allInnerTexts();
+  const miss = api.filter((x) => x.daysAgo != null).filter((x) => !texts.some((tx) => tx.includes(x.phone) && tx.includes(word(x.daysAgo))));
+  ok(`${tag}: дни с визита — по Астане, как у сервера (браузер в Нью-Йорке)`, api.length > 0 && !miss.length, miss.map((x) => `${x.phone}: ${x.daysAgo}`).join("; "));
+  await step(t, "other-zone");
+  await finish(t);
+}
+
 async function notReady(vp, scheme, tag) {
   const t = await session({ role: "owner", c: "demo-empty", vp, scheme, tag });
   const { page } = t;
@@ -504,6 +518,7 @@ try {
     await run("Компания без базы · телефон, светлая", () => notReady(PHONE, "light", "empty-390-light"));
   } else {
     await run("Сотрудник · компьютер, светлая", () => staff(DESK, "light", "staff-1280-light"));
+    await run("Сотрудник · телефон в часовом поясе Нью-Йорка", () => otherZone(PHONE, "light", "staff-390-ny"));
   }
 } finally {
   await browser.close();

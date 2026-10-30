@@ -53,19 +53,23 @@ test("отказ клиента: «стоп» — это и отказ в сог
   assert.equal(card.consent.marketing.state, "denied"); assert.equal(card.consent.marketing.evidence, "client_stop"); assert.equal(card.consent.marketing.confirmed, true);
   const r = card.restrictions.find(x => x.active);
   assert.equal(r.byClient, true); assert.equal(r.canLift, false); assert.match(r.liftHint, /нового подтверждённого согласия/);
-  assert.deepEqual(card.consentRules, { refusedAt: card.consentRules.refusedAt, chatAvailable: false, oralAllowed: false });
+  assert.equal(card.consentRules.chatAvailable, false); assert.equal(card.consentRules.oralAllowed, false); assert.ok(card.consentRules.refusedAt > 0);
   await assert.rejects(contactsLift(s.env, W, Date.now(), { id, rid: r.id, reason: "владелец решил" }, "owner", true), e => e.code === "consent");
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "oral" }, "owner"), e => e.code === "consent");
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "chat" }, "owner"), e => e.code === "consent" && /не писал/.test(e.message));
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "document", evidenceRef: "анкета", givenAt: day(30) }, "owner"), e => e.code === "consent" && /раньше отказа/.test(e.message));
-  // клиент сам написал после «стопа» — подтверждение в переписке
+  // обычное сообщение после «стопа» — не согласие (находка проверки безопасности 31.10.2026)
   net.ai = ["Хорошо!"];
+  await s.gaText("winchester", INST, "77000000911", "а на завтра есть время?", { idMessage: "R-1b" });
+  assert.equal((await contactsCard(s.env, W, Date.now(), id)).consentRules.chatAvailable, false);
+  await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "chat" }, "owner"), e => e.code === "consent");
+  // клиент сам написал «присылайте» — подтверждение в переписке
   await s.gaText("winchester", INST, "77000000911", "присылайте акции снова, пожалуйста", { idMessage: "R-2" });
   card = await contactsCard(s.env, W, Date.now(), id);
   assert.equal(card.consentRules.chatAvailable, true);
   await contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "chat" }, "staff");
   card = await contactsCard(s.env, W, Date.now(), id);
-  assert.equal(card.consent.marketing.confirmed, true); assert.match(card.consent.marketing.evidenceRef, /сообщение клиента/);
+  assert.equal(card.consent.marketing.confirmed, true); assert.match(card.consent.marketing.evidenceRef, /сообщение клиента .*«присылайте акции снова/);
   assert.equal(card.restrictions.find(x => x.active).canLift, true);
   await contactsLift(s.env, W, Date.now(), { id, rid: r.id, reason: "клиент сам попросил присылать" }, "owner", true);
   assert.equal(s.kv.mem.get("optout:winchester:77000000911"), undefined);
@@ -191,4 +195,18 @@ test("справочник клиентов Altegio: вся база, а не т
   assert.ok(pr.summary.some(l => /is_newsletter_allowed\): 6/.test(l)));
   assert.equal(pd.raw.prepare("select count(*) n from contacts").get().n, 0, "в черновик — только числа");
   assert.ok(!/7700001|Давний|Арман/.test(JSON.stringify(pr) + JSON.stringify(pd.raw.prepare("select details from events").all())), "без имён и номеров");
+});
+
+test("запрет поставил человек, потом клиент сам написал «стоп»: отказ записан, снять без нового согласия нельзя (находка проверки безопасности)", { skip }, async () => {
+  net.reset();
+  const d = d1With("production"), s = mk({ ...ENV, DB: d.db, GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token });
+  const x = await contactsAdd(s.env, W, Date.now(), { phone: "+77000000961", name: "Т" }, "staff");
+  await contactsRestrict(s.env, W, Date.now(), { id: x.id, kind: "marketing_optout", reason: "администратор попросил подождать" }, "staff");
+  await s.gaText("winchester", INST, "77000000961", "стоп", { idMessage: "S-1" });
+  await s.gaText("winchester", INST, "77000000961", "стоп", { idMessage: "S-1" }); // повтор вебхука — второго отказа нет
+  const card = await contactsCard(s.env, W, Date.now(), x.id);
+  assert.equal(card.consentHistory.filter(c => c.evidence === "client_stop").length, 1);
+  const r = card.restrictions.find(y => y.active);
+  assert.equal(r.source, "admin"); assert.equal(r.canLift, false, "клиент отказался позже — без его согласия не снять");
+  await assert.rejects(contactsLift(s.env, W, Date.now(), { id: x.id, rid: r.id, reason: "подождали" }, "owner", true), e => e.code === "consent");
 });

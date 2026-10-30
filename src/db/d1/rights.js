@@ -16,7 +16,7 @@ export async function contactFor(db, ws, phone, newId, at) {
  * пометку «ждёт решения». event_key — id сообщения у провайдера: повторный вебхук не даёт второго события.
  * @param {any} db @param {string} ws
  * @param {{ contactId: string, kind: string, reason: string, source: string, actor: string, review?: boolean, legacyKey?: string|null, at: number, eventKey?: string, details?: any }} x
- * @returns {Promise<boolean>} true — запрет новый
+ * @returns {Promise<{ added: boolean, fresh: boolean }>} added — запрет новый; fresh — событие новое (не повтор того же сообщения)
  */
 export async function restrictionAdd(db, ws, x) {
   const list = [
@@ -24,10 +24,10 @@ export async function restrictionAdd(db, ws, x) {
       values (?, ?, ?, '', ?, ?, ?, ?, ?, ?) on conflict do nothing returning id`).bind(ws, x.contactId, x.kind, x.reason.slice(0, 300), x.source, x.actor, x.legacyKey || null, x.review ? 1 : 0, x.at)
   ];
   if (!x.review) list.push(db.prepare("update restrictions set needs_review = 0 where ws = ? and contact_id = ? and kind = ? and lifted_at is null and needs_review = 1").bind(ws, x.contactId, x.kind));
-  list.push(db.prepare("insert into events (ws, event_key, kind, contact_id, actor, details, at) values (?, ?, ?, ?, ?, ?, ?) on conflict do nothing")
+  list.push(db.prepare("insert into events (ws, event_key, kind, contact_id, actor, details, at) values (?, ?, ?, ?, ?, ?, ?) on conflict do nothing returning id")
     .bind(ws, x.eventKey || `r:${x.contactId}:${x.kind}:${x.at}`, x.review ? "stop_review" : x.kind === "full_block" ? "full_block" : "stop", x.contactId, x.actor, JSON.stringify({ reason: x.reason.slice(0, 200), source: x.source, ...(x.details || {}) }), x.at));
   const res = await db.batch(list);
-  return (res[0].results || []).length === 1;
+  return { added: (res[0].results || []).length === 1, fresh: (res[res.length - 1].results || []).length === 1 };
 }
 
 /** Снять запрет (кто и почему — обязательно). → вид снятого или null. @param {any} db @param {string} ws @param {{ contactId: string, rid: number, by: string, reason: string, at: number }} x */

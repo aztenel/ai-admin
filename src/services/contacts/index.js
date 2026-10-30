@@ -3,7 +3,8 @@
 // согласия и запреты с историей. Источник правды — D1; «стоп» читается ещё и из KV (запрещено, если запрещено хоть где-то).
 // Полные номера — только в карточке (как в пульте чатов), в списке — маской.
 /** @import { Env, Client } from "../../lib/types.js" */
-import { normPhone, maskPhone, fmtPhone, logSafe } from "../../lib/phone.js";
+import { normPhone, maskPhone, fmtPhone, logSafe, maskPhones } from "../../lib/phone.js";
+import { stopKind } from "../conversation/stop-words.js";
 import { d1Ready, stageOf } from "../../db/d1/status.js";
 import { syncRows } from "../../db/d1/sync.js";
 import { contactNumbers, eventsOf, segmentCounts, contactsPage, contactCard, contactAdd, recompute } from "../../db/d1/contacts.js";
@@ -31,15 +32,23 @@ const MON = ["января", "февраля", "марта", "апреля", "м
 /** «14 ноября» по Астане. @param {number} t */
 const dayWords = t => { const d = dayOf(t); return `${+d.slice(8, 10)} ${MON[+d.slice(5, 7) - 1]}`; };
 
+// явное «да» в сообщении клиента: согласен, присылайте, можно писать, подпишите, «да», «старт». Любое другое сообщение («а завтра есть
+// время?») согласием не считается (находка проверки безопасности 31.10.2026), «стоп» и неоднозначный «стоп» — тем более
+const OPT_IN = /(соглас|присылай|пишите|можно\s+(?:писать|присылать|отправлять|скидывать)|хочу\s+получать|подпиш|подписа|верните\s+рассылк|^\s*(?:да|ок|окей|старт|start|yes|иә|ия)\s*[.!)]*\s*$|келісемін|жіберіңіз|жазыңыз)/iu;
 /**
- * Последнее сообщение клиента в переписке (оба номера) позже after — подтверждение «клиент сам написал». null — нет.
+ * Последнее сообщение клиента в переписке (оба номера) позже after с явным «да» — подтверждение «клиент сам написал». null — нет.
  * @param {Env} env @param {string} ws @param {string} phone @param {number} after
+ * @returns {Promise<{ t: number, text: string } | null>}
  */
 async function clientWroteAfter(env, ws, phone, after) {
+  /** @type {{ t: number, text: string } | null} */
   let best = null;
   for (const ch of ["ga", "wa"]) {
     let h = null; try { h = await readHist(env, `h:${ch}:${ws}:${phone}`); } catch (e) {}
-    for (const t of (h && h.turns) || []) if (t && t.role === "user" && +t.t > after && (!best || +t.t > best)) best = +t.t;
+    for (const t of (h && h.turns) || []) {
+      const text = String((t && t.text) || "");
+      if (t && t.role === "user" && +t.t > after && !stopKind(text) && OPT_IN.test(text) && (!best || +t.t > best.t)) best = { t: +t.t, text: maskPhones(text).replace(/\s+/g, " ").trim().slice(0, 120) };
+    }
   }
   return best;
 }
@@ -51,6 +60,13 @@ async function kvStopAt(env, ws, phone) {
 const byClientOf = y => CLIENT_SOURCES.includes(String(y.source)) && (y.kind === "marketing_optout" || y.kind === "full_block") && !+y.needs_review;
 /** Есть ли подтверждённое «да» позже момента at. @param {any} cs @param {number} at */
 const consentAfter = (cs, at) => !!cs && cs.state === "granted" && +cs.confirmed === 1 && +(cs.given_at ?? cs.created_at) > at;
+/**
+ * После какого момента нужно новое подтверждённое согласие, чтобы снять этот запрет (0 — не нужно): запрет поставил клиент — после
+ * него; клиент отказался позже, чем запрет поставили (человек поставил, а потом клиент написал «стоп»), — после отказа.
+ * @param {any} row запрет @param {number} refused последний отказ клиента (0 — не было)
+ */
+const needConsentAfter = (row, refused) => !(row.kind === "marketing_optout" || row.kind === "full_block") || +row.needs_review ? 0
+  : byClientOf(row) ? Math.max(+row.created_at, refused) : refused > +row.created_at ? refused : 0;
 const NEED_CONSENT = "Клиент сам отказался от рассылок. Снять запрет можно только после его нового подтверждённого согласия: запишите его в блоке «Согласие» (сообщение клиента в WhatsApp или письменное согласие).";
 
 /** База этого адреса или ошибка «нет базы». @param {Env} env @param {number} now */
@@ -155,8 +171,9 @@ export async function contactsCard(env, c, now, id) {
   const cons = (/** @type {any} */ s) => ({ state: s.state, basis: s.basis, source: s.source, actor: who(s.actor), at: +s.created_at, confirmed: !!+s.confirmed, evidence: s.evidence || null, evidenceRef: s.evidence_ref || (s.evidence ? EVIDENCE_TEXT[s.evidence] || null : null), givenAt: n0(s.given_at) });
   const latest = (/** @type {string} */ p) => { const s = r.consents.find((/** @type {any} */ y) => y.purpose === p); return s ? cons(s) : null; };
   const lastM = r.consents.find((/** @type {any} */ y) => y.purpose === "marketing") || null;
+  const refusedD1 = (await refusedAt(db, c.id, x.id)) || 0;
   const restrictions = r.restrictions.map((/** @type {any} */ y) => {
-    const active = y.lifted_at == null, byClient = byClientOf(y), canLift = active && (!byClient || consentAfter(lastM, +y.created_at));
+    const active = y.lifted_at == null, byClient = byClientOf(y), need = needConsentAfter(y, refusedD1), canLift = active && (!need || consentAfter(lastM, need));
     return { id: +y.id, kind: y.kind, reason: y.reason, source: y.source, actor: who(y.actor), at: +y.created_at, review: !!y.needs_review, liftedAt: n0(y.lifted_at), liftedBy: y.lifted_by ? who(y.lifted_by) : null,
       liftReason: y.lift_reason || null, active, byClient, untilAt: n0(y.until_at), canLift, liftHint: active && !canLift ? NEED_CONSENT : "" };
   });
@@ -166,7 +183,8 @@ export async function contactsCard(env, c, now, id) {
     const canLift = consentAfter(lastM, at);
     restrictions.unshift({ id: 0, kind: "marketing_optout", reason: "«Стоп» в прежнем хранилище (KV)", source: "kv", actor: "—", at, review: false, liftedAt: null, liftedBy: null, liftReason: null, active: true, byClient: true, untilAt: null, canLift, liftHint: canLift ? "" : NEED_CONSENT });
   }
-  const refused = await refusedAt(db, c.id, x.id), kvStop = restrictions.find((/** @type {any} */ y) => y.id === 0), refusal = Math.max(refused || 0, kvStop ? kvStop.at : 0) || null;
+  const kvStop = restrictions.find((/** @type {any} */ y) => y.id === 0), refusal = Math.max(refusedD1, kvStop ? kvStop.at : 0) || null;
+  const chat = await clientWroteAfter(env, c.id, x.phone, refusal || 0);
   const reasons = marketWhy(k);
   return {
     contact: { id: String(x.id), name: logSafe(x.name || ""), phone: fmtPhone(x.phone) || "+" + x.phone, altegioId: x.altegio_client_id || null, firstVisitAt: n0(x.first_visit_at), lastVisitAt: n0(k.lastv), daysAgo: n0(k.d), visits: +x.visits || 0,
@@ -178,7 +196,7 @@ export async function contactsCard(env, c, now, id) {
     missed: live.filter((/** @type {any} */ b) => b.starts_at <= now && +b.attendance === -1).length,
     consent: { marketing: latest("marketing"), service: latest("service") },
     consentHistory: r.consents.map(cons),
-    consentRules: { refusedAt: refusal, chatAvailable: !!(await clientWroteAfter(env, c.id, x.phone, refusal || 0)), oralAllowed: !refusal },
+    consentRules: { refusedAt: refusal, chatAvailable: !!chat, chatText: chat ? chat.text : null, chatAt: chat ? chat.t : null, oralAllowed: !refusal },
     restrictions,
     segments: SEGMENTS.filter((s, i) => s.id !== "all" && seg["s" + i]).map(s => ({ id: s.id, label: s.label })),
     canMarket: { ok: !reasons.length, reasons },
@@ -217,9 +235,9 @@ export async function contactsConsent(env, c, now, b, actor) {
   const refused = purpose === "marketing" ? Math.max((await refusedAt(db, c.id, x.id)) || 0, await kvStopAt(env, c.id, x.phone)) || null : null;
   let givenAt = now, evRef = ref;
   if (evidence === "chat") {
-    const t = await clientWroteAfter(env, c.id, x.phone, refused || 0);
-    if (!t) throw fail("consent", refused ? `После отказа (${dayWords(refused)}) клиент не писал в WhatsApp — подтверждения в переписке нет.` : "В переписке нет сообщений клиента — подтверждения нет.");
-    givenAt = t; evRef = `сообщение клиента ${dayWords(t)}`;
+    const m = await clientWroteAfter(env, c.id, x.phone, refused || 0);
+    if (!m) throw fail("consent", refused ? `После отказа (${dayWords(refused)}) клиент не писал в WhatsApp, что согласен, — подтверждения в переписке нет.` : "В переписке нет сообщения клиента с согласием («да», «присылайте», «согласен») — подтверждения нет.");
+    givenAt = m.t; evRef = `сообщение клиента ${dayWords(m.t)}: «${m.text}»`;
   } else if (evidence === "document") {
     if (evRef.length < 3) throw fail("input", "Укажите номер письменного согласия или где оно хранится.", "evidenceRef");
     const g = /^\d{4}-\d{2}-\d{2}$/.test(str(b.givenAt)) ? dayStart(str(b.givenAt)) : NaN;
@@ -271,7 +289,9 @@ export async function contactsLift(env, c, now, b, actor, owner) {
   }
   const row = rid ? await restrictionGet(db, c.id, x.id, rid) : null;
   if (!row || row.lifted_at != null) throw fail("missing", "Запрет не найден или уже снят.");
-  if (byClientOf(row) && !consentAfter(cs, +row.created_at)) throw fail("consent", NEED_CONSENT); // отказ клиента не обходится без его нового согласия
+  // отказ клиента не обходится без его нового согласия: и когда запрет поставил клиент, и когда клиент отказался позже запрета
+  const need = needConsentAfter(row, Math.max((await refusedAt(db, c.id, x.id)) || 0, await kvStopAt(env, c.id, x.phone)));
+  if (need && !consentAfter(cs, need)) throw fail("consent", NEED_CONSENT);
   const kind = await restrictionLift(db, c.id, { contactId: x.id, rid, by: actor, reason, at: now });
   if (!kind) throw fail("missing", "Запрет не найден или уже снят.");
   if (!(await blocksLeft(db, c.id, x.id))) await mirror(env, db, c.id, x.phone, "del", now);

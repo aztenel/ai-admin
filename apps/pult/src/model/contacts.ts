@@ -104,7 +104,7 @@ export type ConsentRecord = {
   givenAt: number | null;
 };
 /** Что можно выбрать в диалоге согласия: был ли отказ клиента, есть ли его сообщение после отказа, можно ли «устно». */
-export type ConsentRules = { refusedAt: number | null; chatAvailable: boolean; oralAllowed: boolean };
+export type ConsentRules = { refusedAt: number | null; chatAvailable: boolean; oralAllowed: boolean; chatText?: string | null; chatAt?: number | null };
 /** Новое согласие: для «есть» обязательно evidence; document — evidenceRef и givenAt (ГГГГ-ММ-ДД). */
 export type ConsentInput = { purpose: ConsentPurpose; state: ConsentState; basis: string; evidence?: "chat" | "document" | "oral"; evidenceRef?: string; givenAt?: string };
 export type Restriction = {

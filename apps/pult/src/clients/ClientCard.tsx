@@ -356,7 +356,7 @@ function ConsentBlock({
                 onSelect={() => (setEvidence("chat"), setErr(null))}
                 disabled={!rules.chatAvailable}
                 title="Клиент сам написал в WhatsApp"
-                sub={rules.chatAvailable ? "сервер найдёт его сообщение" : "в переписке нет сообщения клиента после отказа"}
+                sub={rules.chatAvailable ? (rules.chatText ? `клиент написал: «${rules.chatText}»` : "сервер найдёт его сообщение") : "в переписке нет сообщения клиента с согласием («да», «присылайте»)"}
               />
               <RadioRow
                 name="evidence"
