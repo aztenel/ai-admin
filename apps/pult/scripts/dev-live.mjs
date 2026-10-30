@@ -40,6 +40,7 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     GA_ID_WINCHESTER: GAW.id,
     GA_TOKEN_WINCHESTER: GAW.token,
     ALTEGIO_USER_WINCHESTER: "usr-tok",
+    REMIND_GA_WINCHESTER: "1", // напоминания по журналу Altegio со второго номера включены (на сервере по умолчанию выключены)
     KEY_WINCHESTER: STAFF_W,
   });
   const { S } = bot;

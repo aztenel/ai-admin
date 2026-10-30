@@ -388,6 +388,8 @@ export type ServiceOverview = {
   altegio: boolean;
   /** Напоминания по всем записям журнала Altegio со второго номера, без бота (Winchester, 30.10.2026): тогда botOff не мешает. */
   journal?: boolean;
+  /** Режим журнала: false — напоминания не включены (Text REMIND_GA_<ID> = 1 на сервере включает владелец после согласия заказчика). */
+  enabled?: boolean;
   /** Green-API отказал (номер заблокирован или ключ не подходит) — отправка на паузе (6 часов). */
   hold?: { at: number; why: string } | null;
 };

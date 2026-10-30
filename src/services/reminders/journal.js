@@ -85,11 +85,17 @@ export function jrPlan(c, records, now) {
 /** @param {any} x */
 const key = x => x.rec + ":" + x.k;
 
+/** включены ли напоминания по журналу: c.jr и Text REMIND_GA_<ID> = 1. По умолчанию выключены — это сообщения настоящим клиентам
+ *  с неофициального номера: включает владелец после «отправляй» заказчика и одобренных текстов (30.10.2026, перед выкладкой: на боевом
+ *  сервере могли уже стоять номер Green-API и ключ журнала — напоминания ушли бы в тот же вечер)
+ *  @param {Env} env @param {Client} c */
+export const jrOn = (env, c) => !!(c && c.jr) && /^(1|on|yes|true|да)$/i.test(String(env["REMIND_GA_" + String(c.id).toUpperCase()] || "").trim());
+
 /** фоновая задача раз в минуту: компании с c.jr, ключом журнала и номером Green-API @param {Env} env @param {number} now */
 export async function jrRun(env, now) {
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
-    if (!c || !c.jr) continue;
+    if (!jrOn(env, c)) continue;
     try { n += await jrClient(env, c, now); } catch (/** @type {any} */ e) { console.log("jr", c.id, String((e && e.stack) || e)); }
   }
   return n;

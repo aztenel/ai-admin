@@ -20,6 +20,7 @@ const WHO = "Отправляет бот сам, с того номера, ку�
 // второй номер Winchester без бота (30.10.2026): напоминания и отзыв — по всем записям журнала Altegio
 const JOURNAL = "Уходят сами со второго номера по всем записям журнала Altegio — администратора, сайта, онлайн-записи. Отзыв — только тем, у кого в Altegio отмечено «пришёл». Администратору ничего делать не нужно.";
 function who(d: ServiceOverview): string {
+  if (d.journal && d.enabled === false) return "Напоминания и просьба об отзыве по журналу Altegio готовы, но выключены: включаются на сервере после согласия владельца компании.";
   if (d.journal) return d.altegio ? JOURNAL : "Напоминания строятся по журналу Altegio, а ключ журнала не подключён — сообщения не уходят.";
   if (!d.altegio)
     return "Напоминания и просьбу об отзыве бот шлёт сам, но только по записям, которые он сделал в Altegio. У компании запись через Altegio не подключена — эти сообщения не уходят.";
@@ -110,7 +111,7 @@ export default function ServiceMessages({ ws, owner }: { ws: string; owner: bool
       )}
 
       <Group title={d.journal ? "Что уходит само" : "Что бот отправляет сам"} note={who(d)}>
-        {d.kinds.length ? d.kinds.map((k) => <KindRow key={k.kind} k={k} altegio={d.altegio} />) : <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Сведений нет.</p>}
+        {d.kinds.length ? d.kinds.map((k) => <KindRow key={k.kind} k={k} altegio={d.altegio} paused={d.journal && d.enabled === false} />) : <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Сведений нет.</p>}
       </Group>
 
       <Group title="Ближайшие" note={owner ? LIVE_ONLY : TIME}>
@@ -158,10 +159,10 @@ function Tile({ kind, on = true }: { kind: ServiceKind; on?: boolean }) {
 }
 
 /** Вид сообщения: когда уходит, что это, включено ли; у отзыва — ссылка, куда бот зовёт оставить отзыв. */
-function KindRow({ k, altegio }: { k: ServiceKindState; altegio: boolean }) {
+function KindRow({ k, altegio, paused }: { k: ServiceKindState; altegio: boolean; paused?: boolean }) {
   const [head, tail] = (k.label || LABEL[k.kind]).split(" — ");
   const what = tail ? tail[0].toUpperCase() + tail.slice(1) : "";
-  const off = k.on ? "" : !altegio ? "Только по записям через Altegio." : k.kind === "rv" ? "Нет ссылки на отзывы (2ГИС, Google Карты)." : "Выключено в настройках бота.";
+  const off = k.on ? "" : paused ? "Пока выключено — включается после согласия владельца." : !altegio ? "Только по записям через Altegio." : k.kind === "rv" ? "Нет ссылки на отзывы (2ГИС, Google Карты)." : "Выключено в настройках бота.";
   return (
     <div className="flex min-h-14 items-start gap-3 py-2.5">
       <Tile kind={k.kind} on={k.on} />

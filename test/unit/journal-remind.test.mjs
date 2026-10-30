@@ -10,7 +10,7 @@ import { botOff } from "../../src/services/channels/index.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 
 const W = CLIENTS.winchester, INST = { id: "7105000088", token: "ga-tok-jr" };
-const ENV = { ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
+const ENV = { ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, REMIND_GA_WINCHESTER: "1" };
 const TODAY = "2026-10-19", TOM = "2026-10-20", YDAY = "2026-10-18";
 const at = (date, time) => atLocal(date, time);
 let rid = 500;
@@ -205,4 +205,23 @@ test("пульт, вкладка «Сервисные»: очередь по ж�
   await s.kv.api.put("jrhold:winchester", JSON.stringify({ at: now, why: "Green-API ответил 403" }));
   assert.ok(/403/.test((await (await own.go("/api/bc/service?c=winchester")).json()).hold.why));
   assert.equal((await (await login("staff-key-barber-0001")).go("/api/bc/service?c=winchester")).status, 403);
+});
+
+test("без REMIND_GA_WINCHESTER = 1 напоминания выключены: журнал не читаем, не шлём; во вкладке «Сервисные» — выключено", async () => {
+  net.reset();
+  const now = Date.now(), tom = new Date(now + 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+  net.altJournal = [rec(ph(311), TOM, "15:00", { id: 111 }), rec(ph(312), tom, "15:00", { id: 112 })];
+  const { REMIND_GA_WINCHESTER, ...off } = ENV;
+  for (const v of [undefined, "0", "нет"]) {
+    const s = mk(v === undefined ? off : { ...off, REMIND_GA_WINCHESTER: v });
+    await jrRun(s.env, at(TODAY, "17:00")); await jrRun(s.env, at(TODAY, "18:00"));
+    assert.equal(await s.kv.api.get("jrq:winchester"), null);
+  }
+  assert.deepEqual(sent(), []);
+  assert.ok(!net.alt.some(x => /^GET \/records\//.test(x)), net.alt.join("\n"));
+  const s = mk(off), b = s.browser();
+  await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" });
+  const j = await (await b.go("/api/bc/service?c=winchester")).json();
+  assert.equal(j.journal, true); assert.equal(j.enabled, false);
+  assert.deepEqual(j.kinds.map(x => x.on), [false, false, false]);
 });
