@@ -319,6 +319,7 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
 function SyncLine({ d, now, owner, onOpen }: { d: ContactsStatus; now: number; owner: boolean; onOpen: () => void }) {
   const s = d.sync;
   const bad = d.checks.filter((c) => c.level === "bad" && c.count > 0).length;
+  const unknown = d.checks.filter((c) => c.level === "unknown").length;
   let tone: "ok" | "critical" | "muted" = "muted";
   let text: string;
   if (!s.available) text = s.why || "Altegio не подключён — база из импорта и ручного добавления.";
@@ -331,7 +332,9 @@ function SyncLine({ d, now, owner, onOpen }: { d: ContactsStatus; now: number; o
     tone = "ok";
     text = `Altegio: обновлено ${ago(s.lastOkAt, now)}`;
   } else text = "Altegio: ещё не синхронизировали";
-  const extra = [s.dryOnly ? "черновик — настоящий Altegio только проверкой без записи" : "", bad ? `проверки: замечаний ${bad}` : ""].filter(Boolean).join(" · ");
+  const extra = [s.dryOnly ? "черновик — настоящий Altegio только проверкой без записи" : "", bad ? `проверки: замечаний ${bad}` : "", unknown ? `ещё не проверено: ${unknown}` : ""]
+    .filter(Boolean)
+    .join(" · ");
   const Icon = tone === "critical" ? CircleAlert : tone === "ok" ? CircleCheck : Database;
   const body = (
     <>
@@ -378,7 +381,7 @@ function Chip({ on, onClick, label, n, title }: { on: boolean; onClick: () => vo
 }
 
 /** Метка в строке клиента: «стоп», «согласие», «запись». */
-export function Pill({ tone, children }: { tone: "critical" | "positive" | "accent" | "muted"; children: ReactNode }) {
+export function Pill({ tone, children }: { tone: "critical" | "positive" | "accent" | "muted" | "warn"; children: ReactNode }) {
   return (
     <span
       className={cn(
@@ -387,6 +390,7 @@ export function Pill({ tone, children }: { tone: "critical" | "positive" | "acce
         tone === "positive" && "bg-positive-soft text-positive",
         tone === "accent" && "bg-accent-soft text-accent-ink",
         tone === "muted" && "bg-surface-2 text-fg-2",
+        tone === "warn" && "bg-surface-2 text-fg ring-1 ring-inset ring-line-strong",
       )}
     >
       {children}
@@ -395,7 +399,8 @@ export function Pill({ tone, children }: { tone: "critical" | "positive" | "acce
 }
 
 function Row({ r, now, onOpen }: { r: ContactRow; now: number; onOpen: () => void }) {
-  const meta = [r.phone, r.lastVisitAt ? `был ${agoText(r.lastVisitAt, now)}` : "визитов нет", r.visits ? `${r.visits} ${plural(r.visits, VISITS)}` : "", r.lastStaff].filter(Boolean);
+  // дни с визита — от сервера (календарь Астаны), чтобы не зависеть от часового пояса телефона
+  const meta = [r.phone, r.lastVisitAt ? `был ${agoText(r.lastVisitAt, now, r.daysAgo)}` : "визитов нет", r.visits ? `${r.visits} ${plural(r.visits, VISITS)}` : "", r.lastStaff].filter(Boolean);
   const pills = r.fullBlock || r.stop || r.review || r.consent === "granted" || !!r.nextBookingAt;
   return (
     <button
@@ -412,7 +417,7 @@ function Row({ r, now, onOpen }: { r: ContactRow; now: number; onOpen: () => voi
             {r.fullBlock && <Pill tone="critical">не писать вообще</Pill>}
             {r.stop && <Pill tone="critical">«стоп»</Pill>}
             {r.review && <Pill tone="muted">«стоп» ждёт решения</Pill>}
-            {r.consent === "granted" && <Pill tone="positive">согласие на рекламу</Pill>}
+            {r.consent === "granted" && (r.consentConfirmed ? <Pill tone="positive">согласие на рекламу</Pill> : <Pill tone="warn">согласие не подтверждено</Pill>)}
             {r.nextBookingAt && (
               <Pill tone="accent">
                 <CalendarDays aria-hidden className="size-3.5" strokeWidth={2} />

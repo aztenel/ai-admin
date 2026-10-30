@@ -1,19 +1,22 @@
 // Карточка клиента (раздел «Клиенты»): кто это (номер полностью — это карточка одного человека), можно ли писать рекламу и почему нет,
 // визиты (из журнала Altegio — правда о записях), ближайшие записи, согласия с историей, запреты с историей (кто, когда, причина),
-// сегменты и журнал событий. Изменить: согласие (основание обязательно для «есть»), добавить запрет (причина обязательна), снять
-// запрет (только владелец, с причиной), решение по неоднозначному «стоп». После каждого действия карточка перечитывается с сервера.
-import { Ban, CalendarDays, CircleAlert, CircleCheck, History, Phone, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+// сегменты и журнал событий. Изменить: согласие (для «есть» — чем подтверждено: сообщение клиента, письменное или устно; основание
+// обязательно), добавить запрет (причина обязательна), снять запрет (только владелец, с причиной), решение по неоднозначному «стоп».
+// Запрет, который поставил сам клиент («стоп»), снимается только после его нового подтверждённого согласия: «Снять» неактивна, рядом —
+// «Записать новое согласие» (31.10.2026, правило владельца: отказ клиента не обходится без его согласия). Согласие из файла —
+// «не подтверждено» и кнопка «Подтвердить». После каждого действия карточка перечитывается с сервера.
+import { Ban, CalendarDays, CircleAlert, CircleCheck, Clock, History, Phone, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Notice, Stats, nf } from "@/campaigns/base/shared";
-import { SelectField, TextField } from "@/campaigns/wizard/fields";
+import { RadioRow, SelectField, TextField } from "@/campaigns/wizard/fields";
 import { toast } from "@/components/overlay";
 import { Avatar, Button, buttonClass, Field, InsetGroup, Segmented, Skeleton } from "@/components/ui";
 import { dataMode } from "@/data/source";
 import { formatPhone, plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
-import type { ConsentPurpose, ConsentRecord, ConsentState, ContactCard, Restriction, Visit } from "@/model/contacts";
+import type { ConsentInput, ConsentPurpose, ConsentRecord, ConsentState, ContactCard, Restriction, Visit } from "@/model/contacts";
 import { store } from "@/state/store";
-import { agoText, CONSENT_LABEL, dateTime, dayText, errField, errMsg, KIND_LABEL, sourceText, useFetch } from "./common";
+import { agoText, CONSENT_LABEL, consentText, dateTime, dayText, errField, errMsg, KIND_LABEL, sourceText, useFetch } from "./common";
 
 const SHOW = 10;
 
@@ -32,6 +35,9 @@ export function ClientCard({ ws, id, owner, dup, onTitle, onChanged }: Props) {
     await card.reload();
     onChanged();
   };
+  // редактор согласия открывается и из блока «Согласие», и из запрета клиента («Записать новое согласие»)
+  const [consentOpen, setConsentOpen] = useState<{ n: number } | null>(null);
+  const openConsent = useCallback(() => setConsentOpen((x) => ({ n: (x?.n || 0) + 1 })), []);
 
   if (card.loading && !d) return <CardSkeleton />;
   if (!d)
@@ -73,7 +79,7 @@ export function ClientCard({ ws, id, owner, dup, onTitle, onChanged }: Props) {
           <Stats
             items={[
               { label: "Визитов", value: nf.format(c.visits), sub: d.missed ? `не пришёл: ${d.missed}` : "всего" },
-              { label: "Последний визит", value: c.lastVisitAt ? agoText(c.lastVisitAt, now) : "—", sub: c.lastVisitAt ? [dayText(c.lastVisitAt, now), c.lastStaff].filter(Boolean).join(" · ") : undefined },
+              { label: "Последний визит", value: c.lastVisitAt ? agoText(c.lastVisitAt, now, c.daysAgo) : "—", sub: c.lastVisitAt ? [dayText(c.lastVisitAt, now), c.lastStaff].filter(Boolean).join(" · ") : undefined },
             ]}
           />
           {c.firstVisitAt && (
@@ -103,8 +109,8 @@ export function ClientCard({ ws, id, owner, dup, onTitle, onChanged }: Props) {
 
         <VisitHistory visits={d.visits} now={now} />
 
-        <ConsentBlock ws={ws} id={id} d={d} now={now} onDone={done} />
-        <RestrictionsBlock ws={ws} id={id} d={d} now={now} owner={owner} onDone={done} />
+        <ConsentBlock ws={ws} id={id} d={d} now={now} onDone={done} open={consentOpen} onClosed={() => setConsentOpen(null)} onOpen={openConsent} />
+        <RestrictionsBlock ws={ws} id={id} d={d} now={now} owner={owner} onDone={done} onNewConsent={openConsent} />
 
         {d.segments.length > 0 && (
           <InsetGroup title="Сегменты">
@@ -122,6 +128,20 @@ export function ClientCard({ ws, id, owner, dup, onTitle, onChanged }: Props) {
           <dl>
             <Field label="Откуда">{c.sources.length ? [...new Set(c.sources.map((s) => sourceText(s.source)))].join(", ") : "—"}</Field>
             {c.altegioId && <Field label="Номер в Altegio">{c.altegioId}</Field>}
+            {c.altVisits !== null && (
+              <Field label="Визитов по Altegio">
+                {nf.format(c.altVisits)}
+                {c.altLastVisitAt ? `, последний ${dayText(c.altLastVisitAt, now)}` : ""}
+              </Field>
+            )}
+            {c.newsletter !== null && (
+              <Field stacked label="Altegio: разрешил рассылки">
+                <span>
+                  {c.newsletter ? "да" : "нет"}
+                  <span className="block text-sm text-fg-3">Это отметка в Altegio, а не подтверждённое согласие.</span>
+                </span>
+              </Field>
+            )}
             {c.lastService && <Field label="Последняя услуга">{c.lastService}</Field>}
             <Field label="В базе с">{c.createdAt ? dateTime(c.createdAt, now) : "—"}</Field>
             {c.syncedAt && <Field label="Сверено с Altegio">{dateTime(c.syncedAt, now)}</Field>}
@@ -203,76 +223,186 @@ const PURPOSE: Record<ConsentPurpose, string> = { marketing: "Реклама и 
 
 function consentLine(r: ConsentRecord | null, now: number) {
   if (!r) return <span className="text-fg-3">не указано</span>;
+  const t = consentText(r, now);
   return (
     <span>
-      <span className={cn("font-medium", r.state === "granted" ? "text-positive" : r.state === "denied" ? "text-critical" : "text-fg")}>{CONSENT_LABEL[r.state]}</span>
-      <span className="block text-sm text-fg-3">{[r.basis, r.actor, dateTime(r.at, now)].filter(Boolean).join(" · ")}</span>
+      <span className={cn("font-medium", r.state === "granted" ? (r.confirmed ? "text-positive" : "text-fg") : r.state === "denied" ? "text-critical" : "text-fg")}>
+        {t.head}
+        {t.tail && <span className="font-normal text-fg-2"> — {t.tail}</span>}
+      </span>
+      <span className="block text-sm text-fg-3">{[r.basis, r.actor, `записано ${dateTime(r.at, now)}`].filter(Boolean).join(" · ")}</span>
     </span>
   );
 }
 
-function ConsentBlock({ ws, id, d, now, onDone }: { ws: string; id: string; d: ContactCard; now: number; onDone: (msg: string) => Promise<void> }) {
+type Evidence = NonNullable<ConsentInput["evidence"]>;
+/** Сегодня по Астане — ГГГГ-ММ-ДД (для поля даты письменного согласия). */
+const astanaToday = (now: number) => new Date(now + 5 * 3600e3).toISOString().slice(0, 10);
+
+function ConsentBlock({
+  ws,
+  id,
+  d,
+  now,
+  onDone,
+  open,
+  onOpen,
+  onClosed,
+}: {
+  ws: string;
+  id: string;
+  d: ContactCard;
+  now: number;
+  onDone: (msg: string) => Promise<void>;
+  /** Открыть редактор снаружи (запрет клиента → «Записать новое согласие»): новый n — открыть с «есть». */
+  open: { n: number } | null;
+  onOpen: () => void;
+  onClosed: () => void;
+}) {
   const [edit, setEdit] = useState(false);
   const [purpose, setPurpose] = useState<ConsentPurpose>("marketing");
   const [state, setState] = useState<ConsentState>("granted");
+  const [evidence, setEvidence] = useState<Evidence | "">("");
+  const [ref, setRef] = useState("");
+  const [given, setGiven] = useState("");
   const [basis, setBasis] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ field: string; text: string } | null>(null);
   const [hist, setHist] = useState(false);
-  const start = () => {
-    const cur = d.consent.marketing;
+  const box = useRef<HTMLDivElement>(null);
+  const rules = d.consentRules;
+  const cur = d.consent.marketing;
+
+  const start = (st: ConsentState) => {
     setPurpose("marketing");
-    setState(cur?.state === "granted" ? "denied" : "granted");
+    setState(st);
+    setEvidence("");
+    setRef("");
+    setGiven("");
     setBasis("");
     setErr(null);
     setEdit(true);
   };
+  // открыть с «есть» по просьбе снаружи и показать редактор
+  useEffect(() => {
+    if (!open) return;
+    start("granted");
+    window.setTimeout(() => box.current?.scrollIntoView({ block: "center", behavior: "smooth" }), 60);
+  }, [open?.n]);
+  const close = () => {
+    setEdit(false);
+    onClosed();
+  };
+
   const save = async () => {
-    if (state === "granted" && !basis.trim()) return setErr({ field: "basis", text: "Укажите основание: где и как клиент согласился." });
+    const input: ConsentInput = { purpose, state, basis: basis.trim() };
+    if (state === "granted") {
+      if (!evidence) return setErr({ field: "evidence", text: "Выберите, чем подтверждено согласие." });
+      if (evidence === "chat" && !rules.chatAvailable) return setErr({ field: "evidence", text: "В переписке нет сообщения клиента после отказа." });
+      if (evidence === "oral" && !rules.oralAllowed) return setErr({ field: "evidence", text: "Клиент сам отказывался — устного согласия мало." });
+      if (evidence === "document") {
+        if (!ref.trim()) return setErr({ field: "evidenceRef", text: "Укажите номер анкеты или где хранится документ." });
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(given)) return setErr({ field: "givenAt", text: "Укажите дату, когда клиент подписал согласие." });
+      }
+      if (!basis.trim()) return setErr({ field: "basis", text: "Коротко: где и как клиент согласился." });
+      input.evidence = evidence;
+      if (evidence === "document") Object.assign(input, { evidenceRef: ref.trim(), givenAt: given });
+    }
     setBusy(true);
     setErr(null);
     try {
-      await store.source!.setConsent(ws, id, purpose, state, basis.trim());
-      setEdit(false);
-      await onDone("Согласие сохранено");
+      await store.source!.setConsent(ws, id, input);
+      close();
+      await onDone(state === "granted" ? "Согласие записано" : "Сохранено");
     } catch (x) {
       setErr({ field: errField(x), text: errMsg(x) });
     } finally {
       setBusy(false);
     }
   };
+  const fieldErr = (f: string) => (err && err.field === f ? err.text : undefined);
+  const refused = rules.refusedAt ? dayText(rules.refusedAt, now) : "";
+
   return (
-    <InsetGroup title="Согласие на сообщения" note="Без согласия «есть» реклама не уходит. Основание — где и как клиент согласился (анкета, устно в салоне, в переписке).">
+    <InsetGroup
+      title="Согласие на сообщения"
+      note="Реклама уходит только при подтверждённом согласии: клиент сам написал в WhatsApp, подписал анкету или согласился устно в салоне. Согласие из файла или из Altegio нужно подтвердить."
+    >
       <dl>
         <Field stacked label={PURPOSE.marketing}>
-          {consentLine(d.consent.marketing, now)}
+          {consentLine(cur, now)}
         </Field>
         <Field stacked label={PURPOSE.service}>
           {consentLine(d.consent.service, now)}
         </Field>
       </dl>
       {edit ? (
-        <div className="py-1">
+        <div ref={box} className="py-1" aria-label="Изменить согласие">
+          {refused && <Notice tone="muted">Клиент сам отказался {refused}. Нужно его новое согласие: сообщение в WhatsApp после отказа или письменное согласие с датой позже отказа.</Notice>}
           <SelectField label="Для чего" value={purpose} onChange={(e) => setPurpose(e.target.value as ConsentPurpose)}>
             <option value="marketing">{PURPOSE.marketing}</option>
             <option value="service">{PURPOSE.service}</option>
           </SelectField>
           <div className="py-3">
             <p className="mb-1.5 text-sm font-medium text-fg-2">Согласие</p>
-            <Segmented label="Согласие" value={state} onChange={setState} options={STATES} className="w-full" />
+            <Segmented label="Согласие" value={state} onChange={(v) => (setState(v), setErr(null))} options={STATES} className="w-full" />
           </div>
+          {state === "granted" && (
+            <div role="radiogroup" aria-label="Чем подтверждено" className="py-2">
+              <p className="mb-1 text-sm font-medium text-fg-2">Чем подтверждено</p>
+              <RadioRow
+                name="evidence"
+                checked={evidence === "chat"}
+                onSelect={() => (setEvidence("chat"), setErr(null))}
+                disabled={!rules.chatAvailable}
+                title="Клиент сам написал в WhatsApp"
+                sub={rules.chatAvailable ? "сервер найдёт его сообщение" : "в переписке нет сообщения клиента после отказа"}
+              />
+              <RadioRow
+                name="evidence"
+                checked={evidence === "document"}
+                onSelect={() => (setEvidence("document"), setErr(null), given || setGiven(astanaToday(now)))}
+                title="Письменное согласие"
+                sub="анкета, договор — номер и дата"
+              />
+              <RadioRow
+                name="evidence"
+                checked={evidence === "oral"}
+                onSelect={() => (setEvidence("oral"), setErr(null))}
+                disabled={!rules.oralAllowed}
+                title="Устно в салоне"
+                sub={rules.oralAllowed ? "администратор записывает со слов клиента" : "клиент сам отказывался — устного согласия мало"}
+              />
+              {fieldErr("evidence") && (
+                <p role="alert" className="flex gap-1.5 pt-1 text-sm text-critical">
+                  <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+                  {fieldErr("evidence")}
+                </p>
+              )}
+            </div>
+          )}
+          {state === "granted" && evidence === "document" && (
+            <>
+              <TextField label="Номер или где хранится" placeholder="Например: анкета № 12, папка «Согласия»" maxLength={120} value={ref} onChange={(e) => setRef(e.target.value)} error={fieldErr("evidenceRef")} />
+              <TextField label="Дата согласия" type="date" max={astanaToday(now)} value={given} onChange={(e) => setGiven(e.target.value)} error={fieldErr("givenAt")} />
+            </>
+          )}
           <TextField
             label="Основание"
             optional={state !== "granted"}
-            placeholder="Например: анкета в салоне"
+            placeholder={state === "granted" ? "Например: подписал анкету при записи" : "Например: сказал по телефону"}
             maxLength={120}
             value={basis}
             onChange={(e) => setBasis(e.target.value)}
-            error={err && err.field === "basis" ? err.text : undefined}
+            error={fieldErr("basis")}
           />
-          {err && err.field !== "basis" && <Notice tone="critical" role="alert">{err.text}</Notice>}
+          {err && !["basis", "evidence", "evidenceRef", "givenAt"].includes(err.field) && (
+            <Notice tone="critical" role="alert">
+              {err.text}
+            </Notice>
+          )}
           <div className="flex gap-2 pb-3 pt-1">
-            <Button onClick={() => setEdit(false)} className="flex-1 md:flex-none">
+            <Button onClick={close} className="flex-1 md:flex-none">
               Отмена
             </Button>
             <Button variant="primary" busy={busy} onClick={() => void save()} className="flex-1 md:flex-none">
@@ -282,7 +412,12 @@ function ConsentBlock({ ws, id, d, now, onDone }: { ws: string; id: string; d: C
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 py-3">
-          <Button variant="tinted" size="sm" onClick={start}>
+          {cur?.state === "granted" && !cur.confirmed && (
+            <Button variant="primary" size="sm" icon={ShieldCheck} onClick={() => (start("granted"), onOpen())}>
+              Подтвердить
+            </Button>
+          )}
+          <Button variant="tinted" size="sm" onClick={() => start(cur?.state === "granted" && cur.confirmed ? "denied" : "granted")}>
             Изменить согласие
           </Button>
           {d.consentHistory.length > 0 && (
@@ -294,12 +429,18 @@ function ConsentBlock({ ws, id, d, now, onDone }: { ws: string; id: string; d: C
       )}
       {hist && !edit && (
         <ul aria-label="История согласий">
-          {d.consentHistory.map((h, i) => (
-            <li key={i} className="py-2.5 text-ui pointer-coarse:text-base">
-              <span className="font-medium">{PURPOSE[h.purpose]}: {CONSENT_LABEL[h.state].toLowerCase()}</span>
-              <span className="block text-sm text-fg-3">{[h.basis, sourceText(h.source), h.actor, dateTime(h.at, now)].filter(Boolean).join(" · ")}</span>
-            </li>
-          ))}
+          {d.consentHistory.map((h, i) => {
+            const t = consentText(h, now);
+            return (
+              <li key={i} className="py-2.5 text-ui pointer-coarse:text-base">
+                <span className="font-medium">
+                  {PURPOSE[h.purpose]}: {t.head.toLowerCase()}
+                </span>
+                {t.tail && <span className="text-fg-2"> — {t.tail}</span>}
+                <span className="block text-sm text-fg-3">{[h.basis, sourceText(h.source), h.actor, dateTime(h.at, now)].filter(Boolean).join(" · ")}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </InsetGroup>
@@ -309,7 +450,24 @@ function ConsentBlock({ ws, id, d, now, onDone }: { ws: string; id: string; d: C
 // ---------- запреты ----------
 type Pending = { rid: string; mode: "lift" | "review-lift" } | null;
 
-function RestrictionsBlock({ ws, id, d, now, owner, onDone }: { ws: string; id: string; d: ContactCard; now: number; owner: boolean; onDone: (msg: string) => Promise<void> }) {
+function RestrictionsBlock({
+  ws,
+  id,
+  d,
+  now,
+  owner,
+  onDone,
+  onNewConsent,
+}: {
+  ws: string;
+  id: string;
+  d: ContactCard;
+  now: number;
+  owner: boolean;
+  onDone: (msg: string) => Promise<void>;
+  /** Открыть редактор согласия: запрет клиента снимается только после его нового подтверждённого согласия. */
+  onNewConsent: () => void;
+}) {
   const active = d.restrictions.filter((r) => r.active);
   const lifted = d.restrictions.filter((r) => !r.active);
   const [adding, setAdding] = useState(false);
@@ -354,16 +512,24 @@ function RestrictionsBlock({ ws, id, d, now, owner, onDone }: { ws: string; id: 
   );
 
   return (
-    <InsetGroup title="Запреты" note="«Стоп» от клиента ставит бот. Снять запрет может только владелец — с причиной, она останется в истории.">
+    <InsetGroup
+      title="Запреты"
+      note="«Стоп» от клиента ставит бот; снять его можно только после нового подтверждённого согласия самого клиента. Остальные запреты снимает владелец — с причиной, она останется в истории."
+    >
       {active.length === 0 && !adding && <p className="flex items-center gap-2 py-3 text-ui text-fg-2 pointer-coarse:text-base"><CircleCheck aria-hidden className="size-4 text-positive" strokeWidth={2} />Действующих запретов нет.</p>}
       {active.map((r) => (
         <div key={r.id} className="py-3">
           <div className="flex items-start gap-2.5">
-            <Ban aria-hidden className="mt-0.5 size-4 shrink-0 text-critical" strokeWidth={2} />
+            {r.kind === "cooldown" ? (
+              <Clock aria-hidden className="mt-0.5 size-4 shrink-0 text-fg-2" strokeWidth={2} />
+            ) : (
+              <Ban aria-hidden className="mt-0.5 size-4 shrink-0 text-critical" strokeWidth={2} />
+            )}
             <div className="min-w-0 flex-1">
               <p className="text-ui font-medium pointer-coarse:text-base">
-                {KIND_LABEL[r.kind]}
+                {r.kind === "cooldown" && r.untilAt ? `Пауза до ${dayText(r.untilAt, now)}` : KIND_LABEL[r.kind]}
                 {r.review && <span className="ml-2 inline-flex h-6 items-center rounded-full bg-surface-2 px-2 align-middle text-xs font-medium text-fg-2">ждёт решения</span>}
+                {r.byClient && !r.review && <span className="ml-2 inline-flex h-6 items-center rounded-full bg-critical-soft px-2 align-middle text-xs font-medium text-critical">от клиента</span>}
               </p>
               <p className="text-sm text-fg-2">{r.reason}</p>
               <p className="text-sm text-fg-3">{[sourceText(r.source), r.actor, dateTime(r.at, now)].filter(Boolean).join(" · ")}</p>
@@ -389,8 +555,19 @@ function RestrictionsBlock({ ws, id, d, now, owner, onDone }: { ws: string; id: 
           )}
           {!r.review && owner && pend?.rid !== r.id && (
             <div className="mt-2 pl-6.5">
-              <Button size="sm" variant="danger" onClick={() => (setPend({ rid: r.id, mode: "lift" }), setReason(""), setErr(null))}>
+              <Button size="sm" variant="danger" disabled={!r.canLift} onClick={() => (setPend({ rid: r.id, mode: "lift" }), setReason(""), setErr(null))}>
                 Снять запрет
+              </Button>
+              {!r.canLift && (
+                <p className="mt-1.5 text-sm text-fg-2">{r.liftHint || "Клиент сам отказался — снять можно только после его нового подтверждённого согласия."}</p>
+              )}
+            </div>
+          )}
+          {!r.review && r.byClient && !r.canLift && pend?.rid !== r.id && (
+            <div className={cn("pl-6.5", owner ? "mt-2" : "mt-2.5")}>
+              {!owner && <p className="mb-1.5 text-sm text-fg-2">Клиент сам отказался. Когда он снова согласится — запишите его согласие, потом владелец снимет запрет.</p>}
+              <Button size="sm" variant="tinted" icon={ShieldCheck} onClick={onNewConsent}>
+                Записать новое согласие
               </Button>
             </div>
           )}

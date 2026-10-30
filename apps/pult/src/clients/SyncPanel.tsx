@@ -6,7 +6,9 @@
 //   «Проверить поля Altegio» — какие поля отдаёт журнал (только чтение, без имён и номеров в ответе);
 //   «Тестовые клиенты» — только на черновике: вымышленные клиенты через тот же код записи.
 // Итог каждого действия — строками ниже кнопок; состояние перечитывается.
-import { CircleAlert, CircleCheck, DatabaseZap, FlaskConical, ListChecks, RefreshCw, ScanSearch, ShieldAlert, TriangleAlert, Users } from "lucide-react";
+// Проверка, которой ещё не было (уровень unknown), — серый «?» и «ещё не проверено», а не зелёная галочка (жалоба владельца 31.10.2026:
+// «ещё не было» выглядело как успех). Уровень показывается как прислал сервер — число 0 не делает проверку успешной.
+import { CircleAlert, CircleCheck, CircleHelp, DatabaseZap, FlaskConical, ListChecks, RefreshCw, ScanSearch, ShieldAlert, TriangleAlert, Users } from "lucide-react";
 import { useState } from "react";
 import { Notice, nf, whenText } from "@/campaigns/base/shared";
 import { Confirm } from "@/components/overlay";
@@ -113,6 +115,7 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
                   ))}
                 </ul>
               )}
+              <Directory s={s} now={now} />
               {s.stats && (
                 <p className="py-3 text-sm text-fg-2">
                   Последняя загрузка: записей журнала {nf.format(s.stats.records)}, клиентов {nf.format(s.stats.contacts)}, записей в базе {nf.format(s.stats.bookings)}, удалённых{" "}
@@ -164,14 +167,18 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
           ) : (
             <ul aria-label="Проверки данных">
               {d.checks.map((c) => (
-                <li key={c.id} className="flex gap-2.5 py-2.5">
-                  <Level level={c.count ? c.level : "ok"} />
+                <li key={c.id} className="flex gap-2.5 py-2.5" data-level={c.level}>
+                  <Level level={c.level} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline justify-between gap-3">
-                      <span className="text-ui pointer-coarse:text-base">{c.label}</span>
-                      <span className="tnum shrink-0 text-sm text-fg-2">{nf.format(c.count)}</span>
+                      <span className={cn("text-ui pointer-coarse:text-base", c.level === "unknown" && "text-fg-2")}>{c.label}</span>
+                      <span className="tnum shrink-0 text-sm text-fg-2">{c.level === "unknown" ? "—" : nf.format(c.count)}</span>
                     </span>
-                    {c.hint && c.count > 0 && <span className="block text-sm text-fg-3">{c.hint}</span>}
+                    {c.level === "unknown" ? (
+                      <span className="block text-sm text-fg-3">{c.hint || "Ещё не проверено."}</span>
+                    ) : (
+                      c.hint && (c.count > 0 || c.level !== "ok") && <span className="block text-sm text-fg-3">{c.hint}</span>
+                    )}
                   </span>
                 </li>
               ))}
@@ -245,7 +252,31 @@ function Output({ out }: { out: Out }) {
   );
 }
 
+const LEVEL: Record<CheckLevel, { label: string; cls: string }> = {
+  ok: { label: "в порядке", cls: "text-positive" },
+  warn: { label: "внимание", cls: "text-fg-2" },
+  bad: { label: "ошибка", cls: "text-critical" },
+  unknown: { label: "ещё не проверено", cls: "text-fg-3" },
+};
 function Level({ level }: { level: CheckLevel }) {
-  const Icon = level === "ok" ? CircleCheck : level === "warn" ? TriangleAlert : CircleAlert;
-  return <Icon aria-label={level === "ok" ? "в порядке" : level === "warn" ? "внимание" : "ошибка"} className={cn("mt-0.5 size-4 shrink-0", level === "ok" ? "text-positive" : level === "warn" ? "text-fg-2" : "text-critical")} strokeWidth={2} />;
+  const Icon = level === "ok" ? CircleCheck : level === "warn" ? TriangleAlert : level === "unknown" ? CircleHelp : CircleAlert;
+  const l = LEVEL[level] || LEVEL.unknown;
+  return <Icon role="img" aria-label={l.label} className={cn("mt-0.5 size-4 shrink-0", l.cls)} strokeWidth={2} />;
+}
+
+/** Справочник клиентов Altegio: вся база, а не только те, кто был в журнале за 2 года. */
+function Directory({ s, now }: { s: ContactsStatus["sync"]; now: number }) {
+  const d = s.directory;
+  if (!d) return null;
+  return (
+    <div className="py-3" aria-label="Справочник клиентов Altegio">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-ui pointer-coarse:text-base">Справочник клиентов Altegio</p>
+        <p className="tnum text-sm text-fg-2">{d.total ? `${nf.format(Math.round((d.total * (d.done ? 100 : d.pct)) / 100))} из ${nf.format(d.total)}` : d.done ? "готово" : `${d.pct}%`}</p>
+      </div>
+      <p className={cn("text-sm", d.lastError ? "text-critical" : "text-fg-3")}>
+        {d.lastError ? `Ошибка: ${d.lastError}` : d.lastOkAt ? `${d.done ? "прочитан" : "читается"} · ${whenText(d.lastOkAt, now)}` : s.dryOnly ? "на черновике — только проверкой без записи" : "ещё не читался"}
+      </p>
+    </div>
+  );
 }

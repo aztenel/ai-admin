@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { astanaDay, when } from "@/campaigns/base/shared";
 import { plural } from "@/lib/format";
-import type { ConsentState, ImportAction, RestrictionKind } from "@/model/contacts";
+import type { ConsentEvidence, ConsentRecord, ConsentState, ImportAction, RestrictionKind } from "@/model/contacts";
 
 export const KIND_LABEL: Record<RestrictionKind, string> = {
   marketing_optout: "Не писать рекламу",
@@ -20,7 +20,13 @@ const SOURCE: Record<string, string> = {
   chat: "переписка",
   site: "сайт",
   chat_stop: "клиент написал «стоп»",
+  ga_journal: "клиент написал «стоп» (нашла сверка журнала Green-API)",
   ga_sweep: "клиент написал «стоп» (сверка журнала Green-API)",
+  kv: "«стоп» из прежнего хранилища",
+  kv_fallback: "клиент написал «стоп»",
+  booking_cancelled: "запись отменена в Altegio",
+  booking_vanished: "запись пропала из журнала Altegio",
+  manual_reconfirm: "новое согласие клиента",
   meta_131050: "Meta: клиент отписался от рассылок",
   meta_button: "кнопка «стоп» в шаблоне Meta",
   admin: "поставил человек",
@@ -40,6 +46,27 @@ const SCOPE: Record<string, string> = {
 };
 export const scopeText = (s: string) => SCOPE[s] || s;
 export const CONSENT_LABEL: Record<ConsentState, string> = { granted: "Есть", denied: "Отказ", unknown: "Не известно" };
+/** Чем подтверждено согласие — словами. */
+export const EVIDENCE_LABEL: Record<ConsentEvidence, string> = {
+  chat: "клиент написал в WhatsApp",
+  document: "письменное согласие",
+  oral: "устно в салоне",
+  import: "из файла",
+  altegio: "флаг в Altegio",
+  client_stop: "клиент сам написал «стоп»",
+};
+/**
+ * Согласие одной строкой: «Есть, подтверждено — клиент написал в WhatsApp 30 октября», «Есть, не подтверждено — из файла»,
+ * «Отказ — клиент сам написал «стоп» 12 октября». Дата — когда клиент согласился или отказался, если известно.
+ */
+export function consentText(r: ConsentRecord, now: number): { head: string; tail: string } {
+  const how = r.evidence ? EVIDENCE_LABEL[r.evidence] : "";
+  const when = r.givenAt ? dayText(r.givenAt, now) : "";
+  const tail = [how, when, r.evidenceRef && r.evidence === "document" ? r.evidenceRef : ""].filter(Boolean).join(" ");
+  if (r.state === "granted") return { head: r.confirmed ? "Есть, подтверждено" : "Есть, не подтверждено", tail };
+  if (r.state === "denied") return { head: "Отказ", tail };
+  return { head: "Не известно", tail };
+}
 export const ACTION_LABEL: Record<ImportAction, string> = { new: "Новый", update: "Обновится имя", same: "Без изменений", dup: "Дубль в файле", invalid: "Неверный номер" };
 
 const DAY = 864e5;
@@ -47,10 +74,13 @@ const dayNo = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, 
 /** Сколько дней по календарю Астаны прошло с t (визит вчера в 20:00 — 1 день и утром, и вечером, как у сервера). */
 export const daysAgo = (t: number, now: number) => dayNo(astanaDay(now)) - dayNo(astanaDay(t));
 const DAYS: [string, string, string] = ["день", "дня", "дней"];
-/** «сегодня», «вчера», «25 дней назад». */
-export function agoText(t: number, now: number): string {
-  const d = daysAgo(t, now);
+/** «сегодня», «вчера», «25 дней назад» — по числу дней. */
+export function daysText(d: number): string {
   return d <= 0 ? "сегодня" : d === 1 ? "вчера" : `${d} ${plural(d, DAYS)} назад`;
+}
+/** «сегодня», «вчера», «25 дней назад». days — число дней от сервера (календарь Астаны); нет — считаем сами. */
+export function agoText(t: number, now: number, days?: number | null): string {
+  return daysText(typeof days === "number" ? days : daysAgo(t, now));
 }
 /** «сегодня в 15:00», «завтра в 12:00», «5 ноября в 12:00» — по Астане. */
 export function dateTime(t: number, now: number): string {

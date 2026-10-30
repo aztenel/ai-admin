@@ -33,8 +33,7 @@ import type {
   ServiceOverview,
 } from "@/model/campaigns";
 import type {
-  ConsentPurpose,
-  ConsentState,
+  ConsentInput,
   ContactCard,
   ContactPage,
   ContactSegments,
@@ -103,7 +102,8 @@ export interface ContactSource {
   contactCard(ws: string, id: string): Promise<ContactCard>;
   /** Добавить вручную; такой номер уже есть — created: false и id существующего. */
   addContact(ws: string, phone: string, name: string): Promise<{ id: string; created: boolean }>;
-  setConsent(ws: string, id: string, purpose: ConsentPurpose, state: ConsentState, basis: string): Promise<void>;
+  /** Согласие с доказательством (ConsentInput). Ошибки: 400 { field: evidence | evidenceRef | givenAt | basis }, 409 — нельзя (отказ клиента). */
+  setConsent(ws: string, id: string, input: ConsentInput): Promise<void>;
   addRestriction(ws: string, id: string, kind: "marketing_optout" | "full_block", reason: string): Promise<void>;
   liftRestriction(ws: string, id: string, rid: string, reason: string): Promise<void>;
   reviewRestriction(ws: string, id: string, rid: string, decision: ReviewDecision, reason?: string): Promise<void>;
