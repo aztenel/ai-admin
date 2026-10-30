@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { sqliteOk, d1With } from "../d1.mjs";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
-import { syncStep, syncDry, syncTest, testJournal } from "../../src/services/contacts/sync.js";
+import { syncStep, syncDry, syncTest, testJournal, dirRow } from "../../src/services/contacts/sync.js";
 import { altProbe } from "../../src/services/contacts/probe.js";
 import { altRead } from "../../src/services/integrations/altegio/client.js";
 import { contactsSegments, contactsList, contactsCard, contactsStatus } from "../../src/services/contacts/index.js";
@@ -204,4 +204,11 @@ test("только чтение Altegio: запрос на изменение ч
   assert.ok(r.summary.some(l => /Справочник клиентов не прочитан: ошибка 403 — Unauthorized/.test(l)), r.summary.join("\n"));
   assert.deepEqual(net.alt.filter(x => !/^GET /.test(x) && !/^POST \/locations\/\d+\/clients\/search$/.test(x)), []);
   net.altJournalFail = 0;
+});
+
+test("справочник: даты Altegio вида «2024-05-10 14:00:00» (так отдал настоящий 30.10.2026) — по Астане; «нет визита» — пусто", () => {
+  const row = v => dirRow({ id: 1, name: "А", phone: ph(990), last_visit_date: v, first_visit_date: v, visits_count: 2 }).row;
+  assert.equal(new Date(row("2024-05-10 14:00:00").lv).toISOString(), "2024-05-10T09:00:00.000Z");
+  for (const v of ["0000-00-00 00:00:00", "", null]) { assert.equal(row(v).lv, null); assert.equal(row(v).fv, null); }
+  assert.equal(row("").vc, 2);
 });
