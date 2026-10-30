@@ -15,7 +15,7 @@ import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
 import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/pages.js";
-import { diag } from "../controllers/diag.js";
+import { diag, storage } from "../controllers/diag.js";
 import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/altegio.js";
 import { selftestPage } from "../controllers/selftest.js";
 import { adminPage, diagPage } from "../controllers/admin.js";
@@ -127,6 +127,7 @@ export async function route(request, env, ctx, pult) {
     const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? page(diagPage(await diag(env))) : a || forbid(); }
+    if (M === "GET" && P === "/diag/storage") { const a = await owner(); return a === true ? page(diagPage(await storage(env), "Хранилища")) : a || forbid(); }
     if (M === "GET" && P === "/admin") { // панель владельца: все служебные страницы в одном месте
       const a = await enter(request, env, url);
       if (a.res) return a.res;

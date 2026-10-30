@@ -2441,6 +2441,23 @@
   "type": "text/plain",
   "text": "Forbidden: неверный ?key="
  },
+ "GET /diag/storage [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag/storage [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /diag/storage [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
  "GET /diag?key=wrong [anon]": {
   "status": 403,
   "type": "text/plain",

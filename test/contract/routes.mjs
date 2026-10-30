@@ -103,7 +103,7 @@ const R = [
   ["GET", "/api/bc/service?c=barber"], ["GET", "/api/bc/service?c=dent"],
   ["GET", "/api/bc/auto?c=barber"], ["GET", "/api/bc/auto?c=dent"], ["POST", "/api/bc/auto", { c: "barber" }], ["POST", "/api/bc/auto", { c: "dent", on: false }], ["POST", "/api/bc/auto", { c: "barber", days: 3 }],
   ["GET", "/wa/barber"], ["POST", "/wa/barber", META], ["POST", "/wa/barber", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/wa/nope", META],
-  ["GET", "/diag"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
+  ["GET", "/diag"], ["GET", "/diag/storage"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
   ["GET", "/selftest"], ["POST", "/api/selftest", {}], ["GET", "/api/selftest"],
   ["POST", "/api/chat", {}], ["POST", "/api/chat", { c: "barber", sid: "contract-1", text: "Здравствуйте" }], ["GET", "/api/history?c=barber&sid=contract-1"], ["GET", "/api/history?c=barber"],
   ["POST", "/ga", GREEN], ["POST", "/ga?t=wrong", GREEN], ["POST", "/ga/barber", GREEN], ["POST", "/ga/barber?t=wrong", GREEN],

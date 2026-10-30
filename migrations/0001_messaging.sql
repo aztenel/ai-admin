@@ -1,5 +1,13 @@
 -- D1 (SQLite): данные сообщений Winchester. Время — INTEGER, мс UTC. ws — компания ('winchester').
 -- Телефон — только цифры с кодом страны ('77001234567'), как ключи optout: в KV.
+-- План и правила — docs/architecture-cloudflare-d1.md. Миграции только вперёд: эту не меняем, исправляет следующая.
+
+-- служебное: k='stage' — чья это база ('preview' у ai-admin-dev, 'production' у ai-admin). Ставится руками при создании
+-- базы, не миграцией: код сверяет отметку с переменной STAGE и при несовпадении базой не пользуется (src/db/d1/status.js)
+CREATE TABLE meta (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
 
 CREATE TABLE contacts (
   id                TEXT PRIMARY KEY,
@@ -59,6 +67,9 @@ CREATE TABLE restrictions (
   source      TEXT NOT NULL,              -- chat_stop | meta_131050 | meta_button | admin | import | kv_migration
   actor       TEXT NOT NULL,
   legacy_key  TEXT,                       -- 'optout:winchester:7700…': повторный перенос из KV не создаёт дублей
+  -- 1 — «стоп» неоднозначный («не пишите пока», «хватит» без слова «стоп»): маркетинг закрыт, пока человек не решит —
+  -- оставить только маркетинг, закрыть всё (добавить full_block) или снять с причиной (решение владельца 31.10.2026)
+  needs_review INTEGER NOT NULL DEFAULT 0 CHECK (needs_review IN (0,1)),
   created_at  INTEGER NOT NULL,
   lifted_at   INTEGER,
   lifted_by   TEXT,
@@ -70,6 +81,7 @@ CREATE UNIQUE INDEX restrictions_legacy ON restrictions (ws, legacy_key) WHERE l
 -- один действующий запрет каждого вида на контакт и номер: второй «стоп» не плодит строки
 CREATE UNIQUE INDEX restrictions_one_active ON restrictions (ws, contact_id, kind, channel)
   WHERE lifted_at IS NULL AND kind <> 'cooldown';
+CREATE INDEX restrictions_review ON restrictions (ws, created_at) WHERE needs_review = 1 AND lifted_at IS NULL;
 
 CREATE TABLE bookings (
   ws                  TEXT NOT NULL,
@@ -172,7 +184,7 @@ CREATE TABLE jobs (
   due_at      INTEGER NOT NULL,
   late_at     INTEGER NOT NULL,             -- позже — не отправляем
   state       TEXT NOT NULL DEFAULT 'queued'
-              CHECK (state IN ('queued','claimed','done','skipped','cancelled','failed')),
+              CHECK (state IN ('queued','claimed','done','skipped','cancelled','failed','unknown')),
   reason      TEXT,
   claim_token TEXT,
   claimed_at  INTEGER,
@@ -183,7 +195,11 @@ CREATE INDEX jobs_due ON jobs (ws, due_at) WHERE state = 'queued';
 CREATE INDEX jobs_claimed ON jobs (ws, claimed_at) WHERE state = 'claimed';
 CREATE INDEX jobs_record ON jobs (ws, record_id) WHERE record_id IS NOT NULL;
 
--- каждая отправка; send_key UNIQUE — вторая попытка с тем же ключом не уходит
+-- каждая отправка; send_key UNIQUE — вторая попытка с тем же ключом не уходит.
+-- unknown — итог неизвестен (обрыв связи или 5xx после отправки, захват завис в sending): сообщение могло уйти, а могло и
+-- нет. Сами не повторяем и не считаем ни отправленным, ни неотправленным: сверка с Green-API (check_*), потом решение
+-- (resolution). Сверка нашла сообщение — 'sent'; не нашла — остаётся unknown до решения человека в пульте. «Отправить
+-- ещё раз» — новая строка с ключом '<send_key>:r1', старая получает resolution 'not_sent' и кто решил.
 CREATE TABLE outbound (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   ws          TEXT NOT NULL,
@@ -198,11 +214,22 @@ CREATE TABLE outbound (
   provider_id TEXT,
   error       TEXT,
   created_at  INTEGER NOT NULL,
-  sent_at     INTEGER
+  sent_at     INTEGER,
+  unknown_at  INTEGER,
+  check_state TEXT CHECK (check_state IS NULL OR check_state IN ('pending','found','not_found','unavailable')),
+  checked_at  INTEGER,
+  check_tries INTEGER NOT NULL DEFAULT 0,
+  resolution  TEXT CHECK (resolution IS NULL OR resolution IN ('sent','not_sent')),
+  resolved_by TEXT,                        -- 'check' (сверка нашла) или кто решил в пульте
+  resolved_at INTEGER,
+  CHECK (state = 'unknown' OR (check_state IS NULL AND resolution IS NULL)),
+  CHECK (resolution IS NULL OR (resolved_by IS NOT NULL AND resolved_at IS NOT NULL))
 );
 CREATE INDEX outbound_contact ON outbound (ws, contact_id, purpose, created_at);
 CREATE INDEX outbound_channel ON outbound (ws, channel, created_at);
 CREATE INDEX outbound_sending ON outbound (ws, created_at) WHERE state = 'sending';
+-- неразобранные unknown: очередь сверки и список «итог неизвестен» в пульте
+CREATE INDEX outbound_unknown ON outbound (ws, unknown_at) WHERE state = 'unknown' AND resolution IS NULL;
 
 -- бюджет номера на сутки (по Астане): сервис и маркетинг отдельно, резервирование одной командой
 CREATE TABLE sender_daily (
@@ -276,6 +303,21 @@ CREATE TABLE sync_state (
   cursor        TEXT,
   PRIMARY KEY (ws, source, scope)
 );
+
+-- расхождения двух хранилищ: запрет записан в одном, а в другом нет (KV и D1 не пишутся одной транзакцией).
+-- Запрет при этом действует (чтение «запрещено, если запрещено хоть где-то»); строку закрывает сверка, дописав
+-- недостающее. Если не записалась сама D1, отметка — в KV (syncerr:), сюда её переносит та же сверка.
+CREATE TABLE sync_issues (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ws          TEXT NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('kv_write','d1_write','mismatch')),
+  key         TEXT NOT NULL,               -- 'optout:winchester:7700…'
+  details     TEXT CHECK (details IS NULL OR json_valid(details)),
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE UNIQUE INDEX sync_issues_open ON sync_issues (ws, kind, key) WHERE resolved_at IS NULL;
 
 CREATE TABLE audit (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,

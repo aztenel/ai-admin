@@ -7,6 +7,7 @@ import { isClaude } from "../services/ai/claude.js";
 import { usageReport } from "../services/ai/usage.js";
 import { systemPrompt } from "../services/conversation/prompt.js";
 import { WA_HINT } from "../services/inbox/deps.js";
+import { storageReport } from "../services/storage/report.js";
 /** @import { Env } from "../lib/types.js" */
 
 /** @param {Env} env */
@@ -86,3 +87,7 @@ export async function diag(env) {
   } catch (e) {}
   return out.join("\n");
 }
+
+/** /diag/storage: к каким KV и D1 подключён этот адрес, сколько ключей каких групп (без значений) — §0 плана D1 */
+/** @param {Env} env */
+export const storage = env => storageReport(env);
