@@ -194,7 +194,11 @@ test("справочник клиентов Altegio: вся база, а не т
   assert.ok(dry.summary.some(l => /Разрешили рассылки .*: 6/.test(l)), dry.summary.join("\n"));
   const pr = await altProbe(ps.env, W, Date.now());
   assert.ok(pr.summary.some(l => /Справочник клиентов: всего 451/.test(l)), pr.summary.join("\n"));
-  assert.ok(pr.summary.some(l => /is_newsletter_allowed\): 6/.test(l)));
+  assert.ok(pr.summary.some(l => /is_newsletter_allowed: 6 клиентов/.test(l)), pr.summary.join("\n"));
+  // всё выше — только чтение Altegio: GET и поиск клиентов; «Добавить клиента» (POST /clients/{локация}) не звали (30.10.2026 звали)
+  assert.deepEqual(net.alt.filter(x => !/^GET /.test(x) && !/^POST \/locations\/\d+\/clients\/search$/.test(x)), []);
+  assert.deepEqual(net.altCreated, []);
+  assert.ok(net.alt.some(x => /^POST \/locations\/\d+\/clients\/search$/.test(x)), "справочник — поиском");
   assert.equal(pd.raw.prepare("select count(*) n from contacts").get().n, 0, "в черновик — только числа");
   assert.ok(!/7700001|Давний|Арман/.test(JSON.stringify(pr) + JSON.stringify(pd.raw.prepare("select details from events").all())), "без имён и номеров");
 });

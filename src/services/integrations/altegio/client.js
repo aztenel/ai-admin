@@ -16,6 +16,16 @@ export const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "
  */
 export function altError(status, message, code) { return Object.assign(new Error(message || ("Altegio " + status)), { status, code: +code || 0 }); }
 
+// Только чтение: GET или поиск (POST …/clients/search, …/clients/visits/search). Другой запрос не отправляется: проба полей,
+// проверка без записи и синхронизация ничего не меняют в Altegio. 30.10.2026 «список клиентов» по ошибке шёл в POST
+// /clients/{локация} — это «Добавить клиента»; Altegio отказал (422: нет имени и номера), клиент не создан.
+const READ_POST = /^\/locations\/\d+\/clients\/(visits\/)?search$/;
+/** Как altCall, но только чтение. @param {Env} env @param {string} method @param {string} path @param {any} [body] @param {any} [user] @param {boolean} [full] @returns {Promise<any>} */
+export function altRead(env, method, path, body, user, full = false) {
+  if (method !== "GET" && !READ_POST.test(path)) return Promise.reject(altError(0, `запрос ${method} не на чтение — не отправлен`));
+  return altCall(env, method, path, body, user, full);
+}
+
 /**
  * @param {Env} env
  * @param {string} method

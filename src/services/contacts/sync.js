@@ -13,7 +13,7 @@ import { CLIENTS } from "../../config/builtin-clients.js";
 import { logSafe } from "../../lib/phone.js";
 import { local } from "../../lib/time.js";
 import { altRecordsRange } from "../integrations/altegio/records-api.js";
-import { altCall } from "../integrations/altegio/client.js";
+import { altClientsSearch } from "../integrations/altegio/clients-api.js";
 import { normPhone } from "../../lib/phone.js";
 import { crmWhy } from "../crm/snapshot.js";
 import { altUserKey } from "../booking/journal.js";
@@ -249,8 +249,8 @@ export async function contactsRun(env, now) {
   return n;
 }
 
-// ---- справочник клиентов Altegio: вся база салона (POST /clients/{локация}, «Get a list of clients», до 200 на страницу,
-// meta.total_count), а не только те, кто был в журнале за 2 года. Это поиск — данные в Altegio не меняет. Номер, имя, id, первый и
+// ---- справочник клиентов Altegio: вся база салона (поиск POST /locations/{локация}/clients/search, «Get a list of clients», до 200
+// на страницу, meta.total_count), а не только те, кто был в журнале за 2 года. Это поиск — данные в Altegio не меняет (altRead). Номер, имя, id, первый и
 // последний визит, число визитов по Altegio; «разрешил рассылки» — отдельным поиском с фильтром is_newsletter_allowed (это флаг
 // Altegio, а не подтверждённое согласие). Курсор — номер страницы в sync_state (scope 'clients'); полный проход — раз в неделю.
 export const DIR = { pageSize: 200, everyMs: 7 * 86400e3, fields: ["id", "name", "surname", "phone", "first_visit_date", "last_visit_date", "visits_count"] };
@@ -260,10 +260,8 @@ let noVisitsCount = false; // Altegio не принял поле visits_count (4
 export async function dirPage(env, c, page, filters, fields) {
   const want = fields || (noVisitsCount ? DIR.fields.filter(f => f !== "visits_count") : DIR.fields);
   const body = { page, page_size: DIR.pageSize, fields: want, order_by: "id", order_by_direction: "ASC", ...(filters ? { filters } : {}) };
-  try {
-    const j = await altCall(env, "POST", `/clients/${altLoc(env, c)}`, body, altUserKey(env, c), true);
-    return { list: (Array.isArray(j.data) ? j.data : []).filter((/** @type {any} */ x) => x && typeof x === "object"), total: +((j.meta && j.meta.total_count) || 0) };
-  } catch (/** @type {any} */ e) {
+  try { return await altClientsSearch(env, altUserKey(env, c), altLoc(env, c), body); }
+  catch (/** @type {any} */ e) {
     if (+(e && e.status) === 400 && want.includes("visits_count") && !fields) { noVisitsCount = true; return dirPage(env, c, page, filters); }
     console.log("contacts dir", c.id, logSafe(String((e && e.message) || e)));
     throw fail("altegio", altText(e).replace("журнал", "список клиентов"));

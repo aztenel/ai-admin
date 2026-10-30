@@ -8,6 +8,7 @@ import { sqliteOk, d1With } from "../d1.mjs";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { syncStep, syncDry, syncTest, testJournal } from "../../src/services/contacts/sync.js";
 import { altProbe } from "../../src/services/contacts/probe.js";
+import { altRead } from "../../src/services/integrations/altegio/client.js";
 import { contactsSegments, contactsList, contactsCard, contactsStatus } from "../../src/services/contacts/index.js";
 
 const skip = sqliteOk ? false : "node:sqlite есть только в Node 22+";
@@ -187,4 +188,20 @@ test("проба полей Altegio: только имена полей, дол�
   assert.ok(st.probe && st.probe.summary.length >= 5);
   const bad = await altProbe(mk({ DB: d.db, STAGE: "preview" }).env, W, Date.now());
   assert.equal(bad.ok, false); assert.match(bad.summary[0], /ALTEGIO_PARTNER/);
+});
+
+test("только чтение Altegio: запрос на изменение через altRead не уходит; ошибка Altegio в пробе — с кодом и его текстом (30.10.2026)", async () => {
+  net.reset();
+  const s = mk(ENV);
+  await assert.rejects(altRead(s.env, "POST", "/clients/133486", { page: 1, page_size: 5 }, "usr-tok"), e => /не на чтение/.test(e.message));
+  await assert.rejects(altRead(s.env, "DELETE", "/record/133486/1", null, "usr-tok"), e => /не на чтение/.test(e.message));
+  await assert.rejects(altRead(s.env, "POST", "/locations/133486/clients/search/../../../clients/133486", {}, "usr-tok"), e => /не на чтение/.test(e.message));
+  assert.deepEqual(net.alt, [], "в Altegio ничего не ушло");
+  assert.deepEqual(net.altCreated, []);
+  net.altJournalFail = 403;
+  const r = await altProbe(s.env, W, Date.now());
+  assert.ok(r.summary.some(l => /Журнал не прочитан: ошибка 403 — Unauthorized/.test(l)), r.summary.join("\n"));
+  assert.ok(r.summary.some(l => /Справочник клиентов не прочитан: ошибка 403 — Unauthorized/.test(l)), r.summary.join("\n"));
+  assert.deepEqual(net.alt.filter(x => !/^GET /.test(x) && !/^POST \/locations\/\d+\/clients\/search$/.test(x)), []);
+  net.altJournalFail = 0;
 });

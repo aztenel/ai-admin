@@ -5,12 +5,13 @@
 // событий D1 (altegio_probe) — его видно в пульте и через подключение Cloudflare.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { logSafe, normPhone } from "../../lib/phone.js";
-import { altCall } from "../integrations/altegio/client.js";
+import { altRead } from "../integrations/altegio/client.js";
+import { altClientsSearch } from "../integrations/altegio/clients-api.js";
 import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { d1Ready } from "../../db/d1/status.js";
 import { eventPut } from "../../db/d1/contacts.js";
-import { syncWhy, dirPage, DIR } from "./sync.js";
+import { syncWhy, DIR } from "./sync.js";
 import { dayOf, dayAdd, altMs } from "./normalize.js";
 
 /** «2026-10-30T15:00:00+05:00» → «9999-99-99T99:99:99+99:99». @param {any} v */
@@ -36,8 +37,12 @@ function dist(list, k) {
 }
 /** @param {Record<string, number>} d */
 const show = d => Object.entries(d).map(([k, v]) => `${k} — ${v}`).join(", ");
+// ошибка → строка отчёта: код и текст Altegio (о поле запроса, без данных клиентов; номера всё равно маскируются)
 /** @param {any} e */
-const errOf = e => `ошибка ${+(e && e.status) || "связи"}`;
+const errOf = e => {
+  const st = +(e && e.status) || 0, m = logSafe(String((e && e.message) || "")).slice(0, 160);
+  return st ? `ошибка ${st}${m && m !== "Altegio " + st ? ` — ${m}` : ""}` : m || "нет связи с Altegio";
+};
 
 /** @param {Env} env @param {Client} c @param {number} now */
 export async function altProbe(env, c, now) {
@@ -49,7 +54,7 @@ export async function altProbe(env, c, now) {
   /** @type {any[]} */
   let recs = [];
   try {
-    const d = await altCall(env, "GET", `/records/${loc}?start_date=${dayAdd(today, -30)}&end_date=${dayAdd(today, 30)}&count=100&page=1`, null, user);
+    const d = await altRead(env, "GET", `/records/${loc}?start_date=${dayAdd(today, -30)}&end_date=${dayAdd(today, 30)}&count=100&page=1`, null, user);
     recs = (Array.isArray(d) ? d : []).filter(x => x && typeof x === "object");
     summary.push(`Журнал: прочитано ${recs.length} записей (первая страница, ${dayAdd(today, -30)} … ${dayAdd(today, 30)})`);
   } catch (e) { ok = false; summary.push(`Журнал не прочитан: ${errOf(e)}`); console.log("probe", logSafe(String(e))); }
@@ -74,7 +79,7 @@ export async function altProbe(env, c, now) {
   // 2. фильтр по дате изменения: если работает, синхронизацию можно сделать дешевле (сейчас — окнами по датам)
   try {
     const iso = (/** @type {number} */ ms) => new Date(ms).toISOString().slice(0, 19);
-    const d = await altCall(env, "GET", `/records/${loc}?changed_after=${iso(now - 3 * 86400e3)}&changed_before=${iso(now)}&count=100&page=1`, null, user);
+    const d = await altRead(env, "GET", `/records/${loc}?changed_after=${iso(now - 3 * 86400e3)}&changed_before=${iso(now)}&count=100&page=1`, null, user);
     const arr = (Array.isArray(d) ? d : []).filter(x => x && typeof x === "object");
     const inRange = arr.filter(x => { const t = altMs(x.last_change_date); return t && t >= now - 3 * 86400e3 - 6 * 3600e3 && t <= now + 6 * 3600e3; }).length;
     summary.push(`Фильтр changed_after (3 дня): вернул ${arr.length}${arr.length >= 100 ? "+" : ""} записей, из них с датой изменения в эти 3 дня — ${inRange}` + (arr.length && !inRange ? " (похоже, фильтр не работает)" : ""));
@@ -85,7 +90,7 @@ export async function altProbe(env, c, now) {
   const cid = (recs.find(x => x.client && x.client.id) || { client: {} }).client.id;
   if (cid) {
     try {
-      const d = await altCall(env, "GET", `/client/${loc}/${encodeURIComponent(String(cid))}`, null, user);
+      const d = await altRead(env, "GET", `/client/${loc}/${encodeURIComponent(String(cid))}`, null, user);
       const o = d && typeof d === "object" ? d : {};
       const keys = Object.keys(o).sort(), flags = Object.fromEntries(Object.entries(o).filter(([k, v]) => /sms|send|mail|push|allow|consent|newsletter|notif|agree|personal|spam|subscri/i.test(k) && (typeof v === "boolean" || v === 0 || v === 1)));
       summary.push(`Карточка клиента: полей ${keys.length}: ${keys.join(", ")}`);
@@ -93,24 +98,22 @@ export async function altProbe(env, c, now) {
       fields.clientCard = { keys, flags };
     } catch (e) { summary.push(`Карточка клиента: ${errOf(e)}`); }
   }
-  // 4. справочник клиентов (вся база салона, не только журнал): сколько всего, какие поля, флаги согласий Altegio — только числа.
-  // Это поиск (POST /clients/{локация}) — данные в Altegio он не меняет
+  // 4. справочник клиентов (вся база салона, не только журнал): сколько всего, какие поля, флаги Altegio — только числа.
+  // Это поиск (POST /locations/{локация}/clients/search) — данные в Altegio он не меняет
+  /** @param {string[]} f @param {any[]} [filters] */
+  const dirBody = (f, filters) => ({ page: 1, page_size: filters ? 1 : 5, fields: f, order_by: "id", order_by_direction: "ASC", ...(filters ? { filters } : {}) });
   try {
-    const d = await altCall(env, "POST", `/clients/${loc}`, { page: 1, page_size: 5, fields: DIR.fields, order_by: "id", order_by_direction: "ASC" }, user, true);
-    const list = (Array.isArray(d.data) ? d.data : []).filter((/** @type {any} */ x) => x && typeof x === "object");
-    fields.directory = fieldsOf(list);
+    let d, noVc = false;
+    try { d = await altClientsSearch(env, user, loc, dirBody(DIR.fields)); }
+    catch (e) { if (+(/** @type {any} */ (e).status) !== 400) throw e; noVc = true; d = await altClientsSearch(env, user, loc, dirBody(DIR.fields.filter(f => f !== "visits_count"))); }
+    fields.directory = fieldsOf(d.list);
     const filled = (/** @type {string} */ k) => { const e = fields.directory.find((/** @type {any} */ x) => x.key === k); return e ? `${e.filled} из ${e.of}${e.shape ? `, вид ${e.shape}` : ""}` : "поля нет"; };
-    summary.push(`Справочник клиентов: всего ${+((d.meta && d.meta.total_count) || 0)} (meta.total_count); поля первой страницы: ${fields.directory.map((/** @type {any} */ x) => x.key).join(", ") || "нет"}`);
-    summary.push(`В справочнике: последний визит (last_visit_date) — ${filled("last_visit_date")}; визитов (visits_count) — ${filled("visits_count")}`);
-  } catch (e) {
-    const st = +(/** @type {any} */ (e).status) || 0;
-    if (st === 400) { // visits_count мог быть не принят — тогда без него
-      try { const d = await dirPage(env, c, 1, undefined, DIR.fields.filter(f => f !== "visits_count")); summary.push(`Справочник клиентов: всего ${d.total}; поле visits_count Altegio не принял`); }
-      catch (e2) { ok = false; summary.push(`Справочник клиентов не прочитан: ${errOf(e2)}`); }
-    } else { ok = false; summary.push(`Справочник клиентов не прочитан: ${errOf(e)}`); }
-  }
-  for (const [type, label] of [["is_newsletter_allowed", "разрешили рассылки"], ["is_personal_data_processing_allowed", "разрешили обработку данных"]]) {
-    try { const d = await dirPage(env, c, 1, [{ type, state: { value: true } }], ["id"]); summary.push(`Флаг Altegio «${label}» (${type}): ${d.total} клиентов — это не подтверждённое согласие`); fields[type] = d.total; }
+    summary.push(`Справочник клиентов: всего ${d.total} (meta.total_count); поля первой страницы: ${fields.directory.map((/** @type {any} */ x) => x.key).join(", ") || "нет"}`);
+    summary.push(`В справочнике: последний визит (last_visit_date) — ${filled("last_visit_date")}; визитов (visits_count) — ${noVc ? "Altegio не принял поле" : filled("visits_count")}`);
+    fields.directoryTotal = d.total;
+  } catch (e) { ok = false; summary.push(`Справочник клиентов не прочитан: ${errOf(e)}`); }
+  for (const [type, label] of [["is_newsletter_allowed", "разрешили рассылки — это не подтверждённое согласие"], ["is_personal_data_processing_allowed", "разрешили обработку данных"], ["is_mass_notification_allowed", "могут получать массовые уведомления"]]) {
+    try { const d = await altClientsSearch(env, user, loc, dirBody(["id"], [{ type, state: { value: true } }])); summary.push(`Флаг Altegio ${type}: ${d.total} клиентов (${label})`); fields[type] = d.total; }
     catch (e) { summary.push(`Флаг Altegio ${type}: ${errOf(e)}`); }
   }
   const report = { at: now, ok, summary, fields };
