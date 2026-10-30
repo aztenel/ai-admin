@@ -9,11 +9,14 @@ export class ApiError extends Error {
   readonly offline: boolean;
   readonly errors?: string[];
   readonly confirm?: string;
-  constructor(message: string, status: number, offline = false, extra?: { errors?: string[]; confirm?: string }) {
+  /** Поле формы, к которому относится ошибка (раздел «Клиенты»: `{ error, field }`). */
+  readonly field?: string;
+  constructor(message: string, status: number, offline = false, extra?: { errors?: string[]; confirm?: string; field?: string }) {
     super(message);
     this.status = status;
     this.offline = offline;
     if (extra?.errors) this.errors = extra.errors;
     if (extra?.confirm) this.confirm = extra.confirm;
+    if (extra?.field) this.field = extra.field;
   }
 }

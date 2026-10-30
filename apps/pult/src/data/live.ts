@@ -23,7 +23,7 @@ import type {
 } from "@/model/types";
 import { channelKind } from "@/model/channels";
 import { ApiError } from "./errors";
-import type { CampaignSource, DataSource } from "./source";
+import type { CampaignSource, ContactSource, DataSource } from "./source";
 import { readMarks } from "./read-marks";
 
 // ---------- ответы сервера ----------
@@ -63,14 +63,19 @@ export async function call<T>(path: string, body?: Record<string, unknown>): Pro
     location.href = "/login?next=" + enc(location.pathname + location.search + location.hash);
     throw new ApiError("Нужно войти заново.", 401);
   }
-  let j: (T & { error?: string; errors?: unknown; confirm?: unknown }) | null = null;
+  return parse<T>(r);
+}
+/** Ответ сервера → данные или ApiError (общая часть call и запросов с файлом, data/live-contacts.ts). */
+export async function parse<T>(r: Response): Promise<T> {
+  let j: (T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown }) | null = null;
   try {
-    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown };
+    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown };
   } catch {
     /* не JSON — ниже общая ошибка */
   }
   if (!j) throw new ApiError(`Сервер ответил ошибкой ${r.status}. Попробуйте ещё раз через минуту.`, r.status);
-  if (j.error) throw new ApiError(j.error, r.status);
+  // раздел «Клиенты»: 400 { error, field } — к какому полю формы относится ошибка
+  if (j.error) throw new ApiError(j.error, r.status, false, typeof j.field === "string" && j.field ? { field: j.field } : undefined);
   if (!r.ok) {
     // рассылки: 400 { ok: false, errors: [...] } — ошибки формы списком; 409 { confirm } — вопрос перед запуском при сигнале Meta
     const errors = Array.isArray(j.errors) ? j.errors.map(String).filter(Boolean) : [];
@@ -181,6 +186,9 @@ const fmtGaState: Record<string, string> = {
 // раздел «Рассылки» — отдельный файл (live-campaigns.ts): грузится при первом обращении, в первое открытие пульта не входит
 const campaignsApi = <K extends keyof CampaignSource>(k: K): CampaignSource[K] =>
   ((...a: unknown[]) => import("./live-campaigns").then((m) => (m.liveCampaigns[k] as (...x: unknown[]) => unknown)(...a))) as CampaignSource[K];
+// раздел «Клиенты» — тоже отдельный файл (live-contacts.ts)
+const contactsApi = <K extends keyof ContactSource>(k: K): ContactSource[K] =>
+  ((...a: unknown[]) => import("./live-contacts").then((m) => (m.liveContacts[k] as (...x: unknown[]) => unknown)(...a))) as ContactSource[K];
 
 export function createLiveSource(): DataSource {
   const marks = readMarks();
@@ -287,6 +295,21 @@ export function createLiveSource(): DataSource {
     autoSet: campaignsApi("autoSet"),
     clearMetaHold: campaignsApi("clearMetaHold"),
     serviceMessages: campaignsApi("serviceMessages"),
+    contactsStatus: contactsApi("contactsStatus"),
+    contactSegments: contactsApi("contactSegments"),
+    contactList: contactsApi("contactList"),
+    contactCard: contactsApi("contactCard"),
+    addContact: contactsApi("addContact"),
+    setConsent: contactsApi("setConsent"),
+    addRestriction: contactsApi("addRestriction"),
+    liftRestriction: contactsApi("liftRestriction"),
+    reviewRestriction: contactsApi("reviewRestriction"),
+    importPreview: contactsApi("importPreview"),
+    importConfirm: contactsApi("importConfirm"),
+    importDiscard: contactsApi("importDiscard"),
+    syncContacts: contactsApi("syncContacts"),
+    probeAltegio: contactsApi("probeAltegio"),
+    stopsAction: contactsApi("stopsAction"),
     externalUrl(page, ws) {
       const c = "?c=" + enc(ws);
       return { broadcast: "/broadcast" + c, studio: "/studio", launch: "/launch" + c, leads: "/leads" + c, logout: "/logout", site: "/" + c }[page];

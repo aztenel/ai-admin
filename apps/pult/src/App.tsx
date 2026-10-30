@@ -1,5 +1,5 @@
 // Пульт чатов: каркас, разделы и состояния запуска (вход, выбор компании, ошибка).
-// Чаты — в основной сборке (открываются первыми); заявки, рассылки и настройки грузятся при первом открытии.
+// Чаты — в основной сборке (открываются первыми); заявки, рассылки, клиенты и настройки грузятся при первом открытии.
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { lazy, Suspense, useEffect } from "react";
 import { ChunkBoundary } from "@/components/boundary";
@@ -14,6 +14,7 @@ import { store, useStore } from "@/state/store";
 
 const RequestsScreen = lazy(() => import("@/screens/Requests"));
 const CampaignsScreen = lazy(() => import("@/screens/Campaigns"));
+const ClientsScreen = lazy(() => import("@/screens/Clients"));
 const SettingsScreen = lazy(() => import("@/screens/Settings"));
 
 export default function App() {
@@ -58,6 +59,7 @@ export default function App() {
           >
             {route.name === "requests" && <RequestsScreen />}
             {route.name === "campaigns" && <CampaignsScreen />}
+            {route.name === "clients" && <ClientsScreen route={route} />}
             {route.name === "settings" && <SettingsScreen section={route.section} />}
           </Suspense>
         </ChunkBoundary>
