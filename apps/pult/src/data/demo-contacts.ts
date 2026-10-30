@@ -2,8 +2,11 @@
 // «Демо Барбер» — как Winchester на черновике: база из журнала Altegio (60 человек), черновик — настоящий Altegio только проверкой без
 // записи, есть «Тестовые клиенты»; «Демо Сервис» — без Altegio, база из импорта и ручного добавления; «Без чатов» — базы D1 нет.
 // Правила и тексты ошибок повторяют сервер (src/controllers/contacts.js): номер — казахстанский, основание согласия и причина запрета
-// обязательны, снять запрет может только владелец. Номера придуманы (+7 700 000 xx xx), имена — обычные вымышленные.
+// обязательны, снять запрет может только владелец. Согласие «есть» — только с доказательством (сообщение клиента, письменное, устно);
+// «стоп» от клиента снимается только после его нового подтверждённого согласия; «да» из файла — не подтверждено; после отменённой
+// записи — пауза рекламы; проверка полей Altegio до первого нажатия — «ещё не проверено». Номера придуманы (+7 700 000 xx xx).
 import type {
+  ConsentInput,
   ConsentPurpose,
   ConsentRecord,
   ConsentState,
@@ -44,6 +47,12 @@ type Person = {
   createdAt: number;
   updatedAt: number;
   syncedAt: number | null;
+  /** Справочник Altegio: визитов всего, последний визит, флаг «разрешил рассылки». */
+  altVisits: number | null;
+  altLastVisitAt: number | null;
+  newsletter: boolean | null;
+  /** Последнее сообщение клиента в WhatsApp (для «клиент сам написал»); null — переписки нет. */
+  chatAt: number | null;
 };
 type Ws = {
   ready: boolean;
@@ -114,10 +123,25 @@ function makePeople(now: number, n: number, seed: number, prefix: string, altegi
       createdAt: created,
       updatedAt: now - (i % 5) * HOUR,
       syncedAt: altegio ? now - 12 * MIN : null,
+      altVisits: altegio ? visits.filter((v) => v.attendance !== -1).length + (i % 5) : null,
+      altLastVisitAt: altegio && visits.length ? visits[0].at : null,
+      newsletter: altegio ? (i % 6 === 0 ? true : i % 10 === 0 ? false : null) : null,
+      chatAt: i % 3 === 0 ? now - (i % 18 === 0 ? 2 : 30) * DAY : null,
     };
-    if (i % 4 === 0) p.consents.push({ purpose: "marketing", state: "granted", basis: "анкета в салоне", source: "manual", actor: "администратор", at: now - 40 * DAY });
-    if (i % 11 === 0) p.consents.push({ purpose: "marketing", state: "denied", basis: "сказал устно", source: "manual", actor: "администратор", at: now - 10 * DAY });
-    if (i % 9 === 0) p.restrictions.push(restr(`r${i}`, "marketing_optout", "Клиент написал «СТОП»", "chat_stop", "бот", now - 8 * DAY));
+    if (i % 4 === 0) p.consents.push(cons("granted", "подписал анкету при записи", "manual", "администратор", now - 40 * DAY, "document", `анкета № ${100 + i}`));
+    if (i % 11 === 0) p.consents.push(cons("denied", "сказал по телефону", "manual", "администратор", now - 10 * DAY, "oral"));
+    if (i % 9 === 0) {
+      p.restrictions.push(restr(`r${i}`, "marketing_optout", "Клиент написал «СТОП»", "chat_stop", "бот", now - 8 * DAY));
+      p.consents.push(cons("denied", "клиент написал «СТОП»", "chat_stop", "бот", now - 8 * DAY, "client_stop"));
+    }
+    if (i === 12 && altegio) {
+      // запись отменили в Altegio — пауза рекламы, а не возврат в аудиторию
+      p.upcoming = [];
+      const until = now + 9 * DAY;
+      const x = restr(`rc${i}`, "cooldown", "Запись на завтра отменена в Altegio — реклама не раньше чем через 14 дней", "booking_cancelled", "синхронизация", now - 5 * DAY);
+      x.untilAt = until;
+      p.restrictions.push(x);
+    }
     if (i === 10) p.restrictions.push(restr(`rv${i}`, "marketing_optout", "Клиент написал «пока не пишите»", "chat_stop", "бот", now - 2 * DAY, true));
     if (i === 22) p.restrictions.push(restr(`rf${i}`, "full_block", "Просил не писать вообще, звонил в салон", "admin", "владелец", now - 30 * DAY));
     if (i === 15) {
@@ -132,8 +156,16 @@ function makePeople(now: number, n: number, seed: number, prefix: string, altegi
   }
   return out;
 }
+/** Запрет от самого клиента: «стоп» в переписке, сверка журнала Green-API, кнопка Meta, прежний список «стоп». */
+const CLIENT_SOURCES = new Set(["chat_stop", "ga_journal", "ga_sweep", "meta_button", "meta_131050", "kv", "kv_migration", "kv_fallback"]);
 function restr(id: string, kind: Restriction["kind"], reason: string, source: string, actor: string, at: number, review = false): Restriction {
-  return { id, kind, reason, source, actor, at, review, liftedAt: null, liftedBy: "", liftReason: "", active: true };
+  return { id, kind, reason, source, actor, at, review, liftedAt: null, liftedBy: "", liftReason: "", active: true, byClient: CLIENT_SOURCES.has(source) && !review, untilAt: null, canLift: true, liftHint: "" };
+}
+type Cons = ConsentRecord & { purpose: ConsentPurpose };
+function cons(state: ConsentState, basis: string, source: string, actor: string, at: number, evidence: Cons["evidence"], evidenceRef: string | null = null, purpose: ConsentPurpose = "marketing"): Cons {
+  // подтверждено: доказательство есть (сообщение, письменное, устно) или это отказ (отказ всегда уважаем)
+  const confirmed = state === "denied" || evidence === "chat" || evidence === "document" || evidence === "oral";
+  return { purpose, state, basis, source, actor, at, confirmed, evidence, evidenceRef, givenAt: at };
 }
 
 function syncOf(now: number, altegio: boolean, preview: boolean): SyncState {
@@ -149,6 +181,7 @@ function syncOf(now: number, altegio: boolean, preview: boolean): SyncState {
       running: false,
       windows: [],
       stats: null,
+      directory: null,
     };
   return {
     available: true,
@@ -164,6 +197,7 @@ function syncOf(now: number, altegio: boolean, preview: boolean): SyncState {
       { scope: "past", label: "Визиты за месяц — ночью", lastOkAt: now - 9 * HOUR, lastError: "Altegio не ответил вовремя — попробую в следующий раз" },
     ],
     stats: { records: 214, contacts: 60, bookings: 214, masked: 1, bad: 0, deleted: 6 },
+    directory: { done: true, total: 1240, pct: 100, lastOkAt: now - 3 * HOUR, lastError: null },
   };
 }
 
@@ -178,6 +212,28 @@ const daysSince = (p: Person, now: number) => {
 const nextBooking = (p: Person, now: number) => p.upcoming.filter((v) => v.at > now).reduce((m, v) => (m && m < v.at ? m : v.at), 0) || null;
 const active = (p: Person) => p.restrictions.filter((x) => x.active);
 const consentNow = (p: Person, purpose: ConsentPurpose) => [...p.consents].reverse().find((c) => c.purpose === purpose) || null;
+/** Когда клиент сам отказался последний раз (его «стоп» или отказ «стоп» в согласиях); null — не отказывался. */
+const refusedAt = (p: Person) =>
+  Math.max(0, ...p.restrictions.filter((x) => x.byClient).map((x) => x.at), ...p.consents.filter((c) => c.state === "denied" && c.evidence === "client_stop").map((c) => c.givenAt || c.at)) || null;
+/** Есть подтверждённое согласие на рекламу, данное позже t. */
+const consentAfter = (p: Person, t: number) => p.consents.some((c) => c.purpose === "marketing" && c.state === "granted" && c.confirmed && (c.givenAt || c.at) > t);
+const cooling = (p: Person, now: number) => active(p).some((x) => x.kind === "cooldown" && (x.untilAt || 0) > now);
+/** Запрет с вычисленным «можно ли снять». */
+const withLift = (p: Person, x: Restriction, now: number): Restriction => {
+  if (!x.active || !x.byClient) return { ...x, canLift: true, liftHint: "" };
+  const ok = consentAfter(p, x.at);
+  return { ...x, canLift: ok, liftHint: ok ? "" : `Клиент сам отказался ${fmtDay(x.at, now)}. Сначала запишите его новое подтверждённое согласие — сообщение в WhatsApp после отказа или письменное с датой позже отказа.` };
+};
+/** Для диалога согласия: был ли отказ, есть ли сообщение клиента после отказа, можно ли «устно». */
+const rules = (p: Person) => {
+  const ref = refusedAt(p);
+  return { refusedAt: ref, chatAvailable: !!p.chatAt && (!ref || p.chatAt > ref), oralAllowed: !ref };
+};
+const MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const fmtDay = (t: number, now: number) => {
+  const d = new Date(t + 5 * HOUR), n = new Date(now + 5 * HOUR);
+  return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}${d.getUTCFullYear() !== n.getUTCFullYear() ? " " + d.getUTCFullYear() : ""}`;
+};
 
 const SEGS: { id: string; label: string; rule: string; test: (p: Person, now: number) => boolean }[] = [
   { id: "pora", label: "Пора на стрижку", rule: "последний визит 21–35 дней назад", test: (p, n) => inRange(daysSince(p, n), 21, 35) },
@@ -186,7 +242,7 @@ const SEGS: { id: string; label: string; rule: string; test: (p: Person, now: nu
   { id: "novye", label: "Новые", rule: "1 визит", test: (p, n) => visitCount(p, n) === 1 },
   { id: "postoyannye", label: "Постоянные", rule: "3 и больше визитов", test: (p, n) => visitCount(p, n) >= 3 },
   { id: "booked", label: "Записаны", rule: "есть будущая запись", test: (p, n) => !!nextBooking(p, n) },
-  { id: "noconsent", label: "Без согласия", rule: "согласия на рекламу нет", test: (p) => consentNow(p, "marketing")?.state !== "granted" },
+  { id: "noconsent", label: "Без согласия", rule: "подтверждённого согласия на рекламу нет", test: (p) => !(consentNow(p, "marketing")?.state === "granted" && consentNow(p, "marketing")?.confirmed) },
 ];
 const inRange = (d: number | null, a: number, b: number) => d !== null && d >= a && d <= b;
 
@@ -197,7 +253,10 @@ function marketReasons(p: Person, now: number): string[] {
   if (act.some((x) => x.kind === "full_block")) out.push("просил не писать вообще");
   if (act.some((x) => x.kind === "marketing_optout" && !x.review)) out.push("просил не писать рекламу («стоп»)");
   if (act.some((x) => x.review)) out.push("«стоп» ждёт решения");
-  if (consentNow(p, "marketing")?.state !== "granted") out.push("нет согласия на рекламу");
+  const c = consentNow(p, "marketing");
+  if (c?.state !== "granted") out.push(c?.state === "denied" ? "отказался от рассылок" : "нет согласия на рекламу");
+  else if (!c.confirmed) out.push("согласие не подтверждено");
+  if (cooling(p, now)) out.push("запись отменена — пауза рекламы");
   if (nextBooking(p, now)) out.push("уже записан");
   const d = daysSince(p, now);
   if (d !== null && d < 14) out.push("был меньше 14 дней назад");
@@ -285,6 +344,13 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       { id: "sync_issues", label: "Расхождения «стоп» между хранилищами", count: 0, level: "ok" as const, hint: "Запрет записан в одном хранилище, а в другом нет; запрет при этом действует." },
       { id: "review", label: "«Стоп» ждёт решения", count: review, level: review ? ("warn" as const) : ("ok" as const), hint: "Клиент написал что-то похожее на «стоп» — реклама закрыта, пока человек не решит." },
       { id: "sync_age", label: "Синхронизация давно не проходила", count: w.altegio && w.sync.lastOkAt && now - w.sync.lastOkAt > 2 * HOUR ? 1 : 0, level: "ok" as const, hint: "Больше 2 часов без удачной синхронизации." },
+      ...(w.altegio
+        ? [
+            w.probe
+              ? { id: "probe", label: "Поля Altegio проверены", count: 0, level: "ok" as const, hint: "Журнал и карточки клиентов читаются." }
+              : { id: "probe", label: "Поля Altegio проверены", count: 0, level: "unknown" as const, hint: "Ещё не проверено: нажмите «Проверить поля Altegio»." },
+          ]
+        : []),
     ];
   };
 
@@ -339,15 +405,18 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       const pages = Math.max(1, Math.ceil(list.length / PER));
       const items = list.slice((page - 1) * PER, page * PER).map((p): ContactRow => {
         const act = active(p);
+        const c = consentNow(p, "marketing");
         return {
           id: p.id,
           name: p.name,
           phone: mask(p.phone),
           lastVisitAt: lastVisit(p, now),
+          daysAgo: daysSince(p, now),
           visits: visitCount(p, now),
           nextBookingAt: nextBooking(p, now),
           lastStaff: p.visits.find((v) => v.attendance !== -1)?.staff || "",
-          consent: consentNow(p, "marketing")?.state || "unknown",
+          consent: c?.state || "unknown",
+          consentConfirmed: !!c?.confirmed,
           stop: act.some((x) => x.kind === "marketing_optout" && !x.review),
           fullBlock: act.some((x) => x.kind === "full_block"),
           review: act.some((x) => x.review),
@@ -368,7 +437,11 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
           altegioId: p.altegioId,
           firstVisitAt: done.filter((v) => v.attendance !== -1).reduce((m, v) => (m && m < v.at ? m : v.at), 0) || null,
           lastVisitAt: lastVisit(p, now),
+          daysAgo: daysSince(p, now),
           visits: visitCount(p, now),
+          altVisits: p.altVisits,
+          altLastVisitAt: p.altLastVisitAt,
+          newsletter: p.newsletter,
           nextBookingAt: nextBooking(p, now),
           lastStaff: done.find((v) => v.attendance !== -1)?.staff || "",
           lastService: done.find((v) => v.attendance !== -1)?.services || "",
@@ -382,7 +455,8 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         missed: done.filter((v) => v.attendance === -1).length,
         consent: { marketing: consentNow(p, "marketing"), service: consentNow(p, "service") },
         consentHistory: [...p.consents].reverse(),
-        restrictions: [...p.restrictions].sort((a, b) => Number(b.active) - Number(a.active) || b.at - a.at),
+        consentRules: rules(p),
+        restrictions: [...p.restrictions].sort((a, b) => Number(b.active) - Number(a.active) || b.at - a.at).map((x) => withLift(p, x, now)),
         segments: SEGS.filter((s) => s.test(p, now)).map((s) => ({ id: s.id, label: s.label })),
         canMarket: { ok: !marketReasons(p, now).length, reasons: marketReasons(p, now) },
         events: structuredClone(p.events),
@@ -409,16 +483,41 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         createdAt: now,
         updatedAt: now,
         syncedAt: null,
+        altVisits: null,
+        altLastVisitAt: null,
+        newsletter: null,
+        chatAt: null,
       };
       w.people.unshift(p);
       return { id: p.id, created: true };
     },
-    async setConsent(id, cid, purpose, state: ConsentState, basis) {
+    async setConsent(id, cid, input: ConsentInput) {
       await wait(260);
-      const p = person(ws(id), cid);
-      if (state === "granted" && !basis.trim()) throw new ApiError("Укажите основание согласия: где и как клиент согласился.", 400, false, { field: "basis" });
-      p.consents.push({ purpose, state, basis: basis.trim(), source: "manual", actor: actor(), at: Date.now() });
-      log(p, "consent", `${purpose === "marketing" ? "Согласие на рекламу" : "Сервисные сообщения"}: ${state === "granted" ? "да" : state === "denied" ? "нет" : "неизвестно"}${basis.trim() ? ` (${basis.trim()})` : ""}`);
+      const p = person(ws(id), cid), now = Date.now(), r = rules(p), basis = input.basis.trim();
+      let givenAt = now, evidenceRef: string | null = null;
+      if (input.state === "granted") {
+        const ev = input.evidence;
+        if (!ev) throw new ApiError("Выберите, чем подтверждено согласие.", 400, false, { field: "evidence" });
+        if (ev === "chat" && !r.chatAvailable) throw new ApiError("В переписке нет сообщения клиента после отказа — так подтвердить нельзя.", 409);
+        if (ev === "oral" && !r.oralAllowed) throw new ApiError("Клиент сам отказывался — устного согласия мало: нужно его сообщение или письменное согласие.", 409);
+        if (ev === "document") {
+          if (!input.evidenceRef?.trim()) throw new ApiError("Укажите номер анкеты или где хранится документ.", 400, false, { field: "evidenceRef" });
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(input.givenAt || "")) throw new ApiError("Укажите дату согласия.", 400, false, { field: "givenAt" });
+          // дата — день по Астане; согласие считается данным в конце этого дня, но не позже «сейчас»
+          const end = Date.UTC(+input.givenAt!.slice(0, 4), +input.givenAt!.slice(5, 7) - 1, +input.givenAt!.slice(8, 10)) - 5 * HOUR + DAY - 1000;
+          if (end - DAY + 1000 > now) throw new ApiError("Дата согласия ещё не наступила.", 400, false, { field: "givenAt" });
+          givenAt = Math.min(end, now);
+          if (r.refusedAt && givenAt <= r.refusedAt) throw new ApiError(`Клиент отказался ${fmtDay(r.refusedAt, now)} — письменное согласие должно быть позже отказа.`, 400, false, { field: "givenAt" });
+          evidenceRef = input.evidenceRef.trim().slice(0, 120);
+        }
+        if (ev === "chat") {
+          givenAt = p.chatAt || now;
+          evidenceRef = `сообщение ${fmtDay(givenAt, now)}`;
+        }
+        if (!basis) throw new ApiError("Коротко: где и как клиент согласился.", 400, false, { field: "basis" });
+        p.consents.push({ ...cons("granted", basis, "manual", actor(), now, ev, evidenceRef, input.purpose), givenAt });
+      } else p.consents.push(cons(input.state, basis, "manual", actor(), now, input.state === "denied" ? "oral" : null, null, input.purpose));
+      log(p, "consent", `${input.purpose === "marketing" ? "Согласие на рекламу" : "Сервисные сообщения"}: ${input.state === "granted" ? "да, подтверждено" : input.state === "denied" ? "нет" : "неизвестно"}${basis ? ` (${basis})` : ""}`);
     },
     async addRestriction(id, cid, kind, reason) {
       await wait(260);
@@ -434,6 +533,8 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       const p = person(ws(id), cid), x = p.restrictions.find((r) => r.id === rid && r.active);
       if (!x) throw new ApiError("Запрет не найден или уже снят.", 404);
       if (!reason.trim()) throw new ApiError("Напишите, почему снимаете запрет.", 400, false, { field: "reason" });
+      // отказ клиента не обходится: нужно его новое подтверждённое согласие, данное после отказа
+      if (x.byClient && !consentAfter(p, x.at)) throw new ApiError("Клиент сам отказался от рассылок. Снять запрет можно только после его нового подтверждённого согласия — запишите его в блоке «Согласие».", 409);
       Object.assign(x, { active: false, review: false, liftedAt: Date.now(), liftedBy: actor(), liftReason: reason.trim() });
       log(p, "lift", `Запрет снят: ${reason.trim()}`);
     },
@@ -493,6 +594,7 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         counts,
         columns: { phone: isHead ? head[pi] || "" : "1-я колонка", name: ni >= 0 ? (isHead ? head[ni] || "" : "2-я колонка") : "", consent: ci >= 0 ? head[ci] || "" : "" },
         hasConsent: ci >= 0,
+        consentNote: "Согласия «да» из файла запишутся как НЕ подтверждённые: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится.",
         rows: [...rows].sort((a, b) => order[a.action] - order[b.action] || a.row - b.row).slice(0, 200).map((r) => ({ row: r.row, phone: r.phone ? mask(r.phone) : "", name: r.name, action: r.action, ...(r.error ? { error: r.error } : {}) })),
       };
     },
@@ -502,12 +604,12 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       if (!imp) throw new ApiError("Загрузка уже подтверждена или отменена.", 409);
       w.imports.delete(iid);
       const now = Date.now();
-      let created = 0, updated = 0, consents = 0;
+      let created = 0, updated = 0, consents = 0, consentsUnconfirmed = 0, consentsSkipped = 0;
       for (const r of imp.rows) {
         if (r.action !== "new" && r.action !== "update" && r.action !== "same") continue;
         let p = w.people.find((x) => x.phone === r.phone);
         if (!p) {
-          p = { id: `i-${++w.seq}`, name: r.name, phone: r.phone, altegioId: "", visits: [], upcoming: [], consents: [], restrictions: [], sources: [{ source: "import", at: now }], events: [{ at: now, kind: "created", text: "Загружен из файла" }], createdAt: now, updatedAt: now, syncedAt: null };
+          p = { id: `i-${++w.seq}`, name: r.name, phone: r.phone, altegioId: "", visits: [], upcoming: [], consents: [], restrictions: [], sources: [{ source: "import", at: now }], events: [{ at: now, kind: "created", text: "Загружен из файла" }], createdAt: now, updatedAt: now, syncedAt: null, altVisits: null, altLastVisitAt: null, newsletter: null, chatAt: null };
           w.people.unshift(p);
           created++;
         } else if (r.action === "update") {
@@ -515,13 +617,19 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
           p.updatedAt = now;
           updated++;
         }
-        // как на сервере: из файла записываются и «да», и «нет» — только с основанием
+        // как на сервере: из файла записываются и «да», и «нет» — только с основанием; «да» — не подтверждено, а тем, кто сам
+        // отказывался, «да» из файла не ставится
         if (r.consent && consentBasis?.trim()) {
-          p.consents.push({ purpose: "marketing", state: r.consent, basis: consentBasis.trim(), source: "import", actor: actor(), at: now });
+          if (r.consent === "granted" && refusedAt(p)) {
+            consentsSkipped++;
+            continue;
+          }
+          p.consents.push({ ...cons(r.consent, consentBasis.trim(), "import", actor(), now, "import", `файл, ${fmtDay(now, now)}`), confirmed: r.consent === "denied" });
           consents++;
+          if (r.consent === "granted") consentsUnconfirmed++;
         }
       }
-      return { created, updated, consents };
+      return { created, updated, consents, consentsUnconfirmed, consentsSkipped };
     },
     async importDiscard(id, iid) {
       await wait(150);
@@ -542,7 +650,7 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       if (mode === "dry")
         return {
           sync: structuredClone(w.sync),
-          report: { summary: ["Проверка без записи: в базу ничего не записано", "Журнал за 400 дней: 2 140 записей, 11 страниц", "Клиентов с номером: 1 087, скрытых номеров: 31, неверных: 4", "Будущих записей: 85, удалённых: 17", "Время: 14 с"] },
+          report: { summary: ["Проверка без записи: в базу ничего не записано", "Журнал за 400 дней: 2 140 записей, 11 страниц", "Клиентов с номером: 1 087, скрытых номеров: 31, неверных: 4", "Будущих записей: 85, удалённых: 17", "Справочник клиентов Altegio: 1 240 человек (вся база, не только журнал за 2 года), разрешили рассылки — 312", "Время: 14 с"] },
         };
       if (w.stage !== "preview") throw new ApiError("Тестовые клиенты — только на черновике.", 409);
       const add = makePeople(now, 5, 99 + w.seq, "9" + String(++w.seq % 10), true);

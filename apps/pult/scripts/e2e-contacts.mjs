@@ -8,8 +8,13 @@
 // Playwright — PLAYWRIGHT_PATH или /opt/node-tools/node_modules/playwright/index.mjs; Chromium — /opt/pw-browsers/chromium (CHROMIUM меняет).
 // На каждом шаге: нет полных номеров базы на странице (кроме карточки открытого клиента и номеров, которые человек набрал сам),
 // нет ошибок в консоли, нет прокрутки вбок; снимки 390×844 и 1280×800, светлая и тёмная тема.
+// Правила 31.10.2026: проверка «ещё не проверено» — не зелёная; согласие «есть» — только с доказательством (письменное: номер и дата);
+// «стоп» от клиента не снимается, пока не записано его новое подтверждённое согласие; «да» из файла — не подтверждено.
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+// часы бота — настоящие (test/clock.mjs: CLOCK=real): на снимках — сегодняшние даты, а не 3 октября 2026 из проверок
+process.env.CLOCK ||= "real";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_PATH || "/opt/node-tools/node_modules/playwright/index.mjs");
 const args = process.argv.slice(2);
@@ -256,13 +261,17 @@ async function owner(vp, scheme, tag) {
   const { card } = await openFirst(t);
   await step(t, "card");
   await tap(card.getByRole("button", { name: "Изменить согласие" }));
-  await tap(card.getByRole("radio", { name: "Есть" }));
+  await tap(card.getByRole("radio", { name: "Есть", exact: true }));
   await tap(card.getByRole("button", { name: "Сохранить", exact: true }));
-  ok(`${tag}: согласие «есть» без основания — ошибка под полем`, /Укажите основание/.test(await text(card)));
-  await fill(card.getByLabel(/^Основание/), "анкета в салоне (проверка)");
+  ok(`${tag}: согласие «есть» без доказательства — ошибка`, /Выберите, чем подтверждено/.test(await text(card)));
+  await tap(card.getByRole("radio", { name: /^Письменное согласие/ }));
   await tap(card.getByRole("button", { name: "Сохранить", exact: true }));
-  await card.getByText("анкета в салоне (проверка)").first().waitFor();
-  ok(`${tag}: согласие сохранено с основанием`, /Есть/.test(await text(card.getByText("Реклама и акции").locator(".."))));
+  ok(`${tag}: письменное без номера — ошибка под полем`, /Укажите номер анкеты/.test(await text(card)));
+  await fill(card.getByLabel("Номер или где хранится"), "анкета № 7 (проверка)");
+  await fill(card.getByLabel(/^Основание/), "подписал анкету (проверка)");
+  await tap(card.getByRole("button", { name: "Сохранить", exact: true }));
+  await card.getByText(/анкета № 7 \(проверка\)/).first().waitFor();
+  ok(`${tag}: согласие с доказательством — «Есть, подтверждено»`, /Есть, подтверждено/.test(await text(card.getByText("Реклама и акции").locator(".."))), await text(card.getByText("Реклама и акции").locator("..")));
   await step(t, "consent");
 
   await tap(card.getByRole("button", { name: "Добавить запрет" }));
@@ -273,10 +282,11 @@ async function owner(vp, scheme, tag) {
   await card.getByText("просил не присылать акции (проверка)").first().waitFor();
   ok(`${tag}: запрет рекламы виден в карточке`, /Не писать рекламу/.test(await text(card)) && /Рекламу писать нельзя/.test(await text(card)));
   await step(t, "restriction");
-  const lift = card.getByRole("button", { name: "Снять запрет" }).first();
-  await tap(lift);
-  await fill(card.getByLabel("Почему снимаете"), "ошиблись (проверка)");
-  await tap(card.getByRole("button", { name: "Снять запрет" }).first());
+  // снимаем именно свой запрет (у клиента может быть и «стоп» от него самого — его «Снять» неактивна)
+  const mine = card.locator("div.py-3").filter({ hasText: "просил не присылать акции (проверка)" }).first();
+  await tap(mine.getByRole("button", { name: "Снять запрет" }));
+  await fill(mine.getByLabel("Почему снимаете"), "ошиблись (проверка)");
+  await tap(mine.getByRole("button", { name: "Снять запрет" }));
   await card.getByText("Запрет снят", { exact: true }).or(page.getByText("Запрет снят", { exact: true })).first().waitFor();
   await card.getByRole("button", { name: "Снять запрет" }).first().waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
   const lifted = card.getByRole("button", { name: /^Снятые · \d+/ });
@@ -286,6 +296,48 @@ async function owner(vp, scheme, tag) {
   ok(`${tag}: снятый запрет — в истории с причиной`, /ошиблись \(проверка\)/.test(await text(card.getByRole("list", { name: "Снятые запреты" }))));
   await step(t, "lifted");
   await closeCard(t);
+
+  // «стоп» от самого клиента: «Снять» неактивна, пока нет нового подтверждённого согласия; после письменного согласия — можно
+  // метка ровно «стоп» (не «стоп» ждёт решения); последняя — чтобы не попасть в клиента, которому выше уже записали согласие
+  const stopRow = rows(page).filter({ has: page.getByText("«стоп»", { exact: true }) }).last();
+  if (!(await stopRow.count())) ok(`${tag}: в базе есть клиент со «стоп» от него самого`, false, "нет строки с меткой «стоп»");
+  else {
+    await tap(stopRow.getByRole("button"));
+    const sc = page.getByRole("dialog");
+    await sc.getByText("Визиты", { exact: true }).waitFor();
+    t.card = (await text(sc.locator("p.tnum").first())).replace(/\D/g, "");
+    const own = sc.locator("div.py-3").filter({ hasText: "от клиента" }).first();
+    await own.waitFor();
+    const liftBtn = own.getByRole("button", { name: "Снять запрет" });
+    ok(`${tag}: «стоп» от клиента — «Снять» неактивна`, await liftBtn.isDisabled());
+    ok(`${tag}: «стоп» от клиента — объяснение, почему нельзя`, /новое подтверждённое согласие/.test(await text(own)), await text(own));
+    await reveal(own);
+    await step(t, "client-stop");
+    await tap(own.getByRole("button", { name: "Записать новое согласие" }));
+    const ed = sc.getByLabel("Изменить согласие");
+    await ed.waitFor();
+    ok(`${tag}: после отказа «устно» недоступно`, await ed.getByRole("radio", { name: /^Устно в салоне/ }).isDisabled());
+    await tap(ed.getByRole("radio", { name: /^Письменное согласие/ }));
+    await fill(ed.getByLabel("Номер или где хранится"), "анкета № 8 (проверка)");
+    await fill(ed.getByLabel(/^Основание/), "снова согласился письменно (проверка)");
+    await step(t, "new-consent");
+    await tap(ed.getByRole("button", { name: "Сохранить", exact: true }));
+    await sc.getByText(/анкета № 8 \(проверка\)/).first().waitFor({ timeout: 10_000 }).catch(() => {});
+    const own2 = sc.locator("div.py-3").filter({ hasText: "от клиента" }).first();
+    const lift2 = own2.getByRole("button", { name: "Снять запрет" });
+    await lift2.waitFor();
+    const enabled = !(await lift2.isDisabled());
+    ok(`${tag}: после нового согласия «Снять» доступна`, enabled, (await text(sc)).slice(0, 300));
+    if (enabled) {
+      await tap(lift2);
+      await fill(own2.getByLabel("Почему снимаете"), "клиент снова согласился (проверка)");
+      await tap(own2.getByRole("button", { name: "Снять запрет" }));
+      await page.getByText("Запрет снят", { exact: true }).first().waitFor();
+      ok(`${tag}: «стоп» снят после нового согласия`, true);
+    }
+    await step(t, "client-stop-lifted");
+    await closeCard(t);
+  }
 
   // добавить клиента: неверный номер, новый, дубль. Ответ 400 на неверный номер ожидаем — браузер всё равно пишет его в консоль
   t.allow.push(/\/api\/contacts\/add$/);
@@ -331,9 +383,32 @@ async function owner(vp, scheme, tag) {
   await tap(imp.getByRole("button", { name: "Загрузить 2" }));
   await imp.getByText(/^Загружено/).waitFor();
   ok(`${tag}: импорт — 2 новых, в файле «да» у одного и «нет» у другого — обе отметки записаны`, /Новых клиентов:\s*2/.test(await text(imp)) && /согласий и отказов записано:\s*2/.test(await text(imp)), await text(imp));
+  ok(`${tag}: «да» из файла — не подтверждено`, /Согласий «да» из файла:\s*1\s*— не подтверждены/.test(await text(imp)), await text(imp));
   await step(t, "import-done");
   await tap(imp.getByRole("button", { name: "Готово" }));
   await imp.waitFor({ state: "detached" });
+
+  // карточка клиента из файла: согласие «есть, не подтверждено» и кнопка «Подтвердить»
+  await fill(page.getByPlaceholder("Имя или номер"), "Тестовый Один");
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(200);
+    if (await page.locator('section[aria-busy="true"]').count()) continue;
+    const r = await rows(page).allInnerTexts();
+    if (r.length === 1 && /Тестовый Один/.test(r[0])) break;
+  }
+  ok(`${tag}: в списке — «согласие не подтверждено»`, /согласие не подтверждено/.test(await text(rows(page).first())), await text(rows(page).first()));
+  await tap(rows(page).first().getByRole("button"));
+  const ic = page.getByRole("dialog");
+  await ic.getByText("Визиты", { exact: true }).waitFor();
+  t.card = (await text(ic.locator("p.tnum").first())).replace(/\D/g, "");
+  const icLine = await text(ic.getByText("Реклама и акции").locator(".."));
+  ok(`${tag}: карточка из файла — «Есть, не подтверждено — из файла»`, /Есть, не подтверждено/.test(icLine) && /из файла/.test(icLine), icLine);
+  ok(`${tag}: карточка из файла — кнопка «Подтвердить»`, (await ic.getByRole("button", { name: "Подтвердить", exact: true }).count()) === 1);
+  ok(`${tag}: рекламу нельзя — согласие не подтверждено`, /согласие не подтвержден|нет подтверждённого согласия/.test(await text(ic)), (await text(ic)).slice(0, 300));
+  await step(t, "import-unconfirmed");
+  await closeCard(t);
+  await page.getByRole("button", { name: "Очистить поиск" }).click();
+  await page.waitForTimeout(700);
 
   // импорт файлом CSV и отмена
   await tap(headerBtn(t, "Импорт из файла", "Импорт"));
@@ -352,6 +427,14 @@ async function owner(vp, scheme, tag) {
   const panel = page.getByRole("dialog", { name: "Синхронизация и проверки" });
   await panel.getByText("Проверки данных", { exact: true }).waitFor();
   ok(`${tag}: панель — проверки данных списком`, (await panel.getByRole("list", { name: "Проверки данных" }).locator("li").count()) > 0);
+  // «ещё не проверено» — серый «?», а не зелёная галочка
+  const checks = panel.getByRole("list", { name: "Проверки данных" });
+  const unk = checks.locator('li[data-level="unknown"]');
+  ok(`${tag}: есть проверка «ещё не проверено»`, (await unk.count()) > 0);
+  const unkIcons = await unk.locator('[role="img"]').evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+  ok(`${tag}: «ещё не проверено» — не «в порядке»`, unkIcons.length > 0 && unkIcons.every((l) => l === "ещё не проверено"), unkIcons.join(", "));
+  const okTexts = await checks.locator('li[data-level="ok"]').allInnerTexts();
+  ok(`${tag}: зелёных «ещё не было» нет`, !okTexts.some((x) => /ещё не (было|проверено|проводилась|читался)/i.test(x)), okTexts.filter((x) => /ещё не/i.test(x)).join(" | "));
   await step(t, "sync-panel");
   for (const [btn, title] of [
     ["Проверка без записи", "Проверка без записи"],

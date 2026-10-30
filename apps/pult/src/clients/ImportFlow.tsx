@@ -1,7 +1,9 @@
 // Импорт клиентов из файла (CSV, Excel .xlsx, текст) или вставленного текста: сначала предпросмотр — сколько новых, у кого обновится
 // имя, сколько без изменений, дублей в самом файле и неверных номеров, строки с причинами (номера маской), — потом «Загрузить N».
 // До подтверждения в базе ничего не меняется; «Отменить» удаляет предпросмотр на сервере. Импорт не снимает запреты. Согласия из файла
-// ставятся, только если указано основание (где клиенты соглашались) — без него колонка согласия не используется.
+// ставятся, только если указано основание (где клиенты соглашались) — без него колонка согласия не используется. Даже с основанием
+// «да» из файла записывается как НЕ подтверждённое: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке; клиентам,
+// которые сами отказывались, «да» из файла не ставится вовсе (31.10.2026, правило владельца).
 import { CircleAlert, CircleCheck, FileUp, ListChecks } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Notice } from "@/campaigns/base/shared";
@@ -85,6 +87,20 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
             .
           </span>
         </div>
+        {(done.consentsUnconfirmed > 0 || done.consentsSkipped > 0) && (
+          <ul aria-label="Согласия из файла" className="mb-6 space-y-2 px-1 text-ui text-fg-2 pointer-coarse:text-base">
+            {done.consentsUnconfirmed > 0 && (
+              <li>
+                Согласий «да» из файла: <b className="tnum text-fg">{done.consentsUnconfirmed}</b> — не подтверждены. Реклама им не уйдёт, пока не подтвердите согласие в карточке клиента.
+              </li>
+            )}
+            {done.consentsSkipped > 0 && (
+              <li>
+                Пропущено: <b className="tnum text-fg">{done.consentsSkipped}</b> — клиент сам отказывался от рассылок, «да» из файла этого не отменяет.
+              </li>
+            )}
+          </ul>
+        )}
         <Button variant="primary" size="lg" className="w-full md:w-auto" onClick={onClose}>
           Готово
         </Button>
@@ -182,6 +198,10 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
             <InsetGroup title="Согласие из файла" note="Например: «анкета в салоне, 2025» или «согласие при записи на сайте».">
               <TextField label="Основание согласия" maxLength={120} value={basis} onChange={(e) => setBasis(e.target.value)} />
               {!basis.trim() && <Notice>Без основания согласия из файла не ставятся — клиенты загрузятся без согласия на рекламу.</Notice>}
+              <Notice tone="muted">
+                {pv.consentNote ||
+                  "Даже с основанием «да» из файла будет не подтверждено: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится."}
+              </Notice>
             </InsetGroup>
           )}
           {problems > 0 && <Notice tone="muted">Дубли и неверные номера не загружаются — исправьте их в файле, если нужно.</Notice>}
