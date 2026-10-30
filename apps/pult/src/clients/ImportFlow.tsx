@@ -79,7 +79,7 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
             Загружено. Новых клиентов: <b className="tnum">{done.created}</b>, обновлено имён: <b className="tnum">{done.updated}</b>
             {done.consents ? (
               <>
-                , согласий записано: <b className="tnum">{done.consents}</b>
+                , согласий и отказов записано: <b className="tnum">{done.consents}</b>
               </>
             ) : null}
             .

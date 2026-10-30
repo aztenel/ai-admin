@@ -60,6 +60,13 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
       quality_rating: w ? "GREEN" : "YELLOW", whatsapp_business_manager_messaging_limit: w ? "TIER_1K" : "TIER_250" }), { headers: { "content-type": "application/json" } });
   };
 
+  // журнал входящих второго номера Winchester (сверка «стопов», services/contacts/stops.js): «стоп» от тестового клиента, который не
+  // пришёл вебхуком, и обычное сообщение — кнопка «Сверить «стопы» по Green-API» находит первый
+  net.gaReply = (rec) => rec.op === "lastIncomingMessages" && rec.inst === GAW.id ? new Response(JSON.stringify([
+    { type: "incoming", idMessage: "DEV-IN-1", timestamp: Math.floor(Date.now() / 1000) - 600, typeMessage: "textMessage", chatId: "77000001012@c.us", textMessage: "стоп" },
+    { type: "incoming", idMessage: "DEV-IN-2", timestamp: Math.floor(Date.now() / 1000) - 300, typeMessage: "textMessage", chatId: "77000001013@c.us", textMessage: "А на завтра есть время?" }
+  ]), { headers: { "content-type": "application/json" } }) : null;
+
   // журнал Altegio Winchester: 40 вымышленных клиентов (≈ 70 записей), визиты 5–95 дней назад, у части — будущая запись, один скрытый номер, неявки
   const NOW = Date.now(); // часы бота (test/clock.mjs)
   const day = (n) => new Date(NOW - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);

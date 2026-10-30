@@ -57,7 +57,7 @@ type Ws = {
   stopsFound: number;
   probe: Report | null;
   errors: { at: number; scope: string; text: string }[];
-  imports: Map<string, { rows: { row: number; phone: string; name: string; consent: boolean; action: ImportAction; error?: string }[] }>;
+  imports: Map<string, { rows: { row: number; phone: string; name: string; consent: "granted" | "denied" | null; action: ImportAction; error?: string }[] }>;
   seq: number;
 };
 
@@ -210,6 +210,7 @@ function splitLine(line: string): string[] {
   return line.split(sep).map((x) => x.trim().replace(/^"(.*)"$/, "$1"));
 }
 const YES = /^(да|yes|1|согласен|согласна|true|\+)$/i;
+const NO = /^\s*(нет|no|n|0|-|false|жоқ)\s*$/i;
 
 export function createDemoContacts(role: () => "owner" | "staff"): ContactSource {
   const now0 = Date.now();
@@ -471,7 +472,7 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       const seen = new Set<string>();
       const rows = lines.slice(isHead ? 1 : 0).map((l, k) => {
         const c = splitLine(l), d = normPhone(c[pi] || ""), nm = (ni >= 0 ? c[ni] || "" : "").slice(0, 60);
-        const r = { row: k + (isHead ? 2 : 1), phone: d, name: nm, consent: ci >= 0 && YES.test(c[ci] || ""), action: "new" as ImportAction, error: undefined as string | undefined };
+        const r = { row: k + (isHead ? 2 : 1), phone: d, name: nm, consent: (ci >= 0 && YES.test(c[ci] || "") ? "granted" : ci >= 0 && NO.test(c[ci] || "") ? "denied" : null) as "granted" | "denied" | null, action: "new" as ImportAction, error: undefined as string | undefined };
         if (!d) Object.assign(r, { action: "invalid", error: c[pi] ? "номер не похож на казахстанский" : "нет номера" });
         else if (seen.has(d)) Object.assign(r, { action: "dup", error: "этот номер уже был выше в файле" });
         else {
@@ -514,8 +515,9 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
           p.updatedAt = now;
           updated++;
         }
-        if (r.consent && consentBasis?.trim() && consentNow(p, "marketing")?.state !== "granted") {
-          p.consents.push({ purpose: "marketing", state: "granted", basis: consentBasis.trim(), source: "import", actor: actor(), at: now });
+        // как на сервере: из файла записываются и «да», и «нет» — только с основанием
+        if (r.consent && consentBasis?.trim()) {
+          p.consents.push({ purpose: "marketing", state: r.consent, basis: consentBasis.trim(), source: "import", actor: actor(), at: now });
           consents++;
         }
       }

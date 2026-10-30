@@ -116,7 +116,7 @@ test("добавление вручную, дубль, поиск по-русс�
   assert.equal(s.kv.mem.get("optout:winchester:77000000921"), undefined, "запретов не осталось — зеркало снято");
   card = (await get(st, "/api/contacts/card?c=winchester&id=" + a.j.id)).j;
   const lifted = card.restrictions.find(x => x.id === rr.id);
-  assert.equal(lifted.active, false); assert.equal(lifted.liftedBy, "owner"); assert.match(lifted.liftReason, /снова присылать/);
+  assert.equal(lifted.active, false); assert.equal(lifted.liftedBy, "владелец"); assert.equal(rr.actor, "сотрудник"); assert.match(lifted.liftReason, /снова присылать/);
   assert.ok(card.events.some(e => /Запрет снят/.test(e.text)));
   assert.equal((await post(own, "/api/contacts/lift", { c: "winchester", id: a.j.id, rid: rr.id, reason: "ещё раз" })).status, 404, "уже снят");
 });
@@ -183,7 +183,8 @@ test("импорт: .xlsx, CSV в Windows-1251, вставка из Excel; ст�
   await post(own, "/api/contacts/import/confirm", { c: "winchester", id: w.j.id });
   assert.equal(d.raw.prepare("select name from contacts where phone = '77000000953'").get().name, "Дамир", "кириллица из Windows-1251");
   const t = await post(own, "/api/contacts/import", { c: "winchester", text: "Ильяс\t+7 700 000 09 54\nМарат\t+7 700 000 09 55" });
-  assert.equal(t.j.counts.new, 2); assert.equal(t.j.columns.phone, 1);
+  assert.equal(t.j.counts.new, 2); assert.equal(t.j.columns.phone, "2-я колонка");
+  assert.equal(x.j.columns.phone, "Телефон"); assert.equal(x.j.columns.name, "Имя");
   const xls = await upload(own, "winchester", "старый.xls", Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3]));
   assert.equal(xls.status, 400); assert.match(xls.j.error, /\.xlsx или \.csv/);
   const none = await post(own, "/api/contacts/import", { c: "winchester", text: "просто текст\nбез номеров" });

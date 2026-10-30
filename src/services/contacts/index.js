@@ -20,6 +20,10 @@ export const PER = 50;
 const fail = (/** @type {string} */ code, /** @type {string} */ text, /** @type {string} */ field = "") => Object.assign(new Error(text), { code, field });
 /** @param {any} v */
 const n0 = v => (v == null ? null : +v);
+// кто сделал — словами для карточки (в базе — короткие метки)
+const ACTOR = /** @type {Record<string, string>} */ ({ owner: "владелец", staff: "сотрудник", webhook: "сообщение клиента", migration: "перенос из прежнего хранилища", sync: "синхронизация", "—": "—" });
+/** @param {any} a */
+const who = a => ACTOR[String(a)] || String(a || "");
 
 /** База этого адреса или ошибка «нет базы». @param {Env} env @param {number} now */
 async function dbOf(env, now) {
@@ -48,8 +52,8 @@ export async function contactsStatus(env, c, now, owner) {
   const probe = probes[0] ? (() => { try { const d = JSON.parse(probes[0].details || "{}"); return { at: +probes[0].at, ok: !!d.ok, summary: d.summary || [] }; } catch (e) { return null; } })() : null;
   const hotAge = hot.last_ok_at ? now - hot.last_ok_at : Infinity;
   const checks = [
-    { id: "initial", label: "Первичная загрузка из Altegio", count: init.pct, level: init.done ? "ok" : "warn", hint: init.done ? "Загружено." : real ? `Загружено ${init.pct}% — продолжится автоматически или кнопкой «Синхронизировать сейчас».` : "На черновике настоящий Altegio не загружается — только «Проверка без записи»." },
-    { id: "fresh", label: "Свежесть данных (ближайшие дни)", count: Number.isFinite(hotAge) ? Math.round(hotAge / 60e3) : -1, level: !init.done || !real ? "ok" : hotAge > 24 * 3600e3 ? "bad" : hotAge > 2 * 3600e3 ? "warn" : "ok", hint: Number.isFinite(hotAge) ? `Обновлялось ${Math.round(hotAge / 60e3)} мин назад.` : "Ещё не обновлялось." },
+    { id: "initial", label: "Первичная загрузка из Altegio, %", count: init.pct, level: init.done ? "ok" : "warn", hint: init.done ? "Загружено." : real ? `Загружено ${init.pct}% — продолжится автоматически или кнопкой «Синхронизировать сейчас».` : "На черновике настоящий Altegio не загружается — только «Проверка без записи»." },
+    { id: "fresh", label: "Свежесть данных (ближайшие дни), минут", count: Number.isFinite(hotAge) ? Math.round(hotAge / 60e3) : 0, level: !init.done || !real ? "ok" : hotAge > 24 * 3600e3 ? "bad" : hotAge > 2 * 3600e3 ? "warn" : "ok", hint: Number.isFinite(hotAge) ? `Обновлялось ${Math.round(hotAge / 60e3)} мин назад.` : "Ещё не обновлялось." },
     { id: "visits", label: "Число визитов сходится с записями", count: nums.visitsMismatch, level: nums.visitsMismatch ? "bad" : "ok", hint: nums.visitsMismatch ? "Есть расхождения — «Синхронизировать сейчас» пересчитает." : "Сходится." },
     { id: "stale", label: "Прошедшие записи пересчитаны", count: nums.staleNext, level: nums.staleNext ? "warn" : "ok", hint: nums.staleNext ? "У части клиентов «ближайшая запись» уже прошла — пересчитается при следующей синхронизации." : "Всё пересчитано." },
     { id: "orphans", label: "Записи без номера (скрыт или неверный)", count: nums.orphanBookings, level: nums.orphanBookings ? "warn" : "ok", hint: nums.orphanBookings ? "Этих людей нет в базе контактов: у ключа журнала нет права видеть телефоны или номер записан с ошибкой." : "Нет." },
@@ -114,8 +118,8 @@ export async function contactsCard(env, c, now, id) {
   if (!r) throw fail("missing", "Клиент не найден.");
   const k = r.k, x = r.contact, seg = k;
   const live = r.bookings.filter((/** @type {any} */ b) => !b.deleted);
-  const latest = (/** @type {string} */ p) => { const s = r.consents.find((/** @type {any} */ y) => y.purpose === p); return s ? { state: s.state, basis: s.basis, source: s.source, actor: s.actor, at: +s.created_at } : null; };
-  const restrictions = r.restrictions.map((/** @type {any} */ y) => ({ id: +y.id, kind: y.kind, reason: y.reason, source: y.source, actor: y.actor, at: +y.created_at, review: !!y.needs_review, liftedAt: n0(y.lifted_at), liftedBy: y.lifted_by || null, liftReason: y.lift_reason || null, active: y.lifted_at == null }));
+  const latest = (/** @type {string} */ p) => { const s = r.consents.find((/** @type {any} */ y) => y.purpose === p); return s ? { state: s.state, basis: s.basis, source: s.source, actor: who(s.actor), at: +s.created_at } : null; };
+  const restrictions = r.restrictions.map((/** @type {any} */ y) => ({ id: +y.id, kind: y.kind, reason: y.reason, source: y.source, actor: who(y.actor), at: +y.created_at, review: !!y.needs_review, liftedAt: n0(y.lifted_at), liftedBy: y.lifted_by ? who(y.lifted_by) : null, liftReason: y.lift_reason || null, active: y.lifted_at == null }));
   // «стоп» только в KV (до переноса в D1) — показываем как действующий запрет из старого хранилища
   if (stops.includes(x.phone) && !restrictions.some((/** @type {any} */ y) => y.active && !y.review && (y.kind === "marketing_optout" || y.kind === "full_block"))) {
     let at = now; try { const v = String((await optoutGet(env, c.id, x.phone)) || ""); at = +(v.startsWith("meta:") ? v.slice(5) : v) || now; } catch (e) {}
@@ -130,7 +134,7 @@ export async function contactsCard(env, c, now, id) {
     upcoming: live.filter((/** @type {any} */ b) => b.starts_at > now).reverse().map((/** @type {any} */ b) => ({ id: String(b.record_id), at: +b.starts_at, staff: b.staff || null, services: b.services || null })),
     missed: live.filter((/** @type {any} */ b) => b.starts_at <= now && +b.attendance === -1).length,
     consent: { marketing: latest("marketing"), service: latest("service") },
-    consentHistory: r.consents.map((/** @type {any} */ y) => ({ purpose: y.purpose, state: y.state, basis: y.basis, source: y.source, actor: y.actor, at: +y.created_at })),
+    consentHistory: r.consents.map((/** @type {any} */ y) => ({ purpose: y.purpose, state: y.state, basis: y.basis, source: y.source, actor: who(y.actor), at: +y.created_at })),
     restrictions,
     segments: SEGMENTS.filter((s, i) => s.id !== "all" && seg["s" + i]).map(s => ({ id: s.id, label: s.label })),
     canMarket: { ok: !reasons.length, reasons },

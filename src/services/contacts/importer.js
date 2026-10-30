@@ -14,6 +14,9 @@ export const IMPORT_MAX_ROWS = 20000, IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 const err = (/** @type {string} */ text) => Object.assign(new Error(text), { code: "input" });
 const phoneOf = (/** @type {string} */ s) => normPhone(s).slice(1);
 const nameOf = (/** @type {any} */ s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+// название колонки для предпросмотра: заголовок из файла или «2-я колонка»; нет колонки — пусто
+/** @param {string[][]} table @param {{ header: boolean }} cols @param {number} i */
+const colName = (table, cols, i) => i < 0 ? "" : cols.header && String((table[0] || [])[i] || "").trim() ? String(table[0][i]).trim().slice(0, 40) : `${i + 1}-я колонка`;
 
 /** Байты файла (или текст) → строки таблицы. @param {Uint8Array} bytes @param {string} name */
 export async function readTable(bytes, name) {
@@ -53,7 +56,7 @@ export async function importPreview(db, ws, table, x) {
   const show = [...rows.filter(r => r.a !== "new" && r.a !== "same"), ...rows.filter(r => r.a === "new").slice(0, 20)].slice(0, 100).sort((a, b) => a.row - b.row);
   return {
     id: x.id, total: counts.total, counts: { new: counts.new, update: counts.update, same: counts.same, dup: counts.dup, invalid: counts.invalid },
-    columns: { phone: cols.phone, name: cols.name, consent: cols.consent }, header: cols.header, hasConsent,
+    columns: { phone: colName(table, cols, cols.phone), name: colName(table, cols, cols.name), consent: colName(table, cols, cols.consent) }, header: cols.header, hasConsent,
     rows: show.map(r => ({ row: r.row, phone: r.p ? maskPhone(r.p) : "", name: logSafe(r.n), action: r.a, ...(r.e ? { error: r.e } : {}) }))
   };
 }

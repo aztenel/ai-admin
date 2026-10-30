@@ -150,7 +150,8 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
   const firstLoad = listLoading && rows.length === 0;
   const empty = !listLoading && !listErr && rows.length === 0;
   const filtered = !!qa || !!seg;
-  const segList = segs.data?.segments || [];
+  // «Все» — своя кнопка экрана (число из status); такой же сегмент сервера не дублируем
+  const segList = (segs.data?.segments || []).filter((s) => s.id !== "all");
 
   return (
     <Page

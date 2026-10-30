@@ -287,7 +287,8 @@ async function owner(vp, scheme, tag) {
   await step(t, "lifted");
   await closeCard(t);
 
-  // добавить клиента: неверный номер, новый, дубль
+  // добавить клиента: неверный номер, новый, дубль. Ответ 400 на неверный номер ожидаем — браузер всё равно пишет его в консоль
+  t.allow.push(/\/api\/contacts\/add$/);
   await tap(headerBtn(t, "Добавить клиента", "Добавить"));
   const sheet = page.getByRole("dialog", { name: "Новый клиент" });
   await sheet.waitFor();
@@ -296,6 +297,7 @@ async function owner(vp, scheme, tag) {
   await sheet.getByText(/казахстанск/).waitFor();
   ok(`${tag}: неверный номер — ошибка под полем`, true);
   await step(t, "add-invalid");
+  t.allow.pop();
   await fill(sheet.getByLabel("Номер телефона"), ADD);
   await fill(sheet.getByLabel(/^Имя/), "Новый Клиент");
   await tap(sheet.getByRole("button", { name: "Добавить" }).last());
@@ -328,7 +330,7 @@ async function owner(vp, scheme, tag) {
   await fill(imp.getByLabel("Основание согласия"), "анкета (проверка)");
   await tap(imp.getByRole("button", { name: "Загрузить 2" }));
   await imp.getByText(/^Загружено/).waitFor();
-  ok(`${tag}: импорт — 2 новых, согласие у одного`, /Новых клиентов:\s*2/.test(await text(imp)) && /согласий записано:\s*1/.test(await text(imp)), await text(imp));
+  ok(`${tag}: импорт — 2 новых, в файле «да» у одного и «нет» у другого — обе отметки записаны`, /Новых клиентов:\s*2/.test(await text(imp)) && /согласий и отказов записано:\s*2/.test(await text(imp)), await text(imp));
   await step(t, "import-done");
   await tap(imp.getByRole("button", { name: "Готово" }));
   await imp.waitFor({ state: "detached" });
