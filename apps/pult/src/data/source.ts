@@ -1,5 +1,6 @@
 // Откуда пульт берёт данные. Два источника с одним интерфейсом:
-//   live — настоящий API бота (/api/inbox/*, /api/bc/*, /api/crm/*, /api/studio/list), см. data/live.ts (рассылки — live-campaigns.ts);
+//   live — настоящий API бота (/api/inbox/*, /api/bc/*, /api/crm/*, /api/contacts/*, /api/studio/list), см. data/live.ts
+//          (рассылки — live-campaigns.ts, клиенты — live-contacts.ts);
 //   demo — вымышленные компании для показа и проверки вида, см. data/demo.ts.
 // Режим выбирается явно (сборка с VITE_PULT_DATA=demo или адрес /demo). Если сервер не ответил, пульт показывает ошибку —
 // подставлять демо вместо настоящих данных нельзя.
@@ -31,6 +32,22 @@ import type {
   SegmentSpec,
   ServiceOverview,
 } from "@/model/campaigns";
+import type {
+  ConsentPurpose,
+  ConsentState,
+  ContactCard,
+  ContactPage,
+  ContactSegments,
+  ContactsStatus,
+  ImportDone,
+  ImportInput,
+  ImportPreview,
+  Report,
+  ReviewDecision,
+  StopsAction,
+  SyncMode,
+  SyncResult,
+} from "@/model/contacts";
 import { createLiveSource } from "./live";
 
 export { ApiError } from "./errors";
@@ -73,7 +90,35 @@ export interface CampaignSource {
   serviceMessages(ws: string): Promise<ServiceOverview>;
 }
 
-export interface DataSource extends CampaignSource {
+/**
+ * Раздел «Клиенты» (model/contacts.ts): база контактов компании в D1. Ошибки — ApiError с текстом сервера; поле формы с ошибкой
+ * (add) — ApiError.field. Роль проверяет сервер: сотруднику lift (и review «lift»), sync, probe и stops отвечают 403.
+ */
+export interface ContactSource {
+  contactsStatus(ws: string): Promise<ContactsStatus>;
+  contactSegments(ws: string): Promise<ContactSegments>;
+  /** По 50 (page с 1); номера — маской. seg — id сегмента («» — все), q — имя или номер. */
+  contactList(ws: string, opts: { q?: string; seg?: string; page?: number }): Promise<ContactPage>;
+  /** Карточка одного клиента: номер полностью. */
+  contactCard(ws: string, id: string): Promise<ContactCard>;
+  /** Добавить вручную; такой номер уже есть — created: false и id существующего. */
+  addContact(ws: string, phone: string, name: string): Promise<{ id: string; created: boolean }>;
+  setConsent(ws: string, id: string, purpose: ConsentPurpose, state: ConsentState, basis: string): Promise<void>;
+  addRestriction(ws: string, id: string, kind: "marketing_optout" | "full_block", reason: string): Promise<void>;
+  liftRestriction(ws: string, id: string, rid: string, reason: string): Promise<void>;
+  reviewRestriction(ws: string, id: string, rid: string, decision: ReviewDecision, reason?: string): Promise<void>;
+  importPreview(ws: string, input: ImportInput): Promise<ImportPreview>;
+  importConfirm(ws: string, id: string, consentBasis?: string): Promise<ImportDone>;
+  importDiscard(ws: string, id: string): Promise<void>;
+  /** Только владелец: step — синхронизировать сейчас (порция), dry — проверка без записи, test — тестовые клиенты (черновик). */
+  syncContacts(ws: string, mode: SyncMode): Promise<SyncResult>;
+  /** Только владелец: какие поля отдаёт журнал Altegio (только чтение, без персональных данных в ответе). */
+  probeAltegio(ws: string): Promise<Report>;
+  /** Только владелец: сверка «стопов» по журналу Green-API, проверка и перенос старого списка «стоп» из KV. */
+  stopsAction(ws: string, action: StopsAction): Promise<string[]>;
+}
+
+export interface DataSource extends CampaignSource, ContactSource {
   readonly mode: "live" | "demo";
   session(): Promise<Session>;
   /** Компании, между которыми может переключаться пользователь (владелец сервиса — все, сотрудник — своя). */

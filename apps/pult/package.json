@@ -10,7 +10,8 @@
     "embed": "node ../../tools/build-pult-app.mjs",
     "check": "tsc -b",
     "shots": "node scripts/shots.mjs",
-    "e2e:campaigns": "node scripts/e2e-campaigns.mjs"
+    "e2e:campaigns": "node scripts/e2e-campaigns.mjs",
+    "e2e:contacts": "node scripts/e2e-contacts.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

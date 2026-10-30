@@ -9,6 +9,9 @@
 //   npm run dev:live            → адреса и ключи — в выводе; владелец входит ключом owner-key-123456
 //   фоновая отправка рассылок:  curl -X POST http://127.0.0.1:<порт пульта>/_cron   (или на порт бота — «прошла минута»)
 //   ещё сообщение клиента:      curl -X POST http://127.0.0.1:<порт бота>/_wa -d '{"c":"dent","from":"77001110001","text":"Привет"}'
+// Раздел «Клиенты» (/api/contacts/*): база D1 — как у черновика ai-admin-dev, но в памяти (test/d1.mjs на node:sqlite, Node 22+;
+// на Node 20 базы нет — раздел покажет «База клиентов ещё не подключена»), STAGE=preview: настоящий Altegio черновик читает только
+// проверкой без записи, для экрана — «Тестовые клиенты» в «Синхронизации» (scripts/e2e-contacts.mjs).
 // Часы бота — как в проверках (test/clock.mjs): 3 октября 2026, 12:00 по Астане и дальше; даты журнала считаются от них.
 // Номера — вымышленные +7 700 000 xx xx (база) и +7 700 111 xx xx (чаты); имена придуманы.
 // Из другого скрипта (scripts/e2e-campaigns.mjs): const d = await startDevLive({ port }) → { app, bot, S, OWNER, STAFF_W, close }.
@@ -27,7 +30,9 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
   const { net, gaPass } = await import(new URL("../../../test/harness.mjs", import.meta.url).href);
+  const { sqliteOk, d1With } = await import(new URL("../../../test/d1.mjs", import.meta.url).href);
   const bot = await start(botPort, {
+    ...(sqliteOk ? { DB: d1With("preview").db, STAGE: "preview" } : {}),
     WA_TOKEN_DENT: "tok-dent",
     APP_SECRET_DENT: "sec-dent",
     PHONE_NUMBER_ID_DENT: "900111",

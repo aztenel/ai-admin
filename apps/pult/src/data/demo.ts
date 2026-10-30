@@ -1,7 +1,7 @@
 // Демо-режим: вымышленные компании для показа пульта и проверки вида. Включается только явно (VITE_PULT_DATA=demo, адрес /demo
 // или ?demo) и никогда не подменяет настоящие данные. Номера — заведомо несуществующие (+7 700 000 …), люди и переписки придуманы.
 // ?staff в адресе — вид сотрудника компании (без кнопок владельца: «Обновить базу», автосценарий, «Снять сигнал Meta»).
-// Рассылки, база клиентов и автосценарий — data/demo-campaigns.ts.
+// Рассылки, база клиентов и автосценарий — data/demo-campaigns.ts; раздел «Клиенты» (база контактов) — data/demo-contacts.ts.
 import type {
   BotState,
   Channel,
@@ -18,6 +18,7 @@ import type {
 } from "@/model/types";
 import { ApiError } from "./errors";
 import { createDemoCampaigns } from "./demo-campaigns";
+import { createDemoContacts } from "./demo-contacts";
 import type { DataSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
@@ -287,6 +288,7 @@ export function createDemoSource(): DataSource {
   const fx = build(Date.now());
   const role = () => (new URLSearchParams(location.search).has("staff") ? "staff" : "owner") as "owner" | "staff";
   const campaigns = createDemoCampaigns(role);
+  const contacts = createDemoContacts(role);
   const find = (ws: string) => {
     const f = fx.find((x) => x.ws.id === ws);
     if (!f) throw new ApiError("Нет доступа к этому клиенту.", 403);
@@ -419,6 +421,7 @@ export function createDemoSource(): DataSource {
       return [...open, ...f.done];
     },
     ...campaigns.api,
+    ...contacts,
     externalUrl() {
       return null;
     },

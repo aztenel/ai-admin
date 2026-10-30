@@ -1,6 +1,6 @@
 // Каркас: на планшете и компьютере — узкая полоса разделов слева, на телефоне — вкладки снизу (прячутся внутри переписки,
-// как в мессенджерах). Разделов немного: ежедневная работа — чаты и заявки; редкое — в настройках.
-import { ClipboardList, Laptop, LogOut, UserRound, Megaphone, MessagesSquare, Moon, Settings, Sun, WifiOff, type LucideIcon } from "lucide-react";
+// как в мессенджерах). Разделов немного: ежедневная работа — чаты и заявки; база клиентов — «Клиенты»; редкое — в настройках.
+import { ClipboardList, Contact, Laptop, LogOut, UserRound, Megaphone, MessagesSquare, Moon, Settings, Sun, WifiOff, type LucideIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "@/components/overlay";
 import { CountBadge } from "@/components/ui";
@@ -26,6 +26,7 @@ function useItems(): Item[] {
     { id: "inbox", label: "Чаты", icon: MessagesSquare, badge: waiting },
     { id: "requests", label: "Заявки", icon: ClipboardList },
     ...(ws?.capabilities.campaigns !== false ? [{ id: "campaigns" as const, label: "Рассылки", icon: Megaphone }] : []),
+    { id: "clients", label: "Клиенты", icon: Contact },
     { id: "settings", label: "Настройки", icon: Settings },
   ];
 }
@@ -39,6 +40,8 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
   const offline = useStore((s) => s.offline);
   const inConversation = route.name === "inbox" && !!route.conv;
   const deepSettings = route.name === "settings" && !!route.section;
+  // открытая карточка клиента на телефоне — экран во весь размер, как переписка: вкладки снизу прячем
+  const inClient = route.name === "clients" && !!route.id;
 
   return (
     <div ref={setRoot} className="app-root flex bg-surface text-fg">
@@ -58,7 +61,7 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
       {/* iPhone горизонтально: вырез экрана бывает и справа — содержимое не заходит под него */}
       <main className="relative flex min-w-0 flex-1 flex-col md:pr-safe">{children}</main>
 
-      {!inConversation && !deepSettings && (
+      {!inConversation && !deepSettings && !inClient && (
         <nav aria-label="Разделы" className="hide-kb pb-safe absolute inset-x-0 bottom-0 z-30 border-t border-line bg-surface md:hidden">
           <ul className="flex">
             {items.map((it) => (
