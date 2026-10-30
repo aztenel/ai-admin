@@ -17,7 +17,10 @@ import { useLoad } from "./useLoad";
 
 const WHO = "Отправляет бот сам, с того номера, куда писал клиент, — только тем, кто записался через бота. Администратору ничего делать не нужно.";
 /** Кто и кому шлёт — по данным сервера. */
+// второй номер Winchester без бота (30.10.2026): напоминания и отзыв — по всем записям журнала Altegio
+const JOURNAL = "Уходят сами со второго номера по всем записям журнала Altegio — администратора, сайта, онлайн-записи. Отзыв — только тем, у кого в Altegio отмечено «пришёл». Администратору ничего делать не нужно.";
 function who(d: ServiceOverview): string {
+  if (d.journal) return d.altegio ? JOURNAL : "Напоминания строятся по журналу Altegio, а ключ журнала не подключён — сообщения не уходят.";
   if (!d.altegio)
     return "Напоминания и просьбу об отзыве бот шлёт сам, но только по записям, которые он сделал в Altegio. У компании запись через Altegio не подключена — эти сообщения не уходят.";
   return `${WHO} Тем, кого администратор записал прямо в Altegio, бот не напоминает.`;
@@ -87,7 +90,16 @@ export default function ServiceMessages({ ws, owner }: { ws: string; owner: bool
 
   return (
     <>
-      {d.botOff && (
+      {d.journal && d.hold && (
+        <section role="status" className="mb-4 flex gap-2.5 rounded-[0.875rem] bg-surface px-4 py-3">
+          <TriangleAlert aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg" strokeWidth={2} />
+          <div className="min-w-0">
+            <p className="text-[0.9375rem] font-semibold md:text-base">Отправка на паузе</p>
+            <p className="mt-0.5 text-ui text-fg-2 pointer-coarse:text-base">Green-API не принял сообщение: {d.hold.why}. Через 6 часов попробуем снова — проверьте, не заблокирован ли номер.</p>
+          </div>
+        </section>
+      )}
+      {d.botOff && !d.journal && (
         <section role="status" className="mb-4 flex gap-2.5 rounded-[0.875rem] bg-surface px-4 py-3">
           <TriangleAlert aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg" strokeWidth={2} />
           <div className="min-w-0">
@@ -97,7 +109,7 @@ export default function ServiceMessages({ ws, owner }: { ws: string; owner: bool
         </section>
       )}
 
-      <Group title="Что бот отправляет сам" note={who(d)}>
+      <Group title={d.journal ? "Что уходит само" : "Что бот отправляет сам"} note={who(d)}>
         {d.kinds.length ? d.kinds.map((k) => <KindRow key={k.kind} k={k} altegio={d.altegio} />) : <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Сведений нет.</p>}
       </Group>
 

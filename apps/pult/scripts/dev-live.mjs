@@ -78,12 +78,14 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   net.altJournal = journal;
   await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
 
-  // Winchester, вкладка «Сервисные · номер бота»: три записи, которые клиенты сделали в чате с ботом на номере бота (ga). Очередь
-  // напоминаний и просьбы об отзыве (rmq:winchester) строит тот же код, что у бота (remindPlan), — времена по его правилам: накануне
-  // в 18:00, за 2 часа, отзыв через 3 часа. Все — впереди по часам бота, фоновая задача (/_cron) их не отправит. Плюс вчерашняя запись,
+  // Winchester, вкладка «Сервисные · номер бота»: три записи из журнала Altegio (с 30.10.2026 у Winchester напоминания — по всем записям
+  // журнала со второго номера, без бота: services/reminders/journal.js). Очередь jrq:winchester строит тот же код (jrPlan) — накануне
+  // в 18:00, за 2 часа (с 10 до 21), отзыв через 3 часа. Все — впереди по часам бота, фоновая задача (/_cron) их не отправит; записей
+  // нет в net.altJournal — чтение журнала фоновой задачей их не трогает (а база клиентов не меняется). Плюс вчерашняя запись,
   // по которой напоминание и отзыв уже ушли (отметки попытки rms: и удачной отправки rmok: живут 3 дня) — «Отправлено за 3 дня: 2»;
   // ещё одна попытка не удалась (только rms:) — её не считаем. Номера — вымышленные +7 700 000 11 0x.
-  const { remindPlan } = await import(new URL("../../../src/services/reminders/plan.js", import.meta.url).href);
+  const { jrPlan } = await import(new URL("../../../src/services/reminders/journal.js", import.meta.url).href);
+  const { jrqSave } = await import(new URL("../../../src/db/kv/reminders.js", import.meta.url).href);
   const { putHist } = await import(new URL("../../../src/db/kv/chats.js", import.meta.url).href);
   const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
   const madeAt = NOW - 3600e3; // записались час назад
@@ -100,8 +102,10 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
       { role: "model", text: `Записала вас на ${b.time} к мастеру ${b.staff} ✂️`, t: madeAt },
     ];
     await putHist(S.kv.api, hk, { n: 2, turns, profile: { ...(b.name ? { name: b.name } : {}), bookings: [rec] } });
-    await remindPlan(S.env, CLIENTS.winchester, hk, [rec], madeAt);
   }
+  const jrRecs = booked.map((b, i) => ({ id: 9101 + i, datetime: `${day(b.day)}T${b.time}:00+05:00`, deleted: false, attendance: 0, create_date: new Date(madeAt).toISOString(),
+    staff: { id: 1, name: b.staff }, client: { id: 9101 + i, phone: "+" + b.id, name: b.name }, services: [{ id: 1, title: b.svc }] }));
+  await jrqSave(S.env, "winchester", jrPlan(CLIENTS.winchester, jrRecs, NOW));
   for (const k of ["rms:winchester:9100:d1", "rms:winchester:9100:rv", "rmok:winchester:9100:d1", "rmok:winchester:9100:rv", "rms:winchester:9099:d1"])
     await S.kv.api.put(k, "1", { expirationTtl: 3 * 86400 });
 

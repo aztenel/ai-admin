@@ -49,7 +49,7 @@ type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null }
 type ServiceRaw = {
   owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string }[];
   queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string }[];
-  total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean;
+  total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean; journal?: boolean; hold?: { at?: number; why?: string } | null;
 };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
@@ -136,7 +136,8 @@ function service(d: ServiceRaw): ServiceOverview {
     isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }] : [],
   );
   // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
-  return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false };
+  return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false,
+    ...(d.journal ? { journal: true, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null } : {}) };
 }
 
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */

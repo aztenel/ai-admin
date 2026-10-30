@@ -44,7 +44,7 @@ const W = (work = () => DAY, dates = [D1, ...NOV]) => {
 };
 let LOC = 7400;
 const reset = data => { net.reset(); Object.assign(net, { altGone: [], altBusy: false, altCheckBusy: false, altJournalFail: 0 }); net.altData = () => data; altCache.clear(); LOC++; };
-const env = extra => ({ ALTEGIO_PARTNER: "partner-key", ALTEGIO_USER_WINCHESTER: "usr-tok", ALTEGIO_LOC_WINCHESTER: String(LOC), ...extra });
+const env = extra => ({ ALTEGIO_PARTNER: "partner-key", ALTEGIO_USER_WINCHESTER: "usr-tok", ALTEGIO_LOC_WINCHESTER: String(LOC), BOT_GA_WINCHESTER: "1", ...extra }); // бот на втором номере выключен с 30.10.2026 — здесь проверяем его самого
 const ownerChat = async (s, sid, text) => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" }); return (await b.post("/api/chat", { c: "winchester", sid, text })).json(); };
 const tag = (name, svc, staff, date, time) => `[ЗАЯВКА] Имя: ${name}; Телефон: —; Услуга: ${svc}; Мастер: ${staff}; Дата: ${date}; Время: ${time}`;
 const sys = (i = -1) => net.gemini.at(i).systemInstruction.parts[0].text;

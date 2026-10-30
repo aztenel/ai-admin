@@ -307,16 +307,17 @@ async function ownerWinchesterPhone() {
   await reveal(sw);
   await step(t, "auto-on");
 
-  // вкладка «Сервисные · номер бота»: что бот шлёт сам и очередь из хранилища бота (dev-live.mjs: rmq:winchester, отметки rms:)
+  // вкладка «Сервисные · номер бота»: что уходит само со второго номера (с 30.10.2026 — по журналу Altegio, без бота) и очередь
+  // из хранилища бота (dev-live.mjs: jrq:winchester, отметки rms:)
   await page.getByRole("tab", { name: /Сервисные/ }).click();
   const svc = page.getByRole("tabpanel");
-  await svc.getByText("Что бот отправляет сам").waitFor();
+  await svc.getByText("Что уходит само").waitFor();
   const stext = await text(svc);
   ok("сервисные: номер бота на связи, вебхук ведёт в бота", /на связи/.test(stext) && /ведёт в бота/.test(stext));
   ok("сервисные: маркетинга с номера бота нет — с причиной", /Маркетинговых рассылок с этого номера нет/.test(stext));
   ok("сервисные: что бот шлёт сам (18:00, за 2 часа, отзыв)", /Накануне в 18:00/.test(stext) && /За 2 часа/.test(stext) && /отзыв/.test(stext) && /Администратору ничего делать не нужно/.test(stext));
-  ok("сервисные: кому — только записавшимся через бота; записанным администратором бот не напоминает", /только тем, кто записался через бота/.test(stext) && /прямо в Altegio, бот не напоминает/.test(stext));
-  ok("[12] сервисные: с того номера, куда писал клиент (а не всегда «с номера бота»)", /с того номера, куда писал клиент/.test(stext) && !/с номера бота/.test(stext), stext.slice(0, 300));
+  ok("сервисные: кому — по всем записям журнала Altegio, отзыв — с отметкой «пришёл»", /по всем записям журнала Altegio/.test(stext) && /отмечено «пришёл»/.test(stext) && !/прямо в Altegio, бот не напоминает/.test(stext));
+  ok("[12] сервисные: со второго номера (Winchester — по журналу, без бота), не «бот шлёт сам»", /Уходят сами со второго номера/.test(stext) && !/Отправляет бот сам/.test(stext), stext.slice(0, 300));
   ok("сервисные: работает только на боевом сайте", /только с боевого сайта/.test(stext) && /С черновика они не отправляются/.test(stext));
   ok("сервисные: все три вида включены, у отзыва — ссылка 2ГИС", (await svc.getByText("включено", { exact: true }).count()) === 3 && (await svc.locator('a[href^="https://2gis.kz/"]').count()) === 1);
   await step(t, "service-tab");
@@ -363,9 +364,9 @@ async function staffWinchester(vp, scheme) {
 
   await page.getByRole("tab", { name: /Сервисные/ }).click();
   const svc = page.getByRole("tabpanel");
-  await svc.getByText("Что бот отправляет сам").waitFor();
+  await svc.getByText("Что уходит само").waitFor();
   const stext = await text(svc);
-  ok(`${t.tag}: сервисные — номер бота и что бот шлёт сам`, /Номер бота/.test(stext) && /на связи/.test(stext) && /Накануне в 18:00/.test(stext) && /Отправляет бот сам/.test(stext));
+  ok(`${t.tag}: сервисные — номер бота и что уходит само`, /Номер бота/.test(stext) && /на связи/.test(stext) && /Накануне в 18:00/.test(stext) && /Уходят сами со второго номера/.test(stext));
   await svcQueue(t, svc);
   ok(`${t.tag}: сервисные — только смотреть, кнопок нет`, !(await svc.getByRole("button").count()) && !(await svc.getByRole("switch").count()));
   ok(`${t.tag}: [17] сотруднику — без слов «боевой сайт / черновик», время по Астане`, !/боевого сайта|черновик/i.test(await text(svc)) && /Время — по Астане/.test(await text(svc)));
@@ -459,7 +460,7 @@ async function ownerWinchesterDesk() {
   await tap(page.getByRole("button", { name: "Отмена" }));
 
   await page.getByRole("tab", { name: /Сервисные/ }).click();
-  await page.getByRole("tabpanel").getByText("Что бот отправляет сам").waitFor();
+  await page.getByRole("tabpanel").getByText("Что уходит само").waitFor();
   await step(t, "service-tab");
   await finish(t);
 }
@@ -531,13 +532,14 @@ async function gallery(vp, scheme, { botOff = false } = {}) {
   await page.getByRole("region", { name: "Новая рассылка" }).getByText(/основного номера/).first().waitFor();
   await step(t, "wizard");
   await page.keyboard.press("Escape");
-  // бот на номере бота выключен (как Text BOT_GA_WINCHESTER = 0 в Cloudflare) — во вкладке «Сервисные» предупреждение
+  // бот на номере бота выключен (как Text BOT_GA_WINCHESTER = 0 в Cloudflare): у Winchester напоминания идут по журналу Altegio
+  // и без бота (30.10.2026) — предупреждения «новых напоминаний не будет» нет ни так, ни так
   if (botOff) dl.S.env.BOT_GA_WINCHESTER = "0";
   try {
     await page.getByRole("tab", { name: /Сервисные/ }).click();
-    await page.getByRole("tabpanel").getByText("Что бот отправляет сам").waitFor();
+    await page.getByRole("tabpanel").getByText("Что уходит само").waitFor();
     const off = page.getByRole("tabpanel").getByRole("status").filter({ hasText: "Бот на номере бота выключен" });
-    ok(`${t.tag}: сервисные — ${botOff ? "бот выключен: предупреждение" : "бот включён: предупреждения нет"}`, botOff ? (await off.count()) === 1 && /новых напоминаний/.test(await text(off)) : !(await off.count()));
+    ok(`${t.tag}: сервисные — ${botOff ? "бот выключен" : "бот включён"}: предупреждения нет (напоминания по журналу)`, !(await off.count()));
     await step(t, botOff ? "service-bot-off" : "service-tab");
   } finally {
     delete dl.S.env.BOT_GA_WINCHESTER;

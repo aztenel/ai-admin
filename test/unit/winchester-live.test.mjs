@@ -8,7 +8,7 @@ import { altCache } from "../../src/services/integrations/altegio/booking-api.js
 import { altDiag } from "../../src/controllers/altegio.js";
 
 const INST = { id: "7105000088", token: "ga-tok-live" };
-const ENV = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
+const ENV = { ALTEGIO_PARTNER: "partner-key", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, BOT_GA_WINCHESTER: "1" }; // бот на втором номере выключен с 30.10.2026 — здесь проверяем его самого
 const NOV = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"]; // следующий месяц (часы тестов — 3 октября 2026)
 const GRID = ["10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00"];
 // одна услуга в двух строках прайса и одной категории: у шеф-барбера (Тони) — 9 000 ₸, у барберов — 7 000 ₸

@@ -386,4 +386,8 @@ export type ServiceOverview = {
   botOff: boolean;
   /** Бот записывает в Altegio. false — напоминаний и просьб об отзыве не бывает: бот строит их только по своим записям в Altegio. */
   altegio: boolean;
+  /** Напоминания по всем записям журнала Altegio со второго номера, без бота (Winchester, 30.10.2026): тогда botOff не мешает. */
+  journal?: boolean;
+  /** Green-API отказал (номер заблокирован или ключ не подходит) — отправка на паузе (6 часов). */
+  hold?: { at: number; why: string } | null;
 };

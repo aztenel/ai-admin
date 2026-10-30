@@ -1,7 +1,7 @@
 // Вкладка «Сервисные · номер бота» нового пульта (19.10.2026): GET /api/bc/service — какие сообщения бот шлёт сам (напоминания и
 // просьба об отзыве по записям, сделанным в чате с ботом), очередь ближайших с номерами маской, сколько ушло за 3 дня.
 // Владелец и сотрудник компании видят, чужой сотрудник — 403. Всё на заглушках, номера вымышленные.
-import { test } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { mk, net } from "../harness.mjs";
 import { remindSend } from "../../src/services/reminders/send.js";
@@ -10,6 +10,9 @@ import { CLIENTS } from "../../src/config/builtin-clients.js";
 
 const OWNER = "owner-key-123456", STAFF_W = "staff-key-winch-0001", STAFF_B = "staff-key-barber-0001";
 const ENV = { KEY_WINCHESTER: STAFF_W, KEY_BARBER: STAFF_B, GA_ID_WINCHESTER: "7105000001", GA_TOKEN_WINCHESTER: "ga-tok-w" };
+// здесь — напоминания бота по записям из чата; у Winchester с 30.10.2026 — по журналу Altegio (c.jr, test/unit/journal-remind.test.mjs):
+// для этих проверок режим журнала снимаем (каждый файл node --test — свой процесс)
+before(() => { delete CLIENTS.winchester.jr; });
 async function login(s, key) {
   const b = s.browser();
   await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `key=${encodeURIComponent(key)}&next=%2Finbox` });
