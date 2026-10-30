@@ -11,6 +11,8 @@ import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
 import { thinkSafe, dropAsk, STOP } from "../../services/conversation/orchestrator.js";
+import { stopKind } from "../../services/conversation/stop-words.js";
+import { stopSeen } from "../../services/contacts/stops.js";
 import { consentText, fallbackText, mediaReply } from "../../services/conversation/fallbacks.js";
 import { detectLang } from "../../services/conversation/language.js";
 import { readHist, putHist, logTurns, waErr, notify } from "../../services/channels/deps.js";
@@ -70,11 +72,12 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
 
   if (niche && CLIENTS[niche] && botOff(env, CLIENTS[niche], channel)) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего
     const now = Date.now();
-    if (STOP.test(text)) await markOptout(env, niche, fromDigits); // «стоп» на рассылку записываем и при выключенном боте
+    await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
     await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
     try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
     return;
   }
+  if (niche && hasClient(niche) && stopKind(text) === "review") await stopSeen(env, niche, fromDigits, text); // ясный «стоп» при включённом боте пишет think()
   if (/^(меню|menu|сброс|reset|\/start)$/i.test(text)) {
     if (niche) {
       // разговор начинается заново, но то, что уже сделано, бот помнит: записи, заявки и ограничения. Паузу и «стоп» эта команда клиента снимает

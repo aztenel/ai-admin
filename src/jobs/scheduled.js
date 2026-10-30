@@ -8,11 +8,13 @@ import { cronRun } from "./cron.js";
 import { qualityRun } from "../services/broadcast/quality.js";
 import { crmRun } from "../services/crm/snapshot.js";
 import { autoRun } from "../services/crm/auto.js";
+import { contactsRun } from "../services/contacts/sync.js";
+import { stopSweep, syncFix } from "../services/contacts/stops.js";
 
 /** @param {any} env */
 export const backup = (env) => backupRun(env, true); // для проверок
 /** @param {any} controller @param {any} env @param {any} ctx */
 export async function scheduled(controller, env, ctx) {
   const at = (controller && controller.scheduledTime) || Date.now();
-  ctx.waitUntil(Promise.all([cronRun(env), backupRun(env), digestRun(env, at), remindRun(env, at), jrRun(env, at), qualityRun(env, at), dayStatsRun(env, at), crmRun(env, at), autoRun(env, at)]).catch(e => console.log("cron", String((e && e.stack) || e))));
+  ctx.waitUntil(Promise.all([cronRun(env), backupRun(env), digestRun(env, at), remindRun(env, at), jrRun(env, at), qualityRun(env, at), dayStatsRun(env, at), crmRun(env, at), autoRun(env, at), contactsRun(env, at), stopSweep(env, at), syncFix(env, at)]).catch(e => console.log("cron", String((e && e.stack) || e))));
 }

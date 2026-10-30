@@ -7,6 +7,7 @@ import { kvRetry } from "../../db/kv/retry.js";
 import { putHist, readHist } from "../../db/kv/chats.js";
 import { hasClient } from "../../config/builtin-clients.js";
 import { PAUSE_MS, HIST_KEEP } from "../../config/constants.js";
+import { stopRecord } from "../contacts/stops.js";
 
 // wx — к какому клиенту и через какой номер пришло сообщение: { client, token, pnid, name }. Пусто — прежний режим: один номер на весь воркер (WA_CLIENT) или меню демо
 /** @param {Env} env @param {string} channel @param {Record<string, any>=} wx @returns {string} */
@@ -87,11 +88,12 @@ export async function waCoex(env, wx, field, val) {
     });
   }
 }
-// отказ от рассылок: отметка без срока, не зависит от того, включён ли бот и дошло ли дело до разговора
-/** @param {Env} env @param {string} client @param {string | number} digits @returns {Promise<void>} */
-export async function markOptout(env, client, digits) {
+// отказ от рассылок: отметка без срока, не зависит от того, включён ли бот и дошло ли дело до разговора. С 31.10.2026 — в KV и D1,
+// с повторами и следом для починки (services/contacts/stops.js): на повторную доставку вебхука не рассчитываем
+/** @param {Env} env @param {string} client @param {string | number} digits @param {{ msgId?: string, text?: string, source?: string }} [info] @returns {Promise<void>} */
+export async function markOptout(env, client, digits, info = {}) {
   if (!client || !/^\d{8,15}$/.test(String(digits))) return;
-  try { await env.KV.put(`optout:${client}:${digits}`, String(Date.now())); } catch (e) { console.log("optout", String(e)); }
+  await stopRecord(env, { ws: client, phone: String(digits), kind: "stop", source: info.source || "chat_stop", eventKey: info.msgId ? "in:" + info.msgId : "", text: info.text || "", at: Date.now() });
 }
 // через какой номер администратор пишет клиенту этого чата
 /** @param {Env} env @param {string} cid @param {Profile=} prof @returns {Record<string, any> | null} */

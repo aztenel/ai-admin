@@ -8,3 +8,6 @@ desktop/src-tauri/icons/
 desktop/package-lock.json
 # Продажи: лиды и переписка с номерами — не в публичный репозиторий
 sales/
+
+# рабочие копии помощников (git worktree) — не часть проекта
+.claude/worktrees/

@@ -41,12 +41,13 @@ const TTL = 60_000;
  * без базы отправки D1 не идут, бот и пульт работают на KV, как раньше).
  * @param {Env} env
  * @param {number} now
+ * @param {boolean} [recheck] база недавно не ответила — проверить сразу, а не ждать минуту (запись «стопа»: он редкий и важный)
  */
-export async function d1Ready(env, now) {
+export async function d1Ready(env, now, recheck = false) {
   const db = env.DB;
   if (!db || typeof db.prepare !== "function") return null;
   const c = seen.get(db);
-  if (c && now - c.at < TTL) return c.ok ? db : null;
+  if (c && now - c.at < TTL && (c.ok || !recheck)) return c.ok ? db : null;
   const s = await d1Status(env);
   seen.set(db, { at: now, ok: !!s.ok });
   return s.ok ? db : null;

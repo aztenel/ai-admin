@@ -98,6 +98,12 @@ const R = [
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],
   ["POST", "/api/crm/refresh", { c: "barber" }], ["POST", "/api/crm/refresh", { c: "dent" }], ["GET", "/api/crm/nope?c=barber"],
+  // база контактов D1 (этап 1): у Worker контракта базы нет — status отвечает ready: false, остальное 503; права — как у всех /api
+  ["GET", "/api/contacts/status?c=barber"], ["GET", "/api/contacts/status?c=dent"], ["GET", "/api/contacts/segments?c=barber"], ["GET", "/api/contacts/list?c=barber&q=x"],
+  ["GET", "/api/contacts/card?c=barber&id=x"], ["POST", "/api/contacts/add", { c: "barber", phone: "+77000000999" }], ["POST", "/api/contacts/consent", { c: "barber", id: "x" }],
+  ["POST", "/api/contacts/restrict", { c: "barber", id: "x" }], ["POST", "/api/contacts/lift", { c: "barber", id: "x" }], ["POST", "/api/contacts/review", { c: "barber", id: "x", decision: "lift" }],
+  ["POST", "/api/contacts/import", { c: "barber", text: "+77000000999" }], ["POST", "/api/contacts/import/confirm", { c: "barber", id: "x" }], ["POST", "/api/contacts/sync", { c: "barber", mode: "step" }],
+  ["POST", "/api/contacts/probe", { c: "barber" }], ["POST", "/api/contacts/stops", { c: "barber", action: "sweep" }], ["POST", "/api/contacts/add", { c: "dent", phone: "+77000000999" }], ["GET", "/api/contacts/nope?c=barber"],
   // рассылка из сегмента базы (номера строит сервер, наружу — маской) и автосценарий «Пора на стрижку» (менять — только владелец)
   ["POST", "/api/bc/check", { c: "dent", segment: "all" }], ["POST", "/api/bc/create", { c: "barber", segment: "pora" }], ["POST", "/api/bc/create", { c: "dent", segment: "all" }],
   ["GET", "/api/bc/service?c=barber"], ["GET", "/api/bc/service?c=dent"],

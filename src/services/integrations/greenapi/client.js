@@ -11,12 +11,13 @@ import { gaSecret, gaHook } from "./webhook.js";
  * @param {string} op
  * @param {any} [body]
  * @param {number} [ms]
+ * @param {string} [query] после токена: «minutes=60» (журналы lastIncomingMessages / lastOutgoingMessages)
  * @returns {Promise<{ ok: boolean, status: number, j: any, text: string }>}
  */
-export async function gaCall(r, op, body, ms = 15000) {
+export async function gaCall(r, op, body, ms = 15000, query = "") {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
-    const res = await fetch(`${String(r.base || GA_BASE).replace(/\/+$/, "")}/waInstance${r.id}/${op}/${r.token}`, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ac.signal } : { signal: ac.signal });
+    const res = await fetch(`${String(r.base || GA_BASE).replace(/\/+$/, "")}/waInstance${r.id}/${op}/${r.token}${query ? "?" + query : ""}`, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ac.signal } : { signal: ac.signal });
     const text = await res.text().catch(() => "");
     let j = {}; try { j = JSON.parse(text) || {}; } catch (e) {}
     return { ok: res.ok, status: res.status, j: typeof j === "object" ? j : {}, text };

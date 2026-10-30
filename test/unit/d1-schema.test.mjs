@@ -32,7 +32,7 @@ test("черновики не подключены к боевым данным:
 
 test("миграции: применяются на пустой базе, повтор пропускается, ошибка не оставляет половину схемы", { skip: NO_SQLITE }, () => {
   const { raw } = openD1();
-  assert.deepEqual(migrate(raw), ["0001_messaging.sql"]);
+  assert.deepEqual(migrate(raw), ["0001_messaging.sql", "0002_contacts_sync.sql"]);
   assert.deepEqual(migrate(raw), [], "второй запуск ничего не применяет (как wrangler d1 migrations apply)");
   const tables = raw.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map(r => r.name);
   for (const t of ["meta", "contacts", "consents", "restrictions", "bookings", "campaigns", "campaign_recipients", "jobs", "outbound", "sender_daily", "events", "sync_issues", "audit", "d1_migrations"]) assert.ok(tables.includes(t), t);
@@ -102,7 +102,7 @@ test("схема держит правила: один «стоп», захва�
 
 test("код пользуется базой, только если это база своего окружения и миграции применены", { skip: NO_SQLITE }, async () => {
   const dev = d1With("preview");
-  assert.deepEqual({ ...(await d1Status({ STAGE: "preview", DB: dev.db })), ms: 0 }, { want: "preview", bound: true, ok: true, stage: "preview", migrations: ["0001_messaging.sql"], tables: 22, ms: 0 });
+  assert.deepEqual({ ...(await d1Status({ STAGE: "preview", DB: dev.db })), ms: 0 }, { want: "preview", bound: true, ok: true, stage: "preview", migrations: ["0001_messaging.sql", "0002_contacts_sync.sql"], tables: 22, ms: 0 });
   assert.equal(await d1Ready({ STAGE: "preview", DB: dev.db }, 1), dev.db);
   // боевой сайт с базой черновика — нет; черновик с боевой — нет
   assert.equal(await d1Ready({ DB: d1With("preview").db }, 1), null);
@@ -155,7 +155,7 @@ test("/diag/storage: только владелец; черновик видит 
   assert.equal(r.headers.get("cache-control"), "no-store");
   assert.match(html, /черновик \(Worker Previews/);
   assert.match(html, /отметка базы: preview — совпадает ✅/);
-  assert.match(html, /миграции: 0001_messaging\.sql; таблиц: 22/);
+  assert.match(html, /миграции: 0001_messaging\.sql, 0002_contacts_sync\.sql; таблиц: 22/);
   assert.match(html, /optout:winchester: 1/);
   assert.match(html, /есть чаты или «стоп» — проверьте, что это тестовые/);
   assert.ok(!/77000000101|77000000102/.test(html), "номеров на странице нет");
