@@ -46,6 +46,8 @@ export const net = {
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
+  altClients: [],              // справочник клиентов (POST /clients/{локация}): { id, name, surname, phone, first_visit_date, last_visit_date, visits_count, nl (разрешил рассылки), pd }
+  altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
   gaState: "authorized",       // что отвечает getStateInstance
@@ -55,7 +57,7 @@ export const net = {
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
   img: [],                     // запросы картинок Altegio (фото мастеров, assets.alteg.io и др.): адреса
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
-  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; }
+  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -124,6 +126,20 @@ function altStub(url, init) {
     return J({ success: true, data: t.map(x => ({ time: x, seance_length: 3600, sum_length: 3600, datetime: `${m[2]}T${x}:00+05:00` })), meta: [] });
   }
   if (path === "/auth" && method === "POST") { const b = JSON.parse(init.body || "{}"); net.altAuth.push({ login: b.login, auth: init.headers && init.headers.authorization }); return b.password === "right-pass" ? J({ success: true, data: { user_token: "usr-tok", name: "Азамат" }, meta: [] }) : J({ success: false, data: null, meta: { message: "Неверный логин или пароль" } }, 401); }
+  if ((m = path.match(/^\/clients\/(\d+)$/)) && method === "POST") { // справочник клиентов: страницы, поля, фильтры флагов, meta.total_count — как Altegio
+    if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
+    if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
+    const b = JSON.parse(init.body || "{}"), fields = Array.isArray(b.fields) ? b.fields : ["id"];
+    if (net.altClientsNoVisits && fields.includes("visits_count")) return J({ success: false, data: null, meta: { message: "Unknown field visits_count" } }, 400);
+    let all = [...net.altClients].sort((a, c) => a.id - c.id);
+    for (const f of b.filters || []) if (f.type === "is_newsletter_allowed") all = all.filter(x => !!x.nl === !!f.state.value); else if (f.type === "is_personal_data_processing_allowed") all = all.filter(x => !!x.pd === !!f.state.value);
+    const size = Math.min(200, +b.page_size || 25), pg = Math.max(1, +b.page || 1);
+    return J({ success: true, data: all.slice((pg - 1) * size, pg * size).map(x => Object.fromEntries(["id", ...fields].filter(k => k in x).map(k => [k, x[k]]))), meta: { total_count: all.length } });
+  }
+  if ((m = path.match(/^\/client\/(\d+)\/(\d+)$/)) && method === "GET") { // карточка клиента
+    const x = net.altClients.find(c => String(c.id) === m[2]);
+    return x ? J({ success: true, data: { id: x.id, name: x.name, phone: x.phone, sms_not: 0, sms_check: 1, is_newsletter_allowed: !!x.nl, visits: x.visits_count || 0 }, meta: [] }) : J({ success: false, data: null, meta: { message: "Not found" } }, 404);
+  }
   if ((m = path.match(/^\/records\/(\d+)/)) && method === "GET") {
     if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
     if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);

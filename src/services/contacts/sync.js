@@ -13,13 +13,18 @@ import { CLIENTS } from "../../config/builtin-clients.js";
 import { logSafe } from "../../lib/phone.js";
 import { local } from "../../lib/time.js";
 import { altRecordsRange } from "../integrations/altegio/records-api.js";
+import { altCall } from "../integrations/altegio/client.js";
+import { normPhone } from "../../lib/phone.js";
 import { crmWhy } from "../crm/snapshot.js";
 import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { d1Ready, stageOf } from "../../db/d1/status.js";
 import { syncRows, leaseTake, leaseFree, syncOkStmt, syncCursorStmt, syncFail, syncClearStmt } from "../../db/d1/sync.js";
-import { windowApply, ownersOf, windowCount, recompute, contactsByPhones, eventPut } from "../../db/d1/contacts.js";
-import { foldWindow, dayOf, dayAdd, dayStart } from "./normalize.js";
+import { windowApply, ownersOf, windowCount, recompute, contactsByPhones, eventPut, directoryApply } from "../../db/d1/contacts.js";
+import { restrictionAdd, consentAdd } from "../../db/d1/rights.js";
+import { foldWindow, dayOf, dayAdd, dayStart, altMs, searchOf } from "./normalize.js";
+import { altText as altClean } from "../integrations/altegio/client.js";
+import { COOL_DAYS } from "./segments.js";
 
 export const SRC = "altegio";
 export const SYNC = { pastDays: 730, futureDays: 60, step: 14, budgetMs: 20000, leaseMs: 90000 };
@@ -69,7 +74,7 @@ export async function applyWindow(db, ws, list, from, to, full, stamp, extra) {
     else win = { from: a, to: b, ids: f.bookings.map(x => x.id) };
   }
   const oldIds = await ownersOf(db, ws, f.bookings);
-  await windowApply(db, ws, { contacts: f.contacts, bookings: f.bookings, window: win, oldIds, stamp, extra: typeof extra === "function" ? extra(f.count) : extra });
+  await windowApply(db, ws, { contacts: f.contacts, bookings: f.bookings, window: win, oldIds, stamp, extra: typeof extra === "function" ? extra(f.count) : extra, coolMs: COOL_DAYS * 86400e3 });
   if (warn) await eventPut(db, ws, `warn:${from}:${to}:${stamp}`, "sync_warn", { text: warn }, stamp);
   return { ...f.count, warn };
 }
@@ -134,6 +139,8 @@ export async function syncStep(env, c, now, opts = {}) {
       done.push({ scope: s, from: a, to: b, ...st });
     }
     await recompute(db, ws, now, "stale"); // ближайшая запись прошла — она стала визитом (или «не пришёл»)
+    // справочник клиентов (вся база салона): раз в неделю, страницами, сколько успеет — дальше с того же места
+    if (Date.now() - t0 < SYNC.budgetMs) { scope = "clients"; const d = await dirStep(env, c, db, now, t0, !!opts.force); if (d) done.push(d); }
     return { initial: initialInfo(init), windows: done };
   } catch (/** @type {any} */ e) {
     const known = e && typeof e.code === "string";
@@ -177,7 +184,14 @@ export async function syncDry(env, c, now) {
     db ? `Уже есть в базе этого адреса: ${known} из ${f.contacts.length}` : "База этого адреса не подключена — сравнения нет",
     "В базу ничего не записано."
   ];
-  const report = { at: now, ok: true, summary, numbers: { ...f.count, contacts: f.contacts.length, future, known, cut: r.cut, pages: r.pages } };
+  // справочник клиентов: вся база салона — сколько всего, сколько с номером, сколько не были больше 2 лет (их в журнале нет)
+  const dir = await dirDry(env, c, now, Date.now() + 25000).catch((/** @type {any} */ e) => ({ error: e && e.message ? String(e.message) : "не прочитан" }));
+  if ("error" in dir) summary.splice(summary.length - 1, 0, `Справочник клиентов: ${dir.error}`);
+  else summary.splice(summary.length - 1, 0,
+    `Справочник клиентов Altegio: всего ${dir.total}; прочитано ${dir.read}${dir.read < dir.total ? " (не всё — не хватило времени)" : ""}`,
+    `В справочнике: с номером ${dir.ok}, скрытых ${dir.masked}, неверных ${dir.bad}, пустых ${dir.empty}; без визитов ${dir.never}; последний визит больше 2 лет назад — ${dir.old2y}`,
+    `Разрешили рассылки (флаг Altegio, не подтверждённое согласие): ${dir.news ?? "не прочитано"}${dir.newsNote ? " — " + dir.newsNote : ""}`);
+  const report = { at: now, ok: true, summary, numbers: { ...f.count, contacts: f.contacts.length, future, known, cut: r.cut, pages: r.pages, directory: "error" in dir ? null : dir } };
   if (db) { try { await eventPut(db, c.id, `dry:${now}`, "altegio_dry", report, now, "owner"); } catch (e) {} }
   return report;
 }
@@ -210,8 +224,18 @@ export async function syncTest(env, c, now) {
   const db = await d1Ready(env, now);
   if (!db) throw fail("db", "База контактов не подключена.");
   const st = await applyWindow(db, c.id, testJournal(now), dayAdd(dayOf(now), -160), dayAdd(dayOf(now), 30), false, now, []);
+  // примеры правил на экране: двое написали «стоп» (отказ клиента), у двоих согласие подтверждено в салоне, у двоих — из файла (не подтверждено)
+  const ids = await contactsByPhones(db, c.id, ["77000001012", "77000001013", "77000001014", "77000001015", "77000001016", "77000001017"]);
+  const id = (/** @type {string} */ p) => (ids.get(p) || { id: "" }).id;
+  for (const p of ["77000001012", "77000001013"]) if (id(p)) {
+    await restrictionAdd(db, c.id, { contactId: id(p), kind: "marketing_optout", reason: "STOP", source: "chat_stop", actor: "webhook", at: now - 5 * 86400e3, eventKey: `test-stop:${p}` });
+    await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "denied", basis: "клиент написал «стоп»", source: "chat_stop", actor: "webhook", at: now - 5 * 86400e3, evidence: "client_stop", confirmed: true, givenAt: now - 5 * 86400e3 });
+  }
+  for (const p of ["77000001014", "77000001015"]) if (id(p)) await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "granted", basis: "устно в салоне (тест)", source: "manual", actor: "owner", at: now, evidence: "oral", confirmed: true, givenAt: now });
+  for (const p of ["77000001016", "77000001017"]) if (id(p)) await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "granted", basis: "анкета (тестовый файл)", source: "import", actor: "owner", at: now, evidence: "import", evidenceRef: "файл «тест.csv»", confirmed: false });
   await eventPut(db, c.id, `test:${now}`, "test_data", { contacts: st.contacts, bookings: st.bookings }, now, "owner");
-  return { summary: [`Тестовые клиенты: ${st.contacts} (номера +7 700 000 xx xx), записей ${st.bookings}, из них скрытый номер — ${st.masked}, удалённых — ${st.deleted}, «не пришёл» — ${st.missed}.`] };
+  return { summary: [`Тестовые клиенты: ${st.contacts} (номера +7 700 000 xx xx), записей ${st.bookings}, из них скрытый номер — ${st.masked}, удалённых — ${st.deleted}, «не пришёл» — ${st.missed}.`,
+    "Для примера: двое написали «стоп», у двоих согласие подтверждено в салоне, у двоих — из файла (не подтверждено), у одного — пауза после отменённой записи."] };
 }
 
 /** Фоновая задача: раз в 5 минут — шаг синхронизации компаний с базой клиентов (crm) и флагом MSG_V2_<ID>=1. @param {Env} env @param {number} now */
@@ -223,4 +247,91 @@ export async function contactsRun(env, now) {
     try { await syncStep(env, c, now); n++; } catch (/** @type {any} */ e) { if (!(e && e.code === "busy")) console.log("contacts run", c.id, logSafe(String((e && e.message) || e))); }
   }
   return n;
+}
+
+// ---- справочник клиентов Altegio: вся база салона (POST /clients/{локация}, «Get a list of clients», до 200 на страницу,
+// meta.total_count), а не только те, кто был в журнале за 2 года. Это поиск — данные в Altegio не меняет. Номер, имя, id, первый и
+// последний визит, число визитов по Altegio; «разрешил рассылки» — отдельным поиском с фильтром is_newsletter_allowed (это флаг
+// Altegio, а не подтверждённое согласие). Курсор — номер страницы в sync_state (scope 'clients'); полный проход — раз в неделю.
+export const DIR = { pageSize: 200, everyMs: 7 * 86400e3, fields: ["id", "name", "surname", "phone", "first_visit_date", "last_visit_date", "visits_count"] };
+let noVisitsCount = false; // Altegio не принял поле visits_count (400) — дальше без него
+
+/** Страница справочника: { list, total }. filters — фильтры Altegio. @param {Env} env @param {Client} c @param {number} page @param {any[]} [filters] @param {string[]} [fields] */
+export async function dirPage(env, c, page, filters, fields) {
+  const want = fields || (noVisitsCount ? DIR.fields.filter(f => f !== "visits_count") : DIR.fields);
+  const body = { page, page_size: DIR.pageSize, fields: want, order_by: "id", order_by_direction: "ASC", ...(filters ? { filters } : {}) };
+  try {
+    const j = await altCall(env, "POST", `/clients/${altLoc(env, c)}`, body, altUserKey(env, c), true);
+    return { list: (Array.isArray(j.data) ? j.data : []).filter((/** @type {any} */ x) => x && typeof x === "object"), total: +((j.meta && j.meta.total_count) || 0) };
+  } catch (/** @type {any} */ e) {
+    if (+(e && e.status) === 400 && want.includes("visits_count") && !fields) { noVisitsCount = true; return dirPage(env, c, page, filters); }
+    console.log("contacts dir", c.id, logSafe(String((e && e.message) || e)));
+    throw fail("altegio", altText(e).replace("журнал", "список клиентов"));
+  }
+}
+/** Клиент справочника → строка для D1 (null — без номера: скрыт или неверный). @param {any} x */
+export function dirRow(x) {
+  const raw = String(x.phone ?? ""), p = normPhone(raw).slice(1);
+  const kind = /** @type {'ok'|'masked'|'bad'|'empty'} */ (p ? "ok" : /[xх*]/i.test(raw) ? "masked" : raw.trim() ? "bad" : "empty");
+  if (!p) return { row: null, kind };
+  const n = altClean([x.name, x.surname].filter(v => typeof v === "string" && v.trim()).join(" "), 60);
+  const day = (/** @type {any} */ v) => { const t = String(v ?? ""); return /^\d{4}-\d{2}-\d{2}$/.test(t) ? dayStart(t) + 12 * 3600e3 : altMs(t) || null; };
+  return { row: { id: newId(), p, n, s: searchOf(n, p), cr: x.id != null ? String(x.id).slice(0, 40) : null, fv: day(x.first_visit_date), lv: day(x.last_visit_date), vc: Number.isFinite(+x.visits_count) && x.visits_count !== null && x.visits_count !== "" ? +x.visits_count : null }, kind };
+}
+/** Состояние справочника для экрана. @param {any} row строка sync_state 'clients' */
+export function dirStatus(row) {
+  if (!row) return null;
+  /** @type {any} */ let cur = {}; try { cur = JSON.parse(row.cursor || "{}") || {}; } catch (e) {}
+  const total = +cur.total || 0, done = !!cur.done, read = Math.min(total, ((+cur.page || 1) - 1) * DIR.pageSize);
+  return { done, total, pct: done ? 100 : total ? Math.min(99, Math.round(100 * read / total)) : 0, lastOkAt: row.last_ok_at ? +row.last_ok_at : null, lastError: row.last_error || null, masked: +cur.masked || 0, bad: +cur.bad || 0 };
+}
+/**
+ * Шаг справочника: страницы, пока есть время. Полный проход закончился меньше недели назад — ничего (force — тоже по расписанию:
+ * справочник большой, 95 страниц на 19 000 клиентов). → итог шага для отчёта или null.
+ * @param {Env} env @param {Client} c @param {any} db @param {number} now @param {number} t0 @param {boolean} force
+ */
+async function dirStep(env, c, db, now, t0, force) {
+  const ws = c.id, row = (await syncRows(db, ws, SRC)).find((/** @type {any} */ r) => r.scope === "clients");
+  /** @type {any} */ let cur = {}; try { cur = JSON.parse((row && row.cursor) || "{}") || {}; } catch (e) {}
+  if (cur.done && row && row.last_ok_at && now - +row.last_ok_at < DIR.everyMs) return null;
+  if (cur.done) cur = {};
+  let page = +cur.page || 1, phase = cur.phase || "all", read = 0;
+  const st = { masked: +cur.masked || 0, bad: +cur.bad || 0 };
+  while (Date.now() - t0 < SYNC.budgetMs) {
+    const r = await dirPage(env, c, page, phase === "news" ? [{ type: "is_newsletter_allowed", state: { value: true } }] : undefined, phase === "news" ? ["id", "phone"] : undefined);
+    const rows = [];
+    for (const x of r.list) {
+      const d = dirRow(x);
+      if (!d.row) { if (phase === "all" && (d.kind === "masked" || d.kind === "bad")) st[d.kind]++; continue; }
+      rows.push(phase === "news" ? { p: d.row.p } : d.row);
+    }
+    const last = r.list.length < DIR.pageSize;
+    const next = last ? (phase === "all" ? { phase: "news", page: 1 } : { phase: "done", page: 1 }) : { phase, page: page + 1 };
+    const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done" };
+    const extra = curNext.done ? [syncOkStmt(db, ws, SRC, "clients", now, JSON.stringify(curNext), null), syncClearStmt(db, ws, SRC, "clients")] : [syncCursorStmt(db, ws, SRC, "clients", JSON.stringify(curNext))];
+    await directoryApply(db, ws, rows, now, extra, { news: phase === "news", reset: phase === "news" && page === 1 });
+    read += r.list.length; cur = curNext; page = next.page; phase = next.phase;
+    if (cur.done) break;
+  }
+  return { scope: "clients", from: "справочник", to: cur.done ? "весь" : `страница ${page}`, records: read, contacts: read, warn: "" };
+}
+
+/** Справочник без записи: страницы до срока, только числа. @param {Env} env @param {Client} c @param {number} now @param {number} until */
+async function dirDry(env, c, now, until) {
+  const out = { total: 0, read: 0, ok: 0, masked: 0, bad: 0, empty: 0, never: 0, old2y: 0, news: /** @type {number|null} */ (null), newsNote: "" };
+  for (let page = 1; Date.now() < until; page++) {
+    const r = await dirPage(env, c, page);
+    if (page === 1) out.total = r.total;
+    for (const x of r.list) {
+      out.read++;
+      const d = dirRow(x);
+      out[d.kind]++;
+      const lv = d.row ? d.row.lv : altMs(x.last_visit_date) || (/^\d{4}-\d{2}-\d{2}$/.test(String(x.last_visit_date || "")) ? dayStart(String(x.last_visit_date)) : 0);
+      if (!lv) out.never++; else if (now - lv > SYNC.pastDays * 86400e3) out.old2y++;
+    }
+    if (r.list.length < DIR.pageSize) break;
+  }
+  try { out.news = (await dirPage(env, c, 1, [{ type: "is_newsletter_allowed", state: { value: true } }], ["id"])).total; }
+  catch (/** @type {any} */ e) { out.newsNote = e && e.message ? String(e.message) : "фильтр не принят"; }
+  return out;
 }

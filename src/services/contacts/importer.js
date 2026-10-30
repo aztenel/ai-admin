@@ -1,13 +1,15 @@
 // @ts-check
 // Импорт контактов из Excel/CSV (этап 1, 31.10.2026): файл → предпросмотр (новые, обновятся, без изменений, дубли в файле, неверные)
-// → «Загрузить» одной пачкой D1. Импорт не снимает запреты и не ставит согласие сам: согласие из файла записывается, только если
-// человек указал основание («анкета в салоне 2026», «согласие в WhatsApp»). Файл не хранится — только строки предпросмотра,
-// они удаляются при подтверждении, отмене или через сутки.
+// → «Загрузить» одной пачкой D1. Импорт не снимает запреты. Согласие из файла записывается, только если человек указал основание
+// («анкета в салоне 2026»), и даже тогда — «не подтверждено»: реклама ему не уйдёт, пока согласие не подтвердят в карточке
+// (сообщение клиента, письменное согласие). Тем, кто сам отказывался, «да» из файла не записывается вовсе. Файл не хранится — только
+// строки предпросмотра, они удаляются при подтверждении, отмене или через сутки.
 import { normPhone, maskPhone, logSafe } from "../../lib/phone.js";
 import { decodeText, csvRows, tableColumns, consentValue } from "../../lib/table.js";
 import { isZip, xlsxRows } from "../../lib/xlsx.js";
 import { contactsByPhones } from "../../db/d1/contacts.js";
 import { importSave, importGet, importRows, importConfirm, importDiscard } from "../../db/d1/imports.js";
+import { refusedPhones } from "../../db/d1/rights.js";
 import { searchOf } from "./normalize.js";
 
 export const IMPORT_MAX_ROWS = 20000, IMPORT_MAX_BYTES = 5 * 1024 * 1024;
@@ -57,6 +59,7 @@ export async function importPreview(db, ws, table, x) {
   return {
     id: x.id, total: counts.total, counts: { new: counts.new, update: counts.update, same: counts.same, dup: counts.dup, invalid: counts.invalid },
     columns: { phone: colName(table, cols, cols.phone), name: colName(table, cols, cols.name), consent: colName(table, cols, cols.consent) }, header: cols.header, hasConsent,
+    consentNote: hasConsent ? "Согласия из файла запишутся как «не подтверждено»: реклама им не уйдёт, пока согласие не подтвердят в карточке клиента. Тем, кто сам отказывался, «да» из файла не записывается. Без основания согласия из файла не записываются вовсе." : "",
     rows: show.map(r => ({ row: r.row, phone: r.p ? maskPhone(r.p) : "", name: logSafe(r.n), action: r.a, ...(r.e ? { error: r.e } : {}) }))
   };
 }
@@ -72,8 +75,11 @@ export async function importApply(db, ws, id, x) {
   const rows = await importRows(db, id), basis = String(x.basis || "").trim();
   const fresh = rows.filter((/** @type {any} */ r) => r.action === "new").map((/** @type {any} */ r) => ({ p: r.phone, n: r.name || "", s: searchOf(r.name, r.phone) }));
   const update = rows.filter((/** @type {any} */ r) => r.action === "update").map((/** @type {any} */ r) => ({ p: r.phone, n: r.name, s: searchOf(r.name, r.phone) }));
-  const consents = basis ? rows.filter((/** @type {any} */ r) => r.consent === "granted" || r.consent === "denied").map((/** @type {any} */ r) => ({ p: r.phone, c: r.consent })) : [];
-  const res = await importConfirm(db, ws, id, { fresh, update, consents, basis, actor: x.actor, at: x.at });
-  return res.ok ? { ok: true, created: fresh.length, updated: update.length, consents: consents.length } : { ok: false, already: true };
+  /** @type {{ p: string, c: string }[]} */
+  const all = basis ? rows.filter((/** @type {any} */ r) => r.consent === "granted" || r.consent === "denied").map((/** @type {any} */ r) => ({ p: String(r.phone), c: String(r.consent) })) : [];
+  const refused = await refusedPhones(db, ws, all.filter(r => r.c === "granted").map(r => r.p));
+  const consents = all.filter(r => !(r.c === "granted" && refused.has(r.p)));
+  const res = await importConfirm(db, ws, id, { fresh, update, consents, basis, ref: `файл «${String(imp.source_name || "").slice(0, 60)}»`, actor: x.actor, at: x.at });
+  return res.ok ? { ok: true, created: fresh.length, updated: update.length, consents: consents.length, consentsUnconfirmed: consents.filter(r => r.c === "granted").length, consentsSkipped: all.length - consents.length } : { ok: false, already: true };
 }
 export { importDiscard };

@@ -13,7 +13,7 @@ import { IMPORT_MAX_BYTES } from "../services/contacts/importer.js";
 import { logSafe } from "../lib/phone.js";
 /** @import { Env } from "../lib/types.js" */
 
-const STATUS = /** @type {Record<string, number>} */ ({ input: 400, forbidden: 403, missing: 404, done: 409, preview: 409, setup: 409, busy: 409, altegio: 502, db: 503, kv: 503, store: 503 });
+const STATUS = /** @type {Record<string, number>} */ ({ input: 400, forbidden: 403, missing: 404, consent: 409, done: 409, preview: 409, setup: 409, busy: 409, altegio: 502, db: 503, kv: 503, store: 503 });
 const OWNER_ONLY = new Set(["/api/contacts/lift", "/api/contacts/sync", "/api/contacts/probe", "/api/contacts/stops"]);
 
 /** @param {Request} request @param {Env} env @param {URL} url @param {any} s */

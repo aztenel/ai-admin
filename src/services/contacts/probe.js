@@ -10,7 +10,7 @@ import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { d1Ready } from "../../db/d1/status.js";
 import { eventPut } from "../../db/d1/contacts.js";
-import { syncWhy } from "./sync.js";
+import { syncWhy, dirPage, DIR } from "./sync.js";
 import { dayOf, dayAdd, altMs } from "./normalize.js";
 
 /** «2026-10-30T15:00:00+05:00» → «9999-99-99T99:99:99+99:99». @param {any} v */
@@ -92,6 +92,26 @@ export async function altProbe(env, c, now) {
       summary.push(`Флаги «да/нет» в карточке: ${show(/** @type {any} */ (flags)) || "нет"}`);
       fields.clientCard = { keys, flags };
     } catch (e) { summary.push(`Карточка клиента: ${errOf(e)}`); }
+  }
+  // 4. справочник клиентов (вся база салона, не только журнал): сколько всего, какие поля, флаги согласий Altegio — только числа.
+  // Это поиск (POST /clients/{локация}) — данные в Altegio он не меняет
+  try {
+    const d = await altCall(env, "POST", `/clients/${loc}`, { page: 1, page_size: 5, fields: DIR.fields, order_by: "id", order_by_direction: "ASC" }, user, true);
+    const list = (Array.isArray(d.data) ? d.data : []).filter((/** @type {any} */ x) => x && typeof x === "object");
+    fields.directory = fieldsOf(list);
+    const filled = (/** @type {string} */ k) => { const e = fields.directory.find((/** @type {any} */ x) => x.key === k); return e ? `${e.filled} из ${e.of}${e.shape ? `, вид ${e.shape}` : ""}` : "поля нет"; };
+    summary.push(`Справочник клиентов: всего ${+((d.meta && d.meta.total_count) || 0)} (meta.total_count); поля первой страницы: ${fields.directory.map((/** @type {any} */ x) => x.key).join(", ") || "нет"}`);
+    summary.push(`В справочнике: последний визит (last_visit_date) — ${filled("last_visit_date")}; визитов (visits_count) — ${filled("visits_count")}`);
+  } catch (e) {
+    const st = +(/** @type {any} */ (e).status) || 0;
+    if (st === 400) { // visits_count мог быть не принят — тогда без него
+      try { const d = await dirPage(env, c, 1, undefined, DIR.fields.filter(f => f !== "visits_count")); summary.push(`Справочник клиентов: всего ${d.total}; поле visits_count Altegio не принял`); }
+      catch (e2) { ok = false; summary.push(`Справочник клиентов не прочитан: ${errOf(e2)}`); }
+    } else { ok = false; summary.push(`Справочник клиентов не прочитан: ${errOf(e)}`); }
+  }
+  for (const [type, label] of [["is_newsletter_allowed", "разрешили рассылки"], ["is_personal_data_processing_allowed", "разрешили обработку данных"]]) {
+    try { const d = await dirPage(env, c, 1, [{ type, state: { value: true } }], ["id"]); summary.push(`Флаг Altegio «${label}» (${type}): ${d.total} клиентов — это не подтверждённое согласие`); fields[type] = d.total; }
+    catch (e) { summary.push(`Флаг Altegio ${type}: ${errOf(e)}`); }
   }
   const report = { at: now, ok, summary, fields };
   const db = await d1Ready(env, now);

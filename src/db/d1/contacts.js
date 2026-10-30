@@ -36,7 +36,7 @@ export async function contactsByPhones(db, ws, phones) {
  * в этой пачке добавилась или изменилась (last_seen_at = stamp), плюс прежние владельцы записей (номер у записи сменился).
  * @param {any} db
  * @param {string} ws
- * @param {{ contacts: any[], bookings: any[], window?: { from: number, to: number, ids: string[] } | null, oldIds?: string[], stamp: number, extra?: any[] }} q
+ * @param {{ contacts: any[], bookings: any[], window?: { from: number, to: number, ids: string[] } | null, oldIds?: string[], stamp: number, extra?: any[], coolMs?: number }} q
  */
 export async function windowApply(db, ws, q) {
   const s = q.stamp, list = [];
@@ -54,17 +54,30 @@ export async function windowApply(db, ws, q) {
       on conflict do nothing`).bind(ws, s, JSON.stringify(part)));
   }
   for (const part of chunks(q.bookings)) {
-    list.push(db.prepare(`insert into bookings (ws, record_id, contact_id, client_ref, starts_at, provider_created_at, staff, services, attendance, deleted, hash, first_seen_at, last_seen_at)
-      select ?1, j.value ->> '$.id', c.id, j.value ->> '$.cr', j.value ->> '$.at', j.value ->> '$.ca', j.value ->> '$.st', j.value ->> '$.sv', j.value ->> '$.att', j.value ->> '$.del', j.value ->> '$.h', ?2, ?2
+    list.push(db.prepare(`insert into bookings (ws, record_id, contact_id, client_ref, starts_at, provider_created_at, staff, services, attendance, deleted, gone, hash, first_seen_at, last_seen_at)
+      select ?1, j.value ->> '$.id', c.id, j.value ->> '$.cr', j.value ->> '$.at', j.value ->> '$.ca', j.value ->> '$.st', j.value ->> '$.sv', j.value ->> '$.att', j.value ->> '$.del',
+        case when (j.value ->> '$.del') = 1 then 'cancelled' end, j.value ->> '$.h', ?2, ?2
       from json_each(?3) j left join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where true
       on conflict (ws, record_id) do update set contact_id = excluded.contact_id, client_ref = excluded.client_ref, starts_at = excluded.starts_at,
         provider_created_at = excluded.provider_created_at, staff = excluded.staff, services = excluded.services, attendance = excluded.attendance,
-        deleted = excluded.deleted, hash = excluded.hash, last_seen_at = excluded.last_seen_at
+        deleted = excluded.deleted, gone = excluded.gone, hash = excluded.hash, last_seen_at = excluded.last_seen_at
       where bookings.hash is not excluded.hash`).bind(ws, s, JSON.stringify(part)));
   }
   // окно прочитано целиком: записи этого окна, которых в ответе нет, удалены в Altegio (администратор удаляет — запись пропадает)
-  if (q.window) list.push(db.prepare(`update bookings set deleted = 1, hash = 'deleted', last_seen_at = ?1
+  if (q.window) list.push(db.prepare(`update bookings set deleted = 1, gone = 'vanished', hash = 'deleted', last_seen_at = ?1
     where ws = ?2 and deleted = 0 and starts_at >= ?3 and starts_at < ?4 and record_id not in (select value from json_each(?5))`).bind(s, ws, q.window.from, q.window.to, JSON.stringify(q.window.ids)));
+  // отменённая или пропавшая будущая запись не возвращает клиента в рекламу сразу: пауза (cooldown) на ?3 мс, одна на запись
+  // (legacy_key 'cancel:<запись>'); запись нашлась снова (перенос за край окна) — пауза снимается. Решение владельца 31.10.2026
+  if (q.coolMs) {
+    list.push(db.prepare(`insert into restrictions (ws, contact_id, kind, channel, until_at, reason, source, actor, legacy_key, needs_review, created_at)
+      select ?2, b.contact_id, 'cooldown', '', ?1 + ?3, case b.gone when 'cancelled' then 'Запись отменена в Altegio' else 'Запись пропала из журнала Altegio (отмена или перенос)' end,
+        'booking_cancelled', 'sync', 'cancel:' || b.record_id, 0, ?1
+      from bookings b where b.ws = ?2 and b.last_seen_at = ?1 and b.deleted = 1 and b.contact_id is not null and b.starts_at > ?1 - 86400000
+      on conflict (ws, legacy_key) where legacy_key is not null do update set lifted_at = null, lifted_by = null, lift_reason = null, until_at = excluded.until_at,
+        reason = excluded.reason, created_at = excluded.created_at`).bind(s, ws, q.coolMs));
+    list.push(db.prepare(`update restrictions set lifted_at = ?1, lifted_by = 'sync', lift_reason = 'запись снова в журнале Altegio'
+      where ws = ?2 and kind = 'cooldown' and lifted_at is null and legacy_key in (select 'cancel:' || record_id from bookings where ws = ?2 and last_seen_at = ?1 and deleted = 0)`).bind(s, ws));
+  }
   list.push(db.prepare(`${RECOMPUTE} where ws = ?2 and (id in (select contact_id from bookings where ws = ?2 and last_seen_at = ?1 and contact_id is not null) or id in (select value from json_each(?3)))`)
     .bind(s, ws, JSON.stringify(q.oldIds || [])));
   list.push(...(q.extra || []));
@@ -94,16 +107,22 @@ export async function recompute(db, ws, now, which) {
 }
 
 // ---- выборки для пульта
-// k — контакт с вычисленными полями: d — дней с последнего визита (по календарю Астаны), booked — запись впереди, blocked — действующий
-// запрет маркетинга или полный (или «стоп» в старом хранилище KV, ?3), review — ждёт решения, consent — последнее согласие на маркетинг,
+// k — контакт с вычисленными полями: lastv — последний визит (журнал или справочник Altegio — что позже), d — дней с него (по
+// календарю Астаны), booked — запись впереди, blocked — действующий запрет маркетинга или полный (или «стоп» в старом хранилище KV, ?3),
+// review — ждёт решения, cooled — пауза после отменённой записи, consent и cconf — последнее согласие на маркетинг и подтверждено ли,
 // v90 — визитов за 90 дней, recent — маркетинг за последние ?4 мс. ?1 — компания, ?2 — сейчас
+const LASTV = "nullif(max(coalesce(c.last_visit_at, 0), coalesce(c.alt_last_visit_at, 0)), 0)";
 const K = `with k as (select c.id, c.name, c.phone, c.search, c.visits, c.first_visit_at, c.last_visit_at, c.next_booking_at, c.last_staff, c.created_at,
-  case when c.last_visit_at is null then null else cast(julianday(date(?2 / 1000 + ${TZS}, 'unixepoch')) - julianday(date(c.last_visit_at / 1000 + ${TZS}, 'unixepoch')) as integer) end as d,
+  c.alt_visits as altv, ${LASTV} as lastv,
+  case when ${LASTV} is null then null else cast(julianday(date(?2 / 1000 + ${TZS}, 'unixepoch')) - julianday(date(${LASTV} / 1000 + ${TZS}, 'unixepoch')) as integer) end as d,
   case when c.next_booking_at > ?2 then 1 else 0 end as booked,
   case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind in ('marketing_optout', 'full_block')) or c.phone in (select value from json_each(?3)) then 1 else 0 end as blocked,
   case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind = 'full_block') then 1 else 0 end as full,
   case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.needs_review = 1) then 1 else 0 end as review,
   coalesce((select s.state from consents s where s.ws = c.ws and s.contact_id = c.id and s.purpose = 'marketing' order by s.id desc limit 1), 'unknown') as consent,
+  coalesce((select s.confirmed from consents s where s.ws = c.ws and s.contact_id = c.id and s.purpose = 'marketing' order by s.id desc limit 1), 0) as cconf,
+  (select max(r.until_at) from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind = 'cooldown' and r.until_at > ?2) as cool_until,
+  case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind = 'cooldown' and r.until_at > ?2) then 1 else 0 end as cooled,
   (select count(distinct date(b.starts_at / 1000 + ${TZS}, 'unixepoch')) from bookings b where b.ws = c.ws and b.contact_id = c.id and b.deleted = 0 and b.starts_at <= ?2 and b.starts_at > ?2 - 7776000000 and coalesce(b.attendance, 0) <> -1) as v90,
   case when exists (select 1 from outbound o where o.ws = c.ws and o.contact_id = c.id and o.purpose = 'marketing' and o.state in ('sending', 'sent', 'unknown') and o.created_at > ?2 - ?4) then 1 else 0 end as recent
   from contacts c where c.ws = ?1)`;
@@ -135,7 +154,7 @@ export async function contactsPage(db, ws, now, kvStops, gapMs, f) {
   const [n, rows] = await db.batch([
     db.prepare(`${K} select count(*) n from k where ${cond}`).bind(...args),
     db.prepare(`${K} select k.*, (select group_concat(distinct s.source) from contact_sources s where s.contact_id = k.id) as sources from k where ${cond}
-      order by last_visit_at desc nulls last, created_at desc, id limit ?7 offset ?8`).bind(...args, f.per, (f.page - 1) * f.per)
+      order by lastv desc nulls last, created_at desc, id limit ?7 offset ?8`).bind(...args, f.per, (f.page - 1) * f.per)
   ]);
   return { total: +(((n.results || [])[0] || {}).n || 0), rows: rows.results || [] };
 }
@@ -150,7 +169,7 @@ export async function contactCard(db, ws, id, now, kvStops, gapMs, segs) {
     db.prepare("select * from contacts where ws = ? and id = ?").bind(ws, id),
     db.prepare(`${K} select *, ${flags} from k where id = ?5`).bind(ws, now, JSON.stringify(kvStops), gapMs, id),
     db.prepare("select record_id, starts_at, staff, services, attendance, deleted from bookings where ws = ? and contact_id = ? order by starts_at desc limit 300").bind(ws, id),
-    db.prepare("select purpose, state, basis, source, actor, created_at from consents where ws = ? and contact_id = ? order by id desc limit 100").bind(ws, id),
+    db.prepare("select purpose, state, basis, source, actor, created_at, evidence, evidence_ref, confirmed, given_at from consents where ws = ? and contact_id = ? order by id desc limit 100").bind(ws, id),
     db.prepare("select * from restrictions where ws = ? and contact_id = ? order by id desc limit 100").bind(ws, id),
     db.prepare("select source, external_id, first_seen from contact_sources where ws = ? and contact_id = ? order by first_seen").bind(ws, id),
     db.prepare("select kind, actor, details, at from events where ws = ? and contact_id = ? order by at desc limit 50").bind(ws, id)
@@ -200,4 +219,34 @@ export async function eventsOf(db, ws, kinds, n) {
 /** @param {any} db @param {string} ws @param {string} key @param {string} kind @param {any} details @param {number} at @param {string} [actor] */
 export async function eventPut(db, ws, key, kind, details, at, actor = "sync") {
   await db.prepare("insert into events (ws, event_key, kind, actor, details, at) values (?, ?, ?, ?, ?, ?) on conflict do nothing").bind(ws, key, kind, actor, details == null ? null : JSON.stringify(details), at).run();
+}
+
+/**
+ * Справочник клиентов Altegio → контакты (вся база салона, не только журнал за 2 года): номер, имя из карточки Altegio (оно главнее
+ * имени из записи), id клиента, первый и последний визит и число визитов по данным Altegio. Неизменённые строки не переписываются.
+ * news — проход «разрешил рассылки» (флаг Altegio, не подтверждённое согласие): reset — перед первой страницей флаги сбрасываются
+ * (клиент мог запретить рассылки в Altegio). extra — отметка курсора в той же пачке.
+ * @param {any} db @param {string} ws @param {any[]} rows [{ id, p, n, s, cr, fv, lv, vc }] или [{ p }] для news @param {number} stamp @param {any[]} extra
+ * @param {{ news?: boolean, reset?: boolean }} [mode]
+ */
+export async function directoryApply(db, ws, rows, stamp, extra, mode = {}) {
+  const list = [];
+  if (mode.news && mode.reset) list.push(db.prepare("update contacts set alt_newsletter = null where ws = ? and alt_newsletter is not null").bind(ws));
+  for (const part of chunks(rows)) {
+    const j = JSON.stringify(part);
+    if (mode.news) { list.push(db.prepare(`update contacts set alt_newsletter = 1 from json_each(?2) j where contacts.ws = ?1 and contacts.phone = j.value ->> '$.p'`).bind(ws, j)); continue; }
+    list.push(db.prepare(`insert into contacts (id, ws, phone, name, altegio_client_id, search, alt_first_visit_at, alt_last_visit_at, alt_visits, created_at, updated_at, synced_at)
+      select j.value ->> '$.id', ?1, j.value ->> '$.p', nullif(j.value ->> '$.n', ''), j.value ->> '$.cr', j.value ->> '$.s', j.value ->> '$.fv', j.value ->> '$.lv', j.value ->> '$.vc', ?2, ?2, ?2
+      from json_each(?3) j where true
+      on conflict (ws, phone) do update set name = coalesce(excluded.name, contacts.name), search = case when excluded.name is not null then excluded.search else contacts.search end,
+        altegio_client_id = coalesce(excluded.altegio_client_id, contacts.altegio_client_id), alt_first_visit_at = excluded.alt_first_visit_at, alt_last_visit_at = excluded.alt_last_visit_at,
+        alt_visits = excluded.alt_visits, synced_at = excluded.synced_at
+      where (excluded.name is not null and excluded.name is not contacts.name) or excluded.altegio_client_id is not contacts.altegio_client_id or excluded.alt_last_visit_at is not contacts.alt_last_visit_at
+        or excluded.alt_first_visit_at is not contacts.alt_first_visit_at or excluded.alt_visits is not contacts.alt_visits`).bind(ws, stamp, j));
+    list.push(db.prepare(`insert into contact_sources (contact_id, ws, source, external_id, first_seen, last_seen)
+      select c.id, ?1, 'altegio', coalesce(j.value ->> '$.cr', ''), ?2, ?2 from json_each(?3) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where true
+      on conflict do nothing`).bind(ws, stamp, j));
+  }
+  list.push(...extra);
+  await db.batch(list);
 }

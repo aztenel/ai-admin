@@ -96,9 +96,10 @@ test("добавление вручную, дубль, поиск по-русс�
   const li = (await get(st, "/api/contacts/list?c=winchester")).j;
   assert.equal(li.items[0].phone, "+7 700 *** ** 21", "в списке — маской");
   assert.deepEqual(li.items[0].sources, ["manual"]);
-  // согласие: без основания «да» нельзя; история сохраняется
-  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", basis: "" })).j.field, "basis");
-  await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", basis: "анкета в салоне" });
+  // согласие: «да» — только с доказательством (31.10.2026); клиент не отказывался — устно можно; история сохраняется
+  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", basis: "анкета" })).j.field, "evidence");
+  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", evidence: ["oral"] })).j.field, "evidence", "только строкой");
+  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", evidence: "oral", basis: "сказал в салоне" })).status, 200);
   await post(st, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "denied", basis: "передумал" });
   let card = (await get(st, "/api/contacts/card?c=winchester&id=" + a.j.id)).j;
   assert.equal(card.contact.phone, "+7 700 000 09 21", "в карточке — полностью");
@@ -125,14 +126,22 @@ test("«стоп» только в прежнем хранилище KV виде
   net.reset();
   const d = d1With("preview"), s = mk({ ...ENV, DB: d.db, STAGE: "preview" }), own = await login(s, OWNER);
   const a = await post(own, "/api/contacts/add", { c: "winchester", phone: "+77000000931", name: "Данияр" });
-  await post(own, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", basis: "в переписке" });
+  await post(own, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", evidence: "oral", basis: "в салоне" });
   const seg = async () => (await get(own, "/api/contacts/segments?c=winchester")).j.segments.find(x => x.id === "all");
   assert.equal((await seg()).ready, 1);
   await s.kv.api.put("optout:winchester:77000000931", String(Date.now()));
   assert.equal((await seg()).ready, 0, "«стоп» в KV — нельзя (запрещено, если запрещено хоть где-то)");
   let card = (await get(own, "/api/contacts/card?c=winchester&id=" + a.j.id)).j;
   assert.equal(card.restrictions[0].id, 0); assert.match(card.restrictions[0].reason, /прежнем хранилище/);
-  assert.equal((await post(own, "/api/contacts/lift", { c: "winchester", id: a.j.id, rid: 0, reason: "написал «старт»" })).status, 200);
+  assert.equal(card.restrictions[0].byClient, true); assert.equal(card.restrictions[0].canLift, false, "«стоп» клиента — снять нельзя без нового согласия");
+  assert.equal(card.consentRules.oralAllowed, false);
+  // отказ клиента не обходится: ни снятием, ни устным «да»; письменное согласие после отказа — можно, и тогда снять
+  const lift0 = await post(own, "/api/contacts/lift", { c: "winchester", id: a.j.id, rid: 0, reason: "написал «старт»" });
+  assert.equal(lift0.status, 409); assert.match(lift0.j.error, /новое подтверждённое согласие|нового подтверждённого согласия/);
+  assert.equal((await post(own, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", evidence: "oral", basis: "в салоне" })).status, 409);
+  const today = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10);
+  assert.equal((await post(own, "/api/contacts/consent", { c: "winchester", id: a.j.id, purpose: "marketing", state: "granted", evidence: "document", evidenceRef: "анкета №7", givenAt: today })).status, 200);
+  assert.equal((await post(own, "/api/contacts/lift", { c: "winchester", id: a.j.id, rid: 0, reason: "подписал анкету №7" })).status, 200);
   assert.equal(s.kv.mem.get("optout:winchester:77000000931"), undefined);
   card = (await get(own, "/api/contacts/card?c=winchester&id=" + a.j.id)).j;
   assert.equal(card.restrictions.length, 1); assert.equal(card.restrictions[0].source, "kv_migration"); assert.equal(card.restrictions[0].active, false);
@@ -156,13 +165,14 @@ test("импорт: CSV с дублями и неверными номерами
   assert.ok(pv.j.rows.every(r => !/7000000094/.test(r.phone)), "в предпросмотре — маской");
   assert.equal(d.raw.prepare("select count(*) n from contacts").get().n, 2, "предпросмотр ничего не добавил");
   const ok = await post(st, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id, consentBasis: "анкета в салоне, октябрь 2026" });
-  assert.deepEqual(ok.j, { ok: true, created: 1, updated: 1, consents: 2 });
+  assert.deepEqual(ok.j, { ok: true, created: 1, updated: 1, consents: 2, consentsUnconfirmed: 1, consentsSkipped: 0 });
   assert.equal((await post(st, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id })).status, 409, "второе «Загрузить» — ничего");
   assert.equal(d.raw.prepare("select count(*) n from contacts").get().n, 3);
   assert.equal(d.raw.prepare("select name from contacts where phone = '77000000941'").get().name, "Нурлан");
   assert.equal(d.raw.prepare("select count(*) n from restrictions where lifted_at is null").get().n, 1, "запрет остался");
   assert.equal(d.raw.prepare("select count(*) n from import_rows").get().n, 0, "строки предпросмотра удалены");
-  assert.deepEqual(d.raw.prepare("select state, basis from consents order by id").all().map(x => x.state + ":" + x.basis), ["granted:анкета в салоне, октябрь 2026", "denied:анкета в салоне, октябрь 2026"]);
+  assert.deepEqual(d.raw.prepare("select state, basis, confirmed, evidence from consents order by id").all().map(x => `${x.state}:${x.confirmed}:${x.evidence}:${x.basis}`),
+    ["granted:0:import:анкета в салоне, октябрь 2026", "denied:1:import:анкета в салоне, октябрь 2026"], "«да» из файла — не подтверждено, «нет» — уважаем");
   // без основания согласия не ставятся
   const pv2 = await upload(st, "winchester", "ещё.csv", new TextEncoder().encode("Телефон;Согласие\n+77000000944;да\n"));
   assert.equal((await post(st, "/api/contacts/import/confirm", { c: "winchester", id: pv2.j.id })).j.consents, 0);

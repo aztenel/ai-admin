@@ -12,7 +12,10 @@ export const GAP_MS = MARKETING_GAP_DAYS * 86400e3;
 
 // можно писать рекламу: нет запрета и решения не ждёт, нет будущей записи, подтверждённое согласие (без него — нельзя, решение
 // владельца 31.10.2026), не был последние 14 дней, рекламы не было 30 дней
-export const READY = `blocked = 0 and review = 0 and booked = 0 and consent = 'granted' and (d is null or d >= ${QUIET_DAYS}) and recent = 0`;
+// (с 31.10.2026: согласие — только подтверждённое; пауза после отменённой записи — тоже «нельзя»)
+export const READY = `blocked = 0 and review = 0 and booked = 0 and cooled = 0 and consent = 'granted' and cconf = 1 and (d is null or d >= ${QUIET_DAYS}) and recent = 0`;
+/** Пауза рекламы после отменённой или пропавшей записи — дней (решение владельца 31.10.2026: исчезнувшая запись не возвращает в рекламу сразу). */
+export const COOL_DAYS = 14;
 
 export const SEGMENTS = /** @type {{ id: string, label: string, rule: string, where: string }[]} */ ([
   { id: "all", label: "Все", rule: "все контакты компании", where: "1 = 1" },
@@ -23,7 +26,7 @@ export const SEGMENTS = /** @type {{ id: string, label: string, rule: string, wh
   { id: "novye", label: "Новые", rule: "один визит, за последние 90 дней", where: "visits = 1 and d <= 90" },
   { id: "postoyannye", label: "Постоянные", rule: "3 и больше визитов за 90 дней", where: "v90 >= 3" },
   { id: "zapis", label: "Есть запись", rule: "ближайшая запись впереди", where: "booked = 1" },
-  { id: "bez", label: "Без визитов", rule: "добавлены вручную или из файла, визитов нет", where: "visits = 0" },
+  { id: "bez", label: "Без визитов", rule: "добавлены вручную или из файла, визитов нет ни в журнале, ни в справочнике Altegio", where: "visits = 0 and coalesce(altv, 0) = 0 and lastv is null" },
   { id: "stop", label: "Просили не писать", rule: "действующий запрет", where: "blocked = 1" },
   { id: "review", label: "Ждут решения", rule: "неоднозначный «стоп»", where: "review = 1" }
 ]);
@@ -46,7 +49,9 @@ export function marketWhy(k) {
   else if (+k.blocked) out.push("просил не писать рекламу («стоп»)");
   if (+k.review) out.push("неоднозначный «стоп» — ждёт решения");
   if (k.consent !== "granted") out.push(k.consent === "denied" ? "отказался от рассылок" : "нет подтверждённого согласия на рассылки");
+  else if (!+k.cconf) out.push("согласие не подтверждено (из файла или Altegio) — подтвердите в карточке");
   if (+k.booked) out.push("уже записан");
+  if (+k.cooled) out.push(`отменил запись — пауза до ${new Date(+k.cool_until + 5 * 3600e3).toISOString().slice(0, 10).split("-").reverse().join(".")}`);
   if (k.d != null && +k.d < QUIET_DAYS) out.push(`был ${+k.d} дн. назад — меньше ${QUIET_DAYS}`);
   if (+k.recent) out.push(`реклама уже была за последние ${MARKETING_GAP_DAYS} дней`);
   return out;

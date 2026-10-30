@@ -53,12 +53,50 @@ export async function blocksLeft(db, ws, contactId) {
   return +((await db.prepare("select count(*) n from restrictions where ws = ? and contact_id = ? and lifted_at is null and needs_review = 0 and kind in ('marketing_optout', 'full_block')").bind(ws, contactId).first("n")) || 0);
 }
 
-/** Согласие — новая строка истории. @param {any} db @param {string} ws @param {{ contactId: string, purpose: string, state: string, basis: string, source: string, actor: string, at: number }} x */
+/**
+ * Согласие — новая строка истории. confirmed — подтверждено ли (реклама — только по подтверждённому «да»), evidence — чем
+ * (chat, document, oral, import, altegio, client_stop), evidenceRef — что именно, givenAt — когда клиент согласился или отказался.
+ * @param {any} db @param {string} ws
+ * @param {{ contactId: string, purpose: string, state: string, basis: string, source: string, actor: string, at: number, evidence?: string|null, evidenceRef?: string|null, confirmed?: boolean, givenAt?: number|null }} x
+ */
 export async function consentAdd(db, ws, x) {
   await db.batch([
-    db.prepare("insert into consents (ws, contact_id, purpose, state, basis, source, actor, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)").bind(ws, x.contactId, x.purpose, x.state, x.basis.slice(0, 200), x.source, x.actor, x.at),
-    db.prepare("insert into events (ws, event_key, kind, contact_id, actor, details, at) values (?, ?, 'consent', ?, ?, ?, ?) on conflict do nothing").bind(ws, `consent:${x.contactId}:${x.purpose}:${x.at}`, x.contactId, x.actor, JSON.stringify({ purpose: x.purpose, state: x.state, basis: x.basis.slice(0, 120) }), x.at)
+    db.prepare("insert into consents (ws, contact_id, purpose, state, basis, source, actor, created_at, evidence, evidence_ref, confirmed, given_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(ws, x.contactId, x.purpose, x.state, x.basis.slice(0, 200), x.source, x.actor, x.at, x.evidence || null, x.evidenceRef ? x.evidenceRef.slice(0, 200) : null, x.confirmed ? 1 : 0, x.givenAt ?? null),
+    db.prepare("insert into events (ws, event_key, kind, contact_id, actor, details, at) values (?, ?, 'consent', ?, ?, ?, ?) on conflict do nothing").bind(ws, `consent:${x.contactId}:${x.purpose}:${x.at}`, x.contactId, x.actor,
+      JSON.stringify({ purpose: x.purpose, state: x.state, basis: x.basis.slice(0, 120), evidence: x.evidence || null, confirmed: !!x.confirmed }), x.at)
   ]);
+}
+
+// источники запретов, которые поставил сам клиент («стоп», кнопка и отказ Meta, перенос его «стопа» из KV): снять их можно только после
+// его нового подтверждённого согласия (решение владельца 31.10.2026). Остальные (поставил человек, пауза после отмены) — технические
+export const CLIENT_SOURCES = ["chat_stop", "ga_journal", "meta_button", "meta_131050", "kv_migration", "kv", "kv_fallback"];
+const CLIENT_IN = CLIENT_SOURCES.map(x => `'${x}'`).join(", ");
+
+/** Когда клиент последний раз сам отказался (запрет от клиента — даже снятый — или отказ в согласии не из файла); null — никогда. @param {any} db @param {string} ws @param {string} contactId */
+export async function refusedAt(db, ws, contactId) {
+  const v = await db.prepare(`select max(t) t from (select max(created_at) t from restrictions where ws = ?1 and contact_id = ?2 and kind in ('marketing_optout', 'full_block') and needs_review = 0 and source in (${CLIENT_IN})
+    union all select max(coalesce(given_at, created_at)) from consents where ws = ?1 and contact_id = ?2 and purpose = 'marketing' and state = 'denied' and coalesce(evidence, '') <> 'import')`).bind(ws, contactId).first("t");
+  return v == null ? null : +v;
+}
+/** Номера, которые сами отказывались (импорт «да» им не записывается). @param {any} db @param {string} ws @param {string[]} phones */
+export async function refusedPhones(db, ws, phones) {
+  const out = new Set();
+  for (let i = 0; i < phones.length; i += 2000) {
+    const r = await db.prepare(`select c.phone from contacts c where c.ws = ?1 and c.phone in (select value from json_each(?2)) and (
+      exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.kind in ('marketing_optout', 'full_block') and r.needs_review = 0 and r.source in (${CLIENT_IN}))
+      or exists (select 1 from consents s where s.ws = c.ws and s.contact_id = c.id and s.purpose = 'marketing' and s.state = 'denied' and coalesce(s.evidence, '') <> 'import'))`).bind(ws, JSON.stringify(phones.slice(i, i + 2000))).all();
+    for (const x of r.results || []) out.add(String(x.phone));
+  }
+  return out;
+}
+/** Последнее согласие на маркетинг. @param {any} db @param {string} ws @param {string} contactId */
+export async function consentLast(db, ws, contactId) {
+  return await db.prepare("select * from consents where ws = ? and contact_id = ? and purpose = 'marketing' order by id desc limit 1").bind(ws, contactId).first();
+}
+/** Запрет по id (в компании и у контакта). @param {any} db @param {string} ws @param {string} contactId @param {number} rid */
+export async function restrictionGet(db, ws, contactId, rid) {
+  return await db.prepare("select * from restrictions where id = ? and ws = ? and contact_id = ?").bind(rid, ws, contactId).first();
 }
 
 /** Есть ли контакт в компании. @param {any} db @param {string} ws @param {string} id @returns {Promise<{ id: string, phone: string } | null>} */

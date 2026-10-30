@@ -17,7 +17,7 @@ import { gaCall } from "../integrations/greenapi/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { d1Ready } from "../../db/d1/status.js";
-import { contactFor, restrictionAdd, issueOpen, issueClose, issuesOpen, blocksLeft, legacyImport, blockedCount, auditAdd } from "../../db/d1/rights.js";
+import { contactFor, restrictionAdd, issueOpen, issueClose, issuesOpen, blocksLeft, legacyImport, blockedCount, auditAdd, consentAdd } from "../../db/d1/rights.js";
 import { contactsByPhones } from "../../db/d1/contacts.js";
 import { importsExpire } from "../../db/d1/imports.js";
 import { optoutGet, optoutPut, optoutDel, kvKeys, syncerrPut, syncerrDel, sweepGet, sweepPut } from "../../db/kv/optout.js";
@@ -46,7 +46,9 @@ async function d1Stop(env, x) {
   if (!db) return "fail";
   const ok = await tries(async () => {
     const id = await contactFor(db, x.ws, x.phone, newId(), x.at);
-    await restrictionAdd(db, x.ws, { contactId: id, kind: "marketing_optout", reason: x.kind === "review" ? `Неоднозначно: «${String(x.text || "").slice(0, 120)}»` : "STOP", source: x.source, actor: x.actor || "webhook", review: x.kind === "review", at: x.at, eventKey: x.eventKey || undefined });
+    const added = await restrictionAdd(db, x.ws, { contactId: id, kind: "marketing_optout", reason: x.kind === "review" ? `Неоднозначно: «${String(x.text || "").slice(0, 120)}»` : "STOP", source: x.source, actor: x.actor || "webhook", review: x.kind === "review", at: x.at, eventKey: x.eventKey || undefined });
+    // ясный «стоп» — это и отказ клиента от рассылок: запись в истории согласий (снять запрет потом — только с его новым подтверждённым «да»)
+    if (added && x.kind === "stop") await consentAdd(db, x.ws, { contactId: id, purpose: "marketing", state: "denied", basis: "клиент написал «стоп»", source: x.source, actor: x.actor || "webhook", at: x.at, evidence: "client_stop", evidenceRef: x.text ? `«${String(x.text).slice(0, 60)}»` : null, confirmed: true, givenAt: x.at });
   }, [300]);
   return ok ? "ok" : "fail";
 }

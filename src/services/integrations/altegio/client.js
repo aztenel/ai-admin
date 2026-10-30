@@ -22,9 +22,10 @@ export function altError(status, message, code) { return Object.assign(new Error
  * @param {string} path
  * @param {any} [body]
  * @param {any} [user]
+ * @param {boolean} [full] весь ответ ({ data, meta }) — число всего в meta.total_count (список клиентов)
  * @returns {Promise<any>}
  */
-export async function altCall(env, method, path, body, user) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
+export async function altCall(env, method, path, body, user, full = false) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
   if (!env.ALTEGIO_PARTNER) throw altError(0, "не задан ключ ALTEGIO_PARTNER");
   for (let attempt = 0; ; attempt++) {
     const ac = new AbortController();
@@ -53,6 +54,6 @@ export async function altCall(env, method, path, body, user) { // user — кл�
       if (!er || typeof er !== "object") er = {};
       throw altError(r.status, clean(er.message || m.message || "", 200) || ("Altegio " + r.status), er.code || m.code);
     }
-    return j ? j.data : null;
+    return full ? (j || {}) : j ? j.data : null;
   }
 }

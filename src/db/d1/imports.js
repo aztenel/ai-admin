@@ -36,7 +36,7 @@ export async function importDiscard(db, ws, id, at) {
  * Подтвердить импорт. rows: [{ p, n, s, c }] — новые и обновлённые; consent: { basis } — записать согласия из файла (только с основанием).
  * → { ok: false } если импорт уже подтверждён или отменён.
  * @param {any} db @param {string} ws @param {string} id
- * @param {{ fresh: any[], update: any[], consents: any[], basis: string, actor: string, at: number }} x
+ * @param {{ fresh: any[], update: any[], consents: any[], basis: string, ref: string, actor: string, at: number }} x
  */
 export async function importConfirm(db, ws, id, x) {
   const mine = "exists (select 1 from imports where id = ?9 and state = 'confirmed' and confirmed_at = ?8)";
@@ -48,8 +48,11 @@ export async function importConfirm(db, ws, id, x) {
     from json_each(?2) j where contacts.ws = ?1 and contacts.phone = j.value ->> '$.p' and ${mine}`).bind(ws, JSON.stringify(part), null, null, null, null, null, x.at, id));
   for (const part of chunks([...x.fresh, ...x.update], 1000)) list.push(db.prepare(`insert into contact_sources (contact_id, ws, source, external_id, import_id, first_seen, last_seen)
     select c.id, ?1, 'import', '', ?9, ?8, ?8 from json_each(?2) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where ${mine} on conflict do nothing`).bind(ws, JSON.stringify(part), null, null, null, null, null, x.at, id));
-  for (const part of chunks(x.consents, 1000)) list.push(db.prepare(`insert into consents (ws, contact_id, purpose, state, basis, source, actor, created_at)
-    select ?1, c.id, 'marketing', j.value ->> '$.c', ?3, 'import', ?4, ?8 from json_each(?2) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where ${mine}`).bind(ws, JSON.stringify(part), x.basis.slice(0, 200), x.actor, null, null, null, x.at, id));
+  // согласие из файла — НЕ подтверждено (одного текста основания мало, решение владельца 31.10.2026): реклама ему не уйдёт, пока
+  // согласие не подтвердят в карточке. Отказ из файла — подтверждён (отказ уважаем всегда)
+  for (const part of chunks(x.consents, 1000)) list.push(db.prepare(`insert into consents (ws, contact_id, purpose, state, basis, source, actor, created_at, evidence, evidence_ref, confirmed, given_at)
+    select ?1, c.id, 'marketing', j.value ->> '$.c', ?3, 'import', ?4, ?8, 'import', ?5, case when (j.value ->> '$.c') = 'denied' then 1 else 0 end, null
+    from json_each(?2) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where ${mine}`).bind(ws, JSON.stringify(part), x.basis.slice(0, 200), x.actor, x.ref.slice(0, 200), null, null, x.at, id));
   list.push(db.prepare(`insert into events (ws, event_key, kind, actor, details, at) select ?1, 'import:' || ?9, 'import', ?2, ?3, ?8 where ${mine} on conflict do nothing`)
     .bind(ws, x.actor, JSON.stringify({ new: x.fresh.length, updated: x.update.length, consents: x.consents.length }), null, null, null, null, x.at, id));
   list.push(db.prepare(`insert into audit (ws, actor, action, target, details, at) select ?1, ?2, 'import_confirm', ?9, ?3, ?8 where ${mine}`)
