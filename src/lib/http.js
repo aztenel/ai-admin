@@ -34,3 +34,27 @@ export function withCors(res, origin, preflight = false) {
   if (preflight) { h.set("access-control-allow-methods", "GET, POST, OPTIONS"); h.set("access-control-allow-headers", "content-type"); h.set("access-control-max-age", "600"); }
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
+
+/**
+ * Тело запроса байтами, но не больше max: читаем поток и обрываем на пределе (Content-Length может не прийти или солгать).
+ * null — больше предела.
+ * @param {Request} request @param {number} max @returns {Promise<Uint8Array | null>}
+ */
+export async function readCapped(request, max) {
+  const len = request.headers.get("content-length");
+  if (len !== null && !(+len <= max)) return null;
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await reader.cancel(); } catch (e) {} return null; }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { all.set(p, o); o += p.byteLength; }
+  return all;
+}

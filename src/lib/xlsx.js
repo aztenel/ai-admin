@@ -3,7 +3,7 @@
 // DecompressionStream («deflate-raw» есть и в Worker, и в Node) только общие строки и первый лист. Формулы, даты и стили не нужны —
 // берём текст ячеек. Старый .xls (двоичный) не читаем: просим сохранить как .xlsx или .csv.
 
-const MAX_UNZIP = 30 * 1024 * 1024; // распакованный лист больше 30 МБ — не читаем (защита от «zip-бомбы»)
+const MAX_UNZIP = 20 * 1024 * 1024; // всё распакованное из одного файла — не больше 20 МБ на все части вместе (защита от «zip-бомбы»)
 
 /** @param {Uint8Array} b @param {number} i */
 const u16 = (b, i) => b[i] | (b[i + 1] << 8);
@@ -29,13 +29,13 @@ function zipIndex(b) {
   return out;
 }
 
-/** @param {Uint8Array} b @param {{ method: number, comp: number, size: number, local: number }} f */
-async function unzip(b, f) {
-  if (f.size > MAX_UNZIP) throw new Error("too big");
+/** budget.left — сколько байт ещё можно распаковать из этого архива (общий предел на все части). @param {Uint8Array} b @param {{ method: number, comp: number, size: number, local: number }} f @param {{ left: number }} budget */
+async function unzip(b, f, budget) {
+  if (f.size > budget.left) throw new Error("too big");
   const l = f.local;
   if (u32(b, l) !== 0x04034b50) throw new Error("bad zip");
   const start = l + 30 + u16(b, l + 26) + u16(b, l + 28), data = b.subarray(start, start + f.comp);
-  if (f.method === 0) return new TextDecoder().decode(data);
+  if (f.method === 0) { budget.left -= data.length; if (budget.left < 0) throw new Error("too big"); return new TextDecoder().decode(data); }
   if (f.method !== 8) throw new Error("zip method");
   const reader = new Blob([/** @type {any} */ (data)]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
   const parts = [];
@@ -43,8 +43,8 @@ async function unzip(b, f) {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    total += value.length;
-    if (total > MAX_UNZIP) { try { await reader.cancel(); } catch (e) {} throw new Error("too big"); }
+    total += value.length; budget.left -= value.length;
+    if (budget.left < 0) { try { await reader.cancel(); } catch (e) {} throw new Error("too big"); }
     parts.push(value);
   }
   const all = new Uint8Array(total);
@@ -70,15 +70,19 @@ export const isZip = b => b.length > 4 && b[0] === 0x50 && b[1] === 0x4b && b[2]
  * @returns {Promise<string[][]>}
  */
 export async function xlsxRows(b, max = 20000) {
-  const z = zipIndex(b);
-  const read = async (/** @type {string} */ n) => { const f = z.get(n); return f ? unzip(b, f) : null; };
+  const z = zipIndex(b), budget = { left: MAX_UNZIP };
+  const read = async (/** @type {string} */ n) => { const f = z.get(n); return f ? unzip(b, f, budget) : null; };
   const ssXml = await read("xl/sharedStrings.xml");
   const shared = ssXml ? [...ssXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => [...m[1].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map(t => xmlText(t[1])).join("")) : [];
   // первый лист — по порядку в книге (workbook.xml → связи), иначе sheet1.xml
   let sheet = "";
   const wb = await read("xl/workbook.xml"), rels = await read("xl/_rels/workbook.xml.rels");
   const rid = wb && (/<sheet\b[^>]*\br:id="([^"]+)"/.exec(wb) || [])[1];
-  if (rid && rels) { const t = (new RegExp(`<Relationship\\b[^>]*Id="${rid}"[^>]*Target="([^"]+)"`).exec(rels) || new RegExp(`<Relationship\\b[^>]*Target="([^"]+)"[^>]*Id="${rid}"`).exec(rels) || [])[1]; if (t) sheet = t.startsWith("/") ? t.slice(1) : "xl/" + t.replace(/^\.\//, ""); }
+  // связи — постоянным выражением и сравнением строк: id из файла в RegExp не подставляем (находка проверки безопасности 31.10.2026)
+  if (rid && rels) for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = (/\bId="([^"]*)"/.exec(m[0]) || [])[1], t = (/\bTarget="([^"]*)"/.exec(m[0]) || [])[1];
+    if (id === rid && t) { sheet = t.startsWith("/") ? t.slice(1) : "xl/" + t.replace(/^\.\//, ""); break; }
+  }
   if (!z.has(sheet)) sheet = [...z.keys()].filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort((a, c) => +(/\d+/.exec(a) || [0])[0] - +(/\d+/.exec(c) || [0])[0])[0] || "";
   const xml = sheet ? await read(sheet) : null;
   if (!xml) throw new Error("no sheet");

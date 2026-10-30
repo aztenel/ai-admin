@@ -109,7 +109,11 @@ test("неоднозначный «стоп»: маркетинг закрыт �
   const card = await contactsCard(s.env, W, Date.now(), id);
   assert.ok(card.restrictions[0].review && card.canMarket.reasons.some(x => /ждёт решения/.test(x)));
   assert.equal((await contactsSegments(s.env, W, Date.now())).segments.find(x => x.id === "review").count, 1);
-  await contactsReview(s.env, W, Date.now(), { id, rid: r[0].id, decision: "keep" }, "staff");
+  // сотрудник не может снять запрет — ни словом, ни подменой типа (["lift"] через String() был бы «lift»)
+  await assert.rejects(contactsReview(s.env, W, Date.now(), { id, rid: r[0].id, decision: "lift", reason: "просто так" }, "staff", false), e => e.code === "forbidden");
+  await assert.rejects(contactsReview(s.env, W, Date.now(), { id, rid: r[0].id, decision: ["lift"], reason: "просто так" }, "staff", false), e => e.code === "input");
+  assert.equal(restr(d, P1)[0].lifted_at, null, "запрет на месте");
+  await contactsReview(s.env, W, Date.now(), { id, rid: r[0].id, decision: "keep" }, "staff", false);
   assert.equal(restr(d, P1)[0].needs_review, 0);
   assert.ok(s.kv.mem.get(`optout:winchester:${P1}`), "подтверждённый запрет — и для бота");
   // другой: неоднозначный, потом ясный «стоп» — пометка снимается, строка одна

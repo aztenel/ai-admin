@@ -177,9 +177,14 @@ export async function contactsRestrict(env, c, now, b, actor) {
   return { ok: true };
 }
 
-/** Снять запрет (только владелец — проверяет контроллер; причина обязательна). rid 0 — «стоп» из KV: сначала переносится в D1. @param {Env} env @param {Client} c @param {number} now @param {any} b @param {string} actor */
-export async function contactsLift(env, c, now, b, actor) {
-  const reason = String(b.reason || "").replace(/\s+/g, " ").trim();
+/**
+ * Снять запрет (только владелец — проверяется здесь, а не только в контроллере; причина обязательна). rid 0 — «стоп» из KV:
+ * сначала переносится в D1.
+ * @param {Env} env @param {Client} c @param {number} now @param {any} b @param {string} actor @param {boolean} owner
+ */
+export async function contactsLift(env, c, now, b, actor, owner) {
+  if (!owner) throw fail("forbidden", "Снять запрет может только владелец.");
+  const reason = typeof b.reason === "string" ? b.reason.replace(/\s+/g, " ").trim() : "";
   if (reason.length < 3) throw fail("input", "Укажите причину: почему снова можно писать.", "reason");
   const db = await dbOf(env, now), x = await contactOne(db, c.id, String(b.id || ""));
   if (!x) throw fail("missing", "Клиент не найден.");
@@ -191,11 +196,15 @@ export async function contactsLift(env, c, now, b, actor) {
   return { ok: true };
 }
 
-/** Решение по неоднозначному «стопу»: keep — оставить запрет рекламы, all — закрыть всё, lift — снять (владелец). @param {Env} env @param {Client} c @param {number} now @param {any} b @param {string} actor */
-export async function contactsReview(env, c, now, b, actor) {
-  const decision = String(b.decision || ""), rid = Math.round(+b.rid) || 0;
+/**
+ * Решение по неоднозначному «стопу»: keep — оставить запрет рекламы, all — закрыть всё, lift — снять (только владелец).
+ * Решение — только строкой: ["lift"] через String() стал бы «lift» в обход проверки прав (находка проверки безопасности 31.10.2026).
+ * @param {Env} env @param {Client} c @param {number} now @param {any} b @param {string} actor @param {boolean} owner
+ */
+export async function contactsReview(env, c, now, b, actor, owner) {
+  const decision = typeof b.decision === "string" ? b.decision : "", rid = Math.round(+b.rid) || 0;
   if (!["keep", "all", "lift"].includes(decision)) throw fail("input", "Неизвестное решение.", "decision");
-  if (decision === "lift") return contactsLift(env, c, now, b, actor);
+  if (decision === "lift") return contactsLift(env, c, now, b, actor, owner);
   const db = await dbOf(env, now), x = await contactOne(db, c.id, String(b.id || ""));
   if (!x) throw fail("missing", "Клиент не найден.");
   if (!(await reviewKeep(db, c.id, x.id, rid, actor, now))) throw fail("missing", "Решение уже принято.");

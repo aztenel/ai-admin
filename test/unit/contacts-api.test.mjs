@@ -68,6 +68,11 @@ test("права: гость — 401, сотрудник — свои данны
   for (const [p, b] of [["/api/contacts/sync", { mode: "test" }], ["/api/contacts/probe", {}], ["/api/contacts/stops", { action: "sweep" }], ["/api/contacts/lift", { id: "x", rid: 1, reason: "просил" }]])
     assert.equal((await post(st, p, { c: "winchester", ...b })).status, 403, p);
   assert.equal((await post(own, "/api/contacts/sync", { c: "winchester", mode: "test" })).status, 200);
+  const one = (await get(st, "/api/contacts/list?c=winchester")).j.items[0];
+  await post(st, "/api/contacts/restrict", { c: "winchester", id: one.id, kind: "marketing_optout", reason: "проверка прав" });
+  const rid = (await get(st, "/api/contacts/card?c=winchester&id=" + one.id)).j.restrictions.find(x => x.active && x.source === "admin").id;
+  for (const decision of ["lift", ["lift"], { toString: "lift" }]) assert.equal((await post(st, "/api/contacts/review", { c: "winchester", id: one.id, rid, decision, reason: "обход" })).status, typeof decision === "string" ? 403 : 400, JSON.stringify(decision));
+  assert.ok((await get(st, "/api/contacts/card?c=winchester&id=" + one.id)).j.restrictions.find(x => x.id === rid).active, "сотрудник запрет не снял");
   const r = await st.go("/api/contacts/add", { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ c: "winchester", phone: "+77000000911" }) });
   assert.equal(r.status, 403, "чужой сайт");
   const p = mk(ENV), po = await login(p, OWNER);
@@ -183,4 +188,37 @@ test("импорт: .xlsx, CSV в Windows-1251, вставка из Excel; ст�
   assert.equal(xls.status, 400); assert.match(xls.j.error, /\.xlsx или \.csv/);
   const none = await post(own, "/api/contacts/import", { c: "winchester", text: "просто текст\nбез номеров" });
   assert.equal(none.status, 400); assert.match(none.j.error, /колонку с номерами/);
+});
+
+test("находки проверки безопасности 31.10.2026: id из .xlsx не идёт в RegExp, общий предел распаковки, тело без Content-Length читается с пределом", { skip }, async () => {
+  // id связи с символами регулярного выражения — не ломает разбор, лист находится по равенству строк
+  const evil = xlsx([["Телефон"], [77000000961]]), z = Buffer.from(evil.toString("latin1").replace('r:id="rId1"', 'r:id="(a+)+$"').replace('Id="rId1"', 'Id="(a+)+$"'), "latin1");
+  assert.deepEqual(await xlsxRows(new Uint8Array(z)), [["Телефон"], ["77000000961"]]);
+  // «zip-бомба» из двух частей по 12 МБ: каждая меньше прежнего предела, вместе — больше общего
+  const big = "<sst>" + "<si><t>a</t></si>".repeat(12 * 1024 * 1024 / 17) + "</sst>";
+  const bomb = xlsx([["Телефон"], [77000000962]]).toString("latin1");
+  const parts = [], central = []; let off = 0;
+  for (const [name, text] of [["xl/sharedStrings.xml", big], ["xl/worksheets/sheet1.xml", "<worksheet><sheetData>" + "<row></row>".repeat(12 * 1024 * 1024 / 11) + "</sheetData></worksheet>"]]) {
+    const raw = Buffer.from(text), data = deflateRawSync(raw), nm = Buffer.from(name), h = Buffer.alloc(30), c = Buffer.alloc(46);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(8, 8); h.writeUInt32LE(data.length, 18); h.writeUInt32LE(raw.length, 22); h.writeUInt16LE(nm.length, 26);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(8, 10); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(nm.length, 28); c.writeUInt32LE(off, 42);
+    parts.push(h, nm, data); central.push(c, nm); off += 30 + nm.length + data.length;
+  }
+  const cd = Buffer.concat(central), e = Buffer.alloc(22);
+  e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(2, 8); e.writeUInt16LE(2, 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+  await assert.rejects(xlsxRows(new Uint8Array(Buffer.concat([...parts, cd, e]))), /too big/);
+  assert.ok(bomb.length > 0);
+  // тело без Content-Length: больше предела — 413, а не чтение целиком
+  net.reset();
+  const s = mk({ ...ENV, DB: d1With("preview").db, STAGE: "preview" }), own = await login(s, OWNER);
+  const chunk = new Uint8Array(1024 * 1024).fill(65);
+  let sent = 0;
+  const stream = new ReadableStream({ pull(ctl) { if (sent++ < 8) ctl.enqueue(chunk); else ctl.close(); } });
+  const r = await own.go("/api/contacts/import", { method: "POST", headers: { "content-type": "multipart/form-data; boundary=x" }, body: stream, duplex: "half" });
+  assert.equal(r.status, 413);
+  assert.ok(sent <= 7, "чтение оборвано на пределе: прочитано частей " + sent);
+  const big2 = await own.go("/api/contacts/add", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ c: "winchester", phone: "+77000000963", name: "x".repeat(70 * 1024) }) });
+  assert.equal(big2.status, 413, "JSON — не больше 64 КБ");
+  const arr = await own.go("/api/contacts/add", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify([{ c: "winchester" }]) });
+  assert.equal(arr.status, 403, "массив вместо объекта — нет компании");
 });
