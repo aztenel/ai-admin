@@ -9,7 +9,7 @@ import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { syncStep, syncDry } from "../../src/services/contacts/sync.js";
 import { altProbe } from "../../src/services/contacts/probe.js";
 import { altMs } from "../../src/services/contacts/normalize.js";
-import { contactsSegments, contactsList, contactsCard, contactsStatus, contactsConsent, contactsLift, contactsAdd, contactsRestrict, contactsImport, contactsImportConfirm } from "../../src/services/contacts/index.js";
+import { contactsSegments, contactsList, contactsCard, contactsStatus, contactsConsent, contactsLift, contactsAdd, contactsRestrict, contactsImport, contactsImportConfirm, optIn } from "../../src/services/contacts/index.js";
 
 const skip = sqliteOk ? false : "node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, NOW = Date.now(); // часы обвязки: 3 октября 2026, 12:00 по Астане
@@ -58,9 +58,11 @@ test("отказ клиента: «стоп» — это и отказ в сог
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "oral" }, "owner"), e => e.code === "consent");
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "chat" }, "owner"), e => e.code === "consent" && /не писал/.test(e.message));
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "document", evidenceRef: "анкета", givenAt: day(30) }, "owner"), e => e.code === "consent" && /раньше отказа/.test(e.message));
-  // обычное сообщение после «стопа» — не согласие (находка проверки безопасности 31.10.2026)
+  // обычное сообщение и отрицания после «стопа» — не согласие (находки проверки безопасности 31.10.2026)
   net.ai = ["Хорошо!"];
   await s.gaText("winchester", INST, "77000000911", "а на завтра есть время?", { idMessage: "R-1b" });
+  await s.gaText("winchester", INST, "77000000911", "не согласен", { idMessage: "R-1c" });
+  await s.gaText("winchester", INST, "77000000911", "не хочу получать рассылку", { idMessage: "R-1d" });
   assert.equal((await contactsCard(s.env, W, Date.now(), id)).consentRules.chatAvailable, false);
   await assert.rejects(contactsConsent(s.env, W, Date.now(), { id, purpose: "marketing", state: "granted", evidence: "chat" }, "owner"), e => e.code === "consent");
   // клиент сам написал «присылайте» — подтверждение в переписке
@@ -209,4 +211,9 @@ test("запрет поставил человек, потом клиент са
   const r = card.restrictions.find(y => y.active);
   assert.equal(r.source, "admin"); assert.equal(r.canLift, false, "клиент отказался позже — без его согласия не снять");
   await assert.rejects(contactsLift(s.env, W, Date.now(), { id: x.id, rid: r.id, reason: "подождали" }, "owner", true), e => e.code === "consent");
+});
+
+test("явное «да» клиента — только сообщение целиком без отрицаний (находка проверки безопасности 31.10.2026)", () => {
+  for (const t of ["да", "Да!", "согласен", "Я согласна, спасибо", "присылайте акции снова, пожалуйста", "Здравствуйте, можно писать", "старт", "иә", "хочу получать акции"]) assert.equal(optIn(t), true, t);
+  for (const t of ["не согласен", "не хочу получать рассылку", "согласен, но не присылайте", "нет", "да не надо", "а на завтра есть время?", "стоп", "присылайте, но не часто", "можно писать? нет, не надо", "согласен на стрижку завтра в 15:00"]) assert.equal(optIn(t), false, t);
 });
