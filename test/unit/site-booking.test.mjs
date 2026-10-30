@@ -74,7 +74,7 @@ test("каталог: свой сайт и источники, мастера, �
   const plain = await s.get("catalog", "", { origin: null });
   assert.equal(plain.status, 200); assert.equal(cors(plain), null);
   assert.equal(j.ok, true); assert.equal(j.mode, "dry");
-  assert.equal(j.company.name, "Winchester"); assert.equal(j.company.tel, "+77005050503"); assert.equal(j.company.wa, "77066940608"); assert.equal(j.company.hours, "ежедневно 10:00–21:00");
+  assert.equal(j.company.name, "Winchester"); assert.equal(j.company.tel, "+77005050503"); assert.equal(j.company.wa, "77005050503"); assert.equal(j.company.hours, "ежедневно 10:00–21:00");
   assert.equal(j.today, D0); assert.match(j.now, /^\d{2}:\d{2}$/); assert.equal(j.days, 120); assert.equal(j.step, 30); assert.equal(j.maxServices, 5);
   assert.match(j.ft, /^\d{13}\.[A-Za-z0-9_-]{22}$/);
   assert.deepEqual(j.staff.map(m => m.id), [W.TONI, W.AIDOS, W.AIDYN, W.ALISHER, W.RUSLAN]);

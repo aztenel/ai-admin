@@ -12,6 +12,9 @@ var CL=attr('data-client','winchester');
 var CSS=attr('data-css',((me&&me.src)||'').replace(/[^\/]*$/,'')+'booking.css');
 var MAP=attr('data-map','https://2gis.kz/astana/firm/70000001038239111');
 var PRIV=attr('data-privacy','privacy.html');
+// номер WhatsApp со страницы сайта важнее номера с сервера: 30.10.2026 кнопки вели на старый номер бота, а сервер
+// меняется только выкладкой — номер на странице владелец меняет сам, загрузкой сайта
+var PWA=attr('data-wa-num','').replace(/\D/g,'');
 var BASE=API+'/api/site/'+encodeURIComponent(CL)+'/';
 var SKEY='wbk:'+CL;
 var STEPS=['master','services','time','contacts'];
@@ -30,7 +33,8 @@ var LOST='Расписание отвечает слишком долго. За�
 var AGREE='Отметь согласие на обработку данных — без него записать не можем.';
 var NOAGREE='Поставь галочку согласия — без неё записать не можем.';
 
-var CO={name:'Winchester',phone:'+7 700 505 05 03',tel:'+77005050503',wa:'77066940608',address:''};
+var CO={name:'Winchester',phone:'+7 700 505 05 03',tel:'+77005050503',wa:'77005050503',address:''};
+if(PWA)CO.wa=PWA;
 var mq=W.matchMedia('(prefers-reduced-motion: reduce)');
 function calm(){return mq.matches;}
 function noop(){}
@@ -122,7 +126,7 @@ function setCat(c){
  c.services.forEach(function(s){S.sv[s.key]=s;});
  c.staff.forEach(function(m){S.st[m.id]=m;});
  S.pk=c.groups.length&&c.groups[0].keys.length?c.groups[0].keys[0]:c.services.length?c.services[0].key:'';
- if(c.company)for(var k in c.company)if(c.company[k])CO[k]=c.company[k];
+ if(c.company)for(var k in c.company)if(c.company[k]&&!(k==='wa'&&PWA))CO[k]=c.company[k];
  var n=c.notify;
  S.notes=NOTE.filter(function(o){return!n||!n.options||n.options.indexOf(o[0])>=0;});
  if(n&&n.def!=null&&S.notes.some(function(o){return o[0]===n.def;}))S.notify=n.def;
