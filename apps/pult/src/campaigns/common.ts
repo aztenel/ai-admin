@@ -41,7 +41,7 @@ export const HOURS_RANGE = { min: 8, max: 22 } as const;
 export const CHANNEL_LABEL: Record<CampaignChannel, string> = { main: "Основной номер", bot: "Номер бота" };
 export const CHANNEL_HINT: Record<CampaignChannel, string> = {
   main: "Шаблон Meta. Строка «СТОП» — в самом шаблоне.",
-  bot: "Обычное сообщение. Пауза 30–150 секунд между сообщениями, строку «СТОП» добавит бот.",
+  bot: "Обычное сообщение. Пауза 30–150 секунд между сообщениями, строку про «стоп» добавим сами.",
 };
 
 export type Tone = "ok" | "run" | "warn" | "critical" | "muted";
@@ -54,8 +54,8 @@ export const STATUS: Record<CampaignStatus, { label: string; tone: Tone }> = {
 };
 export const QUALITY: Record<NumberQuality, { label: string; tone: Tone }> = {
   green: { label: "высокое", tone: "ok" },
-  yellow: { label: "среднее — есть жалобы", tone: "warn" },
-  red: { label: "низкое — много жалоб", tone: "critical" },
+  yellow: { label: "среднее, есть жалобы", tone: "warn" },
+  red: { label: "низкое, много жалоб", tone: "critical" },
   unknown: { label: "неизвестно", tone: "muted" },
 };
 /** Почему человека нет в сегментах (CrmOverview.excluded). */
@@ -67,7 +67,7 @@ export const EXCLUDED: Record<keyof CrmOverview["excluded"], string> = {
   marketed: "уже писали рекламу за 30 дней",
 };
 /** Отметки визитов в журнале Altegio (CrmInfo.att). Что ставят администраторы Winchester — не проверено, поэтому показываем как есть. */
-export const ATTENDANCE: Record<string, string> = { "1": "пришёл", "-1": "не пришёл — не считается", "0": "без отметки", "2": "подтвердил запись", нет: "без отметки" };
+export const ATTENDANCE: Record<string, string> = { "1": "пришёл", "-1": "не пришёл, не считается", "0": "без отметки", "2": "подтвердил запись", нет: "без отметки" };
 
 // ---------- числа и деньги ----------
 const nf = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
@@ -79,7 +79,7 @@ export const costEstimate = (recipients: number) => recipients * MARKETING_PRICE
 /** «≈ 1 092 ₸ — оценка: 40 × 27,3 ₸. Точная цена — в кабинете Meta.» Номеру бота — бесплатно, но риск блокировки. */
 export function costText(channel: CampaignChannel, recipients: number): string {
   if (channel === "bot") return "Бесплатно, но обычный WhatsApp могут заблокировать за массовые сообщения.";
-  return `≈\u00a0${money(costEstimate(recipients))} — оценка: ${nf.format(recipients)} × ${nf.format(MARKETING_PRICE_KZT)} ₸. Точная цена — в кабинете Meta.`;
+  return `≈\u00a0${money(costEstimate(recipients))} . Оценка: ${nf.format(recipients)} × ${nf.format(MARKETING_PRICE_KZT)} ₸. Точная цена в кабинете Meta.`;
 }
 
 /** Предел в сутки по умолчанию: основной номер — предел Meta × 0,95 (или 240, если предел неизвестен); номер бота — 50. */

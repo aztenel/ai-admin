@@ -141,7 +141,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
       )}
       <Group
         title="Основной номер"
-        note={m.ready ? "Отсюда уходят маркетинговые рассылки — шаблонами Meta. Тем, кто ответил «стоп», рассылки не уходят." : undefined}
+        note={m.ready ? "Отсюда уходят рассылки шаблонами Meta. Тем, кто ответил «стоп», рассылки не уходят." : undefined}
       >
         <NumberHead
           icon={Smartphone}
@@ -153,7 +153,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
         {!m.ready ? (
           <p className="flex gap-2 py-3 text-ui text-critical pointer-coarse:text-base">
             <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
-            <span>{m.why || "Основной номер не подключён — маркетинговые рассылки появятся после подключения."}</span>
+            <span>{m.why || "Основной номер не подключён к рассылкам."}</span>
           </p>
         ) : (
           <dl className="grid grid-cols-3 divide-x divide-line">
@@ -166,7 +166,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
           <p className={cn("flex gap-2 py-3 text-ui pointer-coarse:text-base", m.quality === "red" ? "text-critical" : "text-fg")}>
             <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
             <span>
-              Качество {QUALITY[m.quality].label}. Пишите реже и только тем, кто ждёт ваших сообщений, — иначе Meta может ограничить номер.
+              Качество {QUALITY[m.quality].label}. Пишите реже и только тем, кто ждёт ваших сообщений, иначе Meta может ограничить номер.
             </span>
           </p>
         )}
@@ -186,7 +186,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
               <ul className="mt-1 space-y-0.5 text-sm text-fg-2">
                 {m.failedToday.codes.map((c) => (
                   <li key={String(c.code)}>
-                    <span className="tnum">{c.n}</span> — {c.hint || `код ${c.code}`}
+                    <span className="tnum">{c.n}</span>: {c.hint || `код ${c.code}`}
                   </li>
                 ))}
               </ul>
@@ -211,7 +211,7 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
   const b = ov.bot;
   if (!b)
     return (
-      <Group title="Номер бота">
+      <Group title="Второй WhatsApp">
         <NumberHead icon={Bot} phone="Не подключён" sub="Green-API · обычный WhatsApp" />
         <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Номера бота (Green-API) у компании нет. Напоминания и просьбу об отзыве бот шлёт с того номера, куда писал клиент.</p>
       </Group>
@@ -219,7 +219,7 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
   return (
     <>
       {b.hold && <HoldBox title="Сигнал от Green-API" lines={[b.hold]} foot="WhatsApp ограничил номер. Сигнал снимется сам через 14 дней." />}
-      <Group title="Номер бота" note="Маркетинговых рассылок с этого номера нет: массовые сообщения с обычного WhatsApp — главная причина блокировок.">
+      <Group title="Второй WhatsApp" note="Отсюда уходят напоминания и ответы клиентам.">
         <NumberHead
           icon={Bot}
           tone={b.ready ? "muted" : "critical"}

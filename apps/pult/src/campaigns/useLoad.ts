@@ -38,7 +38,7 @@ export function useLoad<T>(load: (src: DataSource) => Promise<T>, deps: readonly
     const my = ++seq.current;
     const src = store.source;
     if (!src) {
-      setSt({ loading: false, refreshing: false, error: "Пульт ещё загружается — попробуйте через секунду." });
+      setSt({ loading: false, refreshing: false, error: "Пульт ещё загружается. Попробуйте через секунду." });
       return;
     }
     setSt((s) => ({ ...s, refreshing: !s.loading }));

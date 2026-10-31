@@ -121,7 +121,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
             <DatabaseZap aria-hidden className="mt-0.5 size-4 shrink-0 text-fg-3" strokeWidth={2} />
             <span>
               Базу ещё не собирали.{" "}
-              {canRefresh ? "Нажмите «Обновить базу» — бот прочитает журнал Altegio за 90 дней." : "Бот соберёт её ночью сам, или владелец обновит её сейчас."}
+              {canRefresh ? "Нажмите «Обновить базу», и мы прочитаем журнал Altegio за 90 дней." : "Бот соберёт её ночью сам, или владелец обновит её сейчас."}
             </span>
           </p>
         )}
@@ -129,14 +129,14 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
         {d.why && has && <Notice>Обновить базу сейчас нельзя: {d.why}</Notice>}
         {info && info.masked > 0 && (
           <Notice>
-            Скрытых номеров: <span className="tnum">{nf.format(info.masked)}</span> — у сотрудника, чей ключ журнала у бота, в Altegio нет права видеть телефоны
+            Скрытых номеров: <span className="tnum">{nf.format(info.masked)}</span>: у сотрудника, чей ключ подключён к пульту, в Altegio нет права видеть телефоны
             клиентов. Этим клиентам рассылка не уйдёт.
           </Notice>
         )}
-        {info && info.cut && <Notice>Журнал прочитан не весь (слишком много записей) — числа могут быть меньше настоящих.</Notice>}
+        {info && info.cut && <Notice>Журнал прочитан не весь (слишком много записей), числа могут быть меньше настоящих.</Notice>}
         {info && info.bad > 0 && (
           <Notice tone="muted">
-            Неверных номеров: <span className="tnum">{nf.format(info.bad)}</span> — им не пишем.
+            Неверных номеров: <span className="tnum">{nf.format(info.bad)}</span>, им не пишем.
           </Notice>
         )}
         {d.error && (
@@ -153,7 +153,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
               {(Object.keys(EXCLUDED) as (keyof CrmOverview["excluded"])[]).map((k, i) => (
                 <span key={k}>
                   {i > 0 && " · "}
-                  {EXCLUDED[k]} — <span className="tnum">{nf.format(d.excluded[k] || 0)}</span>
+                  {EXCLUDED[k]}: <span className="tnum">{nf.format(d.excluded[k] || 0)}</span>
                 </span>
               ))}
             </p>
@@ -179,14 +179,14 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
       {has && (
         <section className="mb-6" aria-labelledby="crm-segs">
           <h3 id="crm-segs" className="mb-1.5 px-4 text-sm font-medium text-fg-3">
-            Сегменты — кому можно писать сейчас
+            Кому можно писать сейчас
           </h3>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
             {tiles.map((s) => (
               <Tile key={s.id} s={s} pora={s.id === "pora"} onOpen={() => setSeg(s)} />
             ))}
           </div>
-          <p className="mt-1.5 px-4 text-sm text-fg-3">Нажмите на сегмент — откроется список людей и «Создать рассылку по сегменту».</p>
+          <p className="mt-1.5 px-4 text-sm text-fg-3">Нажмите на сегмент, чтобы увидеть людей и создать рассылку.</p>
         </section>
       )}
 
@@ -262,7 +262,7 @@ function Marks({ info }: { info: NonNullable<CrmOverview["info"]> }) {
           Отметки визитов в Altegio:{" "}
           {keys.map((k, i) => (
             <span key={k}>
-              {i > 0 && " · "}«{k}» {ATTENDANCE[k] || "другая отметка"} — <span className="tnum">{nf.format(info.att[k] || 0)}</span>
+              {i > 0 && " · "}«{k}» {ATTENDANCE[k] || "другая отметка"}: <span className="tnum">{nf.format(info.att[k] || 0)}</span>
             </span>
           ))}
         </p>

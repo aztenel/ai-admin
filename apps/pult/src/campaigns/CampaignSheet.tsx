@@ -1,4 +1,4 @@
-// Одна рассылка: ход, почему стоит или чего ждёт, действия и «Не дошло — почему». Лист снизу на телефоне, панель справа на компьютере.
+// Одна рассылка: ход, почему стоит или чего ждёт, действия и «Почему не дошло». Лист снизу на телефоне, панель справа на компьютере.
 // Действия и подтверждения — как на старой странице /broadcast (её больше нет в пульте): «Запустить»/«Продолжить» — с числом получателей,
 // у шаблонов больше 100 получателей — второе подтверждение с оценкой суммы; сервер спросил про сигнал «остановиться» (409 confirm) —
 // вопрос сервера и тот же запрос с force — только владельцу: запуск при сигнале снимает сигнал для всего номера (сотруднику сервер
@@ -225,9 +225,16 @@ export function CampaignSheet({
               )}
 
               {isBot && !finished && (
-                <p className="text-sm text-fg-2">
-                  Это рассылка с номера бота. Запускать и продолжать такие рассылки в пульте нельзя: массовые сообщения с обычного WhatsApp — главная причина блокировок. Остановить или удалить — можно.
-                </p>
+                <div className="space-y-2 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+                  <p className="text-sm text-fg-2">
+                    {c.approvedAt ? `Одобрена${c.approvedBy ? ` (${c.approvedBy})` : ""}. ` : "Черновик. "}Запуск рассылок со второго номера пока выключен: его включает владелец отдельным решением.
+                  </p>
+                  {owner && c.status === "ready" && (
+                    <Button size="sm" variant={c.approvedAt ? "secondary" : "primary"} busy={busy === (c.approvedAt ? "unapprove" : "approve")} disabled={!!busy} onClick={() => void act(c.approvedAt ? "unapprove" : "approve")}>
+                      {c.approvedAt ? "Снять одобрение" : "Одобрить"}
+                    </Button>
+                  )}
+                </div>
               )}
 
               {(c.failed > 0 || (c.fails && c.fails.length > 0)) && (
@@ -237,7 +244,7 @@ export function CampaignSheet({
                     <ul className="space-y-1 text-ui pointer-coarse:text-base">
                       {c.fails.map((f) => (
                         <li key={String(f.code)}>
-                          <span className="tnum font-medium">{nf.format(f.n)}</span> — {f.hint || `ошибка ${f.code}`}
+                          <span className="tnum font-medium">{nf.format(f.n)}</span>: {f.hint || `ошибка ${f.code}`}
                         </li>
                       ))}
                     </ul>
@@ -256,7 +263,7 @@ export function CampaignSheet({
                     ) : (
                       <>
                         <Button variant="outline" icon={ListX} className="mt-2" busy={bad?.loading} onClick={() => void loadBad()}>
-                          Не дошло — почему
+                          Почему не дошло
                         </Button>
                         {bad?.error && <p className="mt-2 text-sm text-critical">{bad.error}</p>}
                       </>
@@ -268,7 +275,7 @@ export function CampaignSheet({
 
               {(c.message || c.text) && (
                 <section>
-                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона — его видят администратор и бот"}</h3>
+                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона"}</h3>
                   <p className="max-w-[90%] whitespace-pre-wrap break-words rounded-[1.125rem] rounded-tl-md bg-bubble-bot px-3 py-[0.4375rem] text-md md:text-base">{c.message || c.text}</p>
                 </section>
               )}
@@ -323,7 +330,7 @@ function Progress({ c }: { c: CampaignRow & Partial<CampaignDetail> }) {
     c.failed ? `не дошло ${nf.format(c.failed)}` : "",
     c.skipped ? `просили не писать ${nf.format(c.skipped)}` : "",
     c.excluded ? `уже записались или им писали ${nf.format(c.excluded)}` : "",
-    c.unsure ? `неизвестно, дошло ли (сбой), — до ${nf.format(c.unsure)}` : "",
+    c.unsure ? `неизвестно, дошло ли (сбой): до ${nf.format(c.unsure)}` : "",
   ].filter(Boolean);
   return (
     <section className="rounded-[0.875rem] bg-surface-2 px-4 py-3">
@@ -352,12 +359,12 @@ function Notes({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: numb
     if (c.retryAt)
       out.push(
         <p key="retry" className="text-ui pointer-coarse:text-base">
-          Временный отказ{c.retryWhy ? `: ${c.retryWhy}` : ""} — повторю в {timeHM(c.retryAt)}.
+          Временный отказ{c.retryWhy ? `: ${c.retryWhy}` : ""} Повторю в {timeHM(c.retryAt)}.
         </p>,
       );
     out.push(
       <p key="bg" className="text-sm text-fg-2">
-        Отправка идёт в фоне — {c.channel === "bot" ? "по одному сообщению раз в 1–3 минуты" : "по порции в минуту"}. Лист можно закрыть: итог придёт в Telegram.
+        Отправка идёт в фоне, {c.channel === "bot" ? "по одному сообщению раз в 1–3 минуты" : "порциями раз в минуту"}. Лист можно закрыть: итог придёт в Telegram.
         {c.lastSentAt ? ` Последняя отправка: ${shortDate(c.lastSentAt, now)}.` : ""}
       </p>,
     );

@@ -36,7 +36,7 @@ export default function Plan({ ws }: { ws: string }) {
   return (
     <>
       {cal.loading ? <PlanSkeleton /> : cal.data ? <CalendarGroup d={cal.data} now={now} /> : <Notice tone="critical" role="alert">Календарь не загрузился: {cal.error}</Notice>}
-      <Group title="Итоги" note="По отчётам о доставке, которые присылает Green-API. «Прочитано» — не меньше этого числа: у части клиентов отчёты о прочтении выключены.">
+      <Group title="Итоги" note="По отчётам о доставке, которые присылает Green-API. «Прочитано» не меньше этого числа: у части клиентов отчёты о прочтении выключены.">
         <Segmented<"7" | "30">
           label="Период итогов"
           value={String(days) as "7" | "30"}
@@ -142,7 +142,7 @@ function CalendarGroup({ d, now }: { d: CampaignCalendar; now: number }) {
 function DayRow({ x, today, now, auto }: { x: CalendarDay; today: string; now: number; auto: boolean }) {
   const s = x.service, m = x.marketing;
   const kinds = (Object.entries(s.kinds) as [ServiceKind, number][]).filter(([, n]) => n > 0).map(([k, n]) => `${KIND[k] || k} ${nf.format(n)}`);
-  const why = m ? Object.entries(m.excluded).filter(([, n]) => n > 0).map(([k, n]) => `${EXCLUDED[k as keyof typeof EXCLUDED] || k} — ${nf.format(n)}`) : [];
+  const why = m ? Object.entries(m.excluded).filter(([, n]) => n > 0).map(([k, n]) => `${EXCLUDED[k as keyof typeof EXCLUDED] || k}: ${nf.format(n)}`) : [];
   const quiet = !s.total && !(m && m.candidates);
   // пустой день — одной строкой: 14 дней по три строки на телефоне — длинный экран без смысла
   if (quiet)

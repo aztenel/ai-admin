@@ -192,7 +192,7 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
               ) : !list || list.rows.length === 0 ? (
                 <p className="flex items-center gap-2.5 py-4 text-ui text-fg-2 pointer-coarse:text-base">
                   <UsersRound aria-hidden className="size-5 shrink-0 text-fg-3" strokeWidth={1.75} />
-                  {filtered ? "Никого с таким отбором — измените дни или мастера." : "Сейчас в этом сегменте некому писать."}
+                  {filtered ? "Никого с таким отбором. Измените дни или мастера." : "Сейчас в этом сегменте некому писать."}
                 </p>
               ) : (
                 <ul aria-label="Клиенты сегмента" aria-busy={busy || undefined} className={cn("divide-y divide-line transition-opacity", busy && "opacity-60")}>
@@ -219,7 +219,7 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
               )}
             </div>
           )}
-          <p className="px-4 text-sm text-fg-3">Номера видны частично — полностью их знает только сервер, он и отправляет рассылку.</p>
+          <p className="px-4 text-sm text-fg-3">Номера видны частично. Полностью их видит только сервер, он и отправляет рассылку.</p>
         </div>
       </div>
 
@@ -233,7 +233,7 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
                 ? ""
                 : total > 0
                   ? `Шаблон Meta с основного номера получат ${nf.format(total)} ${plural(total, PEOPLE)} · оценка ≈\u00a0${money(costEstimate(total))}`
-                  : "Некому писать — рассылку не создать."}
+                  : "Некому писать, рассылку не создать."}
         </p>
         <Button variant="primary" size="lg" icon={Megaphone} className="mb-1 w-full" disabled={!canCreate} onClick={() => onCreate(applied)}>
           Создать рассылку по сегменту
