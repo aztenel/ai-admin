@@ -63,7 +63,7 @@ test("проверка рассылки из сегмента: получате�
   // второй номер (ТЗ v3.0): черновик по сегменту — обычным текстом, без шаблона Meta; текст каждому собирает сервер
   const g = await (await own.post("/api/bc/check", { c: "winchester", ch: "ga", name: "Пора", text: "Здравствуйте, {имя}! Прошло {дней} дней.", segment: "pora", cap: 50, from: 10, to: 20, consent: true })).json();
   assert.equal(g.ok, true, JSON.stringify(g)); assert.equal(g.valid, 3); assert.equal(g.text, "Здравствуйте, {{client.first_name}}! Прошло {{visit.days_since}} дней.\n\nЧтобы не получать сообщения, ответьте СТОП");
-  assert.ok(g.samples.some(x => /^Здравствуйте, Данияр! Прошло 22 дней\./.test(x.text)) && g.samples.some(x => /^Здравствуйте! Прошло 33 дней\./.test(x.text)), JSON.stringify(g.samples));
+  assert.ok(g.samples.some(x => /^Здравствуйте, Данияр! Прошло 22 дня\./.test(x.text)) && g.samples.some(x => /^Здравствуйте! Прошло 33 дня\./.test(x.text)), JSON.stringify(g.samples));
   assert.ok(g.samples.every(x => /^\+7 700 \*\*\* \*\* \d\d$/.test(x.to)) && !JSON.stringify(g).includes(dg(101)), "номера маской");
   assert.ok(g.excluded.some(x => x.code === "stop" && x.n === 1), JSON.stringify(g.excluded));
   const u = await (await own.post("/api/bc/check", { ...FORM, segment: "nope" })).json();

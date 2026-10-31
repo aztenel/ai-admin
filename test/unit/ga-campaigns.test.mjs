@@ -49,7 +49,7 @@ test("проверка черновика со второго номера: те
   assert.equal(d.tplId, "M01"); assert.equal(d.valid, 3); assert.ok(!/\{\{1\}\}|шаблон Meta/.test(t), "без шаблонов Meta");
   assert.ok(d.samples.some(x => x.to === "+7 700 *** ** 01" && x.text.startsWith("Здравствуйте, Арман! С последней стрижки прошло 25 дней.")), JSON.stringify(d.samples));
   assert.ok(d.samples.some(x => x.text.startsWith("Здравствуйте, Арман! С последней стрижки прошло 30 дней.")), "«АРМАН ЕРЛАНОВИЧ» → «Арман»");
-  assert.ok(d.samples.some(x => x.text.startsWith("Здравствуйте! С последней стрижки прошло 33 дней.")), "без имени — без обращения");
+  assert.ok(d.samples.some(x => x.text.startsWith("Здравствуйте! С последней стрижки прошло 33 дня.")), "без имени — без обращения");
   assert.ok(d.samples.every(x => !/[{}[\]]/.test(x.text) && /https:\/\/winchester\.kz/.test(x.text) && /напишите «стоп»\.$/.test(x.text)), JSON.stringify(d.samples));
   assert.deepEqual(d.excluded, [{ code: "stop", why: "просили не писать", n: 1 }]);
   assert.ok(![601, 602, 603, 604].some(i => t.includes(dg(i))), "полных номеров базы нет");

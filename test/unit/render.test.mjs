@@ -46,6 +46,12 @@ const CASES = [
   [`Прошло {{visit.days_since}} дней.`, full({ d: null }), "Прошло … дней.", true, ["visit.days_since"]],
   [`Прошло {{visit.days_since}} дней.`, full({ d: "много" }), "Прошло … дней.", true, ["visit.days_since"]],
   [`Прошло {{visit.days_since}} дней.`, full({ d: 0 }), "Прошло 0 дней.", false, []],
+  // слово «день» согласуется с числом
+  [`Прошло {{visit.days_since}} дней.`, full({ d: 21 }), "Прошло 21 день.", false, []],
+  [`Прошло {{visit.days_since}} дней.`, full({ d: 22 }), "Прошло 22 дня.", false, []],
+  [`Прошло {{visit.days_since}} дня.`, full({ d: 11 }), "Прошло 11 дней.", false, []],
+  [`Прошло {{visit.days_since}} день.`, full({ d: 114 }), "Прошло 114 дней.", false, []],
+  [`{{visit.days_since}} күн болды`, full({ d: 22 }), "22 күн болды", false, []],
   [`Запись: {{booking.url}}`, dataFor({ name: "Арман" }, { name: "X" }), "Запись: …", true, ["booking.url"]],
   [`Адрес: {{company.address}}.`, full(), "Адрес: Астана, проспект Кабанбай Батыра, 18.", false, []],
   // [скобки] — условия не вписаны

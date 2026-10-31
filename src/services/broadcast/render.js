@@ -102,6 +102,8 @@ function dropName(t) {
     .replace(/[ \t]+\u0001(?=[ \t]*(?:[^\p{L}\p{N}\s]|\n|$))/gu, "")
     .replace(/[ \t]*\u0001[ \t]*/g, " ");
 }
+/** «день», «дня» или «дней» к числу @param {number} n */
+export const dayWord = n => n % 10 === 1 && n % 100 !== 11 ? "день" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "дня" : "дней";
 /** порядок после подстановки: пробел перед знаком, «, !», двойные пробелы, заглавная после убранного имени @param {string} t */
 const tidy = t => t
   .replace(/[ \t]+([,.!?;:])/g, "$1").replace(/([,;:])[ \t]*([,.!?])/g, "$2")
@@ -122,6 +124,11 @@ export function render(text, data, opts = {}) {
   if (!t) return { text: "", missing: [], blocked: true, issues: ["Пустой текст"] };
   const issues = [], missing = /** @type {string[]} */ ([]);
   if (/[[\]]/.test(t)) { issues.push(BRACKETS_ISSUE); t = t.replace(/\[[^[\]\n]{0,160}\]/g, MARK).replace(/[[\]]/g, ""); }
+  // «прошло {{visit.days_since}} дней» → «21 день», «22 дня», «25 дней»: слово после числа согласуется с ним
+  t = t.replace(/\{\{visit\.days_since\}\}(\s+)(дней|дня|день)(?![\p{L}])/gu, (m, sp) => {
+    const n = Number(d["visit.days_since"]);
+    return Number.isInteger(n) && n >= 0 ? `{{visit.days_since}}${sp}${dayWord(n)}` : m;
+  });
   // один проход: подставленное значение второй раз не разбирается
   t = t.replace(/\{\{\s*([^{}\s]{1,40})\s*\}\}/g, (_, k) => {
     if (k === NAME) return normName(d[NAME]) || GONE;
