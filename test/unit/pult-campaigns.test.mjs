@@ -38,7 +38,7 @@ test("/api/bc/list: у номера бота Winchester — почему рас�
   for (const b of [own, sw]) {
     const d = await (await b.go("/api/bc/list?c=winchester")).json();
     assert.ok(d.ga, JSON.stringify(d));
-    assert.match(d.ga.bcOff, /номера бота \(Green-API\) у этой компании выключены/);
+    assert.equal(d.ga.bcOff, "Запуск рассылок со второго номера выключен. Его включает владелец отдельным решением.");
     assert.equal(d.ready, true, "основной номер готов — его рассылки не тронуты");
   }
   const b = await (await own.go("/api/bc/list?c=barber")).json();

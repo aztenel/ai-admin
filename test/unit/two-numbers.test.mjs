@@ -47,9 +47,9 @@ test("номер бота: на «спасибо» бот отвечает ка�
   assert.ok(gaSent(from).some(t => /Ждём вас/.test(t)), JSON.stringify(gaSent(from)));
 });
 
-test("с номера бота рассылки запрещены; с официального — как раньше", () => {
+test("со второго номера запуск рассылок запрещён (черновики можно, ТЗ v3.0); с официального — как раньше", () => {
   const ga = bcRoute(ENV, "winchester", "ga");
-  assert.ok(ga.error && /номера бота/.test(ga.error), JSON.stringify(ga));
+  assert.ok(ga.error && /Запуск рассылок со второго номера выключен/.test(ga.error) && ga.code === "ga_off", JSON.stringify(ga));
   assert.ok(bcRoute({ ...ENV, GA_ID_BARBER: "1", GA_TOKEN_BARBER: "t" }, "barber", "ga").ga, "у других компаний Green-API-рассылки не тронуты");
 });
 

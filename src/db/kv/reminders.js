@@ -12,7 +12,9 @@
 //     же номером записи — другая версия, новое напоминание уходит (ТЗ v2.0 §4, 31.10.2026)
 //   jrl:<клиент> — последние 100 решений по очереди { t, k, rec, p, n, date, time, st, why } (ушло, отменено, пропущено, задача), 3 дня
 //   jrns:<клиент>:<запись> — о неявке уже поставили задачу администратору, 3 дня
-//   svtpl:<клиент> — тексты, одобренные владельцем: { S03: { v, at } }, без срока; новая версия текста — заново
+//   svtpl:<клиент> — тексты, одобренные владельцем: { S03: { v, at, var } }, без срока; var — вариант текста (b1 — первый встроенный,
+//     у одобрений до вариантов его нет), v — его версия; другой вариант или новая версия текста — одобрять заново
+//   svtpl:<клиент>:var — свои варианты текстов и какой действует: { S03: { active: "u…", list: [{ id, ru, kk, v, at, by }] } }, без срока
 /** @import { Env } from "../../lib/types.js" */
 import { kvRetry } from "./retry.js";
 
@@ -111,13 +113,24 @@ export async function jrNoShowMark(env, cid, rec) {
   return true;
 }
 
-/** одобренные владельцем тексты @param {Env} env @param {string} cid @returns {Promise<Record<string, { v: number, at: number }>>} */
+/** одобренные владельцем тексты @param {Env} env @param {string} cid @returns {Promise<Record<string, { v: number, at: number, var?: string }>>} */
 export async function svApprovals(env, cid) {
   try { const o = JSON.parse((await env.KV.get("svtpl:" + cid)) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch (e) { return {}; }
 }
-/** @param {Env} env @param {string} cid @param {string} id @param {number} v @param {boolean} on @param {number} now */
-export const svApprove = (env, cid, id, v, on, now) => kvRetry(async () => {
+/** @param {Env} env @param {string} cid @param {string} id @param {number} v @param {boolean} on @param {number} now @param {string} [variant] */
+export const svApprove = (env, cid, id, v, on, now, variant = "b1") => kvRetry(async () => {
   const o = await svApprovals(env, cid);
-  if (on) o[id] = { v, at: now }; else delete o[id];
+  if (on) o[id] = { v, at: now, var: variant }; else delete o[id];
   await env.KV.put("svtpl:" + cid, JSON.stringify(o));
+});
+/** свои варианты текстов сервисных сообщений @param {Env} env @param {string} cid @returns {Promise<Record<string, { active?: string, list?: any[] }>>} */
+export async function svVariants(env, cid) {
+  try { const o = JSON.parse((await env.KV.get(`svtpl:${cid}:var`)) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch (e) { return {}; }
+}
+/** изменить варианты одного сценария (чтение и запись подряд, с повтором) @param {Env} env @param {string} cid @param {(o: Record<string, any>) => void} edit */
+export const svVariantsEdit = (env, cid, edit) => kvRetry(async () => {
+  const o = await svVariants(env, cid);
+  edit(o);
+  await env.KV.put(`svtpl:${cid}:var`, JSON.stringify(o));
+  return o;
 });

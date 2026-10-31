@@ -1122,7 +1122,7 @@ section("рассылки через Green-API");
   net.gaState = "authorized";
   const keep = net.gaSettings["7105000001"].webhookUrl; net.gaSettings["7105000001"].webhookUrl = "";
   r = await start(id1); d = await J(r);
-  ok("вебхук не настроен → запуск отклонён: «стоп» клиентов не дойдёт до бота", r.status === 409 && /вебхук/i.test(d.error || "") && /стоп/i.test(d.error || "") && bcOf(id1).status === "ready", JSON.stringify(d));
+  ok("номер не настроен до конца (вебхук) → запуск отклонён: «стоп» клиентов не дойдёт до бота", r.status === 409 && /не настроен/i.test(d.error || "") && /стоп/i.test(d.error || "") && bcOf(id1).status === "ready", JSON.stringify(d));
   net.gaSettings["7105000001"].webhookUrl = keep;
   S3.kv.mem.set("optout:acme:77012220002", String(Date.now())); // этот клиент раньше написал «стоп»
   r = await start(id1); d = await J(r);

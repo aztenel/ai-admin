@@ -60,8 +60,12 @@ test("проверка рассылки из сегмента: получате�
   assert.equal((await sb.post("/api/bc/check", { ...FORM, segment: "pora" })).status, 403, "сотрудник другой компании");
   const f = await (await own.post("/api/bc/check", { ...FORM, segment: { id: "all", from: 36, to: 60 } })).json();
   assert.equal(f.valid, 2); assert.equal(f.segment.label, "Вся база · 36–60 дн. с визита");
-  const g = await (await own.post("/api/bc/check", { ...FORM, ch: "ga", text: "Привет", segment: "pora" })).json();
-  assert.equal(g.ok, false); assert.ok(g.errors.some(e => /только шаблоном Meta/.test(e)), JSON.stringify(g));
+  // второй номер (ТЗ v3.0): черновик по сегменту — обычным текстом, без шаблона Meta; текст каждому собирает сервер
+  const g = await (await own.post("/api/bc/check", { c: "winchester", ch: "ga", name: "Пора", text: "Здравствуйте, {имя}! Прошло {дней} дней.", segment: "pora", cap: 50, from: 10, to: 20, consent: true })).json();
+  assert.equal(g.ok, true, JSON.stringify(g)); assert.equal(g.valid, 3); assert.equal(g.text, "Здравствуйте, {{client.first_name}}! Прошло {{visit.days_since}} дней.\n\nЧтобы не получать сообщения, ответьте СТОП");
+  assert.ok(g.samples.some(x => /^Здравствуйте, Данияр! Прошло 22 дней\./.test(x.text)) && g.samples.some(x => /^Здравствуйте! Прошло 33 дней\./.test(x.text)), JSON.stringify(g.samples));
+  assert.ok(g.samples.every(x => /^\+7 700 \*\*\* \*\* \d\d$/.test(x.to)) && !JSON.stringify(g).includes(dg(101)), "номера маской");
+  assert.ok(g.excluded.some(x => x.code === "stop" && x.n === 1), JSON.stringify(g.excluded));
   const u = await (await own.post("/api/bc/check", { ...FORM, segment: "nope" })).json();
   assert.ok(u.errors.some(e => /не найден/.test(e)), JSON.stringify(u));
 });
@@ -494,11 +498,17 @@ test("отправка по базе: согласие проверяется п
   }
 });
 
-test("календарь на 14 дней: реклама — кто в этот день дойдёт до N дней, кому можно и почему нельзя; сервисные — отдельно; без номеров", { skip: consentSkip }, async () => {
+test("календарь: этот месяц с 1-го и весь следующий; реклама — кто в этот день дойдёт до N дней, кому можно и почему нельзя; сервисные — отдельно; без номеров", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   await own.post("/api/bc/auto", { c: "winchester", days: 28, tpl: "pora_na_strizhku", on: true });
   const r = await (await own.go("/api/bc/calendar?c=winchester")).json();
-  assert.equal(r.days.length, 14); assert.equal(r.auto.days, 28);
+  const today = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10), [y, m] = today.split("-").map(Number);
+  const len = new Date(Date.UTC(y, m - 1 + 2, 0)).getUTCDate() + new Date(Date.UTC(y, m, 0)).getUTCDate();
+  assert.equal(r.days.length, len); assert.equal(r.days[0].date, today.slice(0, 8) + "01"); assert.equal(r.today, today); assert.equal(r.auto.days, 28);
+  assert.equal(r.month.length, 2); assert.equal(r.month[0].id, today.slice(0, 7)); assert.ok(r.month.every(x => /^[А-Я][а-я]+$/.test(x.label)), JSON.stringify(r.month));
+  assert.equal(r.days[r.days.length - 1].date.slice(0, 7), r.month[1].id);
+  for (const d of r.days) { assert.equal(d.past, d.date < today); if (d.past) assert.equal(d.marketing, null, "прошедшие дни — без плана рекламы"); }
+  assert.equal(r.days.filter(d => d.today).length, 1);
   const sum = r.days.reduce((a, d) => a + (d.marketing ? d.marketing.candidates : 0), 0);
   assert.ok(sum >= 1, JSON.stringify(r.days.map(d => d.marketing)));
   for (const d of r.days) if (d.marketing) { assert.ok(d.marketing.allowed <= d.marketing.candidates); assert.ok(d.marketing.planned <= d.marketing.allowed); }

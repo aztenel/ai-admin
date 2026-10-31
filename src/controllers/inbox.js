@@ -27,6 +27,23 @@ import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
 /** @import { Env } from "../lib/types.js" */
 
+// кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
+// остальных — нейтральные), тестовая это версия или боевой сайт (stage) и режим записи с сайта (site: off — выключена, dry —
+// проверка без записи, заявки администратору, live — настоящая запись). Сотрудник — только о своей компании; владелец — brand null,
+// а оформление каждой компании — в brands. Секретов и ключей здесь нет
+/** @param {Env} env @param {any} s */
+export function inboxMe(env, s) {
+  const staff = s.role === "staff", ids = staff ? (hasClient(s.cid) ? [s.cid] : []) : Object.keys(CLIENTS);
+  const brands = /** @type {Record<string, string>} */ ({}), site = /** @type {Record<string, string>} */ ({});
+  for (const id of ids) {
+    const c = CLIENTS[id];
+    if (c.brand) brands[id] = String(c.brand);
+    const sc = siteConf(env, c);
+    if (sc) site[id] = sc.mode;
+  }
+  return { owner: !staff, c: staff ? s.cid : "", brand: staff ? brands[s.cid] || null : null, brands, stage: env.STAGE === "preview" ? "preview" : "production", site };
+}
+
 // ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
 // У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
 // Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.

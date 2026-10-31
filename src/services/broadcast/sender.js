@@ -20,7 +20,9 @@ import { wzOn, wzHealth } from "../channels/wazzapo.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { BC_HINT, BC_TEMP, BC_ACCOUNT, BC_PARAM, bcWhy } from "./errors.js";
 import { bcOptouts } from "./segments.js";
-import { crmView } from "../crm/segments.js";
+import { crmView, daysSince } from "../crm/segments.js";
+import { render, dataFor } from "./render.js";
+import { companyOf } from "./library.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "./holds.js";
 // ================= РАССЫЛКИ: шаблоны WhatsApp по списку клиентов =================
 // Написать клиенту первым официальный WhatsApp разрешает только шаблоном, который одобрила Meta. Рассылка = шаблон + список номеров.
@@ -37,12 +39,19 @@ import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } fr
 // Altegio 14 дней таким не пишут, services/crm/segments.js)
 /** @param {number} ms @param {number} now */
 export const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
-/** @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
-export const bcRoute = (env, cid, ch) => { // с какого номера и каким токеном уходят шаблоны (ch = "ga" — номер Green-API клиента)
+// gaNoBroadcast (Winchester, 18.10.2026): рассылка с неофициального номера — прямой путь к блокировке. С ТЗ v3.0 (31.10.2026) это запрет
+// только на запуск и отправку: черновик со второго номера можно создать, проверить на клиентах базы и одобрить, а запуск отвечает
+// 409 ga_off. Снимает запрет владелец отдельным решением (правка кода), не переменной
+export const GA_OFF = "Запуск рассылок со второго номера выключен. Его включает владелец отдельным решением.";
+/** запуск рассылок с номера Green-API выключен у компании @param {string} cid */
+export const bcGaOff = cid => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast);
+/** с какого номера и каким токеном уходят сообщения рассылки (ch = "ga" — номер Green-API клиента). Для запуска и отправки:
+ *  у второго номера с запретом — { error: GA_OFF, code: "ga_off" }. Черновики маршрут не спрашивают
+ *  @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
+export const bcRoute = (env, cid, ch) => {
   const up = cid.toUpperCase();
-  // gaNoBroadcast — номер Green-API только для ответов бота: рассылка с неофициального номера — прямой путь к блокировке (Winchester, 18.10.2026)
-  if (ch === "ga" && CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) return { error: "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta." };
-  if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Green-API у этого клиента не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} (номер и токен инстанса из кабинета Green-API).` }; }
+  if (ch === "ga" && bcGaOff(cid)) return { error: GA_OFF, code: "ga_off" };
+  if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Второй номер (Green-API) у этой компании не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} из кабинета Green-API.` }; }
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID» — без него рассылку не отправить (страница «Мои боты» → Изменить)." }; }
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
   return { error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${up}.` };
@@ -60,9 +69,10 @@ export function bcGaMsg(src) {
 export const bcGaText = (b, name) => String(b.msg || "").replace(/\{\s*(имя|name)\s*\}/gi, name || b.fallback || "уважаемый клиент");
 /** @param {string} u */
 const bcFileName = u => { let n = ""; try { n = decodeURIComponent(new URL(u).pathname.split("/").pop() || ""); } catch (e) {} n = n.replace(/[^\p{L}\p{N}._-]/gu, "").slice(-60); return /\.[a-z0-9]{2,5}$/i.test(n) ? n : "image.jpg"; };
-/** @param {Env} env @param {string} digits @param {any} b @param {any} name @param {any} r */
-export async function bcSendGa(env, digits, b, name, r) {
-  const text = bcGaText(b, name), chatId = digits + "@c.us";
+/** ready — уже собранный текст (рассылка по базе со вставками, render.js); без него — {имя} из списка
+ *  @param {Env} env @param {string} digits @param {any} b @param {any} name @param {any} r @param {string} [ready] */
+export async function bcSendGa(env, digits, b, name, r, ready) {
+  const text = ready || bcGaText(b, name), chatId = digits + "@c.us";
   if (!b.img) return sendGreen(env, chatId, text, r, true);
   const x = await gaCall(r, "sendFileByUrl", { chatId, urlFile: b.img, fileName: bcFileName(b.img), caption: text.slice(0, 1024) }); // картинка с подписью
   return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
@@ -71,12 +81,12 @@ export async function bcSendGa(env, digits, b, name, r) {
 // сообщением без повода, раздел «Ответы на рассылки» его не видел, а галочки (отчёты Green-API) некуда было ставить. Чат только с нашим
 // сообщением в очередь «Нужен ответ» не встаёт — пульт прячет его под «только наши сообщения». Ключи разные (у каждого клиента
 // свой чат) — по 10 одновременно. Сбой записи рассылку не останавливает
-/** @param {Env} env @param {string} cid @param {any} b @param {[string, string, string][]} list @param {number} now */
+/** @param {Env} env @param {string} cid @param {any} b @param {string[][]} list [цифры, имя, номер сообщения, готовый текст] @param {number} now */
 async function bcLog(env, cid, b, list, now) {
   const ch = b.ch === "ga" ? "ga" : "wa", bc = String(b.id || "bc").slice(0, 40);
   for (let i = 0; i < list.length; i += 10) {
-    await Promise.all(list.slice(i, i + 10).map(([digits, name, mid]) => {
-      const text = b.ch === "ga" ? bcGaText(b, name) : `[Рассылка «${String(b.name || "").slice(0, 60)}» — шаблон ${String(b.tpl || "").slice(0, 60)}]`;
+    await Promise.all(list.slice(i, i + 10).map(([digits, name, mid, ready]) => {
+      const text = b.ch === "ga" ? ready || bcGaText(b, name) : `[Рассылка «${String(b.name || "").slice(0, 60)}», шаблон ${String(b.tpl || "").slice(0, 60)}]`;
       return logTurns(env.KV, `h:${ch}:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc, by: "bc", ...(mid ? { mid: mid.slice(0, 80) } : {}), st: "sent" }])
         .catch(e => console.log("bc log", String(e).slice(0, 120)));
     }));
@@ -138,6 +148,8 @@ export async function bcTick(env, cid, id, gaBusy) {
   if (b.status !== "running") return { b, state: b.status };
   const ga = b.ch === "ga";
   if (ga && gaBusy) return { b, state: "busy" };
+  // рассылка по базе со второго номера: маркетинг, как у шаблонов Meta, — отметки «писали рекламу» (bcm:) и текст каждому из свежей базы
+  const gaCrm = ga && b.src === "crm";
   /** @param {string} text */
   const tell = async text => { try { await notify(env, text, cid); } catch (e) { console.log("bc tg", String(e)); } };
   // рассылка автосценария «Пора на стрижку» — только в день создания (находки проверки 19.10.2026): не успела — назавтра её получателям
@@ -173,7 +185,7 @@ export async function bcTick(env, cid, id, gaBusy) {
   const w = bcWait(b, now); if (w) return waitFor(w);
   if (ga && b.nextAt > now) return { b, state: "wait" }; // пауза между сообщениями Green-API: хранилище не пишем
   const route = bcRoute(env, cid, b.ch);
-  if (route.error) return stopFor(route.error);
+  if (route.error) return stopFor(route.error); // в том числе запуск со второго номера выключен (GA_OFF)
   const hold = bcHoldFor(await bcHold(env, cid), b);
   if (hold) return stopFor(`Сигнал от ${bcFrom(b)}: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
   // предел на 24 часа — общий для всех рассылок клиента с этого номера: Meta считает получателей за скользящие сутки; у номера Green-API свой счётчик
@@ -204,14 +216,14 @@ export async function bcTick(env, cid, id, gaBusy) {
   if ((await env.KV.get(lk)) !== token) return { b, state: "busy" };
   let sentNow = 0, did = false;
   const marked = /** @type {string[]} */ ([]); // кому шаблон ушёл (или мог уйти) в этой порции — отметка «писали маркетинг»
-  const logged = /** @type {[string, string, string][]} */ ([]); // кому ушло: номер, имя, номер сообщения у провайдера — в переписку
+  const logged = /** @type {string[][]} */ ([]); // кому ушло: номер, имя, номер сообщения у провайдера, готовый текст — в переписку
   try {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
     if (b.cur) { // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
       b.unsure = (b.unsure || 0) + b.cur[1];
       // шаблон мог уйти любому из неё — отметка «писали маркетинг» всем: иначе следующая рассылка по базе или автосценарий напишут второй раз (находка проверки 19.10.2026)
-      if (!ga) { try { await bcmAdd(env, cid, isoDay(now), (await bcRange(env, cid, id, b.cur[0], b.cur[1])).map(x => String(x[0]))); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
+      if (!ga || gaCrm) { try { await bcmAdd(env, cid, isoDay(now), (await bcRange(env, cid, id, b.cur[0], b.cur[1])).map(x => String(x[0]))); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
       delete b.cur;
     }
     // Green-API: одно сообщение за раз (смотрим до 25 человек вперёд, чтобы пропустить попросивших не писать); Meta — порция
@@ -224,6 +236,7 @@ export async function bcTick(env, cid, id, gaBusy) {
     // человеку два платных шаблона; кто записался или пришёл после создания рассылки — тоже не получит. Старая база — пауза: не видно, кто записался
     const no = new Set();
     /** @type {Set<string> | null} */ let allow = null;
+    /** @type {Map<string, any>} */ const fresh = new Map(); // строки свежей базы — для текста со вставками
     if (b.src === "crm" && take > 0) {
       const view = await crmView(env, CLIENTS[cid], now);
       // реклама — только тем, у кого подтверждённое согласие сейчас (список разрешённых, а не список исключений: человек, которого
@@ -231,7 +244,7 @@ export async function bcTick(env, cid, id, gaBusy) {
       if (!view.gate || !view.gate.ready) return await stopFor(`${(view.gate && view.gate.why) || "База согласий не отвечает."} Рассылка на паузе — «Продолжить», когда база снова доступна.`);
       allow = view.allow || new Set();
       if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return await stopFor("База клиентов из Altegio не обновлялась больше 3 дней — по ней не видно, кто уже записался. Обновите базу в разделе сегментов и нажмите «Продолжить».");
-      for (const x of view.rows) if (x.why && x.why !== "stop") no.add(x.p);
+      for (const x of view.rows) { if (x.why && x.why !== "stop") no.add(x.p); if (gaCrm) fresh.set(x.p, x); }
       for (const p of view.marked || []) no.add(p);
       for (const p of view.futOnly || []) no.add(p);
     }
@@ -239,15 +252,21 @@ export async function bcTick(env, cid, id, gaBusy) {
     // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт
     b.pos = from + items.length; b.last = now; delete b.waitNote; delete b.waitTill; delete b.retryAt; delete b.retryWhy;
     if (items.length) { b.cur = [from, items.length]; await bcPut(env, cid, b); }
-    const t0 = Date.now();
+    const t0 = Date.now(), co = gaCrm ? companyOf(CLIENTS[cid]) : null;
     let done = 0, halt = null;
-    for (const [digits, name] of items) {
+    for (const [digits, name, staff, svc, last] of items) {
       if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
       if (stop.has(digits)) { b.skipped++; done++; continue; }
       if (no.has(digits) || (allow && !allow.has(digits))) { b.excl = (b.excl || 0) + 1; done++; continue; }
+      let ready = "";
+      if (gaCrm) { // текст — из свежей строки базы (мастер, услуга, дни после визита); её нет — из того, что было при создании
+        const x = fresh.get(digits), rd = render(b.msg, dataFor(x ? { name: x.n, staff: x.staff, svc: x.svc, d: x.d } : { name, staff, svc, d: last ? daysSince(String(last), now) : null }, co || {}));
+        if (rd.blocked) { b.excl = (b.excl || 0) + 1; b.noData = (b.noData || 0) + 1; done++; continue; } // не хватает данных — не пишем
+        ready = rd.text;
+      }
       did = true;
-      const r = ga ? await bcSendGa(env, digits, b, name, route.ga) : await sendTemplate(env, digits, b, name, route);
-      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || "")]); continue; }
+      const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route);
+      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga || gaCrm) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || ""), ready]); continue; }
       if (!ga && r.code === 0) marked.push(digits); // связь оборвалась — шаблон мог уйти: второй раз за 14 дней такому клиенту не пишем
       const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
       if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь
@@ -268,8 +287,9 @@ export async function bcTick(env, cid, id, gaBusy) {
     if (sentNow) { // учёт отправленного за сутки
       try { const nq = /** @type {Record<string, any>} */ ({}); for (const k of live) nq[k] = q[k]; nq[slot] = (+nq[slot] || 0) + sentNow; await env.KV.put(qk, JSON.stringify(nq), { expirationTtl: 2 * 86400 }); } catch (e) { console.log("bcq", String(e)); }
     }
-    // отметка «писали маркетинг» — раз за порцию, а не за каждое сообщение (KV пишет ключ не чаще раза в секунду). Только шаблоны Meta и
-    // Wazzapo: с номера Green-API маркетинг по базе не уходит. Сбой отметки рассылку не останавливает — в журнал без номеров
+    // отметка «писали маркетинг» — раз за порцию, а не за каждое сообщение (KV пишет ключ не чаще раза в секунду). Шаблоны Meta и
+    // Wazzapo и рассылка по базе со второго номера; рассылка по списку из Excel с номера Green-API — без отметок. Сбой отметки рассылку
+    // не останавливает — в журнал без номеров
     if (marked.length) { try { await bcmAdd(env, cid, isoDay(now), marked); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
     if (logged.length) await bcLog(env, cid, b, logged, now);
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {

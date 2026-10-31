@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { jrRun, jrPlan } from "../../src/services/reminders/journal.js";
-import { SCENARIOS, svText, render } from "../../src/services/reminders/templates.js";
+import { SCENARIOS, SV_CATS, svText, render } from "../../src/services/reminders/templates.js";
 import { atLocal, remindText } from "../../src/services/reminders/plan.js";
 import { jrqSave } from "../../src/db/kv/reminders.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
@@ -29,18 +29,21 @@ const login = async (s, key) => { const b = s.browser(); await b.go("/login", { 
 const post = (b, path, body) => b.post(path, body);
 const log = s => s.kv.json("jrl:winchester") || [];
 
-test("каталог: S01–S18, у каждого режим; тексты напоминаний те же, что раньше (ru, kk, en); шаблон без данных — без пустых кусков", () => {
+test("каталог: S01–S18, у каждого режим и рубрика; тексты простым языком без тире (ru, kk, en); шаблон без данных — без пустых кусков", () => {
   assert.deepEqual(SCENARIOS.map(x => x.id), Array.from({ length: 18 }, (_, i) => "S" + String(i + 1).padStart(2, "0")));
   for (const x of SCENARIOS) {
     assert.ok(["auto", "reply", "task", "off"].includes(x.mode), x.id);
     assert.ok(x.title && x.trigger && x.v >= 1, x.id);
     if (x.auto) assert.ok(x.ru.length && x.kk.length, x.id + ": RU и KZ"); // свой вид в очереди — свой текст
+    assert.ok(SV_CATS.some(c => c.id === x.cat), x.id + ": рубрика");
+    for (const t of [x.title, x.trigger, x.note || "", ...x.ru, ...x.kk]) assert.ok(!/ — |«Winchester»|\{\{/.test(t), `${x.id}: без тире-разделителей и {{}}: ${t}`);
   }
   const b = { time: "15:00", services: "Мужская стрижка", staffName: "Айдос" };
-  assert.equal(remindText(W, b, "d1"), "Напоминаем: завтра в 15:00 вас ждут в «Winchester» — Мужская стрижка · Айдос. Если планы изменились, напишите сюда.");
-  assert.equal(remindText(W, { time: "15:00" }, "d1", "kk"), "Еске салу: «Winchester» сізді ертең сағат 15:00-де күтеді. Жоспарыңыз өзгерсе, осында жазыңыз.");
-  assert.match(remindText(W, b, "h2"), /^Ждём вас сегодня в 15:00 в «Winchester» \(Мужская стрижка · Айдос\)\. Адрес: Астана, проспект Кабанбай Батыра, 18\. /);
-  assert.match(remindText(W, b, "rv", "en"), /^Thank you for visiting «Winchester»! We'd be grateful for a review: https:\/\/2gis/);
+  assert.equal(remindText(W, b, "d1"), "Напоминаем: завтра в 15:00 ждём вас в Winchester. Мужская стрижка, мастер Айдос. Если планы изменились, напишите сюда.");
+  assert.equal(remindText(W, { time: "15:00", staffName: "Айдос" }, "d1"), "Напоминаем: завтра в 15:00 ждём вас в Winchester. Мастер Айдос. Если планы изменились, напишите сюда.");
+  assert.equal(remindText(W, { time: "15:00" }, "d1", "kk"), "Еске саламыз: ертең сағат 15:00 Winchester барбершопында күтеміз. Жоспарыңыз өзгерсе, осында жазыңыз.");
+  assert.match(remindText(W, b, "h2"), /^Ждём вас сегодня в 15:00 в Winchester\. Мужская стрижка, мастер Айдос\. Адрес: Астана, проспект Кабанбай Батыра, 18\. /);
+  assert.match(remindText(W, b, "rv", "en"), /^Thank you for visiting Winchester! We'd be grateful for a review: https:\/\/2gis/);
   assert.equal(render("Здравствуйте[[, {имя}]]! В {время}[[ — {мастер}]].", { имя: "", время: "12:00", мастер: "Тони" }), "Здравствуйте! В 12:00 — Тони.");
   const s01 = svText(W, "s01", { name: "Арман Каримов", date: TOM, time: "15:00", services: "Мужская стрижка", staffName: "Айдос" }, "ru");
   assert.equal(s01.sc, "S01");
@@ -143,7 +146,7 @@ test("исходящее в переписке — с номером сообщ�
   await jrRun(s.env, at(TODAY, "17:50")); await jrRun(s.env, at(TODAY, "18:00"));
   const t = s.hist("ga", "winchester", dg(351)).turns.at(-1);
   assert.match(t.mid, /^GA\d+$/); assert.equal(t.st, "sent"); assert.equal(t.rm, "d1");
-  assert.match(sent().find(x => x.to === dg(352)).text, /^Еске салу/);
+  assert.match(sent().find(x => x.to === dg(352)).text, /^Еске саламыз/);
   assert.match(sent().find(x => x.to === dg(351)).text, /^Напоминаем/);
 });
 
