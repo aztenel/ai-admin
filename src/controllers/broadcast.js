@@ -12,7 +12,8 @@ import { BC_HINT, bcCode, bcWhy } from "../services/broadcast/errors.js";
 import { bcOptouts } from "../services/broadcast/segments.js";
 import { bcFields, bcCheck, bcCreate, bcStarting, bcStarted, bcCrmStale } from "../services/broadcast/create.js";
 import { autoInfo, autoSet } from "../services/crm/auto.js";
-import { serviceInfo } from "../services/reminders/info.js";
+import { serviceInfo, serviceApprove } from "../services/reminders/info.js";
+import { jrDry } from "../services/reminders/journal.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, GA_CAP } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
@@ -75,6 +76,16 @@ export async function bcApi(request, env, url, s) {
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
+  if (P === "/api/bc/service/dry") { // проверка по настоящему журналу Altegio без отправки и без записи — только владелец
+    if (s.role !== "owner") return jsonP({ error: "Проверку по журналу запускает владелец." }, 403);
+    try { return jsonP(await jrDry(env, c, now)); }
+    catch (e) { console.log("bc service dry", String(e)); return jsonP({ error: "Altegio не ответил — попробуйте через минуту." }, 503); }
+  }
+  if (P === "/api/bc/service/approve") { // одобрить текст сервисного сообщения: без одобрения владельца оно не уходит (ТЗ v2.0 §4)
+    if (s.role !== "owner") return jsonP({ error: "Одобрить текст может только владелец." }, 403);
+    try { const r = await serviceApprove(env, c, body.sc ?? body.id, body.v, body.on !== false, now); return r.ok ? jsonP({ ok: true }) : jsonP({ error: r.error }, r.status || 400); }
+    catch (e) { console.log("bc service approve", String(e)); return jsonP({ error: BUSY }, 503); }
+  }
   if (P === "/api/bc/auto") { // включить, выключить, изменить — только владелец: автосценарий пишет клиентам каждый день сам
     if (s.role !== "owner") return jsonP({ error: "Настраивать автосценарий может только владелец." }, 403);
     // снять сигнал Meta, когда остановленной рассылки нет (сигнал пришёл после завершения): иначе он держал бы автосценарий 14 дней,

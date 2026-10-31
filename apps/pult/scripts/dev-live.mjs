@@ -119,6 +119,14 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const jrRecs = booked.map((b, i) => ({ id: 9101 + i, datetime: `${day(b.day)}T${b.time}:00+05:00`, deleted: false, attendance: 0, create_date: new Date(madeAt).toISOString(),
     staff: { id: 1, name: b.staff }, client: { id: 9101 + i, phone: "+" + b.id, name: b.name }, services: [{ id: 1, title: b.svc }] }));
   await jrqSave(S.env, "winchester", jrPlan(CLIENTS.winchester, jrRecs, NOW));
+  // тексты напоминаний и отзыва одобрены владельцем (ТЗ v2.0 §4: без одобрения сервисное сообщение не уходит); подтверждение записи
+  // и «перенесли» — нет. Журнал решений: перенос отменил старое напоминание, неявка — задача администратору (номера вымышленные)
+  const { SCENARIOS } = await import(new URL("../../../src/services/reminders/templates.js", import.meta.url).href);
+  await S.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(["S03", "S04", "S12"].map((id) => [id, { v: SCENARIOS.find((x) => x.id === id).v, at: NOW - 86400e3 }]))));
+  await S.kv.api.put("jrl:winchester", JSON.stringify([
+    { t: NOW - 3 * 3600e3, k: "h2", rec: "9001", p: "77000001104", n: "Самат", date: day(0), time: "11:00", st: "cancelled", why: "запись перенесена" },
+    { t: NOW - 2 * 3600e3, k: "noshow", rec: "9002", p: "77000001105", n: "Канат", date: day(1), time: "18:00", st: "task", why: "клиент не пришёл — задача администратору" },
+  ]), { expirationTtl: 3 * 86400 });
   for (const k of ["rms:winchester:9100:d1", "rms:winchester:9100:rv", "rmok:winchester:9100:d1", "rmok:winchester:9100:rv", "rms:winchester:9099:d1"])
     await S.kv.api.put(k, "1", { expirationTtl: 3 * 86400 });
 

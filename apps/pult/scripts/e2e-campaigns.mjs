@@ -325,6 +325,32 @@ async function ownerWinchesterPhone() {
   await svcQueue(t, svc);
   await reveal(svc.getByRole("list", { name: "Ближайшие сообщения" }));
   await step(t, "service-queue");
+  // ТЗ v2.0 §4: последние решения по очереди, тексты сообщений с одобрением владельца, проверка по журналу без отправки
+  const log = svc.getByRole("list", { name: "Последние решения" });
+  await reveal(log);
+  ok("сервисные: последние решения — перенос отменил напоминание, неявка — задача администратору; номера маской", /отменено — запись перенесена/.test(await text(log)) && /задача администратору/.test(await text(log)) && /\+7 700 \*\*\* \*\* 04/.test(await text(log)), (await text(log)).slice(0, 400));
+  const cat = svc.getByRole("list", { name: "Тексты сообщений" });
+  await reveal(cat);
+  ok("сервисные: каталог S01–S18, напоминания одобрены, подтверждение — ждёт одобрения", (await cat.locator("li").count()) === 18 && /S03 Напоминание накануне\s*одобрено/.test(await text(cat)) && /S01 Новая запись — подтверждение\s*ждёт одобрения/.test(await text(cat)), (await text(cat)).slice(0, 300));
+  const s03 = cat.locator("li").filter({ hasText: "S03 Напоминание накануне" });
+  await tap(s03.getByRole("button", { name: "Қазақша" }));
+  ok("сервисные: пример текста на казахском", /Еске салу/.test(await text(s03)));
+  await step(t, "service-texts");
+  const s01 = cat.locator("li").filter({ hasText: "S01 Новая запись" });
+  await tap(s01.getByRole("button", { name: "Одобрить текст" }));
+  await s01.getByText("одобрено", { exact: true }).waitFor();
+  ok("сервисные: владелец одобрил текст S01", (await s01.getByRole("button", { name: "Снять одобрение" }).count()) === 1);
+  await tap(s01.getByRole("button", { name: "Снять одобрение" }));
+  const back = await s01.getByText("ждёт одобрения", { exact: true }).waitFor({ timeout: 10000 }).then(() => true, () => false);
+  ok("сервисные: одобрение S01 снято", back, (await text(s01)).slice(0, 300));
+  const dry = svc.getByRole("button", { name: "Проверить по журналу (без отправки)" });
+  await reveal(dry);
+  await tap(dry);
+  const res = svc.getByRole("status").filter({ hasText: "Записей в журнале" });
+  const dryOk = await res.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  if (!dryOk) ok("сервисные: проверка по журналу ответила", false, (await text(svc)).slice(-500));
+  ok("сервисные: проверка по журналу — без отправки, номера маской", /Записей в журнале: \d+/.test(await text(res)) && !/7700000\d{4}/.test(await text(svc)));
+  await step(t, "service-dry-run");
   await finish(t);
   return poraN;
 }
@@ -368,7 +394,9 @@ async function staffWinchester(vp, scheme) {
   const stext = await text(svc);
   ok(`${t.tag}: сервисные — номер бота и что уходит само`, /Номер бота/.test(stext) && /на связи/.test(stext) && /Накануне в 18:00/.test(stext) && /Уходят сами со второго номера/.test(stext));
   await svcQueue(t, svc);
-  ok(`${t.tag}: сервисные — только смотреть, кнопок нет`, !(await svc.getByRole("button").count()) && !(await svc.getByRole("switch").count()));
+  // переключатель языка примера текста — не действие: кроме него кнопок нет
+  ok(`${t.tag}: сервисные — только смотреть, кнопок нет`, !(await svc.getByRole("button").filter({ hasNotText: /^(Русский|Қазақша)$/ }).count()) && !(await svc.getByRole("switch").count()));
+  ok(`${t.tag}: сервисные — тексты сообщений видны, одобрить нельзя`, (await svc.getByRole("list", { name: "Тексты сообщений" }).locator("li").count()) === 18 && !(await svc.getByRole("button", { name: /Одобрить текст|Проверить по журналу/ }).count()));
   ok(`${t.tag}: [17] сотруднику — без слов «боевой сайт / черновик», время по Астане`, !/боевого сайта|черновик/i.test(await text(svc)) && /Время — по Астане/.test(await text(svc)));
   await step(t, "service-tab");
   await finish(t);

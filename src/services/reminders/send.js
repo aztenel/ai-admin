@@ -47,7 +47,9 @@ export async function remindSend(env, cid, x, now) {
   // отметка «ушло» — отдельным ключом (тот же ключ второй раз за секунду KV не принимает): по ней пульт считает «Отправлено за 3 дня»,
   // неудачные попытки (rms: без rmok:) не считаются (находка проверки 19.10.2026)
   try { await env.KV.put(`rmok:${cid}:${x.rec}:${x.k}`, "1", { expirationTtl: 3 * 86400 }); } catch (e) { console.log("remind ok mark", String(e)); }
-  try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k }]); } catch (e) { console.log("remind log", String(e)); }
+  // номер сообщения у провайдера и статус — для галочек в пульте (ТЗ v2.0 §2.3, services/inbox/status.js)
+  const rr = /** @type {any} */ (r), mid = String((rr && (rr.id || (rr.ids && rr.ids[0]))) || "").slice(0, 80);
+  try { await logTurns(env.KV, hk, [{ role: "model", text, t: now, rm: x.k, ...(mid ? { mid } : {}), st: "sent" }]); } catch (e) { console.log("remind log", String(e)); }
   return true;
 }
 /** @param {Env} env @param {number} now */
