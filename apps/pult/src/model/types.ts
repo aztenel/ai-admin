@@ -132,7 +132,7 @@ export type ChatRequest = { id: string; kind: RequestKind; name: string; service
 
 export type ReplyState =
   | { allowed: true; closesAt?: number }
-  | { allowed: false; reason: "web" | "window" | "not_connected" | "stopped"; text: string };
+  | { allowed: false; reason: "web" | "window" | "not_connected" | "stopped" | "blocked"; text: string };
 
 export type ConversationDetail = {
   key: string;

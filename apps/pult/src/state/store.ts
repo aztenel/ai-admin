@@ -300,7 +300,8 @@ class Store {
   async send(key: string, text: string, retryId?: string, quote?: Quote) {
     const ws = this.state.wsId, ref = parseKey(key);
     if (!this.src || !ws || !ref) return;
-    const id = retryId || `out-${Date.now()}`;
+    // id — он же rid: время и случайная часть (два сотрудника в одну миллисекунду не должны получить один номер отправки)
+    const id = retryId || `out-${Math.floor(Date.now()).toString(36)}-${Math.random().toString(36).slice(2, 8)}`; // только буквы, цифры и «-»: такой rid принимает сервер
     const was = (this.state.outbox[key] || []).find((x) => x.id === id);
     const q = quote || was?.quote;
     const m: Message = { id, from: "operator", text, at: Date.now(), delivery: "sending", ...(q ? { quote: q } : {}) };
@@ -321,7 +322,7 @@ class Store {
     const ws = this.state.wsId, ref = parseKey(key);
     if (!this.src?.sendFile || !ws || !ref || !files.length) return [];
     const now = Date.now(), seed = Math.random().toString(36).slice(2, 8);
-    const items = files.map((file, i) => ({ id: `file-${now}-${seed}-${i}`, file, caption: files.length === 1 ? caption : "", quote: i === 0 ? quote : undefined }));
+    const items = files.map((file, i) => ({ id: `file-${Math.floor(now).toString(36)}-${seed}-${i}`, file, caption: files.length === 1 ? caption : "", quote: i === 0 ? quote : undefined }));
     for (const it of items) this.pending.set(it.id, it);
     this.setOutbox(key, (box) => [...box, ...items.map((it) => this.fileMessage(it, now))]);
     const warnings: string[] = [];

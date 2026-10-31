@@ -1,6 +1,7 @@
 // @ts-check
 // Рассылки (/broadcast, /api/bc/*): создание, проверка, пуск, пауза, отчёт.
 import { clean } from "../lib/text.js";
+import { isPreview } from "../lib/stage.js";
 import { normPhone, maskPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
 import { jsonP, sameOrigin } from "../lib/http.js";
@@ -144,6 +145,8 @@ export async function bcApi(request, env, url, s) {
     if (!to) return jsonP({ error: "Укажите свой номер полностью, например +7 701 123 45 67." }, 400);
     const rt = ga ? bcRoute(env, cid, "ga") : route;
     if (rt.error) return jsonP({ error: rt.error, ...(rt.code ? { code: rt.code } : {}), ...(gt ? { preview: gt.text } : {}) }, 409);
+    // проба на свой номер — тоже сообщение через настоящий номер: с черновика не уходит; текст пробы виден (preview)
+    if (isPreview(env)) return jsonP({ error: "Это тестовая версия: пробное сообщение отсюда не отправляется. Текст пробы показан ниже.", code: "preview", ...(gt ? { preview: gt.text } : {}) }, 409);
     const tk = `bct:${cid}:${Math.floor(now / 3600e3)}`, tn = +((await env.KV.get(tk)) || 0);
     if (tn >= 20) return jsonP({ error: "Слишком много пробных отправок за час. Подождите немного." }, 429);
     try { await env.KV.put(tk, String(tn + 1), { expirationTtl: 3700 }); } catch (e) {}
@@ -172,7 +175,8 @@ export async function bcApi(request, env, url, s) {
       // Второй номер с запретом (Winchester) — 409 ga_off: черновик готов и одобрен, а запуск — отдельное решение владельца (ТЗ v3.0)
       if (s.role !== "owner") return jsonP({ error: "Запустить рассылку может только владелец. Сотрудник готовит и проверяет, владелец решает." }, 403);
       if (cur.ch === "ga" && bcGaOff(cid)) return jsonP({ error: GA_OFF, code: "ga_off" }, 409);
-      if (env.STAGE === "preview" && env.BC_DEV_REAL !== "1") return jsonP({ error: "Это тестовая версия: рассылки отсюда не отправляются. Проверка, пример и проба на свой номер работают.", code: "preview" }, 409);
+      // черновик рассылки не запускает (аудит 31.10.2026: обхода BC_DEV_REAL больше нет; стенд на заглушках работает как боевой сайт)
+      if (isPreview(env)) return jsonP({ error: "Это тестовая версия: рассылки отсюда не отправляются. Проверка и пример работают.", code: "preview" }, 409);
       const rt = bcRoute(env, cid, cur.ch);
       if (rt.error) return jsonP({ error: rt.error, ...(rt.code ? { code: rt.code } : {}) }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);

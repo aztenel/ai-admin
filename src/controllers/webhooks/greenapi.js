@@ -6,7 +6,7 @@ import { clean } from "../../lib/text.js";
 import { nicheOf, seenBefore } from "../../services/channels/index.js";
 import { sendGreen } from "../../services/channels/greenapi.js";
 import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/holds.js";
-import { readHist, putHist, kvRetry, gaShared } from "../../services/channels/deps.js";
+import { readHist, putHist, kvRetry } from "../../services/channels/deps.js";
 import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
 import { applyStatus, patchTurn, stOf } from "../../services/inbox/status.js";
 import { statStatus } from "../../services/inbox/stats.js";
@@ -18,8 +18,7 @@ import { quoteOf } from "../../services/inbox/send.js";
 export const gaText = md => { md = md || {}; const t = md.textMessageData?.textMessage || md.extendedTextMessageData?.text || md.fileMessageData?.caption || ""; return clean(t, 1000) || `[${(/** @type {Record<string, string>} */ ({ imageMessage: "фото", videoMessage: "видео", audioMessage: "голосовое", documentMessage: "файл", locationMessage: "геолокация", contactMessage: "контакт" }))[md.typeMessage] || "сообщение"}]`; };
 /** @param {any} body @param {Env} env @param {any} origin @param {any} r */
 export async function handleGreen(body, env, origin, r) {
-  r = r || gaShared(env);
-  if (!r) return;
+  if (!r) return; // номер — тот, на чей вебхук пришло событие (свой номер компании или общий /ga): другого не подставляем
   const type = body?.typeWebhook, iid = body?.instanceData?.idInstance;
   if (iid !== undefined && iid !== null && String(iid) !== r.id) { console.log("ga: сообщение другого инстанса", String(iid).slice(0, 20)); return; } // адрес вебхука вставлен в кабинет другого номера
   if (type === "stateInstanceChanged") return gaStateSignal(env, r, String(body.stateInstance || ""));

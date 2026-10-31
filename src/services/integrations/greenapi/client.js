@@ -4,6 +4,14 @@
 import { GA_BASE } from "../../../config/constants.js";
 import { fmtPhone } from "../../../lib/phone.js";
 import { gaSecret, gaHook } from "./webhook.js";
+import { PREVIEW_SEND } from "../../../lib/stage.js";
+
+// На черновике (route.preview) Green-API только читаем: состояние, настройки, журналы, скачивание файла. Всё остальное — отправка,
+// setSettings (вебхук настоящего номера ушёл бы на черновик), перезапуск — не уходит (аудит 31.10.2026, lib/stage.js).
+const GA_READ = new Set(["getStateInstance", "getSettings", "downloadFile", "lastIncomingMessages", "lastOutgoingMessages", "getChatHistory", "getMessage"]);
+/** @param {any} r @param {string} op */
+const blocked = (r, op) => !!(r && r.preview) && !GA_READ.has(op);
+const PREVIEW_RES = () => ({ ok: false, status: 409, j: { message: PREVIEW_SEND }, text: "", preview: true });
 
 // запрос к Green-API → { ok, status, j, text }; status 0 — Green-API не ответил
 /**
@@ -12,9 +20,10 @@ import { gaSecret, gaHook } from "./webhook.js";
  * @param {any} [body]
  * @param {number} [ms]
  * @param {string} [query] после токена: «minutes=60» (журналы lastIncomingMessages / lastOutgoingMessages)
- * @returns {Promise<{ ok: boolean, status: number, j: any, text: string }>}
+ * @returns {Promise<{ ok: boolean, status: number, j: any, text: string, preview?: boolean }>}
  */
 export async function gaCall(r, op, body, ms = 15000, query = "") {
+  if (blocked(r, op)) return PREVIEW_RES();
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
     const res = await fetch(`${String(r.base || GA_BASE).replace(/\/+$/, "")}/waInstance${r.id}/${op}/${r.token}${query ? "?" + query : ""}`, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ac.signal } : { signal: ac.signal });
@@ -33,8 +42,9 @@ export function gaMediaBase(base) {
 }
 // запрос к Green-API с файлом (multipart/form-data, например sendFileByUpload) → как у gaCall. Сам не повторяется: файл мог уйти,
 // а второй раз клиент получил бы его дважды (CLAUDE.md §5.2). status 0 — Green-API не ответил (обрыв, срок вышел)
-/** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string }>} */
+/** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string, preview?: boolean }>} */
 export async function gaUpload(r, op, form, ms = 60000) {
+  if (blocked(r, op)) return PREVIEW_RES();
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
     const res = await fetch(`${gaMediaBase(r.base)}/waInstance${r.id}/${op}/${r.token}`, { method: "POST", body: form, signal: ac.signal });
@@ -47,6 +57,7 @@ export async function gaUpload(r, op, form, ms = 60000) {
 // ответ Green-API → код причины (подсказки — в GA_HINT)
 /** @param {any} x @returns {string} */
 export function gaCode(x) {
+  if (x.preview) return "ga:preview";
   const s = x.status, t = String((x.j && x.j.message) || x.text || "");
   if (!s || s === 499) return "ga:net";
   if (s === 400) return /expired/i.test(t) ? "ga:expired" : /starting process/i.test(t) ? "ga:starting" : /not authorized/i.test(t) ? "ga:auth" : /deleted/i.test(t) ? "ga:deleted" : "ga:400";
@@ -59,7 +70,7 @@ export const GA_HINT = {
   "ga:466": "закончился лимит тарифа Green-API (бесплатный тариф пишет только нескольким номерам) — оплатите тариф в кабинете Green-API",
   "ga:expired": "оплаченный срок инстанса Green-API закончился — оплатите его в кабинете Green-API", "ga:auth": "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API",
   "ga:starting": "Green-API перезапускает инстанс", "ga:deleted": "инстанс Green-API удалён", "ga:400": "Green-API не принял номер или текст (неверные данные)", "ga:5xx": "временный сбой Green-API",
-  "ga:noAccount": "у номера нет WhatsApp", "ga:failed": "WhatsApp не доставил сообщение"
+  "ga:noAccount": "у номера нет WhatsApp", "ga:failed": "WhatsApp не доставил сообщение", "ga:preview": "это тестовая версия, отсюда сообщения клиентам не отправляются"
 };
 // причина отказа человеческим языком, с именем переменной, которую нужно проверить
 /** @param {any} res @param {any} r @returns {string} */

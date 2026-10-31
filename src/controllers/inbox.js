@@ -10,7 +10,7 @@ import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
 import { eraseClient } from "../services/inbox/erase.js";
-import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaShared, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
+import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { waRoute, waBotOff, botOff } from "../services/channels/index.js";
@@ -25,7 +25,8 @@ import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
-import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce } from "../services/inbox/send.js";
+import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, NO_DB, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbReady } from "../services/inbox/send.js";
+import { isPreview, PREVIEW_SEND } from "../lib/stage.js";
 /** @import { Env } from "../lib/types.js" */
 
 // кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
@@ -120,9 +121,13 @@ export async function inboxApi(request, env, url, s, ctx) {
   const fgAt = await readForgot(env.KV, hk);
   applyForget(h, fgAt);
   let p = h.profile || {};
-  const gaOn = ch === "ga" && !!(gaRoute(env, cid) || gaShared(env));
+  // номер Green-API — только свой у компании или общий, закреплённый за ней (gaRoute): чужой общий номер не подставляется (аудит 31.10.2026)
+  const gaOn = ch === "ga" && !!gaRoute(env, cid);
+  // почему из пульта сейчас нельзя отправить — пульт показывает это заранее, а не после нажатия: черновик клиентам не пишет;
+  // второму номеру нужна база для защиты от двойной отправки (без неё Green-API не вызывается)
+  const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn && !(await sendDbReady(env, now)) ? NO_DB : "";
   const view = async () => {
-    const phone = ch === "web" ? p.phone || "" : "+" + id;
+    const phone = ch === "web" ? p.phone || "" : "+" + id, sendOff = await sendOffOf();
     /** @type {any[]} */
     let reqs = [];
     if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
@@ -137,9 +142,10 @@ export async function inboxApi(request, env, url, s, ctx) {
       need: p.need ? { why: p.need.why, text: p.need.why === "task" ? String(p.need.text || "задача") : /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
       assignee: (p.as && p.as.n) || "", done: p.done || 0, line: { ch, label: lineLabel(cid, ch, lineChans(env, cid)) },
       audit: (p.audit || []).slice(-12), paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
-      canSend: ch !== "web" && (ch === "ga" ? gaOn : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {}),
+      canSend: ch !== "web" && !sendOff && (ch === "ga" ? gaOn : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {}),
+      ...(sendOff ? { sendOff } : {}),
       // файлы и ответ на конкретное сообщение — только со второго номера (Green-API): у Meta и чата сайта из пульта этого нет
-      canFiles: gaOn, canQuote: gaOn
+      canFiles: gaOn && !sendOff, canQuote: gaOn && !sendOff
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
@@ -160,6 +166,8 @@ export async function inboxApi(request, env, url, s, ctx) {
 
   /** @type {{ blob: Blob, name: string, mime: string, size: number } | null} */
   let file = null;
+  // черновик клиентам не пишет ни с какого номера (аудит 31.10.2026): отказ до чтения тела и до обращения к провайдеру
+  if ((P === "/api/inbox/send" || isFile) && isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
   if (isFile) { // со второго номера (Green-API); у Meta и чата сайта отправки файлов из пульта нет — и тело не читаем
     if (ch !== "ga") return jsonP({ error: NO_FILES }, 409);
     if (!gaOn) return jsonP({ error: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." }, 409);
@@ -172,9 +180,9 @@ export async function inboxApi(request, env, url, s, ctx) {
   /** @param {string} text @param {string} [quote] @returns {Promise<{ ok: boolean, id?: string, unknown?: boolean, error?: string }>} */
   const sendTo = async (text, quote) => {
     if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя. Позвоните клиенту." };
-    if (ch === "ga") { // номер Green-API клиента (или общий номер воркера, через который пришёл этот чат)
-      const gr = gaRoute(env, cid) || gaShared(env);
-      if (!gr) return { ok: false, error: "Green-API не настроен." };
+    if (ch === "ga") { // номер Green-API компании: свой или общий, закреплённый за ней (чужой общий номер — нет, аудит 31.10.2026)
+      const gr = gaRoute(env, cid);
+      if (!gr) return { ok: false, error: "Второй номер этой компании не подключён к пульту." };
       const r = await sendGreen(env, id + "@c.us", text, gr, true, quote);
       if (r.ok) return { ok: true, id: r.id || "" };
       if (!r.status || r.status >= 500) return { ok: true, unknown: true, error: "" }; // ответа нет — сообщение могло уйти: статус «?», само не повторяется
@@ -203,7 +211,10 @@ export async function inboxApi(request, env, url, s, ctx) {
   };
   // тот же rid второй раз (двойное нажатие, повтор запроса браузером после обрыва): клиенту ничего не уходит, пульт получает переписку
   /** @param {{ dup: string, unknown?: boolean }} r */
-  const dupAnswer = async r => r.dup === "busy" ? jsonP({ error: BUSY }, 409) : jsonP({ ok: true, dup: true, chat: await view(), ...(r.unknown ? { warn: UNKNOWN_SENT } : {}) });
+  const dupAnswer = async r => r.dup === "busy" ? jsonP({ error: BUSY, code: "busy" }, 409) : jsonP({ ok: true, dup: true, chat: await view(), ...(r.unknown ? { warn: UNKNOWN_SENT } : {}) });
+  // отправка не начиналась: нет номера отправки (rid) или базы для защиты от двойной отправки — клиенту ничего не ушло
+  /** @param {{ status: number, code: string, error: string }} x */
+  const blockedAnswer = x => jsonP({ error: x.error, code: x.code }, x.status);
   const rid = String(b.rid || "").slice(0, 64), quoteId = String(b.quote || "").slice(0, 80);
   // ответ на конкретное сообщение (цитата WhatsApp): только со второго номера и только на сообщение этой переписки
   const qt = quoteId ? quoteOf(h.turns || [], quoteId) : null;
@@ -214,6 +225,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   if (P === "/api/inbox/send") {
     if (!msg) return jsonP({ error: "Напишите сообщение." }, 400);
     const r = await sendOnce(env, cid, ch, id, rid, () => sendTo(msg, qt ? qt.mid : ""));
+    if ("blocked" in r) return blockedAnswer(r.blocked);
     if ("dup" in r) return dupAnswer(r);
     if (!r.ok) return jsonP({ error: r.error }, 409);
     return saveReply({ ...adminTurn(msg, r), ...(qt ? { qt } : {}) }, r);
@@ -223,6 +235,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (!plan.ok) return jsonP({ error: plan.error }, plan.status);
     const f = file, { kind, name } = plan;
     const r = await sendOnce(env, cid, ch, id, rid, () => gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : ""));
+    if ("blocked" in r) return blockedAnswer(r.blocked);
     if ("dup" in r) return dupAnswer(r);
     if (!r.ok) return jsonP({ error: r.error }, 409);
     // файл в истории — как у клиента: вид, имя, тип, размер, номер сообщения (по нему файл открывается в пульте: downloadFile)
@@ -273,7 +286,17 @@ export async function inboxApi(request, env, url, s, ctx) {
       const lid = String(b.lead || "");
       let lead = null; try { lead = (await loadLeads(env.KV, cid)).find(l => l.id === lid) || null; } catch (e) {}
       if (!lead || (lead.phone && lead.phone !== (normPhone("+" + id) || p.phone) && lead.phone !== p.phone)) return jsonP({ error: "Заявка не найдена." }, 404);
-      let sent = null; if (msg) { sent = await sendTo(msg); if (!sent.ok) return jsonP({ error: sent.error }, 409); }
+      // сообщение клиенту при закрытии просьбы — та же защита, что у ответа (аудит 31.10.2026): черновик не отправляет, второй номер —
+      // только с rid и отметкой в D1, двойное нажатие «Отправить клиенту и закрыть» второй раз не отправляет
+      /** @type {any} */ let sent = null;
+      if (msg) {
+        if (isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
+        const r = await sendOnce(env, cid, ch, id, rid, () => sendTo(msg));
+        if ("blocked" in r) return blockedAnswer(r.blocked);
+        if ("dup" in r) return dupAnswer(r);
+        if (!r.ok) return jsonP({ error: r.error }, 409);
+        sent = r;
+      }
       await leadPatch(env, cid, lid, { status: "выполнена", note: clean((lead.note ? lead.note + " " : "") + `Выполнил ${who}${msg ? ", клиенту сообщено" : ""}.`, 600) });
       h = await logTurns(env.KV, hk, msg ? [adminTurn(msg, sent)] : [], pr => {
         chatAudit(pr, now, who, "done", lead.kind || "lead");

@@ -2,19 +2,23 @@
 // Green-API: настройки номера из переменных (gaShared, gaRoute, gaSecret) и пароль вебхука (gaHook = HMAC токена).
 /** @import { Env } from "../../../lib/types.js" */
 import { hasClient } from "../../../config/builtin-clients.js";
+import { isPreview } from "../../../lib/stage.js";
 
 // --- Green-API (обычный WhatsApp по QR-коду)
 // Свой номер у клиента: Text GA_ID_<ID>, Secret GA_TOKEN_<ID>, Text GA_URL_<ID> (apiUrl из кабинета, по умолчанию api.green-api.com).
 //   Вебхук: https://<воркер>/ga/<id>?t=<пароль>. Пароль бот выводит из токена инстанса; адрес показывает «Проверка запуска», там же кнопка «Настроить Green-API».
 // Общий номер воркера (прежний режим): GA_ID, GA_TOKEN, GA_URL, GA_HOOK, GA_CLIENT — вебхук /ga?t=<GA_HOOK>.
 /** @param {Env} env */
-export const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", shared: true } : null;
-// номер Green-API клиента: свой (GA_ID_<ID> и GA_TOKEN_<ID>) или общий номер воркера, закреплённый за ним (GA_CLIENT)
+// preview — черновик: отправка и смена настроек через этот номер запрещены в gaCall/gaUpload (lib/stage.js)
+export const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", shared: true, preview: isPreview(env) } : null;
+// номер Green-API клиента: свой (GA_ID_<ID> и GA_TOKEN_<ID>) или общий номер воркера, закреплённый за ним (GA_CLIENT).
+// Общий номер, закреплённый за другой компанией (или ни за кем), этой компании не достаётся: иначе её ответы, файлы и напоминания
+// ушли бы клиентам с чужого номера (аудит 31.10.2026). Отправка из пульта, файлы, скачивание и напоминания берут номер только здесь.
 /** @param {Env} env @param {string} cid */
 export function gaRoute(env, cid) {
   if (!hasClient(cid)) return null;
   const up = cid.toUpperCase();
-  if (env["GA_ID_" + up] && env["GA_TOKEN_" + up]) return { client: cid, id: String(env["GA_ID_" + up]).trim(), token: String(env["GA_TOKEN_" + up]), base: env["GA_URL_" + up] || "" };
+  if (env["GA_ID_" + up] && env["GA_TOKEN_" + up]) return { client: cid, id: String(env["GA_ID_" + up]).trim(), token: String(env["GA_TOKEN_" + up]), base: env["GA_URL_" + up] || "", preview: isPreview(env) };
   const s = gaShared(env);
   return s && s.client === cid ? s : null;
 }

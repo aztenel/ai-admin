@@ -1,6 +1,7 @@
 // @ts-check
 // Проверка запуска (/launch, /api/launch/*): чек-лист подключений и экзамен бота по его паспорту.
 import { money } from "../lib/money.js";
+import { isPreview, PREVIEW_HOOK } from "../lib/stage.js";
 import { phonesIn } from "../lib/phone.js";
 import { local } from "../lib/time.js";
 import { clean, lowE } from "../lib/text.js";
@@ -131,6 +132,8 @@ export async function launchApi(request, env, url, s) {
   }
   if (M === "POST" && P === "/api/launch/tg") return jsonP(await tgProbe(env, c));
   if (M === "POST" && P === "/api/launch/ga") { // вебхук Green-API одной кнопкой: адрес этого бота и нужные уведомления
+    // с черновика вебхук не меняем: сообщения настоящих клиентов пошли бы в тестовую версию (аудит 31.10.2026; запрет есть и в gaCall)
+    if (isPreview(env)) return jsonP({ error: PREVIEW_HOOK, code: "preview" }, 409);
     const gr = /** @type {any} */ (gaRoute(env, cid));
     if (!gr) return jsonP({ error: `У этого клиента нет Green-API: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up}.` }, 409);
     if (gr.shared && !env.GA_HOOK) return jsonP({ error: "Для общего номера задайте в Cloudflare секрет GA_HOOK (любой пароль)." }, 409);

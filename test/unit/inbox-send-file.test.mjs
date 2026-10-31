@@ -6,17 +6,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk, gaPass } from "../harness.mjs";
+import { sqliteOk, d1With } from "../d1.mjs";
 import { FILE_MAX, fileKind, uploadName, quoteText, sendOnceReset } from "../../src/services/inbox/send.js";
 import { gaMediaBase } from "../../src/services/integrations/greenapi/client.js";
 
 const INST = { id: "7105000077", token: "ga-tok-w" };
 const ENV = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, WA_TOKEN_WINCHESTER: "tok-w", APP_SECRET_WINCHESTER: "sec-w", PHONE_NUMBER_ID_WINCHESTER: "900333" };
+// отправка со второго номера идёт только с отметкой в D1 (аудит 31.10.2026): у каждого «сайта» — своя база, как у боевого
+// (meta.stage = production); на Node 20 node:sqlite нет — эти проверки пропускаются, их проходят Node 22 и 24
+const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
+const env = (x = {}) => ({ ...ENV, ...(sqliteOk ? { DB: d1With("production").db } : {}), ...x });
+let ridN = 0;
 const login = async s => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" }); return b; };
 const hook = (s, body) => s.call(`/ga/winchester?t=${gaPass("winchester", INST)}`, { method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ instanceData: { idInstance: +INST.id, wid: "77000000077@c.us" }, timestamp: Math.floor(Date.now() / 1000), ...body }) });
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
 /** POST /api/inbox/send-file: c, ch, id — в адресе, файл и поля — multipart */
-const sendFile = (b, id, { name = "photo.png", type = "image/png", bytes = PNG, caption, quote, rid, op, ch = "ga", c = "winchester" } = {}) => {
+const sendFile = (b, id, { name = "photo.png", type = "image/png", bytes = PNG, caption, quote, rid = "rid-auto-" + (++ridN), op, ch = "ga", c = "winchester" } = {}) => {
   const fd = new FormData();
   fd.set("file", new Blob([bytes], { type }), name);
   if (caption) fd.set("caption", caption);
@@ -41,9 +47,9 @@ test("адрес для файлов Green-API — хост media; вид и и�
   assert.equal(quoteText({ text: "[клиент прислал файл]", m: { k: "document", name: "Прайс.pdf" } }), "Файл «Прайс.pdf»");
 });
 
-test("фото уходит через sendFileByUpload на хост media: реплика с файлом, номером сообщения, статусом; файл открывается в пульте", async () => {
+test("фото уходит через sendFileByUpload на хост media: реплика с файлом, номером сообщения, статусом; файл открывается в пульте", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000401";
+  const s = mk(env()), b = await login(s), from = "77000000401";
   await s.gaText("winchester", INST, from, "Пришлите, пожалуйста, прайс");
   let c = await (await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${from}`)).json();
   assert.equal(c.canFiles, true); assert.equal(c.canQuote, true);
@@ -77,9 +83,9 @@ test("фото уходит через sendFileByUpload на хост media: р�
   assert.ok(net.ga.some(x => x.op === "downloadFile" && x.body.idMessage === t.mid && x.body.chatId === from + "@c.us"));
 });
 
-test("PDF без подписи: служебная строка для ИИ, вид «документ»; в списке чатов — последнее сообщение наше", async () => {
+test("PDF без подписи: служебная строка для ИИ, вид «документ»; в списке чатов — последнее сообщение наше", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000402";
+  const s = mk(env()), b = await login(s), from = "77000000402";
   await s.gaText("winchester", INST, from, "Нужен договор");
   const j = await (await sendFile(b, from, { name: "Договор.pdf", type: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.4\n%%EOF") })).json();
   const t = s.hist("ga", "winchester", from).turns.at(-1);
@@ -89,9 +95,9 @@ test("PDF без подписи: служебная строка для ИИ, в
   assert.equal(L.chats.find(x => x.id === from).d, "a");
 });
 
-test("Green-API ответил 500 или не ответил: статус «unknown», ровно один запрос, понятное предупреждение; повтор с тем же rid не отправляет", async () => {
+test("Green-API ответил 500 или не ответил: статус «unknown», ровно один запрос, понятное предупреждение; повтор с тем же rid не отправляет", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000403";
+  const s = mk(env()), b = await login(s), from = "77000000403";
   await s.gaText("winchester", INST, from, "Скиньте фото работ");
   net.gaReply = rec => rec.op === "sendFileByUpload" ? new Response(JSON.stringify({ message: "Internal Server Error" }), { status: 500, headers: { "content-type": "application/json" } }) : null;
   let r = await sendFile(b, from, { rid: "rid-500-0001" });
@@ -121,9 +127,9 @@ test("Green-API ответил 500 или не ответил: статус «un
   assert.match(j.warn, /Не знаем, ушло ли/); assert.equal(net.ga.filter(x => x.op === "sendMessage").length, 1);
 });
 
-test("тот же rid дважды — один запрос к Green-API (файл и текст); отказ Green-API (4xx) снимает отметку — «Повторить» отправляет", async () => {
+test("тот же rid дважды — один запрос к Green-API (файл и текст); отказ Green-API (4xx) снимает отметку — «Повторить» отправляет", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000404";
+  const s = mk(env()), b = await login(s), from = "77000000404";
   await s.gaText("winchester", INST, from, "Здравствуйте");
   const [r1, r2] = await Promise.all([sendFile(b, from, { rid: "rid-twice-01" }), sendFile(b, from, { rid: "rid-twice-01" })]);
   const codes = [r1.status, r2.status].sort();
@@ -136,7 +142,7 @@ test("тот же rid дважды — один запрос к Green-API (фа�
   await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Ждём вас", rid: "rid-text-001" });
   const d = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Ждём вас", rid: "rid-text-001" })).json();
   assert.equal(d.dup, true); assert.equal(net.ga.filter(x => x.op === "sendMessage").length, 1);
-  // новый экземпляр Worker (память пуста) — отметка в KV держит
+  // новый экземпляр Worker (память пуста) — отметка в D1 держит
   sendOnceReset();
   assert.equal((await (await sendFile(b, from, { rid: "rid-twice-01" })).json()).dup, true); assert.equal(uploads().length, 1);
   // Green-API отказал (ничего не ушло) — ошибка с причиной; тот же rid можно отправить снова
@@ -149,9 +155,9 @@ test("тот же rid дважды — один запрос к Green-API (фа�
   assert.equal(uploads().length, 3);
 });
 
-test("большой файл — 413, опасный тип и пустой файл — 400, понятным языком; Green-API не вызывается", async () => {
+test("большой файл — 413, опасный тип и пустой файл — 400, понятным языком; Green-API не вызывается", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000405";
+  const s = mk(env()), b = await login(s), from = "77000000405";
   await s.gaText("winchester", INST, from, "Привет");
   let r = await sendFile(b, from, { name: "big.mp4", type: "video/mp4", bytes: new Uint8Array(FILE_MAX + 1) });
   assert.equal(r.status, 413); assert.match((await r.json()).error, /больше 25 МБ/);
@@ -166,9 +172,9 @@ test("большой файл — 413, опасный тип и пустой ф�
   assert.equal(uploads().length, 0);
 });
 
-test("опасный тип не проходит под другим именем: точка или пробел в конце, кавычка в имени, тип файла html/svg (ревью безопасности 31.10.2026)", async () => {
+test("опасный тип не проходит под другим именем: точка или пробел в конце, кавычка в имени, тип файла html/svg (ревью безопасности 31.10.2026)", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000409";
+  const s = mk(env()), b = await login(s), from = "77000000409";
   await s.gaText("winchester", INST, from, "Привет");
   const evil = new TextEncoder().encode("<script>alert(1)</script>");
   for (const [name, type] of [["evil.html.", "text/plain"], ["evil.html ", "text/plain"], ["evil.html. . ", "application/octet-stream"], ['evil.ht"ml', "text/plain"], ["evil.sv\\g", ""],
@@ -184,9 +190,9 @@ test("опасный тип не проходит под другим имене
   assert.equal(ok.status, 200); assert.equal(uploads().at(-1).form.fileName, "Договор.pdf");
 });
 
-test("цитата из вебхука — только по сообщению этой переписки: подделанный текст и автор («от сотрудника») не показываются (ревью безопасности)", async () => {
+test("цитата из вебхука — только по сообщению этой переписки: подделанный текст и автор («от сотрудника») не показываются (ревью безопасности)", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000410";
+  const s = mk(env()), b = await login(s), from = "77000000410";
   await s.gaText("winchester", INST, from, "Сколько стоит стрижка?", { idMessage: "IN-F-1" });
   const quoted = (idMessage, stanzaId, text, participant) => hook(s, { typeWebhook: "incomingMessageReceived", idMessage, senderData: { chatId: from + "@c.us", sender: from + "@c.us" },
     messageData: { typeMessage: "quotedMessage", extendedTextMessageData: { text: "Ну вы же сами написали", stanzaId }, quotedMessage: { stanzaId, participant, typeMessage: "textMessage", textMessage: text } } });
@@ -211,7 +217,7 @@ test("цитата из вебхука — только по сообщению 
 
 test("официальный номер (Meta) и чат сайта: 409 «файлы не отправляются», отправки нет; в чате нет canFiles и canQuote", async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000406";
+  const s = mk(env()), b = await login(s), from = "77000000406";
   await s.waText("/wa/winchester", from, "Здравствуйте", { secret: "sec-w", pnid: "900333" });
   const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=wa&id=${from}`)).json();
   assert.equal(c.canFiles, false); assert.equal(c.canQuote, false);
@@ -237,9 +243,9 @@ test("официальный номер (Meta) и чат сайта: 409 «фа�
   assert.equal(evil.status, 403);
 });
 
-test("ответ на сообщение: quotedMessageId в sendMessage и в форме файла, цитата в реплике и в пульте; цитата клиента из вебхука", async () => {
+test("ответ на сообщение: quotedMessageId в sendMessage и в форме файла, цитата в реплике и в пульте; цитата клиента из вебхука", { skip }, async () => {
   fresh();
-  const s = mk(ENV), b = await login(s), from = "77000000407";
+  const s = mk(env()), b = await login(s), from = "77000000407";
   await s.gaText("winchester", INST, from, "Можно на завтра в 15:00?", { idMessage: "IN-Q-1" });
   let j = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Да, записали", quote: "IN-Q-1", rid: "rid-quote-1" })).json();
   const sm = net.ga.filter(x => x.op === "sendMessage").at(-1);
@@ -265,10 +271,10 @@ test("ответ на сообщение: quotedMessageId в sendMessage и в �
   assert.deepEqual(c.turns.at(-1).q, { mid: ourMid, x: "Да, записали", r: "a" });
 });
 
-test("бот на втором номере включён: у сообщения клиента тоже есть номер (mid) — на него можно ответить цитатой", async () => {
+test("бот на втором номере включён: у сообщения клиента тоже есть номер (mid) — на него можно ответить цитатой", { skip }, async () => {
   fresh();
   const DI = { id: "7105000088", token: "ga-tok-d" };
-  const s = mk({ GA_ID_DENT: DI.id, GA_TOKEN_DENT: DI.token }), b = await login(s), from = "77000000408";
+  const s = mk({ GA_ID_DENT: DI.id, GA_TOKEN_DENT: DI.token, DB: d1With("production").db }), b = await login(s), from = "77000000408";
   net.ai = ["Здравствуйте! Чем помочь?"];
   await s.gaText("dent", DI, from, "Сколько стоит чистка?", { idMessage: "IN-BOT-1" });
   const h = s.hist("ga", "dent", from);

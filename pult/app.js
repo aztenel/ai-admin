@@ -69,8 +69,8 @@ var enc = encodeURIComponent;
 var API = DEMO ? window.__DEMO_API : {
   list: function (f, ch) { return jf("/api/inbox/list?c=" + enc(S.C) + "&f=" + (ch === "web" ? "all" : f) + "&ch=" + ch); },
   chat: function (ch, id) { return jf("/api/inbox/chat?c=" + enc(S.C) + "&ch=" + ch + "&id=" + enc(id)); },
-  send: function (ch, id, text) { return jf("/api/inbox/send", { c: S.C, ch: ch, id: id, text: text }); },
-  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; } return jf("/api/inbox/act", b); },
+  send: function (ch, id, text, rid) { return jf("/api/inbox/send", { c: S.C, ch: ch, id: id, text: text, rid: rid }); },
+  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; if (x.text) b.rid = doneRid(x.lead, x.text); } return jf("/api/inbox/act", b); },
   me: function () { return jf("/api/inbox/me"); },
   leads: function () { return jf("/api/inbox/leads?c=" + enc(S.C)); },
   report: function () { return jf("/api/inbox/report?c=" + enc(S.C)); },
@@ -603,7 +603,7 @@ function renderChat(d, scroll) {
   }
   var comp = $("comp"), wl = $("warn");
   comp.hidden = !d.canSend; wl.className = "warnl";
-  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? "Отправка не настроена: WhatsApp этой компании ещё не подключён." : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым." : "";
+  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? (d.sendOff || "Отправка не настроена: WhatsApp этой компании ещё не подключён.") : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым." : "";
   wl.textContent = w;
   $("txt").disabled = !d.open; fit();
   renderCard(d);
@@ -643,16 +643,29 @@ function done(d, tgt) {
   clear($("cards")); renderChat(d.chat, true); loadList();
 }
 function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) { done(d, tgt); }).catch(oops); }
+// номер отправки (rid): одно нажатие — одно сообщение клиенту. Связь оборвалась — запрос мог дойти: тот же текст в тот же чат
+// уходит с тем же номером, и сервер второй раз не отправит (аудит 31.10.2026; без номера второй номер не отправляет вовсе)
+// rid для «Отправить клиенту и закрыть»: одна заявка и один текст — одно сообщение, сколько бы раз ни нажали
+function doneRid(lead, t) {
+  var h = 5381; for (var i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return "dn-" + (String(lead || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "x") + "-" + h.toString(36);
+}
+function ridFor(tgt, t) {
+  var k = keyOf(tgt) + "\n" + t;
+  if (S.ridLost && S.ridLost.k === k) return S.ridLost.rid;
+  return "o" + Math.floor(Date.now()).toString(36) + Math.random().toString(36).slice(2, 10); // только буквы и цифры: такой rid принимает сервер
+}
 function sendMsg() {
   var ta = $("txt"), t = ta.value.trim(); if (!t || S.busy || !S.cur) return;
-  S.busy = true; var tgt = S.cur, M = $("msgs");
+  S.busy = true; var tgt = S.cur, M = $("msgs"), rid = ridFor(tgt, t);
   S.justSent = t;
   var pend = h("div", "m adm pend new", [h("span", "tx", t), h("span", "ts", hm(Date.now()))]); M.appendChild(pend); M.scrollTop = M.scrollHeight;
   ta.value = ""; fit();
-  API.send(tgt.ch, tgt.id, t).then(function (d) {
+  API.send(tgt.ch, tgt.id, t, rid).then(function (d) {
+    S.ridLost = null;
     if (d.error) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
     delete S.drafts[keyOf(tgt)]; done(d, tgt);
-  }).catch(function (e) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } oops(e); });
+  }).catch(function (e) { S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } oops(e); });
 }
 function fit() {
   var t = $("txt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px";

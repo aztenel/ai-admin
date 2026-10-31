@@ -16,11 +16,15 @@ test("владелец: brand null, оформление по компаниям
 
 test("сотрудник Winchester: своё оформление и режим записи с сайта (проверка без записи, настоящая — переменной); тестовая версия", async () => {
   net.reset();
-  for (const [extra, mode] of [[{ ALTEGIO_PARTNER: "partner-test" }, "dry"], [{ ALTEGIO_PARTNER: "partner-test", SITE_BOOKING_WINCHESTER: "1" }, "live"], [{ ALTEGIO_PARTNER: "partner-test", SITE_BOOKING_WINCHESTER: "0" }, "off"]]) {
+  // на черновике настоящей записи с сайта не бывает (аудит 31.10.2026): «1» там — тоже проверка без записи
+  for (const [extra, mode] of [[{ ALTEGIO_PARTNER: "partner-test" }, "dry"], [{ ALTEGIO_PARTNER: "partner-test", SITE_BOOKING_WINCHESTER: "1" }, "dry"], [{ ALTEGIO_PARTNER: "partner-test", SITE_BOOKING_WINCHESTER: "0" }, "off"]]) {
     const s = mk({ ...ENV, ...extra, STAGE: "preview" }), d = await me(await login(s, "staff-key-winch-0001"));
     assert.deepEqual(d, { owner: false, c: "winchester", brand: "winchester", brands: { winchester: "winchester" }, stage: "preview", site: { winchester: mode } });
     assert.ok(!JSON.stringify(d).includes("partner-test"), "без ключей");
   }
+  const s = mk({ ...ENV, ALTEGIO_PARTNER: "partner-test", SITE_BOOKING_WINCHESTER: "1" }), d = await me(await login(s, "staff-key-winch-0001"));
+  assert.deepEqual(d.site, { winchester: "live" }, "на боевом сайте «1» — настоящая запись, как раньше");
+  assert.equal(d.stage, "production");
 });
 
 test("сотрудник другой компании: нейтральное оформление, о Winchester ничего", async () => {

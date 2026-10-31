@@ -3,9 +3,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk, gaPass } from "../harness.mjs";
+import { sqliteOk, d1With } from "../d1.mjs";
 
 const INST = { id: "7105000077", token: "ga-tok-w" };
 const ENV = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
+// ответ из пульта со второго номера — только с отметкой отправки в D1 и номером отправки rid (аудит 31.10.2026); на Node 20 D1 нет
+const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
+const envD = () => ({ ...ENV, ...(sqliteOk ? { DB: d1With("production").db } : {}) });
 const login = async s => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" }); return b; };
 let n = 0;
 /** любой вебхук Green-API на номер Winchester */
@@ -33,13 +37,13 @@ test("исходящее без ответа клиента — не в очер
   assert.equal(L.need, 1);
 });
 
-test("«спасибо» после нашего ответа не ставит в очередь; ответ сотрудника — с именем, номером сообщения и галочкой", async () => {
+test("«спасибо» после нашего ответа не ставит в очередь; ответ сотрудника — с именем, номером сообщения и галочкой", { skip }, async () => {
   net.reset();
-  const s = mk(ENV), b = await login(s), from = "77000000302";
+  const s = mk(envD()), b = await login(s), from = "77000000302";
   await s.gaText("winchester", INST, from, "Можно перенести запись на пятницу?");
   let c = await chat(b, from);
   assert.equal(c.need.tp, "move");
-  const r = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Да, перенесли на пятницу 15:00", op: "Айгерим" })).json();
+  const r = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Да, перенесли на пятницу 15:00", op: "Айгерим", rid: "rid-v2-0001" })).json();
   assert.equal(r.ok, true);
   assert.equal(r.chat.need, null); assert.equal(r.chat.assignee, "Айгерим", "ответил — ведёт чат");
   const mine = r.chat.turns.at(-1);
@@ -97,16 +101,16 @@ test("«Готово» при неотвеченном вопросе — тол
   assert.equal((await list(b)).chats[0].dn, undefined, "клиент написал снова — чат снова открыт");
 });
 
-test("клиент исправил, удалил сообщение, поставил реакцию — меняется та же реплика, очередь не трогается", async () => {
+test("клиент исправил, удалил сообщение, поставил реакцию — меняется та же реплика, очередь не трогается", { skip }, async () => {
   net.reset();
-  const s = mk(ENV), b = await login(s), from = "77000000305";
+  const s = mk(envD()), b = await login(s), from = "77000000305";
   await s.gaText("winchester", INST, from, "Запишите на 14:00", { idMessage: "IN-EDIT-1" });
   await hook(s, { typeWebhook: "incomingMessageReceived", idMessage: "IN-EDIT-2", senderData: { chatId: from + "@c.us", sender: from + "@c.us" }, messageData: { typeMessage: "editedMessage", editedMessageData: { textMessage: "Запишите на 15:00", stanzaId: "IN-EDIT-1" } } });
   await s.settle();
   let h = s.hist("ga", "winchester", from);
   assert.equal(h.turns.filter(t => t.role === "user").length, 1, "правка — не новое сообщение");
   assert.equal(h.turns[0].text, "Запишите на 15:00"); assert.equal(h.turns[0].ed, 1);
-  const r = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Записали на 15:00" })).json();
+  const r = await (await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Записали на 15:00", rid: "rid-v2-0002" })).json();
   const mid = s.hist("ga", "winchester", from).turns.at(-1).mid;
   await hook(s, { typeWebhook: "incomingMessageReceived", idMessage: "IN-R-1", senderData: { chatId: from + "@c.us" }, messageData: { typeMessage: "reactionMessage", extendedTextMessageData: { text: "👍" }, quotedMessage: { stanzaId: mid } } });
   await hook(s, { typeWebhook: "incomingMessageReceived", idMessage: "IN-D-1", senderData: { chatId: from + "@c.us" }, messageData: { typeMessage: "deletedMessage", deletedMessageData: { stanzaId: "IN-EDIT-1" } } });
@@ -198,11 +202,11 @@ test("карточка ближайшей записи Altegio: только ч�
   assert.equal((await (await b2.go(`/api/inbox/booking?c=winchester&ch=ga&id=${from}`)).json()).available, false);
 });
 
-test("задача по чату — в очереди «Нужен ответ» до «Готово»; отметка «опаздывает» — в журнале чата", async () => {
+test("задача по чату — в очереди «Нужен ответ» до «Готово»; отметка «опаздывает» — в журнале чата", { skip }, async () => {
   net.reset();
-  const s = mk(ENV), b = await login(s), from = "77000000309";
+  const s = mk(envD()), b = await login(s), from = "77000000309";
   await s.gaText("winchester", INST, from, "Буду минут на 10 позже");
-  await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Хорошо, ждём", op: "Айгерим" });
+  await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Хорошо, ждём", op: "Айгерим", rid: "rid-v2-0003" });
   let r = await (await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "late", min: 10, op: "Айгерим" })).json();
   assert.equal(r.chat.late.min, 10); assert.equal(r.chat.audit.at(-1).a, "late");
   assert.equal((await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "task", text: "" })).status, 400);

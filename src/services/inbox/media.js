@@ -7,7 +7,7 @@
 // иначе такой «файл клиента» исполнился бы на нашем адресе. Файлы не храним — каждый раз берём у провайдера.
 /** @import { Env } from "../../lib/types.js" */
 import { GRAPH } from "../../config/constants.js";
-import { gaRoute, gaShared } from "../integrations/greenapi/webhook.js";
+import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaCall } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
 import { wzOn, wzMedia } from "../channels/wazzapo.js";
@@ -59,7 +59,7 @@ export async function mediaFile(env, cid, ch, chatDigits, p, t, range) {
         if (r) r.body && r.body.cancel();
       }
       // старая ссылка не открылась — новая у Green-API по номеру сообщения
-      const gr = gaRoute(env, cid) || gaShared(env);
+      const gr = gaRoute(env, cid); // только номер этой компании: чужой общий номер не спрашиваем (аудит 31.10.2026)
       if (!gr || !m.id) return { ok: false, why: "gone" };
       const d = await gaCall(gr, "downloadFile", { chatId: chatDigits + "@c.us", idMessage: m.id }, 10000);
       if (!d.ok) return { ok: false, why: d.status === 500 || d.status === 400 ? "gone" : "error" };

@@ -11,6 +11,7 @@
 // Вебхук в кабинете Wazzapo: https://<воркер>/wz/<id>, события message.incoming, message.outgoing, message.status.
 /** @import { Env } from "../../../lib/types.js" */
 import { clean } from "../../../lib/text.js";
+import { isPreview, PREVIEW_SEND } from "../../../lib/stage.js";
 
 export const WZ_BASE = "https://wazzapo.kz/api/v2/external";
 
@@ -26,6 +27,7 @@ const base = env => String(env.WZ_URL || WZ_BASE).replace(/\/+$/, "");
  * @returns {Promise<{ ok: boolean, status: number, j: any, text: string }>}
  */
 export async function wzCall(env, key, method, path, body, ms = 15000) {
+  if (isPreview(env) && method !== "GET") return { ok: false, status: 409, j: { error: PREVIEW_SEND }, text: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
     const r = await fetch(base(env) + path, { method, signal: ac.signal, headers: { "x-api-key": key, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
