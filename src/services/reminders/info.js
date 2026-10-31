@@ -39,7 +39,7 @@ async function journalInfo(env, c, now) {
   const on = /** @type {Record<string, boolean>} */ (Object.fromEntries(kinds.map(x => [x.k, x.on])));
   const soon = (await jrqLoad(env, c.id)).filter(x => x && on[x.k] && x.at > now - 3600e3).sort((a, b) => a.at - b.at);
   const queue = soon.slice(0, QUEUE_MAX).map(x => ({ k: x.k, at: x.at, ch: "ga", phone: maskPhone(x.p), name: String(x.n || ""), date: x.date, time: x.time,
-    ...(x.na ? { why: "текст не одобрен владельцем" } : x.tries ? { why: `не ушло с ${x.tries}-й попытки — пробуем ещё` } : {}) }));
+    ...(x.na ? { why: "текст не одобрен владельцем" } : x.tries ? { why: `не ушло с ${x.tries}-й попытки, пробуем ещё` } : {}) }));
   let sent3d = 0;
   try { const r = await env.KV.list({ prefix: `rmok:${c.id}:`, limit: 1000 }); sent3d = ((r && r.keys) || []).length; } catch (e) {}
   const log = (await jrLogLoad(env, c.id)).slice(-LOG_MAX).reverse().map(x => ({ t: x.t, k: x.k, st: x.st, why: String(x.why || ""), phone: maskPhone(x.p), name: String(x.n || ""), date: x.date, time: x.time }));
@@ -119,9 +119,9 @@ export async function serviceInfo(env, c, now) {
   const altegio = altLoc(env, c) > 0;
   const remind = altegio && c.remind !== "off", h2 = remind && c.remind !== "day", rv = altegio && !!c.review;
   const kinds = [
-    { k: "d1", label: "Накануне в 18:00 — напоминание о записи", on: remind },
-    { k: "h2", label: "За 2 часа — напоминание о записи", on: h2 },
-    { k: "rv", label: "Через 3 часа после визита — просьба оставить отзыв", on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "d1", label: "Напоминание о записи накануне в 18:00", on: remind },
+    { k: "h2", label: "Напоминание о записи за 2 часа", on: h2 },
+    { k: "rv", label: "Просьба оставить отзыв через 3 часа после визита", on: rv, ...(c.review ? { link: String(c.review) } : {}) },
   ];
   /** @type {any[]} */ let q = [];
   try { q = JSON.parse((await env.KV.get("rmq:" + c.id)) || "[]") || []; } catch (e) { console.log("service queue", String(e)); }

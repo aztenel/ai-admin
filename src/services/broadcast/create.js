@@ -44,7 +44,7 @@ async function gaText(env, c, body) {
   let text = String(body.text ?? ""), tplId = "";
   if (body.tplId) {
     const it = (await libraryOf(env, c)).find(x => x.id === String(body.tplId).slice(0, 16));
-    if (!it) errors.push("такого текста в библиотеке нет — выберите его заново");
+    if (!it) errors.push("такого текста в библиотеке нет, выберите его заново");
     else { tplId = it.id; if (!text.trim()) text = (lang === "kk" && it.kk) || it.ru; }
   }
   text = toCanonical(text);
@@ -77,8 +77,8 @@ export function bcFields(body) {
     return { errors, ch: "ga", tpl: "", lang: "", img, msg, params: /** @type {string[]} */ ([]), text: clean(msg.replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
   }
   const tpl = String(body.tpl || "").trim(), lang = String(body.lang || "ru").trim();
-  if (!/^[a-z0-9_]{1,512}$/.test(tpl)) errors.push("название шаблона — как в кабинете Meta: строчные латинские буквы, цифры и «_» (например, promo_october)");
-  if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(lang)) errors.push("язык шаблона — код из кабинета Meta: ru, kk, en или en_US");
+  if (!/^[a-z0-9_]{1,512}$/.test(tpl)) errors.push("название шаблона пишите как в кабинете Meta: строчные латинские буквы, цифры и «_» (например, promo_october)");
+  if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(lang)) errors.push("язык шаблона: код из кабинета Meta (ru, kk, en или en_US)");
   if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка: ссылка, которая начинается с https://");
   const params = (Array.isArray(body.params) ? body.params : String(body.params || "").split("\n")).map(x => clean(x, 300)).filter(Boolean).slice(0, 10);
   return { errors, ch: "", tpl, lang, img, msg: "", params, text: clean(String(body.text || "").replace(/\s*\n\s*/g, " ⏎ "), 1100), fallback };
@@ -143,7 +143,7 @@ export async function bcCheck(env, c, body0, now) {
   return { ok: list.length > 0 && !errors.length, valid: list.length, named: list.filter(x => x[1]).length, dup: rc.dup, bad: rc.bad, badN: rc.badN, cut: rc.cut, stopped: list.filter(x => stop.has(x[0])).length,
     ...(rc.seg ? { segOut: rc.seg.out, noDate: rc.seg.noDate, seg: rc.seg.label } : {}), ...(rc.crm ? { segment: rc.crm, excluded: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }) } : {}),
     ...(g ? { tplId: g.tplId, lang: g.lang, text: f.msg, samples: gr ? gr.samples : [] } : {}),
-    sample: list.slice(0, 5).map(x => (rc.crm ? maskPhone(x[0]) : "+" + x[0]) + " — " + (x[1] || "без имени")), errors,
+    sample: list.slice(0, 5).map(x => (rc.crm ? maskPhone(x[0]) : "+" + x[0]) + " · " + (x[1] || "без имени")), errors,
     preview: f.ch === "ga" ? (gr ? gr.samples.slice(0, 1).map(x => x.text) : f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) };
 }
 

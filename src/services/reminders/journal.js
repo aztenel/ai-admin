@@ -160,7 +160,7 @@ async function jrClient(env, c, now) {
   for (const x of q) {
     if (now - x.at > late(o, x.k, x.at)) {
       drop.add(key(x));
-      logs.push(entry(x, "skipped", x.na ? "не ушло: текст не одобрен владельцем" : x.wa ? "в Altegio нет отметки «пришёл» — об отзыве не просим" : "время отправки прошло", now));
+      logs.push(entry(x, "skipped", x.na ? "не ушло: текст не одобрен владельцем" : x.wa ? "в Altegio нет отметки «пришёл», об отзыве не просим" : "время отправки прошло", now));
     }
     else if (x.at <= now) due.push(x);
   }
@@ -221,7 +221,7 @@ async function jrMerge(env, c, o, q, list, now, logs) {
       try {
         if (!(await jrNoShowMark(env, c.id, v.id))) continue;
         await logTurns(env.KV, `h:ga:${c.id}:${v.p}`, [], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "noshow" }; if (!p.waName && v.n) p.waName = v.n; });
-        logs.push(entry({ ...v, rec: v.id, k: "noshow" }, "task", "клиент не пришёл — задача администратору", now));
+        logs.push(entry({ ...v, rec: v.id, k: "noshow" }, "task", "клиент не пришёл, задача администратору", now));
       } catch (e) { console.log("jr noshow", String(e)); }
     }
   }
@@ -265,7 +265,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   // запись сделал бот в этой переписке — подтверждение клиент уже получил там (S01, S06)
   if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) return skip("подтверждение уже в переписке (запись через бота)");
   if (st.cnt >= o.cap) {
-    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сообщений в сутки со второго номера — остальные напоминания сегодня не отправлены.`, c.id); }
+    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сообщений в сутки со второго номера. Остальные напоминания сегодня не отправлены.`, c.id); }
     catch (e) { console.log("jr cap note", String(e)); }
     return "stop";
   }
@@ -286,7 +286,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     }
     if (kind === "net") { // Green-API не ответил: могло уйти — второй раз не шлём, в переписке — «неизвестно» (знак вопроса)
       await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, st: "unknown" });
-      st.logs.push(entry(x, "unknown", "Green-API не ответил — неизвестно, ушло ли; второй раз не шлём", now));
+      st.logs.push(entry(x, "unknown", "Green-API не ответил: неизвестно, ушло ли, второй раз не шлём", now));
       return "drop";
     }
     if (kind === "temp") {
@@ -296,7 +296,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     }
     // номера нет в WhatsApp, текст не принят, три временных отказа подряд — задача администратору (S18), без новых попыток
     await adminTask(env, c, x, now, { role: "model", text: t.text, t: now, rm: x.k, st: "failed", se: stErr("failed", why) }, why);
-    st.logs.push(entry(x, "task", `не ушло (${why}) — задача администратору`, now));
+    st.logs.push(entry(x, "task", `не ушло (${why}), задача администратору`, now));
     return "drop";
   }
   st.cnt++;
@@ -315,7 +315,7 @@ async function turn(env, hk, x, tr) {
 async function adminTask(env, c, x, now, tr, why) {
   try { await logTurns(env.KV, `h:ga:${c.id}:${x.p}`, [tr], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "send" }; if (!p.waName && x.n) p.waName = x.n; }); }
   catch (e) { console.log("jr task", String(e)); }
-  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: сообщение со второго номера не ушло — ${KIND_WORD[x.k] || "сообщение"}, клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
+  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: со второго номера не ушло сообщение (${KIND_WORD[x.k] || "сообщение"}), клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
   catch (e) { console.log("jr task note", String(e)); }
 }
 

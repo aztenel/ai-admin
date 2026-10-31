@@ -39,8 +39,8 @@ export function crmSegSpec(v) {
   const o = v && typeof v === "object" ? v : { id: v }, errors = [];
   const num = (/** @type {string} */ k) => o[k] == null || String(o[k]).trim() === "" ? undefined : Math.round(+o[k]);
   const id = String(o.id ?? "").trim().slice(0, 80), from = num("from"), to = num("to"), days = num("days"), staff = String(o.staff ?? "").trim().slice(0, 60) || undefined;
-  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден — выберите его заново");
-  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита — число от 0 до 400");
+  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден, выберите его заново");
+  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита: число от 0 до 400");
   return { id, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(days !== undefined ? { days } : {}), ...(staff ? { staff } : {}), errors };
 }
 // название сегмента для рассылки и отчёта: «Пора на стрижку», «Мастер: Тони · 36–60 дн. с визита»

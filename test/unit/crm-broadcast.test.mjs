@@ -54,7 +54,7 @@ test("проверка рассылки из сегмента: получате�
   assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
   assert.equal(d.ok, true, t); assert.equal(d.valid, 3); assert.equal(d.named, 2, "«Ерлан должник» — пометка администратора, не имя");
   assert.equal(d.segment.id, "pora"); assert.equal(d.segment.label, "Пора на стрижку"); assert.equal(d.segment.total, 3);
-  assert.ok(d.sample.every(x => /^\+7 700 \*\*\* \*\* \d\d — /.test(x)), JSON.stringify(d.sample));
+  assert.ok(d.sample.every(x => /^\+7 700 \*\*\* \*\* \d\d · /.test(x)), JSON.stringify(d.sample));
   assert.ok(![101, 104, 109, 105].some(i => t.includes(dg(i))) && !t.includes("7019990001"), "ни полных номеров базы, ни номера из браузера");
   assert.deepEqual(d.preview, ["Данияр"]);
   assert.equal((await sb.post("/api/bc/check", { ...FORM, segment: "pora" })).status, 403, "сотрудник другой компании");
@@ -112,7 +112,7 @@ test("отправка шаблона Meta ставит отметку «пис�
   // «Номера с ошибками» рассылки из базы — только маской, и владельцу, и сотруднику: полные номера базы браузеру не уходят (находка проверки 19.10.2026)
   for (const who of [own, await login(s, STAFF_W)]) {
     const g = await who.go(`/api/bc/get?c=winchester&id=${d.b.id}&bad=1`), t = await g.text(), j = JSON.parse(t);
-    assert.equal(g.status, 200); assert.deepEqual(j.bad, ["+7 700 *** ** 09 — номер не в WhatsApp или не принимает сообщения"]);
+    assert.equal(g.status, 200); assert.deepEqual(j.bad, ["+7 700 *** ** 09: номер не в WhatsApp или не принимает сообщения"]);
     assert.ok(!t.includes(dg(109)) && !t.includes(dg(101)), "в ответе нет полных номеров базы");
   }
 });
