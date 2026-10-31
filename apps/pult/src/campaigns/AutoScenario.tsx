@@ -167,7 +167,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
     <>
       <Group
         title={TITLE}
-        note={`Бот пишет сам: каждый день в 11:00 по Астане берёт из базы тех, у кого ровно ${s.days} ${plural(s.days, DAYS)} с последнего визита, и шлёт им шаблон Meta с основного номера. День пропускается, если качество номера не высокое, Meta просила остановиться или база устарела, — причина придёт в Telegram.`}
+        note={`Бот пишет сам: каждый день в 11:00 по Астане берёт из базы тех, у кого ровно ${s.days} ${plural(s.days, DAYS)} с последнего визита, и шлёт им шаблон Meta с основного номера. День пропускается, если качество номера не высокое, Meta просила остановиться или база устарела. Причина придёт в Telegram.`}
       >
         <div className="flex min-h-14 items-center gap-3 py-2.5">
           <span
@@ -204,7 +204,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
         <dl className="divide-y divide-line">
           <Row label="Кому сегодня" value={d.today.total ? `${d.today.n} из ${d.today.total}` : "никому"}>
             {d.today.total
-              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать — ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел — ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
+              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать: ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел — ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
               : `Сейчас нет клиентов ровно с ${s.days} ${plural(s.days, DAYS)} после визита, которым можно писать.`}
           </Row>
           <QualityRow q={d.quality} now={now} />
@@ -256,7 +256,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
                 setTplErr("");
               }}
               error={tplErr || undefined}
-              hint="Название — как в кабинете Meta / Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta. В шаблоне — одна переменная {{1}}: имя клиента."
+              hint="Название как в кабинете Meta или Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta, в нём одна подстановка: имя клиента."
             />
             <SelectField label="Язык шаблона" value={edit.lang} onChange={(e) => set({ lang: e.target.value })}>
               {langs.map((l) => (

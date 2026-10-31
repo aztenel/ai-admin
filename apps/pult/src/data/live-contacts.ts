@@ -241,7 +241,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
   try {
     r = await fetch(path, { method: "POST", credentials: "same-origin", body: form });
   } catch {
-    throw new ApiError("Нет связи с сервером. Проверьте интернет — файл не отправлен.", 0, true);
+    throw new ApiError("Нет связи с сервером. Файл не отправлен, проверьте интернет.", 0, true);
   }
   if (r.status === 401) {
     location.href = "/login?next=" + enc(location.pathname + location.search + location.hash);

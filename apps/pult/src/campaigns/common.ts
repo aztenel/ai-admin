@@ -40,7 +40,7 @@ export const HOURS_RANGE = { min: 8, max: 22 } as const;
 
 export const CHANNEL_LABEL: Record<CampaignChannel, string> = { main: "Основной номер", bot: "Номер бота" };
 export const CHANNEL_HINT: Record<CampaignChannel, string> = {
-  main: "Шаблон Meta. Строка «СТОП» — в самом шаблоне.",
+  main: "Шаблон Meta. Строка «СТОП» есть в самом шаблоне.",
   bot: "Обычное сообщение. Пауза 30–150 секунд между сообщениями, строку про «стоп» добавим сами.",
 };
 

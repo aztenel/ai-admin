@@ -132,7 +132,7 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
                 <Button variant="tinted" icon={FileUp} onClick={() => input.current?.click()}>
                   {file ? "Выбрать другой файл" : "Выбрать файл"}
                 </Button>
-                <p className="mt-2 text-sm text-fg-3">{file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} КБ` : "CSV, Excel (.xlsx) или текст, до 5 МБ. Старый .xls — сохраните как .xlsx."}</p>
+                <p className="mt-2 text-sm text-fg-3">{file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} КБ` : "CSV, Excel (.xlsx) или текст, до 5 МБ. Старый .xls сохраните как .xlsx."}</p>
                 {file && (
                   <Button variant="ghost" size="sm" className="mt-1" onClick={() => (setFile(null), input.current && (input.current.value = ""))}>
                     Убрать файл
@@ -190,7 +190,7 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
           </ul>
           <InsetGroup title="Колонки">
             <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">
-              Номер — {pv.columns.phone ? `«${pv.columns.phone}»` : "не нашли"}; имя — {pv.columns.name ? `«${pv.columns.name}»` : "нет"}; согласие —{" "}
+              Номер: {pv.columns.phone ? `«${pv.columns.phone}»` : "не нашли"}; имя: {pv.columns.name ? `«${pv.columns.name}»` : "нет"}; согласие:{" "}
               {pv.columns.consent ? `«${pv.columns.consent}»` : "нет"}.
             </p>
           </InsetGroup>
