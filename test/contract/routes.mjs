@@ -102,6 +102,12 @@ const R = [
   ["POST", "/api/push/prefs", { c: "barber" }], ["POST", "/api/push/unsubscribe", { c: "barber" }], ["POST", "/api/push/test", { c: "barber" }],
   ["GET", "/api/bc/templates?c=barber"], ["GET", "/api/bc/templates?c=dent"], ["POST", "/api/bc/templates", { c: "barber" }], ["POST", "/api/bc/templates/preview", { c: "barber" }], ["GET", "/api/bc/calendar?c=barber"], ["GET", "/api/bc/calendar?c=dent"], ["GET", "/api/bc/stats?c=barber"], ["GET", "/api/bc/stats?c=dent"],
   ["POST", "/api/bc/service/dry", { c: "barber" }], ["POST", "/api/bc/service/approve", { c: "barber" }],
+  // ТЗ Winchester v3.0 (31.10.2026): копия и архив текстов, варианты сервисных текстов, одобрение рассылки — только владелец; чужая компания — 403
+  ["POST", "/api/bc/templates/action", { c: "barber", id: "M01", action: "nope" }], ["POST", "/api/bc/templates/action", { c: "dent", id: "M01", action: "nope" }],
+  ["POST", "/api/bc/templates", { c: "dent" }], ["POST", "/api/bc/templates/preview", { c: "dent" }],
+  ["POST", "/api/bc/service/variant", { c: "barber", id: "S03" }], ["POST", "/api/bc/service/variant", { c: "dent", id: "S03" }],
+  ["POST", "/api/bc/act", { c: "barber", act: "approve" }], ["POST", "/api/bc/act", { c: "dent", act: "approve" }],
+  ["POST", "/api/bc/check", { c: "barber", ch: "ga", segment: "pora", tplId: "M01" }], ["POST", "/api/bc/check", { c: "dent", ch: "ga", segment: "all", tplId: "M01" }],
   ["GET", "/api/inbox/catalog?c=barber"], ["GET", "/api/inbox/times?c=barber&date=2026-11-02"], ["GET", "/api/inbox/times?c=dent"],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
@@ -141,7 +147,8 @@ const R = [
 const PROTECTED = /^\/(leads|studio|inbox|launch|broadcast|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|inbox|launch|bc|selftest|crm)\//;
 const PROTECTED_EXACT = new Set(["/api/selftest"]);
 const OWNER_ONLY = /^\/(studio|launch|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|launch|selftest)(\/|$)|^\/api\/crm\/refresh$/; // обновить базу клиентов — только владелец
-const OWNER_POST = /^\/api\/bc\/auto$/; // смотреть автосценарий может и сотрудник, менять — только владелец
+// смотреть автосценарий, тексты и сервисные сообщения может и сотрудник, менять, одобрять, копировать и убирать в архив — только владелец
+const OWNER_POST = /^\/api\/bc\/(auto|templates|templates\/action|service\/variant|service\/approve|service\/dry)$/;
 const FOREIGN = /[?&]c=dent\b|"c":"dent"/;
 const isProtected = p => PROTECTED.test(p) || PROTECTED_EXACT.has(p.split("?")[0]);
 
@@ -196,6 +203,10 @@ if (sqliteOk) {
   { // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
     const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
     ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+  }
+  { // черновик со второго номера по базе (ТЗ v3.0): текст каждому собирает сервер, номера — только маской
+    const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", ch: "ga", segment: "all", text: "{имя}, ждём вас у мастера {мастер}! Если такие сообщения больше не нужны, напишите «стоп»." }));
+    ok("второй номер, сегмент базы: в примере имя и мастер из базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
   }
   delete S.env.DB;
 }

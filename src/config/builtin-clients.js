@@ -153,6 +153,7 @@ export const CLIENTS = {
     name: "Winchester",
     kind: "барбершоп",
     hidden: true,
+    brand: "winchester", // фирменное оформление пульта (бордовый, кремовый, латунь: docs/winchester-v3/design.md), /api/inbox/me
     lines: { wa: "Основной номер", ga: "Второй номер" }, // в пульте у каждого чата видно, на какой номер написал клиент (ТЗ v2.0 §2.2)
     // dry: true — бот проверяет окно, но запись в журнал не создаёт (book_check вместо book_record); Text ALTEGIO_DRY_WINCHESTER = 1 возвращает этот режим.
     // mainService / mainMinutes: пока клиент не назвал услугу, свободное время считается по ней или хотя бы на 60 мин подряд

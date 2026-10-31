@@ -10,7 +10,7 @@ import { clean } from "../lib/text.js";
 import { sessionRead, keyGate, leadsKey, cookieSet, syncClients, runCase, gaShared, gaRoute, gaHook } from "../controllers/deps.js";
 import { tooManyKeys, handleLogin, enter } from "../controllers/auth.js";
 import { studioApi, studioPage } from "../controllers/studio.js";
-import { inboxApi } from "../controllers/inbox.js";
+import { inboxApi, inboxMe } from "../controllers/inbox.js";
 import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
@@ -91,7 +91,7 @@ export async function route(request, env, ctx, pult) {
     if (P.startsWith("/api/inbox/")) {
       const s = await sessionRead(env, request);
       if (!s) return jsonP({ error: "Войдите заново." }, 401);
-      if (M === "GET" && P === "/api/inbox/me") return jsonP({ owner: s.role === "owner", c: s.role === "staff" ? s.cid : "" });
+      if (M === "GET" && P === "/api/inbox/me") return jsonP(inboxMe(env, s));
       return inboxApi(request, env, url, s, ctx);
     }
     // ---- проверка запуска (чек-лист подключений и экзамен бота)

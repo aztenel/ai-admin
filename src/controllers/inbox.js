@@ -27,6 +27,23 @@ import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
 /** @import { Env } from "../lib/types.js" */
 
+// кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
+// остальных — нейтральные), тестовая это версия или боевой сайт (stage) и режим записи с сайта (site: off — выключена, dry —
+// проверка без записи, заявки администратору, live — настоящая запись). Сотрудник — только о своей компании; владелец — brand null,
+// а оформление каждой компании — в brands. Секретов и ключей здесь нет
+/** @param {Env} env @param {any} s */
+export function inboxMe(env, s) {
+  const staff = s.role === "staff", ids = staff ? (hasClient(s.cid) ? [s.cid] : []) : Object.keys(CLIENTS);
+  const brands = /** @type {Record<string, string>} */ ({}), site = /** @type {Record<string, string>} */ ({});
+  for (const id of ids) {
+    const c = CLIENTS[id];
+    if (c.brand) brands[id] = String(c.brand);
+    const sc = siteConf(env, c);
+    if (sc) site[id] = sc.mode;
+  }
+  return { owner: !staff, c: staff ? s.cid : "", brand: staff ? brands[s.cid] || null : null, brands, stage: env.STAGE === "preview" ? "preview" : "production", site };
+}
+
 // ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
 // У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
 // Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.
@@ -41,7 +58,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   const c = CLIENTS[cid], now = Date.now();
 
   if (M === "GET" && P === "/api/inbox/report") { // итоги за 30 дней и сравнение с прошлыми 30 днями («Итоги» в пульте)
-    try { return jsonP(await growthReport(env, c, now)); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+    try { return jsonP(await growthReport(env, c, now)); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте обновить через минуту." }, 503); }
   }
   if (M === "GET" && P === "/api/inbox/list") {
     const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID || gaRoute(env, cid) ? ["wa", "ga"] : ["wa"], rows = [];
@@ -49,7 +66,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     for (const ch of chans) {
       const prefix = `h:${ch}:${cid}:`;
       for (let cursor, page = 0; page < 3; page++) { // до 3000 чатов на канал
-        let r; try { r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) }); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+        let r; try { r = await env.KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) }); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте обновить через минуту." }, 503); }
         for (const k of (r && r.keys) || []) {
           const m = k.metadata || {}, id = String(k.name).slice(prefix.length);
           if (!/** @type {any} */ (CHAT_ID)[ch].test(id)) continue;
@@ -82,11 +99,11 @@ export async function inboxApi(request, env, url, s, ctx) {
     try {
       const r = P === "/api/inbox/catalog" ? await siteCatalog(env, c, conf, now) : await siteTimes(env, c, conf, q, now);
       return jsonP({ available: true, ...(r.res || {}) }, r.http === 200 ? 200 : r.http || 502);
-    } catch (e) { console.log("inbox times", String(e).slice(0, 120)); return jsonP({ error: "Altegio сейчас не ответил — попробуйте через минуту." }, 502); }
+    } catch (e) { console.log("inbox times", String(e).slice(0, 120)); return jsonP({ error: "Altegio сейчас не ответил. Попробуйте через минуту." }, 502); }
   }
   if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)
     /** @type {any} */
-    let leads; try { leads = await allLeads(env, cid); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
+    let leads; try { leads = await allLeads(env, cid); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте обновить через минуту." }, 503); }
     return jsonP({ leads: leads.slice(-60).reverse().map((/** @type {any} */ l) => ({ id: l.id, name: l.name || "", phone: l.phone || "", service: l.service || "", time: l.time || "", note: l.note || "", status: l.status || "", kind: l.kind || "lead", source: l.source || "", ts: leadTs(l) })), partial: !!leads.unread });
   }
 
@@ -94,7 +111,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   if (!/** @type {any} */ (CHAT_ID)[ch] || !/** @type {any} */ (CHAT_ID)[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
   /** @type {any} */
-  let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте ещё раз." }, 503); }
+  let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте ещё раз." }, 503); }
   if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
   // чат очищали, а бот в другом месте сети успел записать копию до очистки: пульт показывает то, что бот будет помнить (19.10.2026)
   const fgAt = await readForgot(env.KV, hk);
@@ -123,7 +140,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   if (M === "GET" && P === "/api/inbox/booking") { // ближайшая запись в Altegio — отдельным запросом: журнал может отвечать несколько секунд
     if (ch === "web") return jsonP({ records: [], available: false });
     try { const r = await bookingCard(env, c, "+" + id, now); return jsonP({ records: r || [], available: r !== null }); }
-    catch (e) { console.log("booking card", String(e).slice(0, 120)); return jsonP({ error: "Журнал Altegio сейчас не ответил — попробуйте позже." }, 502); }
+    catch (e) { console.log("booking card", String(e).slice(0, 120)); return jsonP({ error: "Журнал Altegio сейчас не ответил. Попробуйте позже." }, 502); }
   }
 
   if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото, видео, документ. Только файл этой переписки (services/inbox/media.js)
@@ -131,14 +148,14 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (!t || !t.m || !(t.m.id || t.m.url)) return jsonP({ error: "Файл не найден." }, 404);
     const r = await mediaFile(env, cid, ch, id, p, t, String(request.headers.get("range") || "").slice(0, 100));
     if (r.ok) return r.res;
-    return jsonP({ error: r.why === "big" ? "Файл больше 100 МБ — откройте его в WhatsApp на телефоне." : r.why === "gone" ? "Файл недоступен: WhatsApp хранит файлы ограниченное время. Попросите клиента прислать его ещё раз." : "Файл сейчас не открылся — попробуйте ещё раз через минуту." }, r.why === "error" ? 502 : 404);
+    return jsonP({ error: r.why === "big" ? "Файл больше 100 МБ. Откройте его в WhatsApp на телефоне." : r.why === "gone" ? "Файл недоступен: WhatsApp хранит файлы ограниченное время. Попросите клиента прислать его ещё раз." : "Файл сейчас не открылся. Попробуйте ещё раз через минуту." }, r.why === "error" ? 502 : 404);
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
 
   // ответ администратора клиенту
   /** @param {string} text */
   const sendTo = async text => {
-    if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя — позвоните клиенту." };
+    if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя. Позвоните клиенту." };
     if (ch === "ga") { // номер Green-API клиента (или общий номер воркера, через который пришёл этот чат)
       const gr = gaRoute(env, cid) || gaShared(env);
       if (!gr) return { ok: false, error: "Green-API не настроен." };
@@ -149,7 +166,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     }
     const route = waRoute(env, cid, p);
     if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
-    if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном — позвоните клиенту или дождитесь его сообщения." };
+    if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном. Позвоните клиенту или дождитесь его сообщения." };
     let r; try { r = await sendWA(env, id, text, route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
     return r && r.ok ? { ok: true, id: String(r.id || "") } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
   };
@@ -173,7 +190,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
     if (act === "resolve") {
-      if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке — тогда чат закроется сам." }, 409);
+      if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке, тогда чат закроется сам." }, 409);
       if (p.need && !b.force) return jsonP({ confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" }, 409); // ТЗ v2.0 §2.5: закрытие с вопросом — только с подтверждением
       h = await logTurns(env.KV, hk, [], pr => { delete pr.need; pr.done = now; chatAudit(pr, now, who, p.need ? "close-unanswered" : "close"); });
     }
@@ -188,11 +205,11 @@ export async function inboxApi(request, env, url, s, ctx) {
       // веб-чат: номер набрал посетитель, он мог быть чужим — удаляем только сам чат, без заявок и согласий по этому номеру (автопроверка безопасности, 17.10.2026)
       const ph = ch === "web" ? "" : normPhone("+" + id);
       try { const r = await eraseClient(env, cid, ch, id, ph, String(altLoc(env, c) || ""), now); return jsonP({ ok: true, erased: true, leads: r.leads }); }
-      catch (e) { console.log("erase", String(e)); return jsonP({ error: "Хранилище не ответило — удалено не всё. Нажмите ещё раз через минуту." }, 503); }
+      catch (e) { console.log("erase", String(e)); return jsonP({ error: "Сервер не ответил, удалено не всё. Нажмите ещё раз через минуту." }, 503); }
     }
     else if (act === "take" || act === "assign") { // кто ведёт чат: «Взять себе» — имя этого устройства, «Назначить» — имя из списка
       const to = act === "take" ? op : opName(b.to);
-      if (act === "take" && !to) return jsonP({ error: "Укажите своё имя в настройках пульта — тогда чат можно взять себе." }, 400);
+      if (act === "take" && !to) return jsonP({ error: "Укажите своё имя в настройках пульта, тогда чат можно взять себе." }, 400);
       h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, act === "take" ? "take" : to ? "assign" : "unassign", act === "take" ? "" : to); });
     }
     else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); });

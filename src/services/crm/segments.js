@@ -39,8 +39,8 @@ export function crmSegSpec(v) {
   const o = v && typeof v === "object" ? v : { id: v }, errors = [];
   const num = (/** @type {string} */ k) => o[k] == null || String(o[k]).trim() === "" ? undefined : Math.round(+o[k]);
   const id = String(o.id ?? "").trim().slice(0, 80), from = num("from"), to = num("to"), days = num("days"), staff = String(o.staff ?? "").trim().slice(0, 60) || undefined;
-  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден — выберите его заново");
-  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита — число от 0 до 400");
+  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден, выберите его заново");
+  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита: число от 0 до 400");
   return { id, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(days !== undefined ? { days } : {}), ...(staff ? { staff } : {}), errors };
 }
 // название сегмента для рассылки и отчёта: «Пора на стрижку», «Мастер: Тони · 36–60 дн. с визита»
@@ -85,6 +85,18 @@ export async function crmSegments(env, c, now) {
   const { list, futOnly, ...info } = snap || {}; // номера — только на сервере
   return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, consent: view.gate,
     info: snap ? info : null, ...(err && err.at > ((snap && snap.at) || 0) ? { error: err.error, errorAt: err.at } : {}) };
+}
+
+/** кто из сегмента отсеян и почему: { stop: 2, noconsent: 5, … } — для проверки рассылки (числа, без номеров)
+ *  @param {CrmView} view @param {string} seg @param {{ days?: number, from?: number, to?: number, staff?: string }} [o] @returns {Record<string, number>} */
+export function crmSegWhy(view, seg, o = {}) {
+  const test = crmSegTest(seg), out = /** @type {Record<string, number>} */ ({});
+  if (!test) return out;
+  for (const x of view.rows) {
+    if (!x.why || !test(x) || (o.days != null && x.d !== o.days) || (o.from != null && x.d < o.from) || (o.to != null && x.d > o.to) || (o.staff && x.staff !== o.staff)) continue;
+    out[x.why] = (out[x.why] || 0) + 1;
+  }
+  return out;
 }
 
 /**

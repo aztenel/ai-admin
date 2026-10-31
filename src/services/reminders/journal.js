@@ -26,9 +26,9 @@ import { altLoc } from "../booking/book.js";
 import { stErr } from "../inbox/status.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
 import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewed, jrReviewMark, optedOut, rmOk,
-  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
+  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals, svVariants } from "../../db/kv/reminders.js";
 import { atLocal } from "./plan.js";
-import { KIND_SC, scenario, svText, firstName } from "./templates.js";
+import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf } from "./templates.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
 const PAGES = 3;             // 3 дня одной локации — одна страница (200 записей), больше трёх не читаем
@@ -148,11 +148,15 @@ async function jrClient(env, c, now) {
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const o = opts(c), logs = /** @type {any[]} */ ([]);
   let q = await jrqLoad(env, c.id), dirty = false;
-  if (now - (await jrSyncAt(env, c.id)) >= SYNC_MS) {
+  const last = await jrSyncAt(env, c.id);
+  if (now - last >= SYNC_MS) {
     try { await jrSyncMark(env, c.id, now); } catch (e) { console.log("jr sync mark", String(e)); } // не записалась — прочитаем журнал ещё раз через минуту
     try {
       const { list } = await altRecordsRange(env, user, loc, isoDay(now - 86400e3), isoDay(now + 86400e3), PAGES);
       q = await jrMerge(env, c, o, q, list, now, logs);
+      // первое чтение журнала после включения (или после перерыва больше суток, jrs: живёт сутки): то, что должно было уйти
+      // раньше, задним числом не шлём (ТЗ v3.0: включили сценарий — старые записи не получают сообщений разом)
+      if (!last) q = q.filter(x => { if (x.at >= now - 60e3) return true; logs.push(entry(x, "skipped", "отправку только что включили: задним числом не шлём", now)); return false; });
       dirty = true;
     } catch (/** @type {any} */ e) { console.log("jr journal", c.id, String((e && e.message) || e).slice(0, 160)); }
   }
@@ -160,7 +164,7 @@ async function jrClient(env, c, now) {
   for (const x of q) {
     if (now - x.at > late(o, x.k, x.at)) {
       drop.add(key(x));
-      logs.push(entry(x, "skipped", x.na ? "не ушло: текст не одобрен владельцем" : x.wa ? "в Altegio нет отметки «пришёл» — об отзыве не просим" : "время отправки прошло", now));
+      logs.push(entry(x, "skipped", x.na ? "не ушло: текст не одобрен владельцем" : x.wa ? "в Altegio нет отметки «пришёл», об отзыве не просим" : "время отправки прошло", now));
     }
     else if (x.at <= now) due.push(x);
   }
@@ -168,7 +172,7 @@ async function jrClient(env, c, now) {
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   let sent = 0;
   if (due.length && !quiet && !(await jrHold(env, c.id))) {
-    const day = isoDay(now), cnt0 = await jrCount(env, c.id, day), st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id) };
+    const day = isoDay(now), cnt0 = await jrCount(env, c.id, day), st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svVariants(env, c.id) };
     for (const x of due) {
       if (sent >= PER_MIN) break;
       const r = await jrSend(env, c, o, x, now, { route, user, loc }, st);
@@ -221,7 +225,7 @@ async function jrMerge(env, c, o, q, list, now, logs) {
       try {
         if (!(await jrNoShowMark(env, c.id, v.id))) continue;
         await logTurns(env.KV, `h:ga:${c.id}:${v.p}`, [], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "noshow" }; if (!p.waName && v.n) p.waName = v.n; });
-        logs.push(entry({ ...v, rec: v.id, k: "noshow" }, "task", "клиент не пришёл — задача администратору", now));
+        logs.push(entry({ ...v, rec: v.id, k: "noshow" }, "task", "клиент не пришёл, задача администратору", now));
       } catch (e) { console.log("jr noshow", String(e)); }
     }
   }
@@ -230,16 +234,20 @@ async function jrMerge(env, c, o, q, list, now, logs) {
 
 /** одно сообщение → "sent" | "drop" (не шлём и не будем) | "wait" (отзыв: ждём «пришёл»; текст ждёт одобрения) | "stop" (в эту минуту
  *  больше не шлём). Решение — в st.logs. @param {Env} env @param {Client} c @param {any} o @param {any} x @param {number} now
- *  @param {{ route: any, user: string, loc: number }} ctx @param {{ cnt: number, cache: Map<string, any[]>, logs: any[], dirty: boolean, approvals: Record<string, any> }} st */
+ *  @param {{ route: any, user: string, loc: number }} ctx
+ *  @param {{ cnt: number, cache: Map<string, any[]>, logs: any[], dirty: boolean, approvals: Record<string, any>, variants: Record<string, any> }} st */
 async function jrSend(env, c, o, x, now, ctx, st) {
   const skip = (/** @type {string} */ why) => { st.logs.push(entry(x, "skipped", why, now)); return "drop"; };
   if (await optedOut(env, c.id, x.p)) return skip("клиент просил не писать");
   if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) return skip("отзыв у этого клиента уже просили (раз в 60 дней)");
-  const sc = scenario(KIND_SC[x.k] || ""), ap = sc && st.approvals[sc.id];
-  if (!sc || !ap || +ap.v !== sc.v) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
-    if (!x.na) { x.na = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "текст не одобрен владельцем — ждёт одобрения", now)); }
+  // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста)
+  const sc = scenario(KIND_SC[x.k] || ""), vt = sc && approvedVariant(sc, st.approvals, st.variants), ap = sc && st.approvals[sc.id];
+  if (!sc || !vt) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
+    if (!x.na) { x.na = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "текст не одобрен владельцем, ждёт одобрения", now)); }
     return "wait";
   }
+  // задним числом не шлём: одобрили (или включили) сценарий позже, чем это сообщение должно было уйти, — оно не уходит
+  if (+ap.at > x.at) return skip("текст одобрен позже, чем должно было уйти это сообщение");
   let list = st.cache.get(x.date);
   if (!list) {
     try { list = (await altRecordsRange(env, ctx.user, ctx.loc, x.date, x.date, PAGES)).list; }
@@ -261,11 +269,11 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   // запись сделал бот в этой переписке — подтверждение клиент уже получил там (S01, S06)
   if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) return skip("подтверждение уже в переписке (запись через бота)");
   if (st.cnt >= o.cap) {
-    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сообщений в сутки со второго номера — остальные напоминания сегодня не отправлены.`, c.id); }
+    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сообщений в сутки со второго номера. Остальные напоминания сегодня не отправлены.`, c.id); }
     catch (e) { console.log("jr cap note", String(e)); }
     return "stop";
   }
-  const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang);
+  const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt);
   if (!t || !t.text) return skip("нет текста сообщения");
   const ver = x.v || "1";
   if (!(await jrTry(env, c.id, x.rec, x.k, ver))) return skip("уже отправляли");
@@ -282,7 +290,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     }
     if (kind === "net") { // Green-API не ответил: могло уйти — второй раз не шлём, в переписке — «неизвестно» (знак вопроса)
       await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, st: "unknown" });
-      st.logs.push(entry(x, "unknown", "Green-API не ответил — неизвестно, ушло ли; второй раз не шлём", now));
+      st.logs.push(entry(x, "unknown", "Green-API не ответил: неизвестно, ушло ли, второй раз не шлём", now));
       return "drop";
     }
     if (kind === "temp") {
@@ -292,7 +300,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     }
     // номера нет в WhatsApp, текст не принят, три временных отказа подряд — задача администратору (S18), без новых попыток
     await adminTask(env, c, x, now, { role: "model", text: t.text, t: now, rm: x.k, st: "failed", se: stErr("failed", why) }, why);
-    st.logs.push(entry(x, "task", `не ушло (${why}) — задача администратору`, now));
+    st.logs.push(entry(x, "task", `не ушло (${why}), задача администратору`, now));
     return "drop";
   }
   st.cnt++;
@@ -311,7 +319,7 @@ async function turn(env, hk, x, tr) {
 async function adminTask(env, c, x, now, tr, why) {
   try { await logTurns(env.KV, `h:ga:${c.id}:${x.p}`, [tr], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "send" }; if (!p.waName && x.n) p.waName = x.n; }); }
   catch (e) { console.log("jr task", String(e)); }
-  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: сообщение со второго номера не ушло — ${KIND_WORD[x.k] || "сообщение"}, клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
+  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: со второго номера не ушло сообщение (${KIND_WORD[x.k] || "сообщение"}), клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
   catch (e) { console.log("jr task note", String(e)); }
 }
 
@@ -325,18 +333,19 @@ export async function jrDry(env, c, now) {
   if (!user) return { ok: false, why: "Не подключён журнал Altegio: нужен ключ журнала (страница /altegio/user)." };
   const from = isoDay(now - 86400e3), to = isoDay(now + 86400e3);
   const { list, pages, cut } = await altRecordsRange(env, user, loc, from, to, PAGES);
-  const o = opts(c), { items, skipped } = jrPlanAll(c, list, now), ap = await svApprovals(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
+  const o = opts(c), { items, skipped } = jrPlanAll(c, list, now), ap = await svApprovals(env, c.id), own = await svVariants(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   /** @type {Map<string, any>} */ const prof = new Map();
   const out = [];
   for (const x of items.sort((a, b) => a.at - b.at).slice(0, 200)) {
-    const sc = scenario(KIND_SC[x.k] || ""), v = jrRec(byId.get(x.rec)), a = sc && ap[sc.id];
+    const sc = scenario(KIND_SC[x.k] || ""), v = jrRec(byId.get(x.rec)), a = sc && ap[sc.id], vt = sc && approvedVariant(sc, ap, own);
     if (!prof.has(x.p)) { try { const h = await readHist(env, `h:ga:${c.id}:${x.p}`); prof.set(x.p, (h && h.profile) || {}); } catch (e) { prof.set(x.p, {}); } }
     const p = prof.get(x.p);
     let why = "", status = "";
     if (await optedOut(env, c.id, x.p)) why = "клиент просил не писать";
     else if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) why = "отзыв у этого клиента уже просили (раз в 60 дней)";
-    else if (!sc || !a || +a.v !== sc.v) why = "текст не одобрен владельцем";
+    else if (!sc || !vt) why = "текст не одобрен владельцем";
+    else if (a && +a.at > x.at) why = "текст одобрен позже, чем должно было уйти это сообщение";
     else if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) why = "подтверждение уже в переписке (запись через бота)";
     else if (await jrTried(env, c.id, x.rec, x.k, x.v)) why = "уже отправляли";
     if (why) status = "skip";
@@ -344,7 +353,7 @@ export async function jrDry(env, c, now) {
     else if (x.at > now) status = "later";
     else if (quiet) { status = "later"; why = `уйдёт в часы отправки (с ${o.from}:00 до ${o.to}:00)`; }
     else status = "now";
-    const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang);
+    const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
     out.push({ k: x.k, sc: sc ? sc.id : "", at: x.at, name: firstName(x.n), phone: maskPhone(x.p), date: x.date, time: x.time, staff: x.staff, svc: x.svc,
       status, why, text: t ? t.text : "", lang: t ? t.lang : "ru" });
   }

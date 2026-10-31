@@ -11,7 +11,8 @@ export const bcKey = /** @param {string} cid @param {string} id */ (cid, id) => 
 // название, сегмент и шаблон обрезаются (шаблон может быть до 512 знаков)
 /** @param {Record<string, any>} b */
 export const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, ...(b.excl ? { excl: b.excl } : {}), created: b.created, ...(b.ch ? { ch: b.ch } : {}),
-  ...(b.by ? { by: snip(b.by, 8) } : {}), ...(b.src ? { src: snip(b.src, 8) } : {}), ...(b.seg ? { seg: snip(b.seg, 60) } : {}), ...(b.tpl ? { tpl: snip(b.tpl, 60) } : {}) });
+  ...(b.by ? { by: snip(b.by, 8) } : {}), ...(b.src ? { src: snip(b.src, 8) } : {}), ...(b.seg ? { seg: snip(b.seg, 60) } : {}), ...(b.tpl ? { tpl: snip(b.tpl, 60) } : {}),
+  ...(b.tplId ? { tplId: snip(b.tplId, 16) } : {}), ...(b.approvedAt ? { approved: true } : {}) }); // tplId — текст библиотеки, approved — одобрил владелец (ТЗ v3.0)
 /** @param {Env} env @param {string} cid @param {Record<string, any>} b */
 export const bcPut = (env, cid, b) => kvRetry(() => env.KV.put(bcKey(cid, b.id), JSON.stringify(b), { expirationTtl: 180 * 86400, metadata: bcMeta(b) }));
 /** @param {Env} env @param {string} cid @param {string} id */
