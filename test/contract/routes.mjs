@@ -10,6 +10,8 @@ import { createHmac } from "node:crypto";
 import { mk, net, ok, T, gaPass } from "../harness.mjs";
 import { PULT_APP } from "../../pult-app.gen.js";
 import { winchesterAlt } from "../fixtures/winchester-altegio.mjs";
+import { grantSnap, sqliteOk } from "../consent.mjs";
+import { d1With } from "../d1.mjs";
 
 const SNAP = fileURLToPath(new URL("./routes.snap.json", import.meta.url));
 const OWNER_KEY = "owner-key-123456", STAFF_KEY = "staff-key-barber-0001", OTHER_KEY = "staff-key-dent-0002";
@@ -94,6 +96,10 @@ const R = [
   ["GET", "/api/studio/list"], ["GET", "/api/studio/get?id=nope"], ["POST", "/api/studio/check", {}], ["POST", "/api/studio/save", {}], ["POST", "/api/studio/key", { id: "nope" }], ["POST", "/api/studio/remove", { id: "nope" }], ["GET", "/api/studio/nope"],
   ["GET", "/api/inbox/me"], ["GET", "/api/inbox/list?c=barber"], ["GET", "/api/inbox/list?c=dent"], ["GET", "/api/inbox/chat?c=barber&ch=web&id=nobody"], ["GET", "/api/inbox/leads?c=barber"], ["GET", "/api/inbox/leads?c=dent"],
   ["GET", "/api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope"], ["POST", "/api/inbox/send", { c: "barber" }], ["POST", "/api/inbox/send", { c: "dent" }], ["POST", "/api/inbox/act", { c: "barber" }], ["POST", "/api/inbox/act", { c: "dent" }], ["GET", "/api/inbox/nope?c=barber"],
+  // ТЗ Winchester v2.0 (31.10.2026): список чатов v2, ближайшая запись Altegio, push-уведомления
+  ["GET", "/api/inbox/list?c=barber&v=2"], ["GET", "/api/inbox/list?c=dent&v=2"], ["GET", "/api/inbox/booking?c=barber&ch=wa&id=77010000001"], ["GET", "/api/inbox/booking?c=dent&ch=wa&id=77010000055"],
+  ["GET", "/api/push/config?c=barber"], ["GET", "/api/push/config?c=dent"], ["POST", "/api/push/subscribe", { c: "barber" }], ["POST", "/api/push/subscribe", { c: "dent" }],
+  ["POST", "/api/push/prefs", { c: "barber" }], ["POST", "/api/push/unsubscribe", { c: "barber" }], ["POST", "/api/push/test", { c: "barber" }],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],
@@ -177,10 +183,18 @@ for (const [path, body, hd] of [["/wa/barber", META, { "x-hub-signature-256": si
 }
 
 // проверка утечек сама работает: владелец метку видит
-for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent", "/api/crm/segments?c=dent", "/api/crm/list?c=dent&seg=all"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
-{ // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
-  const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
-  ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent", "/api/crm/segments?c=dent"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
+// список людей сегмента и рассылка из сегмента — только тем, у кого подтверждённое согласие (31.10.2026): оно — в базе D1 (node:sqlite,
+// Node 22+), поэтому эти две проверки — на отдельной копии бота с базой согласий; у основной копии базы нет (снимок одинаков на Node 20)
+if (sqliteOk) {
+  S.env.DB = d1With("production").db;
+  await grantSnap(S.env, "dent");
+  { const o = await shape(await go(owner, "GET", "/api/crm/list?c=dent&seg=all")); ok("владелец видит данные клиента (метка находится): /api/crm/list?c=dent&seg=all", o.body.includes(MARK), o.body.slice(0, 200)); }
+  { // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
+    const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
+    ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+  }
+  delete S.env.DB;
 }
 
 // 7. изменяющие запросы с чужого сайта отклоняются даже с cookie владельца

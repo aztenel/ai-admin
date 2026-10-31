@@ -1,6 +1,7 @@
 // @ts-check — перенесено из worker.js как есть (REFACTORING.md, фаза 1)
 // Рассылки: сигналы «остановиться» от Meta и Green-API (bchold), состояния номера Green-API, разбор сигналов Meta (waSignal, waFailed, gaStateSignal).
 /** @import { Env } from "../../lib/types.js" */
+import { pushNotify } from "../notifications/push.js";
 import { clean } from "../../lib/text.js";
 import { isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
@@ -43,6 +44,7 @@ export async function gaStateSignal(env, r, state) {
   if (GA_STATE_BAD[state]) {
     const why = GA_STATE_BAD[state];
     try { await bcHoldEdit(env, cid, h => { h.ga = { at: Date.now(), why }; }); } catch (e) { console.log("bchold", String(e)); } // тревога важнее пометки: сбой хранилища её не отменяет (перед отправкой состояние номера проверяется заново)
+    try { await pushNotify(env, cid, { kind: "channel_down", key: "gastate:" + state + ":" + Math.floor(Date.now() / 3600e3), line: "второй номер" }); } catch (e) {} // Telegram — строкой ниже
     await notifyOnce(env, "gastate:" + cid + ":" + state, `🚨 WhatsApp (Green-API) — ${who}\n${why}.\nРассылки остановлены.${state === "blocked" ? " Бот на этом номере не отвечает клиентам." : " Пару дней не делайте рассылок и пишите только тем, кто пишет вам сам."}`, cid);
   } else if (state === "notAuthorized") await notifyOnce(env, "gastate:" + cid + ":" + state, `⚠️ WhatsApp (Green-API) — ${who}\nWhatsApp отвязан от Green-API: бот не получает и не отправляет сообщения. Отсканируйте QR-код в кабинете Green-API телефоном с этим номером.`, cid);
 }

@@ -1403,6 +1403,301 @@
    "error"
   ]
  },
+ "GET /api/inbox/list?c=barber&v=2 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=barber&v=2 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=barber&v=2 [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "records"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "GET /api/launch/status?c=barber [anon]": {
   "status": 401,
   "type": "application/json",
@@ -1890,6 +2185,7 @@
    "at",
    "client",
    "clients",
+   "consent",
    "excluded",
    "info",
    "ok",

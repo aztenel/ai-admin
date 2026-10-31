@@ -8,6 +8,7 @@ import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
 import { fixedOf, nicheOf, seenBefore, waCoex, markOptout, botOff } from "../../services/channels/index.js";
 import { inboundNeed } from "../../services/inbox/queue.js";
+import { inboundPush } from "../../services/inbox/notify.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
@@ -219,13 +220,14 @@ export async function handleWAMessage(env, msg, wx) {
   if (await seenBefore(env, msg.id)) return;
   const from = String(msg.from).replace(/\D/g, ""), send = watchSend(env, "wa", from, wx, t => sendWA(env, from, t, wx));
   if (!from) return;
-  if (msg.type === "text") return handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx);
+  const pushAfter = async () => { if (wx && wx.client) await inboundPush(env, "wa", wx.client, from, String(msg.id || "")); }; // push сотрудникам (ТЗ v2.0 §3)
+  if (msg.type === "text") { await handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx); return pushAfter(); }
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст
   const pressed = msg.type === "button" ? msg.button?.text || msg.button?.payload : msg.type === "interactive" ? msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title : "";
-  if (pressed) return handleWAText(env, "wa", from, String(pressed).trim(), send, wx);
+  if (pressed) { await handleWAText(env, "wa", from, String(pressed).trim(), send, wx); return pushAfter(); }
   /** @type {Record<string, string>} */
   const kinds = { audio: "audio", voice: "audio", image: "image", video: "video", document: "document", sticker: "sticker", location: "location", contacts: "contact" };
-  if (kinds[msg.type]) { const o = msg[msg.type] || {}; return handleWAMedia(env, "wa", from, kinds[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "" }); }
+  if (kinds[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, kinds[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
   // реакции и прочее — без ответа
 }
 

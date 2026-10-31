@@ -9,6 +9,7 @@ import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/
 import { readHist, putHist, kvRetry, gaShared } from "../../services/channels/deps.js";
 import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
 import { applyStatus, patchTurn } from "../../services/inbox/status.js";
+import { inboundPush, failedPush } from "../../services/inbox/notify.js";
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {any} md */
@@ -24,7 +25,12 @@ export async function handleGreen(body, env, origin, r) {
     const st = String(body.status || ""), to = String(body.chatId || "");
     if (to.endsWith("@c.us")) {
       const niche = await nicheOf(env, "ga", to.replace(/\D/g, ""), r.shared ? {} : { client: r.client });
-      if (niche) { try { await applyStatus(env, `h:ga:${niche}:${to.replace(/\D/g, "")}`, String(body.idMessage || ""), st, String(body.description || "")); } catch (e) { console.log("ga status", String(e)); } }
+      if (niche) {
+        try {
+          const ch0 = await applyStatus(env, `h:ga:${niche}:${to.replace(/\D/g, "")}`, String(body.idMessage || ""), st, String(body.description || ""));
+          if (ch0 === "changed" && /^(failed|noAccount|notInGroup|suspended)$/.test(st)) await failedPush(env, "ga", niche, to.replace(/\D/g, ""), String(body.idMessage || ""));
+        } catch (e) { console.log("ga status", String(e)); }
+      }
     }
     if (GA_STATE_BAD[st]) return gaStateSignal(env, r, st);
     if ((st === "noAccount" || st === "failed") && hasClient(r.client)) await waFailed(env, { client: r.client }, [{ code: "ga:" + st, to: to.replace(/\D/g, "") }]);
@@ -60,14 +66,16 @@ export async function handleGreen(body, env, origin, r) {
   const gxm = { ...gx, msgId: String(id || "") };
   const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
-  if (text) return handleWAText(env, "ga", digitsId, text, send, gxm);
+  const niche0 = r.shared ? "" : r.client; // компания номера: по ней — push сотрудникам (общий демо-номер — без push)
+  if (text) { await handleWAText(env, "ga", digitsId, text, send, gxm); if (niche0) await inboundPush(env, "ga", niche0, digitsId, String(id || "")); return; }
   /** @type {Record<string, string>} */
   const kinds = { audioMessage: "audio", imageMessage: "image", videoMessage: "video", documentMessage: "document", stickerMessage: "sticker", locationMessage: "location", contactMessage: "contact", contactsArrayMessage: "contact" };
   const kind = kinds[md.typeMessage];
   if (!kind) return; // реакции, опросы и прочее — без ответа
   const fd = md.fileMessageData || {};
   // id сообщения нужен, чтобы взять у Green-API новую ссылку на файл (downloadFile), когда старая устареет; имя файла — только у документов
-  return handleWAMedia(env, "ga", digitsId, kind, fd.downloadUrl || null, (fd.caption || "").trim(), send, gxm, { id: String(id || ""), mime: fd.mimeType || "", ...(kind === "document" && fd.fileName ? { name: String(fd.fileName) } : {}) });
+  await handleWAMedia(env, "ga", digitsId, kind, fd.downloadUrl || null, (fd.caption || "").trim(), send, gxm, { id: String(id || ""), mime: fd.mimeType || "", ...(kind === "document" && fd.fileName ? { name: String(fd.fileName) } : {}) });
+  if (niche0) await inboundPush(env, "ga", niche0, digitsId, String(id || ""));
 }
 
 // клиент исправил или удалил своё сообщение, поставил реакцию на наше: меняем ту реплику, которую видит пульт (Green-API присылает
