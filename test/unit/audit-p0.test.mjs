@@ -40,20 +40,21 @@ const lag = () => new Promise(r => setTimeout(r, LAG));
 function slowKV(shared) {
   return { ...shared, get: async (k, ...x) => { if (k.startsWith("snd:")) await lag(); return shared.get(k, ...x); } };
 }
-/** KV второго экземпляра Worker: переписка общая, а отметки отправки (snd:) он ещё не видит — KV согласован не сразу */
-function staleKV(shared) {
-  const own = mkKV();
-  return { ...shared, get: async k => { if (k.startsWith("snd:")) { await lag(); return own.api.get(k); } return shared.get(k); }, put: (k, v, o) => (k.startsWith("snd:") ? own.api.put(k, v, o) : shared.put(k, v, o)), delete: k => (k.startsWith("snd:") ? own.api.delete(k) : shared.delete(k)) };
+/** KV второго экземпляра Worker: переписка общая, а ключи с префиксами stale (по умолчанию отметки отправки snd:) он видит
+ *  «старыми» — запись в настоящем KV доходит до других мест сети до минуты */
+function staleKV(shared, stale = ["snd:"]) {
+  const own = mkKV(), old = k => stale.some(p => k.startsWith(p));
+  return { ...shared, get: async k => { if (old(k)) { await lag(); return own.api.get(k); } return shared.get(k); }, put: (k, v, o) => (old(k) ? own.api.put(k, v, o) : shared.put(k, v, o)), delete: k => (old(k) ? own.api.delete(k) : shared.delete(k)) };
 }
 /** Другой экземпляр Worker — другая память: всё, что send.js держит в памяти процесса, забыто */
 const isolate = async () => { const m = await import("../../src/services/inbox/send.js"); if (typeof m.sendOnceReset === "function") m.sendOnceReset(); };
 /** Два экземпляра Worker Winchester с общей D1 и общей перепиской. */
-async function twoWorkers(extra = {}) {
+async function twoWorkers(extra = {}, stale = ["snd:"]) {
   net.reset(); await isolate();
   const d = sqliteOk ? d1With("production") : null;
   const a = mk({ ...GA_W, ...(d ? { DB: d.db } : {}), ...extra });
   a.env.KV = slowKV(a.kv.api);
-  const bEnv = mk({ ...GA_W, ...(d ? { DB: d.db } : {}), ...extra, KV: staleKV(a.kv.api) });
+  const bEnv = mk({ ...GA_W, ...(d ? { DB: d.db } : {}), ...extra, KV: staleKV(a.kv.api, stale) });
   const from = "770000009" + String(Math.floor(Math.random() * 90) + 10);
   await a.gaText("winchester", INST, from, "Здравствуйте, можно на завтра?");
   return { a, bEnv, d, from, ba: await login(a), bb: await login(bEnv) };
@@ -170,12 +171,13 @@ test("A12 разные rid — разные сообщения; тот же rid 
   assert.equal(sends().length, 3);
 });
 
-const doneLead = async (a, from, id) => a.kv.api.put("leads:winchester", JSON.stringify([{ id, kind: "change", name: "Клиент", phone: "", service: "Стрижка", time: "завтра 15:00", at: new Date().toISOString() }]));
+const doneLead = async (s, from, id) => s.env.KV.put("leads:winchester", JSON.stringify([{ id, kind: "change", name: "Клиент", phone: "", service: "Стрижка", time: "завтра 15:00", at: new Date().toISOString() }]));
 const done = (b, from, lead, text, rid) => b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "done", lead, text, ...(rid ? { rid } : {}) });
 
 test("A13 «Отправить клиенту и закрыть» — двойное нажатие в двух экземплярах: одно сообщение", { skip }, async () => {
-  const { a, ba, bb, from } = await twoWorkers();
-  await doneLead(a, from, "L-A13");
+  // второй экземпляр видит заявку ещё открытой: закрытие из первого до него не дошло (KV согласован не сразу)
+  const { a, bEnv, ba, bb, from } = await twoWorkers({}, ["snd:", "leads:", "lead:"]);
+  await doneLead(a, from, "L-A13"); await doneLead(bEnv, from, "L-A13");
   await Promise.all([done(ba, from, "L-A13", "Перенесли на 16:00, ждём вас", "dn-LA13-xyz1"), done(bb, from, "L-A13", "Перенесли на 16:00, ждём вас", "dn-LA13-xyz1")]);
   assert.equal(sends().length, 1, "клиенту ушло " + sends().length);
 });
