@@ -137,7 +137,8 @@ export function statusOf(c: Pick<CampaignRow, "status" | "channel" | "approved">
 
 function kindOf(c: Shown): { icon: LucideIcon; label: string } {
   const k = kindBase(c);
-  return c.demo ? { ...k, label: `демо · ${k.label}` } : k; // демо-база: вымышленные клиенты, видно прямо в строке
+  // демо-база: вымышленные клиенты, видно прямо в строке (название уже со словом «демо» — второй раз не пишем)
+  return c.demo && !/демо/i.test(c.name) ? { ...k, label: `демо · ${k.label}` } : k;
 }
 function kindBase(c: Shown): { icon: LucideIcon; label: string } {
   if (c.channel === "bot") return { icon: Bot, label: "второй WhatsApp" };

@@ -204,7 +204,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
         <dl className="divide-y divide-line">
           <Row label="Кому сегодня" value={d.today.total ? `${d.today.n} из ${d.today.total}` : "никому"}>
             {d.today.total
-              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать: ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел — ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
+              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать: ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
               : `Сейчас нет клиентов ровно с ${s.days} ${plural(s.days, DAYS)} после визита, которым можно писать.`}
           </Row>
           <QualityRow q={d.quality} now={now} />

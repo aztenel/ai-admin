@@ -214,7 +214,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
                 onChange={(e) => {
                   const list = [...(e.target.files || [])];
                   e.target.value = ""; // тот же файл можно выбрать снова
-                  if (list.length > FILES_AT_ONCE) toast(`За раз — не больше ${FILES_AT_ONCE} файлов. Остальные выберите ещё раз.`);
+                  if (list.length > FILES_AT_ONCE) toast(`За раз можно не больше ${FILES_AT_ONCE} файлов. Остальные выберите ещё раз.`);
                   if (list.length) setPicked(list.slice(0, FILES_AT_ONCE));
                 }}
               />

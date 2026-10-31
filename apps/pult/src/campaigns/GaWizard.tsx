@@ -446,7 +446,7 @@ function Funnel({ f }: { f: AudienceFunnel }) {
   return (
     <div className="rounded-2xl bg-surface px-3 py-1">
       <dl aria-label="Аудитория" className="divide-y divide-line">
-        {f.total > 0 && <Row label="Всего в базе">{nf.format(f.total)}</Row>}
+        {f.total > 0 && <Row label="Клиентов в журнале Altegio">{nf.format(f.total)}</Row>}
         {f.valid > 0 && <Row label="С правильным номером">{nf.format(f.valid)}</Row>}
         <Row label="Подходят по сегменту">{nf.format(f.segment)}</Row>
         <Reasons title="Не подходят по правилам" list={rules} />

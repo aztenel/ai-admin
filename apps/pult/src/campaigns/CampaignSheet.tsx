@@ -427,7 +427,7 @@ function Details({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: nu
 /** Итоги рассылки (ТЗ V3): что ответил провайдер и кто записался в Altegio после сообщения. «Записались после» — совпадение по
  *  времени, а не доказательство, что записались из-за рассылки: так и пишем. */
 function Results({ r }: { r: CampaignResults }) {
-  const items: [string, number][] = [["Отправлено", r.sent], ["Доставлено", r.delivered], ["Прочитано", r.read], ["Не дошло", r.failed], ["Ответили", r.replied], [`Записались за ${r.window} дн.`, r.booked]];
+  const items: [string, number][] = [["Отправлено", r.sent], ["Доставлено", r.delivered], ["Прочитано", r.read], ["Не дошло", r.failed], ["Ответили", r.replied], ["Записались", r.booked]];
   return (
     <section aria-label="Итоги рассылки">
       <h3 className="mb-1.5 text-sm font-medium text-fg-3">Итоги</h3>
@@ -439,7 +439,7 @@ function Results({ r }: { r: CampaignResults }) {
           </div>
         ))}
       </dl>
-      <p className="mt-1.5 text-xs text-fg-3">«Записались»: клиенты, у которых после сообщения появилась запись в Altegio. Это совпадение по времени, а не доказательство, что записались из-за рассылки.</p>
+      <p className="mt-1.5 text-xs text-fg-3">«Записались»: клиенты, у которых в течение {r.window} дней после сообщения появилась запись в Altegio. Это совпадение по времени, а не доказательство, что записались из-за рассылки.</p>
     </section>
   );
 }

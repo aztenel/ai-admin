@@ -43,7 +43,7 @@ export function FileSheet({ files, onRemove, onClose, onSend, quote, quoteWho }:
       open={open}
       onOpenChange={(v) => !v && onClose()}
       title={title}
-      description={ok.length > 1 ? "Файлы уйдут по одному, каждый — отдельным сообщением." : undefined}
+      description={ok.length > 1 ? "Файлы уйдут по одному, каждый отдельным сообщением." : undefined}
       footer={
         <div className="flex gap-2 pb-1">
           <Button className="flex-1" onClick={onClose}>

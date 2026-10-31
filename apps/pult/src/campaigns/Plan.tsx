@@ -153,7 +153,8 @@ function DayRow({ x, today, now, auto }: { x: CalendarDay; today: string; now: n
     return (
       <li className="grid grid-cols-[6.5rem_1fr] gap-x-3 py-2 text-fg-3 md:grid-cols-[9rem_1fr]">
         <p className="text-[0.9375rem] md:text-base">{dayName(x.date, today, now)}</p>
-        <p className="text-ui pointer-coarse:text-base">ничего не запланировано</p>
+        {/* у прошедшего дня планов нет, но события ниже (ушло, ошибки) — не пишем «ничего», чтобы не спорить со списком */}
+        <p className="text-ui pointer-coarse:text-base">{x.events?.length ? (x.date < today ? "что было в этот день" : "плановых сообщений нет") : "ничего не запланировано"}</p>
       </li>
     );
   return (

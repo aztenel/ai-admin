@@ -468,7 +468,7 @@ function CheckSummary({ res, r }: { res: CampaignCheck; r: Resolved }) {
         {res.badN > 0 && (
           <div className="py-3 text-ui pointer-coarse:text-base">
             <p className="text-fg">
-              Не понял строк: <span className="tnum">{nf.format(res.badN)}</span> — им не уйдёт.
+              Не понял строк: <span className="tnum">{nf.format(res.badN)}</span>, им не уйдёт.
             </p>
             {res.bad.length > 0 && <p className="mt-1 break-words text-sm text-fg-3">Например: {res.bad.slice(0, 3).map((b) => `«${b}»`).join(", ")}</p>}
           </div>
@@ -501,7 +501,7 @@ function Cost({ n, cap }: { n: number; cap: number }) {
         </div>
       </Group>
       <Note>
-        {nf.format(n)} × {String(MARKETING_PRICE_KZT).replace(".", ",")} ₸ за шаблон «Маркетинг». Это оценка: точная цена — в кабинете Meta.
+        {nf.format(n)} × {String(MARKETING_PRICE_KZT).replace(".", ",")} ₸ за шаблон «Маркетинг». Это оценка, точная цена в кабинете Meta.
         {days > 1 && ` В сутки уйдёт не больше ${nf.format(cap)}, на всех понадобится около ${days} ${plural(days, ["дня", "дней", "дней"])}.`}
       </Note>
     </>

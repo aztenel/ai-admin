@@ -506,7 +506,7 @@ async function planTab(t, owner) {
   const cells = grid.getByRole("gridcell");
   ok(`${t.tag}: календарь — сетка месяца с днями недели`, calOk && (await cells.count()) >= 28 && (await grid.getByRole("columnheader").count()) === 7, (await text(panel)).slice(0, 300));
   const day = panel.getByRole("list", { name: "Выбранный день" });
-  ok(`${t.tag}: календарь — выбран сегодняшний день, сервисные и реклама`, (await grid.locator('[aria-selected="true"]').count()) === 1 && /Сервисные:|ничего не запланировано/.test(await text(day)), (await text(day)).slice(0, 200));
+  ok(`${t.tag}: календарь — выбран сегодняшний день, сервисные и реклама`, (await grid.locator('[aria-selected="true"]').count()) === 1 && /Сервисные:|ничего не запланировано|плановых сообщений нет|что было в этот день/.test(await text(day)), (await text(day)).slice(0, 200));
   await step(t, "plan-calendar");
   await tap(panel.getByRole("button", { name: "Следующий месяц" }));
   ok(`${t.tag}: календарь — следующий месяц`, (await grid.getAttribute("aria-label")) !== null && (await panel.getByRole("button", { name: "Следующий месяц" }).isDisabled()));
