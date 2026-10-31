@@ -88,7 +88,11 @@ export function ConversationPane({
               <span className="flex min-w-0 items-center gap-1 text-sm leading-[1.125rem] text-fg-3">
                 {ch && (ch.kind === "web" ? <Globe aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : <MessageCircle aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} />)}
                 {/* на какой номер написал клиент (основной или второй) и кто ведёт чат (ТЗ v2.0 §2.2) */}
-                <span className="truncate">{d?.line?.label || (ch ? channelTitle(ch) : "")}</span>
+                {/* макет Figma: «Второй WhatsApp · ответ на напоминание» — откуда пришёл ответ, под именем, а не в красной полосе */}
+                <span className="truncate">
+                  {d?.line?.label || (ch ? channelTitle(ch) : "")}
+                  {attention?.source && attention.topic ? (attention.source.kind === "rm" ? " · ответ на напоминание" : " · ответ на рассылку") : ""}
+                </span>
                 {assignee ? <span className="min-w-0 truncate whitespace-nowrap">· ведёт {assignee === me ? "вы" : assignee}</span> : bot.state === "active" ? <span className="shrink-0 whitespace-nowrap @max-[24rem]:hidden">· бот</span> : null}
               </span>
             </span>
@@ -245,14 +249,12 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
   let body: ReactNode = null, mark: ReactNode = null, action: ReactNode = null;
   if (attention) {
     // макет Figma «Переписка»: красноватая полоса во всю ширину, «Ждёт ответа 5 мин · просит перенести», справа главное действие
-    const src = attention.source && attention.topic ? (attention.source.kind === "rm" ? " · ответ на напоминание" : " · ответ на рассылку") : "";
     const w = attention.since ? waited(attention.since, now) : "";
     const what = attention.label ? attention.label[0].toLowerCase() + attention.label.slice(1) : "";
     body = (
       <span className="font-medium text-critical">
         {w ? (w === "только что" ? "Ждёт ответа" : `Ждёт ответа ${w}`) : attention.label}
         {w && what ? ` · ${what}` : ""}
-        {src}
       </span>
     );
     action =

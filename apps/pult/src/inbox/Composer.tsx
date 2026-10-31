@@ -169,7 +169,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
           onClick={submit}
           disabled={!text.trim()}
           aria-label="Отправить"
-          className="relative grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1 hover:brightness-95 disabled:bg-surface-2 disabled:text-fg-3"
+          className="relative grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1 hover:brightness-95 disabled:opacity-40"
         >
           <SendHorizontal aria-hidden className="size-[1.125rem]" strokeWidth={2.2} />
         </button>
