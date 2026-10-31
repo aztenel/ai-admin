@@ -1,25 +1,41 @@
-// «Создать рассылку» со второго номера (ТЗ v3.0 §5.2, 31.10.2026): Кому → Сообщение → Проверка → Когда → Итог.
+// «Создать рассылку» со второго номера (ТЗ V3 «Рассылки и доступная аудитория», 31.10.2026):
+// Шаблон → Кому → Аудитория → Предпросмотр → Проверка → Когда.
 // Никаких полей Meta и {{1}}: текст — из библиотеки или свой, имя и данные сервер подставляет каждому клиенту сам;
-// клиенту без имени — приветствие без имени. Получатели — сегмент базы клиентов, только с подтверждённым согласием,
-// без «стоп» и не чаще раза в 30 дней (исключения сервер считает и показывает причинами).
-// Итог: «Сохранить черновик» (сотрудник и владелец), «Одобрить» (владелец). «Запустить» — недоступно, пока запуск рассылок
-// со второго номера не включён отдельным решением владельца (сервер всё равно ответит отказом). Реальных отправок здесь нет.
+// клиенту без имени — приветствие без имени. Получатели — сегмент базы клиентов: сервер считает воронку (всего → с правильным
+// номером → по сегменту → исключения по правилам и по разрешениям → можно отправлять) и ничего не «добавляет»: нет согласия —
+// не пишем, «стоп» — не пишем. В конце — «Сохранить черновик» (сотрудник и владелец) и «Одобрить» (владелец, после отметки
+// «проверено»). «Запустить» — недоступно, пока запуск рассылок со второго номера не включён отдельным решением владельца.
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, CircleCheck, Users } from "lucide-react";
+import { ChevronLeft, CircleCheck, FlaskConical, Users } from "lucide-react";
 import { Sheet, toast } from "@/components/overlay";
 import { Button, Skeleton } from "@/components/ui";
+import { ApiError } from "@/data/errors";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CampaignCheck, CampaignDraft, CrmSegment, LibraryItem, TemplateVar } from "@/model/campaigns";
+import type { AudienceFunnel, CampaignCheck, CampaignDraft, CrmSegment, FunnelReason, LibraryItem, TemplateVar } from "@/model/campaigns";
 import { store } from "@/state/store";
 import { nf, Notice, segRule } from "./base/shared";
 import { EXCLUDED, errorList } from "./common";
 import { DEFAULT_VARS, hasBlanks, toCanon } from "./vars";
 import { WaBubble } from "./WaBubble";
 
-const STEPS = ["Кому", "Сообщение", "Проверка", "Когда", "Итог"];
+const STEPS = ["Шаблон", "Кому", "Аудитория", "Предпросмотр", "Проверка", "Когда"];
+const LAST = STEPS.length - 1;
 const WHY: Record<string, string> = { ...EXCLUDED, blocked: "нет нужных данных для текста", noname: "нет имени" };
+// причины «нет разрешения на связь» — отдельно от правил компании (ТЗ V3): без согласия и после «стоп» не пишем никогда
+const CONSENT_CODES = new Set(["noconsent", "stop", "optout", "restricted", "restriction", "denied"]);
 const HOURS = Array.from({ length: 15 }, (_, i) => i + 8); // 8–22
+const CLIENTS: [string, string, string] = ["клиент", "клиента", "клиентов"];
+
+/** Воронка: от сервера; у старого ответа — собрать из «кому не уйдёт». */
+function funnelOf(d: CampaignCheck, seg?: CrmSegment): AudienceFunnel | null {
+  if (d.funnel) return d.funnel;
+  if (!d.excluded) return null;
+  const list = d.excluded.filter((x) => x.n > 0).map((x) => ({ ...x, why: x.why || WHY[x.code] || x.code }));
+  const rules = list.filter((x) => !CONSENT_CODES.has(x.code)), consent = list.filter((x) => CONSENT_CODES.has(x.code));
+  const out = list.reduce((a, x) => a + x.n, 0);
+  return { total: 0, valid: 0, segment: seg?.n ? seg.n + out : d.valid + out, rules, consent, allowed: d.valid };
+}
 
 export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: { ws: string; owner: boolean; open: boolean; preset?: { tplId?: string; seg?: string }; onClose: () => void; onDone: (id: string) => void }) {
   const [step, setStep] = useState(0);
@@ -31,12 +47,17 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
   const [own, setOwn] = useState("");
   const [lang, setLang] = useState<"ru" | "kk">("ru");
   const [check, setCheck] = useState<{ data?: CampaignCheck; error?: string; busy?: boolean }>({});
-  // некому писать (нет базы, нет согласий) — пример на вымышленном клиенте: сырой текст с {{…}} показывать нельзя (ТЗ v3.0 §4.2)
-  const [demo, setDemo] = useState("");
+  // пример на вымышленном клиенте и тот же текст без имени: сырой текст с {{…}} показывать нельзя (ТЗ v3.0 §4.2)
+  const [demo, setDemo] = useState<{ text: string; noName: string } | null>(null);
+  const [testTo, setTestTo] = useState("");
+  const [test, setTest] = useState<{ busy?: boolean; ok?: string; off?: string; preview?: string; error?: string }>({});
+  const [checked, setChecked] = useState(false);
   const [from, setFrom] = useState(11);
   const [to, setTo] = useState(20);
   const [cap, setCap] = useState(20);
   const [busy, setBusy] = useState("");
+  // демо-база черновика: клиенты вымышленные — пишем об этом на шагах с числами и примерами
+  const [isDemo, setIsDemo] = useState(false);
 
   // данные мастера: сегменты базы и одобренные тексты — при открытии
   useEffect(() => {
@@ -46,6 +67,9 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     setTplId(preset?.tplId || "");
     setSeg(preset?.seg || "");
     setCheck({});
+    setDemo(null);
+    setTest({});
+    setChecked(false);
     store.source.crmSegments(ws).then(
       (d) => {
         if (!live) return;
@@ -55,6 +79,10 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
         setSegErr(d.available ? "" : d.why || "База клиентов не подключена.");
       },
       (e: unknown) => live && setSegErr(errorList(e)[0] || "Сегменты не загрузились"),
+    );
+    store.source.contactsStatus(ws).then(
+      (d) => live && setIsDemo(!!d.demo),
+      () => {},
     );
     store.source.templates(ws).then(
       (d) => live && setLib({ items: d.items.filter((x) => !x.archived), vars: d.vars?.length ? d.vars : DEFAULT_VARS }),
@@ -86,23 +114,13 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     [tpl, seg, lang, text, cap, from, to],
   );
 
-  // проверка — при входе на шаг «Проверка»
+  // аудитория — при входе на шаг «Аудитория» (шаблон и сегмент уже выбраны)
   useEffect(() => {
     if (!open || step !== 2 || !store.source) return;
     let live = true;
     setCheck({ busy: true });
-    setDemo("");
-    const src = store.source;
-    src.checkCampaign(ws, draft).then(
-      (data) => {
-        if (!live) return;
-        setCheck({ data });
-        if (!data.samples?.length)
-          src.templatePreview(ws, tpl ? { id: tpl.id, lang } : { text, lang }).then(
-            (p) => live && setDemo(p.list[0]?.text || ""),
-            () => {},
-          );
-      },
+    store.source.checkCampaign(ws, draft).then(
+      (data) => live && setCheck({ data }),
       (e: unknown) => live && setCheck({ error: errorList(e)[0] || "Проверка не прошла" }),
     );
     return () => {
@@ -111,8 +129,36 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, step]);
 
+  // пример без имени и запасной пример на вымышленном клиенте — при входе на «Предпросмотр»
+  useEffect(() => {
+    if (!open || step !== 3 || !store.source) return;
+    let live = true;
+    store.source.templatePreview(ws, tpl ? { id: tpl.id, lang } : { text, lang }).then(
+      (p) => live && setDemo({ text: p.list[0]?.text || "", noName: p.noName?.text || "" }),
+      () => live && setDemo({ text: "", noName: "" }),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, step]);
+
   const valid = check.data?.valid ?? 0;
-  const canNext = [!!seg, !!text.trim() && !hasBlanks(text), !!check.data?.ok && valid > 0, from < to && cap >= 1, true][step];
+  const funnel = check.data ? funnelOf(check.data, segment) : null;
+  const canNext = [!!text.trim() && !hasBlanks(text), !!seg, !!check.data?.ok && valid > 0, true, true, from < to && cap >= 1][step];
+
+  const sendTest = async () => {
+    const src = store.source;
+    if (!src) return;
+    setTest({ busy: true });
+    try {
+      setTest({ ok: await src.testSend(ws, draft, testTo) });
+    } catch (e) {
+      // второй номер Winchester: пробная отправка выключена вместе с запуском — сервер присылает, как клиент увидит сообщение
+      if (e instanceof ApiError && (e.code === "ga_off" || e.code === "preview")) setTest({ off: e.message, preview: e.preview || "" });
+      else setTest({ error: errorList(e)[0] || "Не отправилось" });
+    }
+  };
   const create = async (approve: boolean) => {
     const src = store.source;
     if (!src) return;
@@ -129,6 +175,7 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     }
   };
 
+  const samples = check.data?.samples || [];
   return (
     <Sheet
       open={open}
@@ -136,7 +183,7 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
       title="Новая рассылка"
       description={`Второй WhatsApp · шаг ${step + 1} из ${STEPS.length}: ${STEPS[step]}`}
       footer={
-        step < 4 ? (
+        step < LAST ? (
           <div className="flex gap-2 pb-1">
             {step > 0 && (
               <Button icon={ChevronLeft} disabled={!!busy} onClick={() => setStep(step - 1)}>
@@ -151,7 +198,7 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
           // итог: три кнопки в 390 px не помещаются — главное действие отдельной строкой сверху (у сотрудника его нет)
           <div className="space-y-2 pb-1">
             {owner && (
-              <Button variant="primary" className="w-full" busy={busy === "approve"} disabled={!!busy} onClick={() => void create(true)}>
+              <Button variant="primary" className="w-full" busy={busy === "approve"} disabled={!!busy || !checked || !canNext} onClick={() => void create(true)}>
                 Одобрить
               </Button>
             )}
@@ -159,7 +206,7 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
               <Button icon={ChevronLeft} disabled={!!busy} onClick={() => setStep(step - 1)}>
                 Назад
               </Button>
-              <Button variant={owner ? "secondary" : "primary"} className="flex-1" busy={busy === "draft"} disabled={!!busy} onClick={() => void create(false)}>
+              <Button variant={owner ? "secondary" : "primary"} className="flex-1" busy={busy === "draft"} disabled={!!busy || !canNext} onClick={() => void create(false)}>
                 Сохранить черновик
               </Button>
             </div>
@@ -175,35 +222,8 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
         ))}
       </ol>
       <div className="space-y-3 px-4 pb-4">
+        {isDemo && step >= 1 && step <= 3 && <p className="rounded-xl border border-brand-gold/40 px-3 py-2 text-sm text-fg-2">Демо-база: числа и примеры на вымышленных клиентах.</p>}
         {step === 0 &&
-          (segErr ? (
-            <Notice>{segErr}</Notice>
-          ) : !segs ? (
-            <Skeleton className="h-40 w-full rounded-2xl" />
-          ) : (
-            <>
-              <p className="text-sm text-fg-2">Кому отправить. Числа уже без тех, кто просил не писать, без согласия или получал рекламу за 30 дней.</p>
-              <ul role="radiogroup" aria-label="Сегмент" className="divide-y divide-line rounded-2xl bg-surface">
-                {segs.map((s) => (
-                  <li key={s.id}>
-                    <button type="button" role="radio" aria-checked={seg === s.id} onClick={() => setSeg(s.id)} className="flex w-full items-center gap-3 px-3 py-3 text-left">
-                      <span className={cn("grid size-5 shrink-0 place-items-center rounded-full border-2", seg === s.id ? "border-accent" : "border-line-strong")}>{seg === s.id && <span className="size-2.5 rounded-full bg-accent" />}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-medium">{s.label}</span>
-                        {segRule(s) && <span className="block truncate text-sm text-fg-2">{segRule(s)}</span>}
-                      </span>
-                      <span className="tnum shrink-0 text-sm text-fg-2">
-                        <Users aria-hidden className="mr-1 inline size-3.5" />
-                        {nf.format(s.n)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ))}
-
-        {step === 1 &&
           (!lib ? (
             <Skeleton className="h-40 w-full rounded-2xl" />
           ) : (
@@ -262,9 +282,37 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
             </>
           ))}
 
+        {step === 1 &&
+          (segErr ? (
+            <Notice>{segErr}</Notice>
+          ) : !segs ? (
+            <Skeleton className="h-40 w-full rounded-2xl" />
+          ) : (
+            <>
+              <p className="text-sm text-fg-2">Кому отправить. Числа уже без тех, кто просил не писать, без согласия или получал рекламу за 30 дней.</p>
+              <ul role="radiogroup" aria-label="Сегмент" className="divide-y divide-line rounded-2xl bg-surface">
+                {segs.map((s) => (
+                  <li key={s.id}>
+                    <button type="button" role="radio" aria-checked={seg === s.id} onClick={() => setSeg(s.id)} className="flex w-full items-center gap-3 px-3 py-3 text-left">
+                      <span className={cn("grid size-5 shrink-0 place-items-center rounded-full border-2", seg === s.id ? "border-accent" : "border-line-strong")}>{seg === s.id && <span className="size-2.5 rounded-full bg-accent" />}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{s.label}</span>
+                        {segRule(s) && <span className="block truncate text-sm text-fg-2">{segRule(s)}</span>}
+                      </span>
+                      <span className="tnum shrink-0 text-sm text-fg-2">
+                        <Users aria-hidden className="mr-1 inline size-3.5" />
+                        {nf.format(s.n)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ))}
+
         {step === 2 &&
           (check.busy ? (
-            <Skeleton className="h-48 w-full rounded-2xl" />
+            <Skeleton className="h-56 w-full rounded-2xl" />
           ) : check.error ? (
             <Notice tone="critical">{check.error}</Notice>
           ) : check.data ? (
@@ -272,24 +320,10 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
               <p className="flex items-center gap-2 text-md">
                 <CircleCheck aria-hidden className={cn("size-5", valid ? "text-positive" : "text-fg-3")} />
                 <span>
-                  Получат: <b className="tnum">{nf.format(valid)}</b> {plural(valid, ["клиент", "клиента", "клиентов"])}
+                  Получат: <b className="tnum">{nf.format(valid)}</b> {plural(valid, CLIENTS)}
                 </span>
               </p>
-              {!!check.data.excluded?.filter((x) => x.n > 0).length && (
-                <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
-                  <p className="mb-1 font-medium text-fg-2">Не получат</p>
-                  <ul className="space-y-0.5 text-fg-2">
-                    {check.data.excluded
-                      .filter((x) => x.n > 0)
-                      .map((x) => (
-                        <li key={x.code} className="flex justify-between gap-3">
-                          <span>{x.why || WHY[x.code] || x.code}</span>
-                          <span className="tnum">{nf.format(x.n)}</span>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              )}
+              {funnel && <Funnel f={funnel} />}
               {!!check.data.errors.length && (
                 <Notice tone="critical">
                   {check.data.errors.map((e) => (
@@ -299,19 +333,72 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
                   ))}
                 </Notice>
               )}
-              {(!!check.data.samples?.length || !!demo) && <p className="text-sm font-medium text-fg-2">Так увидят клиенты</p>}
-              {check.data.samples?.length ? (
-                check.data.samples.slice(0, 3).map((x, i) => <WaBubble key={i} text={x.text} to={x.to || undefined} />)
-              ) : demo ? (
-                <>
-                  <WaBubble text={demo} />
-                  <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>
-                </>
-              ) : null}
+              <p className="text-xs text-fg-3">Без согласия и после «стоп» сообщения не уходят никогда. Это решает сервер, а не пульт.</p>
             </>
           ) : null)}
 
         {step === 3 && (
+          <>
+            {samples.length ? (
+              <>
+                <p className="text-sm font-medium text-fg-2">Так увидят клиенты</p>
+                {samples.slice(0, 3).map((x, i) => (
+                  <WaBubble key={i} text={x.text} to={x.to || undefined} />
+                ))}
+              </>
+            ) : !demo ? (
+              <Skeleton className="h-40 w-full rounded-2xl" />
+            ) : demo.text ? (
+              <>
+                <p className="text-sm font-medium text-fg-2">Так увидит клиент</p>
+                <WaBubble text={demo.text} />
+                <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>
+              </>
+            ) : null}
+            {demo?.noName && demo.noName !== (samples[0]?.text || demo.text) && (
+              <div>
+                <p className="mb-1 text-xs text-fg-3">Если имени клиента нет:</p>
+                <WaBubble text={demo.noName} />
+              </div>
+            )}
+          </>
+        )}
+
+        {step === 4 && (
+          <>
+            <p className="text-sm text-fg-2">Отправьте пример себе, чтобы увидеть сообщение в WhatsApp. Клиентам на этом шаге ничего не уходит.</p>
+            <div className="flex gap-2">
+              <input
+                aria-label="Ваш номер WhatsApp"
+                inputMode="tel"
+                value={testTo}
+                onChange={(e) => setTestTo(e.target.value)}
+                placeholder="+7 701 123 45 67"
+                className="h-11 min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 text-md outline-none focus:border-accent"
+              />
+              <Button icon={FlaskConical} busy={test.busy} disabled={test.busy || testTo.replace(/\D/g, "").length < 10} onClick={() => void sendTest()}>
+                Отправить пример
+              </Button>
+            </div>
+            {test.ok && <Notice tone="muted" role="status">{test.ok}</Notice>}
+            {test.error && <Notice tone="critical">{test.error}</Notice>}
+            {test.off !== undefined && (
+              <>
+                <Notice tone="muted">Пробная отправка со второго номера выключена, как и запуск рассылок. Ниже то, что пришло бы вам.</Notice>
+                {test.preview && <WaBubble text={test.preview} />}
+              </>
+            )}
+            <label className="flex items-start gap-3 rounded-xl bg-surface px-3 py-3">
+              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="mt-0.5 size-5 shrink-0 accent-[var(--accent)]" />
+              <span className="text-sm">
+                Я проверил текст и список получателей: {nf.format(valid)} {plural(valid, CLIENTS)}.
+                {owner ? " Без этой отметки одобрить нельзя." : ""}
+              </span>
+            </label>
+          </>
+        )}
+
+        {step === 5 && (
           <>
             <p className="text-sm text-fg-2">Сообщения уходят по одному, с паузой, только в эти часы по Астане. Кто ответит «стоп», больше ничего не получит.</p>
             <div className="grid grid-cols-2 gap-3">
@@ -338,23 +425,59 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
             </label>
             {from >= to && <Notice tone="critical">Время «до» должно быть позже «с».</Notice>}
             {valid > 0 && <p className="text-sm text-fg-3">При {nf.format(cap)} в день {nf.format(valid)} {plural(valid, ["клиент получит", "клиента получат", "клиентов получат"])} сообщения примерно за {nf.format(Math.ceil(valid / cap))} {plural(Math.ceil(valid / cap), ["день", "дня", "дней"])}.</p>}
-          </>
-        )}
-
-        {step === 4 && (
-          <>
             <dl className="divide-y divide-line rounded-2xl bg-surface px-3">
               <Row label="Номер">Второй WhatsApp</Row>
-              <Row label="Кому">{segment ? `${segment.label}, ${nf.format(valid)} ${plural(valid, ["клиент", "клиента", "клиентов"])}` : "—"}</Row>
+              <Row label="Кому">{segment ? `${segment.label}, ${nf.format(valid)} ${plural(valid, CLIENTS)}` : "не выбрано"}</Row>
               <Row label="Сообщение">{tpl ? tpl.title : "Свой текст"}{lang === "kk" ? ", на казахском" : ""}</Row>
-              <Row label="Когда">{`с ${from}:00 до ${to}:00, не больше ${cap} в день`}</Row>
+              <Row label="Проверено">{checked ? "да" : "нет"}</Row>
             </dl>
-            {check.data?.samples?.[0] && <WaBubble text={check.data.samples[0].text} to={check.data.samples[0].to} />}
+            {owner && !checked && <Notice tone="muted">Чтобы одобрить, вернитесь на шаг «Проверка» и отметьте, что всё проверено.</Notice>}
             <Notice tone="muted">Запуск рассылок со второго номера пока выключен. Сохраните черновик{owner ? " или одобрите его" : ""}: запустить можно будет, когда владелец включит рассылки с этого номера.</Notice>
           </>
         )}
       </div>
     </Sheet>
+  );
+}
+
+/** Воронка аудитории: всего → с правильным номером → по сегменту → исключения (правила и разрешения) → можно отправлять. */
+function Funnel({ f }: { f: AudienceFunnel }) {
+  const rules = f.rules.filter((x) => x.n > 0), consent = f.consent.filter((x) => x.n > 0);
+  return (
+    <div className="rounded-2xl bg-surface px-3 py-1">
+      <dl aria-label="Аудитория" className="divide-y divide-line">
+        {f.total > 0 && <Row label="Всего в базе">{nf.format(f.total)}</Row>}
+        {f.valid > 0 && <Row label="С правильным номером">{nf.format(f.valid)}</Row>}
+        <Row label="Подходят по сегменту">{nf.format(f.segment)}</Row>
+        <Reasons title="Не подходят по правилам" list={rules} />
+        <Reasons title="Нет разрешения на связь" list={consent} />
+        <div className="flex items-start justify-between gap-4 py-2.5 text-sm">
+          <dt className="font-semibold">Можно отправлять</dt>
+          <dd className="tnum font-semibold">{nf.format(f.allowed)}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function Reasons({ title, list }: { title: string; list: FunnelReason[] }) {
+  if (!list.length) return null;
+  const sum = list.reduce((a, x) => a + x.n, 0);
+  return (
+    <div className="py-2.5 text-sm">
+      <div className="flex items-start justify-between gap-4">
+        <dt className="text-fg-2">{title}</dt>
+        <dd className="tnum font-medium">−{nf.format(sum)}</dd>
+      </div>
+      <ul className="mt-1 space-y-0.5 text-fg-3">
+        {list.map((x) => (
+          <li key={x.code} className="flex justify-between gap-3 pl-3">
+            <span>{x.why || WHY[x.code] || x.code}</span>
+            <span className="tnum">{nf.format(x.n)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

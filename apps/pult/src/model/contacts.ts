@@ -55,6 +55,11 @@ export type ContactsStatus = {
   owner: boolean;
   client: { id: string; name: string };
   counts: { contacts: number; withVisits: number; upcoming: number; stops: number; review: number };
+  /** Запрещено писать рекламу: «стоп», отказ в согласии или запрет (сервер; нет — пульт показывает «стоп»). */
+  forbidden?: number;
+  /** В базе загружена демо-база черновика: вымышленные клиенты (когда). */
+  demo?: boolean;
+  demoAt?: number;
   sync: SyncState;
   /** Сверка «стопов» по журналу входящих Green-API (не надеемся на повтор вебхука): когда, ошибка, сколько нашла; channel null — номера Green-API нет. */
   stops: { lastOkAt: number | null; lastError: string | null; found: number; channel: "ga" | null };

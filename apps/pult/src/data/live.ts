@@ -76,15 +76,20 @@ export async function call<T>(path: string, body?: Record<string, unknown>): Pro
 }
 /** Ответ сервера → данные или ApiError (общая часть call и запросов с файлом, data/live-contacts.ts). */
 export async function parse<T>(r: Response): Promise<T> {
-  let j: (T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown }) | null = null;
+  let j: (T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown; code?: unknown; preview?: unknown }) | null = null;
   try {
-    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown };
+    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown; code?: unknown; preview?: unknown };
   } catch {
     /* не JSON — ниже общая ошибка */
   }
   if (!j) throw new ApiError(`Сервер ответил ошибкой ${r.status}. Попробуйте ещё раз через минуту.`, r.status);
   // раздел «Клиенты»: 400 { error, field } — к какому полю формы относится ошибка
-  if (j.error) throw new ApiError(j.error, r.status, false, typeof j.field === "string" && j.field ? { field: j.field } : undefined);
+  if (j.error)
+    throw new ApiError(j.error, r.status, false, {
+      ...(typeof j.field === "string" && j.field ? { field: j.field } : {}),
+      ...(typeof j.code === "string" && j.code ? { code: j.code } : {}),
+      ...(typeof j.preview === "string" && j.preview ? { preview: j.preview } : {}),
+    });
   if (!r.ok) {
     // рассылки: 400 { ok: false, errors: [...] } — ошибки формы списком; 409 { confirm } — вопрос перед запуском при сигнале Meta
     const errors = Array.isArray(j.errors) ? j.errors.map(String).filter(Boolean) : [];

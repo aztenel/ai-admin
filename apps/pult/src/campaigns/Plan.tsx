@@ -5,11 +5,11 @@
 // рассылок в календаре нет — их запускает владелец. Итоги — по отчётам Green-API о доставке; «прочитано» — не меньше, чем
 // пришло отчётов (у клиента могут быть выключены отчёты о прочтении). Только числа: имён и номеров здесь нет.
 import { useState } from "react";
-import { CalendarDays, Megaphone } from "lucide-react";
+import { BellRing, CalendarDays, CircleAlert, Clock3, Megaphone, Send, UsersRound, type LucideIcon } from "lucide-react";
 import { Segmented, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CalendarDay, CampaignCalendar, MessageStats, ServiceKind, StatSource } from "@/model/campaigns";
+import type { CalendarDay, CalendarEvent, CalendarEventKind, CampaignCalendar, MessageStats, ServiceKind, StatSource } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { nf, Notice, visitDay } from "./base/shared";
 import { EXCLUDED } from "./common";
@@ -115,6 +115,7 @@ function CalendarGroup({ d, now }: { d: CampaignCalendar; now: number }) {
               <span className="flex h-1.5 gap-0.5">
                 {svc > 0 && <span className={cn("size-1.5 rounded-full", on ? "bg-accent-fg" : "bg-brand-gold")} />}
                 {mk > 0 && <span className={cn("size-1.5 rounded-full", on ? "bg-accent-fg/70" : "bg-accent")} />}
+                {!!x?.events?.some((e) => e.kind === "error" && e.n > 0) && <span className={cn("size-1.5 rounded-full", on ? "bg-accent-fg" : "bg-critical")} />}
               </span>
             </button>
           );
@@ -129,9 +130,12 @@ function CalendarGroup({ d, now }: { d: CampaignCalendar; now: number }) {
         </span>
       </div>
       {day ? (
-        <ul aria-label="Выбранный день" className="border-t border-line">
-          <DayRow x={day} today={d.today} now={now} auto={!!(auto && auto.on && auto.tpl)} />
-        </ul>
+        <>
+          <ul aria-label="Выбранный день" className="border-t border-line">
+            <DayRow x={day} today={d.today} now={now} auto={!!(auto && auto.on && auto.tpl)} />
+          </ul>
+          {!!day.events?.filter((e) => e.n > 0 || e.kind === "approval").length && <DayEvents list={day.events} />}
+        </>
       ) : (
         <p className="border-t border-line py-3 text-ui text-fg-3">{sel < d.today ? "День прошёл." : "Нет данных на этот день."}</p>
       )}
@@ -181,6 +185,26 @@ function DayRow({ x, today, now, auto }: { x: CalendarDay; today: string; now: n
         </div>
       )}
     </li>
+  );
+}
+
+// события дня (ТЗ V3, календарь): короткий список, одна строка на событие, цвет — только у ошибок
+const EV_ICON: Record<CalendarEventKind, LucideIcon> = { service: BellRing, campaign: Megaphone, approval: Clock3, sent: Send, error: CircleAlert, audience: UsersRound };
+function DayEvents({ list }: { list: CalendarEvent[] }) {
+  const shown = list.filter((e) => e.n > 0 || e.kind === "approval");
+  return (
+    <ul aria-label="События дня" className="divide-y divide-line border-t border-line">
+      {shown.map((e, i) => {
+        const Icon = EV_ICON[e.kind] || CalendarDays;
+        return (
+          <li key={`${e.kind}${e.id || ""}${i}`} className="flex items-center gap-2.5 py-2">
+            <Icon aria-hidden className={cn("size-4 shrink-0", e.kind === "error" ? "text-critical" : "text-fg-3")} strokeWidth={1.9} />
+            <span className={cn("min-w-0 flex-1 text-ui pointer-coarse:text-base", e.kind === "error" && "text-critical")}>{e.title}</span>
+            {e.n > 0 && <span className="tnum shrink-0 text-sm font-semibold">{nf.format(e.n)}</span>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

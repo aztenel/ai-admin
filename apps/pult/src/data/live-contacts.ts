@@ -90,6 +90,9 @@ function status(x: unknown): ContactsStatus {
     owner: !!d.owner,
     client: { id: str(k.id), name: str(k.name) },
     counts: { contacts: num(c.contacts), withVisits: num(c.withVisits), upcoming: num(c.upcoming), stops: num(c.stops), review: num(c.review) },
+    // показатели ТЗ V3 и пометка демо-базы — если сервер их прислал
+    ...(typeof obj(d.kpi).forbidden === "number" ? { forbidden: num(obj(d.kpi).forbidden) } : typeof c.forbidden === "number" ? { forbidden: num(c.forbidden) } : {}),
+    ...(d.demo ? { demo: true, demoAt: num(d.demoAt) } : {}),
     sync: syncState(d.sync),
     stops: { lastOkAt: tm(sp.lastOkAt), lastError: str(sp.lastError) || null, found: num(sp.found), channel: sp.channel === "ga" ? "ga" : null },
     probe: report(d.probe),

@@ -5,6 +5,7 @@
 import type {
   AutoInfo,
   CampaignCalendar,
+  CampaignResults,
   LibraryItem,
   MessageStats,
   TemplateLibrary,
@@ -42,12 +43,13 @@ import type { CampaignSource } from "./source";
 // ---------- ответы сервера ----------
 type RowRaw = {
   id: string; name?: string; status: string; total?: number; pos?: number; sent?: number; failed?: number; skipped?: number; excl?: number;
-  created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string;
+  created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string; demo?: number | boolean; approved?: number | boolean;
 };
 type BRaw = RowRaw & {
   cap?: number; from?: number; to?: number; text?: string; msg?: string; fallback?: string; img?: string; lang?: string; params?: string[];
   segId?: string; crmAt?: number; approvedBy?: string; approvedAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
   retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean;
+  results?: Partial<CampaignResults> | null;
 };
 type ListRaw = {
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
@@ -95,6 +97,8 @@ function row(r: RowRaw): CampaignRow {
     ...(r.seg ? { segment: r.seg } : {}),
     ...(r.by === "owner" || r.by === "staff" || r.by === "auto" ? { by: r.by } : {}),
     ...(r.tpl ? { template: r.tpl } : {}),
+    ...(r.demo ? { demo: true } : {}),
+    ...(r.approved ? { approved: true } : {}),
   };
 }
 
@@ -106,6 +110,11 @@ function detail(b: BRaw): CampaignDetail {
     nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure,
   };
   for (const [k, v] of Object.entries(extra)) if (v) (d as Record<string, unknown>)[k] = v;
+  // итоги: сервер считает по ответам провайдера и журналу Altegio; без базы D1 — нет
+  if (b.results) {
+    const x = b.results;
+    d.results = { sent: n(x.sent), delivered: n(x.delivered), read: n(x.read), failed: n(x.failed), replied: n(x.replied), booked: n(x.booked), window: n(x.window) || 14 };
+  }
   return d;
 }
 

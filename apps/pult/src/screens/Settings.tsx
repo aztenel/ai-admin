@@ -6,6 +6,8 @@ import { Activity, Bell, Building2, ChevronRight, ExternalLink, KeyRound, MapPin
 import { useEffect, useState, type ReactNode } from "react";
 import { SyncPanel } from "@/clients/SyncPanel";
 import type { ContactsStatus } from "@/model/contacts";
+import type { CampaignsOverview, ServiceOverview } from "@/model/campaigns";
+import { whenText } from "@/campaigns/base/shared";
 import { buttonClass, Button, Field, Segmented } from "@/components/ui";
 import { channelTitle, KIND_LONG } from "@/model/channels";
 import type { Channel } from "@/model/types";
@@ -180,28 +182,113 @@ function SiteBooking() {
 }
 
 /** Диагностика — только владельцу: проверки базы клиентов и связи с Altegio (раньше — баннер на экране «Клиенты»). */
+/** Диагностика (ТЗ V3): сверху — коротко для владельца (подключено ли, работает ли, когда обновлялось), ниже по кнопке — подробности
+ *  для разработчика (синхронизация, проверки данных, «стоп», ошибки, служебные страницы). Большие тексты — только внизу. */
 function Diagnostics() {
   const ws = useStore((s) => s.wsId);
   const mode = useStore((s) => s.mode);
   const [st, setSt] = useState<{ data?: ContactsStatus; error?: string; rev: number }>({ rev: 0 });
+  const [ov, setOv] = useState<CampaignsOverview | null | undefined>(undefined);
+  const [svc, setSvc] = useState<ServiceOverview | null | undefined>(undefined);
+  const [tech, setTech] = useState(false);
   useEffect(() => {
     let live = true;
-    if (!ws || !store.source) return;
-    store.source.contactsStatus(ws).then(
+    const src = store.source;
+    if (!ws || !src) return;
+    src.contactsStatus(ws).then(
       (data) => live && setSt((x) => ({ ...x, data, error: undefined })),
       (e: unknown) => live && setSt((x) => ({ ...x, error: e instanceof Error ? e.message : "Не загрузилось" })),
     );
+    src.campaignsOverview(ws).then((d) => live && setOv(d), () => live && setOv(null));
+    src.serviceMessages(ws).then((d) => live && setSvc(d), () => live && setSvc(null));
     return () => {
       live = false;
     };
   }, [ws, st.rev]);
   if (mode === "demo") return <Group><p className="py-3 text-sm text-fg-2">В демо диагностики нет.</p></Group>;
   if (!ws) return null;
-  if (st.error) return <Group><p role="alert" className="py-3 text-sm text-critical">Не загрузилось: {st.error}</p></Group>;
-  if (!st.data) return <Group><p className="py-3 text-sm text-fg-3">Загружаю…</p></Group>;
-  if (!st.data.ready) return <Group><p className="py-3 text-sm text-fg-2">{st.data.why || "База клиентов на этом адресе не подключена."}</p></Group>;
-  return <SyncPanel ws={ws} status={st.data} onChanged={() => setSt((x) => ({ ...x, rev: x.rev + 1 }))} />;
+  const now = Date.now();
+  const d = st.data, sync = d?.sync;
+  const failed = !!sync?.lastError && (!sync.lastOkAt || (sync.lastErrorAt || 0) > sync.lastOkAt);
+  const rows: StatusRow[] = [
+    {
+      label: "Altegio",
+      ...(!d ? (st.error ? { tone: "bad", value: "не отвечает", hint: st.error } : { tone: "wait", value: "проверяю…" })
+        : !d.ready ? { tone: "off", value: "база не подключена", hint: d.why }
+        : sync?.running ? { tone: "wait", value: "обновляется" }
+        : failed ? { tone: "bad", value: "ошибка", hint: "Подробности ниже, в разделе для разработчика." }
+        : sync?.available ? { tone: "ok", value: "подключён" }
+        : { tone: "off", value: "не подключён", hint: sync?.why }),
+    },
+    {
+      label: "Второй WhatsApp",
+      ...(ov === undefined ? { tone: "wait", value: "проверяю…" } : !ov?.bot ? { tone: "off", value: "не подключён" } : ov.bot.ready ? { tone: "ok", value: "на связи" } : { tone: "bad", value: "нет связи", hint: ov.bot.why }),
+    },
+    {
+      label: "Основной WhatsApp",
+      ...(ov === undefined ? { tone: "wait", value: "проверяю…" } : ov?.main.ready ? { tone: "ok", value: "подключён" } : { tone: "off", value: "не подключён к пульту" }),
+    },
+    {
+      label: "Напоминания",
+      ...(svc === undefined ? { tone: "wait", value: "проверяю…" } : !svc ? { tone: "bad", value: "не загрузилось" }
+        : svc.journal && svc.enabled === false ? { tone: "off", value: "выключены", hint: "Включаются на сервере после согласия владельца компании." }
+        : !svc.altegio && !svc.journal ? { tone: "off", value: "не работают", hint: "Нет записи через Altegio." }
+        : { tone: "ok", value: "включены" }),
+    },
+    {
+      label: "Очередь сообщений",
+      ...(svc === undefined ? { tone: "wait", value: "проверяю…" } : svc?.hold ? { tone: "bad", value: "остановлена", hint: svc.hold.why } : svc && (svc.enabled !== false) ? { tone: "ok", value: "работает" } : { tone: "off", value: "не запущена" }),
+    },
+    { label: "Последняя удачная синхронизация", tone: sync?.lastOkAt ? "ok" : "off", value: sync?.lastOkAt ? whenText(sync.lastOkAt, now) : "ещё не было" },
+  ];
+  return (
+    <>
+      <Group title="Как работает сейчас">
+        <ul aria-label="Состояние" className="divide-y divide-line">
+          {rows.map((r) => (
+            <li key={r.label} className="flex items-start gap-3 py-2.5">
+              <span aria-hidden className={cn("mt-1.5 size-2.5 shrink-0 rounded-full", TONE_DOT[r.tone])} />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="text-ui font-medium pointer-coarse:text-base">{r.label}</span>
+                  <span className={cn("text-ui pointer-coarse:text-base", r.tone === "bad" ? "text-critical" : r.tone === "ok" ? "text-positive" : "text-fg-2")}>{r.value}</span>
+                </span>
+                {r.hint && <span className="mt-0.5 block text-sm text-fg-3">{r.hint}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Group>
+      <button type="button" aria-expanded={tech} onClick={() => setTech(!tech)} className="mb-3 flex items-center gap-1.5 px-1 text-ui font-medium text-accent-ink">
+        <ChevronRight aria-hidden className={cn("size-4 transition-transform", tech && "rotate-90")} />
+        Для разработчика
+      </button>
+      {tech && (
+        <>
+          {st.error ? <Group><p role="alert" className="py-3 text-sm text-critical">Не загрузилось: {st.error}</p></Group>
+            : !d ? <Group><p className="py-3 text-sm text-fg-3">Загружаю…</p></Group>
+            : !d.ready ? <Group><p className="py-3 text-sm text-fg-2">{d.why || "База клиентов на этом адресе не подключена."}</p></Group>
+            : <SyncPanel ws={ws} status={d} onChanged={() => setSt((x) => ({ ...x, rev: x.rev + 1 }))} />}
+          <Group title="Служебные страницы" note="Журнал, хранилища KV и D1, миграции, проверка Green-API. Открываются в новой вкладке, только владельцу.">
+            {[
+              ["/admin", "Панель владельца"],
+              ["/diag/storage", "Хранилища и миграции"],
+              ["/diag", "Ключи, модели, расходы"],
+            ].map(([href, label]) => (
+              <a key={href} href={href} target="_blank" rel="noopener" className="flex items-center justify-between py-3 text-ui pointer-coarse:text-base">
+                {label}
+                <ExternalLink aria-hidden className="size-4 text-fg-3" />
+              </a>
+            ))}
+          </Group>
+        </>
+      )}
+    </>
+  );
 }
+type StatusTone = "ok" | "bad" | "wait" | "off";
+type StatusRow = { label: string; tone: StatusTone; value: string; hint?: string };
+const TONE_DOT: Record<StatusTone, string> = { ok: "bg-positive", bad: "bg-critical", wait: "bg-brand-gold", off: "bg-line-strong" };
 
 function Branches() {
   const ws = useStore((s) => s.workspace);

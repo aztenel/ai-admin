@@ -4,7 +4,7 @@
 // в карточке одного клиента. Карточка — своя запись истории (#/clients/<id>): жест «назад» закрывает её. «Добавить клиента» —
 // лист; импорт и панель синхронизации — слой во весь экран (телефон) или панель справа (компьютер).
 // База не подключена (нет D1 — боевой сайт до решения владельца) — спокойный экран с причиной, без запросов, которые ответят 503.
-import { Activity, CalendarDays, CircleAlert, CircleCheck, Contact, Database, Ellipsis, RefreshCw, Search, Upload, UserPlus, X } from "lucide-react";
+import { Activity, CalendarDays, CircleAlert, CircleCheck, Contact, Database, Ellipsis, FlaskConical, RefreshCw, Search, Upload, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Layer, useBackLayer, whenText, nf } from "@/campaigns/base/shared";
 import { useLoad } from "@/campaigns/useLoad";
@@ -187,6 +187,12 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
       <SyncLine d={d} now={now} owner={owner} />
       {st.error && <p role="alert" className="mb-3 px-1 text-sm text-critical">Не обновилось: {st.error}</p>}
 
+      {d.demo && (
+        <p role="note" className="mb-3 flex items-start gap-2 rounded-[0.875rem] border border-brand-gold/40 bg-surface px-3 py-2.5 text-sm text-fg-2">
+          <FlaskConical aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" strokeWidth={2} />
+          <span>Демо-база: вымышленные клиенты для проверки пульта. Настоящих имён и номеров здесь нет.</span>
+        </p>
+      )}
       <label className="relative mb-3 block">
         <span className="sr-only">Поиск по имени или номеру</span>
         <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-3" strokeWidth={2} />
@@ -213,17 +219,24 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
         ))}
         {segs.loading && !segList.length && <Skeleton className="h-9 w-40 rounded-full" />}
       </div>
-      <p className="mb-4 px-1 text-sm text-fg-3">
-        <span className="tnum">{nf.format(d.counts.contacts)}</span> {plural(d.counts.contacts, ["клиент", "клиента", "клиентов"])} · с визитами{" "}
-        <span className="tnum">{nf.format(d.counts.withVisits)}</span> · записаны вперёд <span className="tnum">{nf.format(d.counts.upcoming)}</span> · «стоп»{" "}
-        <span className="tnum">{nf.format(d.counts.stops)}</span>
-        {d.counts.review > 0 && (
-          <>
-            {" "}
-            · <span className="text-fg-2">ждут решения {nf.format(d.counts.review)}</span>
-          </>
-        )}
-      </p>
+      {/* ТЗ V3: четыре коротких показателя вместо строки с точками */}
+      <dl aria-label="Показатели базы" className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {(
+          [
+            ["Все клиенты", d.counts.contacts],
+            ["Есть запись", d.counts.upcoming],
+            ["Подходят по сегменту", seg ? (segList.find((s) => s.id === seg)?.count ?? 0) : null],
+            ["Запрещено писать", d.forbidden ?? d.counts.stops],
+          ] as [string, number | null][]
+        ).map(([label, v]) => (
+          <div key={label} className="rounded-[0.875rem] bg-surface px-3 py-2">
+            <dt className="truncate text-xs text-fg-3">{label}</dt>
+            <dd className="tnum text-lg font-semibold">{v === null ? <span className="text-sm font-normal text-fg-3">выберите сегмент</span> : nf.format(v)}</dd>
+          </div>
+        ))}
+      </dl>
+      {d.counts.review > 0 && <p className="mb-2 px-1 text-sm text-fg-2">«Стоп» ждёт решения: {nf.format(d.counts.review)}</p>}
+      <div className="mb-4" />
 
       {listErr && (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[0.875rem] bg-critical-soft px-4 py-3 text-ui text-critical">

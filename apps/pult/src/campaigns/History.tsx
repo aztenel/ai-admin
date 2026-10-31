@@ -130,12 +130,16 @@ const TONE: Record<Tone, string> = {
 };
 
 /** Статус словами. Рассылку с номера бота в пульте не запускают — «готова к запуску» ей не пишем. */
-export function statusOf(c: Pick<CampaignRow, "status" | "channel">): { label: string; tone: Tone } {
-  if (c.channel === "bot" && c.status === "ready") return { label: "Не запущена", tone: "muted" };
+export function statusOf(c: Pick<CampaignRow, "status" | "channel" | "approved">): { label: string; tone: Tone } {
+  if (c.channel === "bot" && c.status === "ready") return c.approved ? { label: "Одобрена", tone: "ok" } : { label: "Черновик", tone: "muted" };
   return STATUS[c.status] || { label: c.status, tone: "muted" };
 }
 
 function kindOf(c: Shown): { icon: LucideIcon; label: string } {
+  const k = kindBase(c);
+  return c.demo ? { ...k, label: `демо · ${k.label}` } : k; // демо-база: вымышленные клиенты, видно прямо в строке
+}
+function kindBase(c: Shown): { icon: LucideIcon; label: string } {
   if (c.channel === "bot") return { icon: Bot, label: "второй WhatsApp" };
   if (c.by === "auto") return { icon: Repeat, label: "автосценарий" };
   if (c.source === "crm") return { icon: UsersRound, label: c.segment ? `база: ${c.segment}` : "база клиентов" };

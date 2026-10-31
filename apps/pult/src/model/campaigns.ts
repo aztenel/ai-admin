@@ -89,6 +89,10 @@ export type CampaignRow = {
   by?: "owner" | "staff" | "auto";
   /** Шаблон Meta (основной номер). */
   template?: string;
+  /** Рассылка из демо-базы (вымышленные клиенты). */
+  demo?: boolean;
+  /** Второй номер: одобрена владельцем (не запуск). */
+  approved?: boolean;
 };
 
 /** Рассылка целиком (/api/bc/get, ответы create/act/tick). */
@@ -117,6 +121,8 @@ export type CampaignDetail = CampaignRow & {
   /** Одобрил владелец (кто и когда). Одобрение — не запуск. */
   approvedBy?: string;
   approvedAt?: number;
+  /** Итоги (нет базы D1 — null или нет поля). */
+  results?: CampaignResults | null;
   startedAt?: number;
   /** Последняя отправка. */
   lastSentAt?: number;
@@ -297,7 +303,24 @@ export type CampaignCheck = {
   samples?: { to: string; text: string }[];
   /** Кому не уйдёт и почему (текст сервера) и сколько. */
   excluded?: { code: string; why: string; n: number }[];
+  /** Воронка аудитории (ТЗ V3): всего → с правильным номером → по сегменту → исключения (правила и разрешения) → можно отправлять. */
+  funnel?: AudienceFunnel;
 };
+
+export type FunnelReason = { code: string; why: string; n: number };
+export type AudienceFunnel = {
+  total: number;
+  valid: number;
+  segment: number;
+  /** Исключены по правилам компании: недавний визит, будущая запись, реклама за 30 дней, нет данных для текста. */
+  rules: FunnelReason[];
+  /** Исключены по разрешениям на связь: нет согласия, «стоп», запрет. */
+  consent: FunnelReason[];
+  allowed: number;
+};
+
+/** Итоги рассылки по ответам провайдера и журналу Altegio. booked — записались в течение window дней после сообщения: совпадение по времени, не доказательство. */
+export type CampaignResults = { sent: number; delivered: number; read: number; failed: number; replied: number; booked: number; window: number };
 
 export type CampaignCreated = {
   campaign: CampaignDetail;
@@ -512,7 +535,11 @@ export type CalendarDay = {
     /** Почему нельзя: причина → сколько (noconsent, stop, booked, recent, marketed…). */
     excluded: Record<string, number>;
   } | null;
+  /** События дня: сервисные, рассылки по плану, ждут одобрения, отправлено, ошибки, изменения аудитории (стоп, согласия). */
+  events?: CalendarEvent[];
 };
+export type CalendarEventKind = "service" | "campaign" | "approval" | "sent" | "error" | "audience";
+export type CalendarEvent = { kind: CalendarEventKind; title: string; n: number; id?: string };
 export type CampaignCalendar = {
   today: string;
   /** Автосценарий: включён, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы. */

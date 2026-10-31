@@ -11,7 +11,7 @@ import { Confirm, Sheet, toast } from "@/components/overlay";
 import { Button, Field, Skeleton } from "@/components/ui";
 import { plural, shortDate, timeHM } from "@/lib/format";
 import { cn, useMedia } from "@/lib/utils";
-import type { CampaignAct, CampaignDetail, CampaignRow } from "@/model/campaigns";
+import type { CampaignAct, CampaignDetail, CampaignResults, CampaignRow } from "@/model/campaigns";
 import { store } from "@/state/store";
 import { CHANNEL_LABEL, CONFIRM_OVER, costText, errText, ownerOnly, progressPct, type Tone } from "./common";
 import { statusOf } from "./History";
@@ -205,8 +205,10 @@ export function CampaignSheet({
             )
           ) : (
             <>
+              {c.demo && <p className="inline-flex rounded-full border border-brand-gold/50 px-2.5 py-0.5 text-xs font-medium text-fg-2">Демо: вымышленные клиенты</p>}
               <Progress c={c} />
               <Notes c={c} now={now} />
+              {c.results && <Results r={c.results} />}
 
               {err && (
                 <p role="alert" className="flex gap-2 text-ui text-critical pointer-coarse:text-base">
@@ -418,6 +420,26 @@ function Details({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: nu
         {!!c.lastSentAt && c.status !== "running" && <Field label="Последняя отправка">{shortDate(c.lastSentAt, now)}</Field>}
         {!!c.doneAt && <Field label="Завершена">{shortDate(c.doneAt, now)}</Field>}
       </dl>
+    </section>
+  );
+}
+
+/** Итоги рассылки (ТЗ V3): что ответил провайдер и кто записался в Altegio после сообщения. «Записались после» — совпадение по
+ *  времени, а не доказательство, что записались из-за рассылки: так и пишем. */
+function Results({ r }: { r: CampaignResults }) {
+  const items: [string, number][] = [["Отправлено", r.sent], ["Доставлено", r.delivered], ["Прочитано", r.read], ["Не дошло", r.failed], ["Ответили", r.replied], [`Записались за ${r.window} дн.`, r.booked]];
+  return (
+    <section aria-label="Итоги рассылки">
+      <h3 className="mb-1.5 text-sm font-medium text-fg-3">Итоги</h3>
+      <dl className="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+        {items.map(([label, v]) => (
+          <div key={label} className="min-w-0">
+            <dt className="truncate text-xs text-fg-3">{label}</dt>
+            <dd className="tnum text-lg font-semibold">{v.toLocaleString("ru-RU")}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-1.5 text-xs text-fg-3">«Записались» — клиенты, у которых после сообщения появилась запись в Altegio. Это совпадение по времени, а не доказательство, что записались из-за рассылки.</p>
     </section>
   );
 }

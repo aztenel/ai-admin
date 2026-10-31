@@ -11,12 +11,18 @@ export class ApiError extends Error {
   readonly confirm?: string;
   /** Поле формы, к которому относится ошибка (раздел «Клиенты»: `{ error, field }`). */
   readonly field?: string;
-  constructor(message: string, status: number, offline = false, extra?: { errors?: string[]; confirm?: string; field?: string }) {
+  /** Код отказа сервера («ga_off», «preview») — пульт по нему выбирает короткое объяснение. */
+  readonly code?: string;
+  /** Пробная отправка, которая не ушла: как сообщение увидит клиент (второй номер, вымышленный клиент). */
+  readonly preview?: string;
+  constructor(message: string, status: number, offline = false, extra?: { errors?: string[]; confirm?: string; field?: string; code?: string; preview?: string }) {
     super(message);
     this.status = status;
     this.offline = offline;
     if (extra?.errors) this.errors = extra.errors;
     if (extra?.confirm) this.confirm = extra.confirm;
     if (extra?.field) this.field = extra.field;
+    if (extra?.code) this.code = extra.code;
+    if (extra?.preview) this.preview = extra.preview;
   }
 }
