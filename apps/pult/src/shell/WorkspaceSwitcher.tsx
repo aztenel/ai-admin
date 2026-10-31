@@ -74,7 +74,8 @@ export function WorkspaceSwitcher({ className, compact }: { className?: string; 
 
   return (
     <div className={cn("flex min-w-0 items-center", className)}>
-      <div className="min-w-0 flex-1">{nameEl}</div>
+      {/* в строке под заголовком (compact) без flex-1: иначе ширина считается от нуля и название обрезается («Winches…») */}
+      <div className={cn("min-w-0", !compact && "flex-1")}>{nameEl}</div>
       {can && !wide && (
         <Sheet open={open} onOpenChange={setOpen} title="Компании">
           <div className="pb-2">

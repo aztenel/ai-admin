@@ -31,6 +31,8 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
   const [own, setOwn] = useState("");
   const [lang, setLang] = useState<"ru" | "kk">("ru");
   const [check, setCheck] = useState<{ data?: CampaignCheck; error?: string; busy?: boolean }>({});
+  // некому писать (нет базы, нет согласий) — пример на вымышленном клиенте: сырой текст с {{…}} показывать нельзя (ТЗ v3.0 §4.2)
+  const [demo, setDemo] = useState("");
   const [from, setFrom] = useState(11);
   const [to, setTo] = useState(20);
   const [cap, setCap] = useState(20);
@@ -89,8 +91,18 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     if (!open || step !== 2 || !store.source) return;
     let live = true;
     setCheck({ busy: true });
-    store.source.checkCampaign(ws, draft).then(
-      (data) => live && setCheck({ data }),
+    setDemo("");
+    const src = store.source;
+    src.checkCampaign(ws, draft).then(
+      (data) => {
+        if (!live) return;
+        setCheck({ data });
+        if (!data.samples?.length)
+          src.templatePreview(ws, tpl ? { id: tpl.id, lang } : { text, lang }).then(
+            (p) => live && setDemo(p.list[0]?.text || ""),
+            () => {},
+          );
+      },
       (e: unknown) => live && setCheck({ error: errorList(e)[0] || "Проверка не прошла" }),
     );
     return () => {
@@ -282,10 +294,15 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
                   ))}
                 </Notice>
               )}
-              <p className="text-sm font-medium text-fg-2">Так увидят клиенты</p>
-              {(check.data.samples?.length ? check.data.samples : check.data.preview.map((t) => ({ to: "", text: t }))).slice(0, 3).map((x, i) => (
-                <WaBubble key={i} text={x.text} to={x.to || undefined} />
-              ))}
+              {(!!check.data.samples?.length || !!demo) && <p className="text-sm font-medium text-fg-2">Так увидят клиенты</p>}
+              {check.data.samples?.length ? (
+                check.data.samples.slice(0, 3).map((x, i) => <WaBubble key={i} text={x.text} to={x.to || undefined} />)
+              ) : demo ? (
+                <>
+                  <WaBubble text={demo} />
+                  <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>
+                </>
+              ) : null}
             </>
           ) : null)}
 

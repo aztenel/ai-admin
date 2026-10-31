@@ -1,6 +1,8 @@
 # Пульт Winchester v3 — дизайн-система и экраны
 
-Единый источник для Figma (`https://www.figma.com/design/Yxg9LPwnDXjygoYAzpTdI5`) и кода (`apps/pult`). ТЗ — «Winchester: единое
+Единый источник для Figma (`https://www.figma.com/design/Yxg9LPwnDXjygoYAzpTdI5`) и кода (`apps/pult`). В Figma (тариф Starter:
+3 страницы, 1 режим переменных, предел вызовов MCP) — основа и бренд, компоненты, 8 экранов телефона; экранов компьютера там
+пока нет, тексты и сверка — `copy.md`, `compliance.md` рядом. ТЗ — «Winchester: единое
 корректирующее ТЗ v3.0» (31.10.2026). При расхождении Figma и кода правим оба и этот файл.
 
 ## 1. Принципы
