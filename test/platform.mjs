@@ -585,7 +585,10 @@ section("рассылки");
   const id1 = d.b && d.b.id;
   ok("рассылку создаёт и сотрудник компании: готова к запуску, список сохранён", d.ok === true && d.b.status === "ready" && d.b.total === 6 && d.dup === 1 && d.bad === 2 && (S.kv.json("bcr:acme:" + id1 + ":0") || []).length === 6 && S.kv.meta.get("bc:acme:" + id1).status === "ready", JSON.stringify(d));
   ok("до запуска ничего не уходит, даже по фоновой задаче", (await S.cron(), tpls().length === 0));
+  // запускает владелец (ТЗ Winchester v2.0 §5, 31.10.2026: одобрение кампании владельцем), сотрудник — только готовит
   d = await J(await staff.post("/api/bc/act", { c: "acme", id: id1, act: "start" }));
+  ok("сотрудник рассылку не запускает — только владелец", /только владелец/.test(d.error || ""), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/act", { c: "acme", id: id1, act: "start", op: "Владелец" }));
   ok("запуск: рассылка идёт, стоит в очереди фоновой отправки, её текст запомнен для ИИ и пульта", d.ok === true && d.b.status === "running" && run().length === 1 && /4 500/.test(S.kv.json("bclast:acme").text), JSON.stringify([d, run()]));
   net.reset(); await S.cron(); g = tpls();
   const b1 = bcOf(id1);

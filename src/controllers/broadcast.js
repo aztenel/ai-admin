@@ -13,6 +13,9 @@ import { bcOptouts } from "../services/broadcast/segments.js";
 import { bcFields, bcCheck, bcCreate, bcStarting, bcStarted, bcCrmStale } from "../services/broadcast/create.js";
 import { autoInfo, autoSet } from "../services/crm/auto.js";
 import { serviceInfo } from "../services/reminders/info.js";
+import { libraryOf, librarySave, render, VARS } from "../services/broadcast/library.js";
+import { crmPick } from "../services/crm/segments.js";
+import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, GA_CAP } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
@@ -73,7 +76,24 @@ export async function bcApi(request, env, url, s) {
     try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await serviceInfo(env, c, now)) }); }
     catch (e) { console.log("bc service", String(e)); return jsonP({ error: BUSY }, 503); }
   }
+  if (M === "GET" && P === "/api/bc/templates") { // библиотека рекламных текстов (ТЗ v2.0 §5): 28 стартовых тем RU/KZ, правки владельца, свои тексты
+    try { return jsonP({ owner: s.role === "owner", vars: VARS, items: await libraryOf(env, c) }); }
+    catch (e) { console.log("bc templates", String(e)); return jsonP({ error: BUSY }, 503); }
+  }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
+  if (P === "/api/bc/templates") { // править и одобрять тексты — только владелец
+    if (s.role !== "owner") return jsonP({ error: "Править и одобрять тексты может только владелец." }, 403);
+    const r = await librarySave(env, c, body, opWho(s, body.op), now);
+    return r.ok ? jsonP({ ok: true, item: r.item }) : jsonP({ error: r.error }, 400);
+  }
+  if (P === "/api/bc/templates/preview") { // предпросмотр на 3–5 клиентах сегмента (с согласием), номера — маской
+    const lang = body.lang === "kk" ? "kk" : "ru", item = body.id ? (await libraryOf(env, c)).find(x => x.id === String(body.id)) : null;
+    const text = clean(String(item ? item[lang] || item.ru : body.text || ""), 1000);
+    if (!text) return jsonP({ error: "Нет текста." }, 400);
+    /** @type {any[]} */ let people = []; try { people = ((await crmPick(env, c, String(body.segment || (item && item.seg !== "staff" ? item.seg : "all")), now)) || []).slice(0, 5); } catch (e) {}
+    const sample = people.length ? people : [{ phone: "", name: "Арман", staff: "Тони", svc: "Мужская стрижка", d: 28 }];
+    return jsonP({ ok: true, lang, demo: !people.length, list: sample.map(x => ({ to: x.phone ? maskPhone(x.phone) : "пример", text: render(text, x, c) })) });
+  }
   const id = String(body.id || "").replace(/[^a-z0-9]/g, "").slice(0, 24), ga = body.ch === "ga";
   if (P === "/api/bc/auto") { // включить, выключить, изменить — только владелец: автосценарий пишет клиентам каждый день сам
     if (s.role !== "owner") return jsonP({ error: "Настраивать автосценарий может только владелец." }, 403);
@@ -111,6 +131,9 @@ export async function bcApi(request, env, url, s) {
   if (P === "/api/bc/act") {
     const act = String(body.act || "");
     if (act === "start") {
+      // кампанию запускает владелец (ТЗ v2.0 §5: одобрение владельцем); сотрудник готовит и проверяет. Черновик (dev) рассылки не шлёт
+      if (s.role !== "owner") return jsonP({ error: "Запустить рассылку может только владелец — сотрудник готовит и проверяет, владелец одобряет запуском." }, 403);
+      if (env.STAGE === "preview" && env.BC_DEV_REAL !== "1") return jsonP({ error: "Это черновик (dev): рассылки отсюда не отправляются. Проверка, предпросмотр и тест на свой номер работают." }, 409);
       const rt = bcRoute(env, cid, cur.ch);
       if (rt.error) return jsonP({ error: rt.error }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
@@ -134,6 +157,7 @@ export async function bcApi(request, env, url, s) {
       if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Если продолжить, ${scope}. Всё равно продолжить?` }, 409);
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
       if (past) { cur.status = "stopped"; cur.note = "Сигнал снят. " + PAST; await bcPut(env, cid, cur); await bcRun(env, cid, id, false); return jsonP({ ok: true, b: pub(cur) }); }
+      cur.approvedBy = opWho(s, body.op); cur.approvedAt = now;
       bcStarting(cur, now); await bcPut(env, cid, cur);
       if (!(await bcStarted(env, cid, cur, now))) return jsonP({ error: "Рассылка не попала в очередь отправки — хранилище не отвечает. Она на паузе, нажмите «Продолжить» через минуту." }, 503);
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
