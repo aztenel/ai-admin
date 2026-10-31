@@ -114,6 +114,9 @@ export type CampaignDetail = CampaignRow & {
   segmentId?: string;
   /** Время снимка базы при создании. */
   crmAt?: number;
+  /** Одобрил владелец (кто и когда). Одобрение — не запуск. */
+  approvedBy?: string;
+  approvedAt?: number;
   startedAt?: number;
   /** Последняя отправка. */
   lastSentAt?: number;
@@ -241,6 +244,8 @@ export type CampaignDraft = {
   listFilter?: { kind: "idle" | "bday"; days: number };
   /** Основной номер: название шаблона в Meta (^[a-z0-9_]+$). */
   tpl?: string;
+  /** Второй номер: текст из библиотеки (id) — сервер подставляет имя и данные каждому клиенту. */
+  tplId?: string;
   /** Основной номер: язык шаблона (ru, kk, en, en_US). */
   lang?: string;
   /** Основной номер: подстановки по порядку ({имя} — имя клиента). */
@@ -288,6 +293,10 @@ export type CampaignCheck = {
   errors: string[];
   /** Основной номер — подстановки для первого клиента с именем; номер бота — [полный текст сообщения с именем и строкой СТОП]. */
   preview: string[];
+  /** Второй номер, база: готовые тексты для 3–5 клиентов (номер маской). */
+  samples?: { to: string; text: string }[];
+  /** Кому не уйдёт и почему: причина → сколько. */
+  excluded?: Record<string, number>;
 };
 
 export type CampaignCreated = {
@@ -298,7 +307,7 @@ export type CampaignCreated = {
   cut: number;
 };
 
-export type CampaignAct = "start" | "pause" | "stop" | "delete";
+export type CampaignAct = "start" | "pause" | "stop" | "delete" | "approve" | "unapprove";
 /** Ответ на действие: готово (рассылка после действия), удалена или сервер спрашивает подтверждение (сигнал Meta) — тогда повторить с force. */
 export type CampaignActResult = { kind: "done"; campaign: CampaignDetail } | { kind: "deleted" } | { kind: "confirm"; question: string };
 
@@ -414,7 +423,12 @@ export type ServiceScenario = {
   approvedAt: number;
   vars: string[];
   preview: { ru: string; kk: string };
+  /** Категория для экрана: Запись, Напоминания, Изменения, Опоздания и неявки, После визита, Ошибки и задачи. */
+  cat?: string;
+  /** Варианты текста (ТЗ v3.0 §6): уходит активный и одобренный. */
+  variants?: ServiceVariant[];
 };
+export type ServiceVariant = { id: string; ru: string; kk: string; active: boolean; approved: boolean; v: number; custom?: boolean };
 /** Что ушло бы по настоящему журналу Altegio — проверка без отправки и без записи (только владелец). */
 export type ServiceDryItem = {
   kind: ServiceKind;
@@ -518,23 +532,53 @@ export type MessageStats = {
   by: Record<StatSource, StatCounts>;
 };
 
-/** Текст из библиотеки (28 стартовых тем RU/KZ + свои). approved — одобрил владелец; в тексте [скобки] — одобрить нельзя. */
+/** Текст из библиотеки (28 стартовых тем RU/KZ + свои). approved — одобрил владелец (это не отправка);
+ *  status: approved — готов; review — на проверке у владельца; facts — нужны данные (мастер, время, условия акции) или [скобки]. */
 export type LibraryItem = {
   id: string;
   title: string;
+  /** Категория (id из TemplateLibrary.cats). */
+  cat?: string;
+  /** Для кого словами: «Были 30–45 дней назад». */
+  who?: string;
   goal: string;
   /** Сегмент базы, для которого задуман текст (all, pora, uhodyat…). */
-  seg: string;
+  seg?: string;
+  /** Какие факты нужны перед отправкой (staff.name, slot, promo…). */
+  needs?: string[];
+  /** Что проверить перед отправкой — словами. */
+  check?: string;
   ru: string;
   kk: string;
-  /** Что вписать перед одобрением («условия акции» и т. п.). */
+  /** Казахский текст проверен носителем языка. */
+  kkChecked?: boolean;
+  /** Что вписать перед одобрением (старое поле). */
   need?: string;
   custom?: boolean;
+  archived?: boolean;
   approved: boolean;
-  /** Версия текста (растёт при каждой правке), кто и когда правил. */
+  status?: "approved" | "review" | "facts";
   v?: number;
   at?: number;
   by?: string;
 };
-export type TemplateLibrary = { owner: boolean; vars: string[]; items: LibraryItem[] };
-export type TemplatePreview = { lang: "ru" | "kk"; demo: boolean; list: { to: string; text: string }[] };
+export type TemplateVar = { key: string; label: string; sample?: string };
+export type TemplateLibrary = {
+  owner: boolean;
+  /** Переменные для вставки в текст: { key: "client.first_name", label: "Имя клиента" }. */
+  vars: TemplateVar[];
+  cats?: { id: string; label: string }[];
+  counts?: { total: number; approved: number; review: number; archived?: number };
+  items: LibraryItem[];
+};
+export type TemplatePreview = {
+  lang: "ru" | "kk";
+  /** true — базы нет, пример на вымышленном клиенте. */
+  demo: boolean;
+  list: { to: string; name?: string; text: string; issues?: string[] }[];
+  /** Тот же текст для клиента без имени. */
+  noName?: { text: string };
+  /** Каких данных не хватает (мастер, время…) — отправить нельзя. */
+  missing?: string[];
+  blocked?: boolean;
+};

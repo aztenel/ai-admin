@@ -53,27 +53,87 @@ export default function Plan({ ws }: { ws: string }) {
   );
 }
 
+const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const WEEK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+/** Календарь месяца (ТЗ v3.0 §5.3): текущий и следующий месяц. В дне — сколько сервисных (латунь) и рекламы (бордовый);
+ *  по нажатию — подробности дня. Пустые и прошедшие дни приглушены. */
 function CalendarGroup({ d, now }: { d: CampaignCalendar; now: number }) {
   const auto = d.auto;
+  const byDay = new Map(d.days.map((x) => [x.date, x]));
+  const months = [...new Set(d.days.map((x) => x.date.slice(0, 7)))];
+  if (!months.length) months.push(d.today.slice(0, 7));
+  const [mi, setMi] = useState(0);
+  const [sel, setSel] = useState(d.today);
+  const month = months[Math.min(mi, months.length - 1)];
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1, 1)), lead = (first.getUTCDay() + 6) % 7, dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`)];
+  while (cells.length % 7) cells.push(null);
   const note = !auto
-    ? "Сервисные — то, что уходит само по записям. Рекламы по базе клиентов у компании нет."
+    ? "Сервисные сообщения уходят сами по записям. Рекламы по базе клиентов у компании нет."
     : auto.on && auto.tpl
-      ? `Реклама — автосценарий «Пора на стрижку»: в 11:00 тем, у кого ${auto.days} ${plural(auto.days, ["день", "дня", "дней"])} с визита, не больше ${auto.cap} в день. Числа — по базе на сегодня.`
-      : "Реклама сама не уходит: автосценарий «Пора на стрижку» выключен. Ниже — сколько клиентов подошли бы в этот день и кому из них можно писать.";
-  const empty = d.days.every((x) => !x.service.total && !(x.marketing && x.marketing.candidates));
+      ? `Реклама: автосценарий «Пора на стрижку» в 11:00 тем, у кого ${auto.days} ${plural(auto.days, ["день", "дня", "дней"])} с визита, не больше ${auto.cap} в день.`
+      : "Реклама сама не уходит: автосценарий выключен. В дне видно, сколько клиентов подошли бы.";
+  const day = byDay.get(sel);
   return (
-    <Group title="Следующие 14 дней" note={note}>
-      {empty ? (
-        <p className="flex items-start gap-2.5 py-4 text-ui text-fg-2 pointer-coarse:text-base">
-          <CalendarDays aria-hidden className="mt-px size-5 shrink-0 text-fg-3" strokeWidth={1.75} />
-          <span>В ближайшие 14 дней ничего не запланировано.</span>
-        </p>
-      ) : (
-        <ul aria-label="Календарь на 14 дней" className="divide-y divide-line">
-          {d.days.map((x) => (
-            <DayRow key={x.date} x={x} today={d.today} now={now} auto={!!(auto && auto.on && auto.tpl)} />
-          ))}
+    <Group title="Календарь" note={note}>
+      <div className="flex items-center justify-between py-2">
+        <button type="button" aria-label="Предыдущий месяц" disabled={mi === 0} onClick={() => setMi(mi - 1)} className="grid size-10 place-items-center rounded-full text-fg-2 hover:bg-surface-2 disabled:opacity-30">
+          ‹
+        </button>
+        <p className="title-display text-lg font-semibold">{`${MONTHS[m - 1]} ${y}`}</p>
+        <button type="button" aria-label="Следующий месяц" disabled={mi >= months.length - 1} onClick={() => setMi(mi + 1)} className="grid size-10 place-items-center rounded-full text-fg-2 hover:bg-surface-2 disabled:opacity-30">
+          ›
+        </button>
+      </div>
+      <div role="grid" aria-label={`${MONTHS[m - 1]} ${y}`} className="grid grid-cols-7 gap-1 pb-2">
+        {WEEK.map((w) => (
+          <span key={w} role="columnheader" className="pb-1 text-center text-xs text-fg-3">
+            {w}
+          </span>
+        ))}
+        {cells.map((iso, i) => {
+          if (!iso) return <span key={i} aria-hidden />;
+          const x = byDay.get(iso), svc = x?.service.total || 0, mk = x?.marketing ? (auto?.on && auto.tpl ? x.marketing.planned : x.marketing.candidates) : 0;
+          const past = iso < d.today, today = iso === d.today, on = iso === sel;
+          return (
+            <button
+              key={iso}
+              type="button"
+              role="gridcell"
+              aria-selected={on}
+              aria-label={`${+iso.slice(8)} ${MONTHS[m - 1].toLowerCase()}: сервисных ${svc}, рекламы ${mk}`}
+              onClick={() => setSel(iso)}
+              className={cn(
+                "flex aspect-square min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl text-ui transition-colors",
+                on ? "bg-accent text-accent-fg" : today ? "ring-2 ring-brand-gold ring-inset" : "hover:bg-surface-2",
+                past && !on && "text-fg-3",
+              )}
+            >
+              <span className="tnum font-medium">{+iso.slice(8)}</span>
+              <span className="flex h-1.5 gap-0.5">
+                {svc > 0 && <span className={cn("size-1.5 rounded-full", on ? "bg-accent-fg" : "bg-brand-gold")} />}
+                {mk > 0 && <span className={cn("size-1.5 rounded-full", on ? "bg-accent-fg/70" : "bg-accent")} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex gap-4 border-t border-line py-2 text-xs text-fg-3">
+        <span className="flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-brand-gold" /> сервисные
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-accent" /> реклама
+        </span>
+      </div>
+      {day ? (
+        <ul aria-label="Выбранный день" className="border-t border-line">
+          <DayRow x={day} today={d.today} now={now} auto={!!(auto && auto.on && auto.tpl)} />
         </ul>
+      ) : (
+        <p className="border-t border-line py-3 text-ui text-fg-3">{sel < d.today ? "День прошёл." : "Нет данных на этот день."}</p>
       )}
     </Group>
   );

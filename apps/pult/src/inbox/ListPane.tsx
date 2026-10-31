@@ -53,15 +53,15 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
       <header className="shrink-0 pt-safe">
         {/* ТЗ v3.0 §2.1: заголовок раздела «Чаты», компания и метка режима («Тестовая версия», «Демо») — строкой ниже;
             крупный шрифт: капсула номера уходит строкой ниже, а не съедает заголовок */}
-        <div className="flex flex-wrap items-end gap-x-2 gap-y-1 pl-4 pr-3 pt-2 md:pr-2 md:pt-3">
-          <div className="min-w-0 flex-[1_1_10rem]">
-            <h1 className="title-display text-[1.75rem] font-bold leading-9 tracking-[-0.022em] md:text-2xl md:font-semibold md:leading-8">Чаты</h1>
-            <div className="flex min-w-0 items-center gap-2">
-              <WorkspaceSwitcher compact className="min-w-0" />
-              <ModeBadge />
-            </div>
+        <div className="pl-4 pr-3 pt-2 md:pr-2 md:pt-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h1 className="title-display min-w-0 flex-1 text-[1.75rem] font-bold leading-9 tracking-[-0.022em] md:text-2xl md:font-semibold md:leading-8">Чаты</h1>
+            {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
           </div>
-          {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
+          <div className="flex min-w-0 items-center gap-2">
+            <WorkspaceSwitcher compact className="min-w-0" />
+            <ModeBadge />
+          </div>
         </div>
         <div className="mx-4 mt-1.5 flex items-center gap-1 md:mr-2 md:mt-2">
           <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[0.625rem] bg-surface-2 px-2.5 text-fg-3 focus-within:outline-2 focus-within:outline-ring pointer-coarse:h-10">

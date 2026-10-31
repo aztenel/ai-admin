@@ -275,3 +275,37 @@ export function NumberSkeleton() {
     </section>
   );
 }
+
+/** Карточка канала маркетинга (ТЗ v3.0 §2.2, §5.1): «Второй WhatsApp», на связи ли, можно ли запускать рассылки, главное действие.
+ *  Запуск со второго номера — отдельное решение владельца: пока он выключен на сервере, здесь так и написано. */
+export function ChannelCard({ ov, onCreate }: { ov: CampaignsOverview; onCreate: () => void }) {
+  const b = ov.bot;
+  const off = !!b?.noBroadcast;
+  return (
+    <section aria-label="Канал рассылок" className="mb-4 rounded-2xl bg-surface p-4 shadow-card">
+      <div className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent-ink">
+          <Smartphone aria-hidden className="size-5" strokeWidth={1.9} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[1.0625rem] font-semibold">Второй WhatsApp</p>
+          <p className="text-sm text-fg-2">{b?.phone ? formatPhone(b.phone) : "номер не подключён"}</p>
+        </div>
+        {b && (
+          <span className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium", b.ready ? "bg-positive-soft text-positive" : "bg-critical-soft text-critical")}>
+            {b.ready ? <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} /> : <CircleAlert aria-hidden className="size-3.5" strokeWidth={2.25} />}
+            {b.ready ? "На связи" : "Нет соединения"}
+          </span>
+        )}
+      </div>
+      {b && (
+        <p className={cn("mt-3 text-sm", off ? "text-fg-2" : "text-positive")}>
+          {off ? "Запуск рассылок выключен. Черновики, проверка и одобрение работают." : "Рассылки с этого номера можно запускать."}
+        </p>
+      )}
+      <Button variant="primary" size="lg" className="mt-3 w-full md:hidden" onClick={onCreate}>
+        Создать рассылку
+      </Button>
+    </section>
+  );
+}

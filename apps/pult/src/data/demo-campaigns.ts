@@ -28,27 +28,61 @@ import type {
   MessageStats,
   TemplateLibrary,
   TemplatePreview,
+  TemplateVar,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
 import { ApiError } from "./errors";
 import type { CampaignSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
-// библиотека в демо — четыре темы из настоящей (сервер: src/services/broadcast/library.js), без правки
-const DEMO_LIBRARY: LibraryItem[] = [
-  { id: "m01", title: "Пора на стрижку", goal: "напомнить о визите", seg: "pora", approved: true, v: 1,
-    ru: "{имя}, прошло {дней} дней с прошлой стрижки. Записаться к {мастер}: ответьте на это сообщение.\nЧтобы не получать сообщения, ответьте СТОП",
-    kk: "{имя}, соңғы шаш алудан {дней} күн өтті. {мастер} шеберіне жазылу үшін осы хабарламаға жауап беріңіз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
-  { id: "m02", title: "Давно не были", goal: "вернуть клиента", seg: "davno", approved: false, v: 1,
-    ru: "{имя}, давно вас не видели в «{компания}». Будем рады снова: ответьте, подберём удобное время.\nЧтобы не получать сообщения, ответьте СТОП",
-    kk: "{имя}, «{компания}» сізді көптен бері көрмеді. Қайта келсеңіз қуанамыз: жауап беріңіз, ыңғайлы уақыт табамыз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
-  { id: "m05", title: "Скидка ко дню рождения", goal: "поздравить", seg: "all", approved: false, v: 1, need: "условия скидки",
-    ru: "{имя}, с днём рождения! Дарим [скидку …] на {услуга} до [дата].\nЧтобы не получать сообщения, ответьте СТОП",
-    kk: "{имя}, туған күніңізбен! {услуга} қызметіне [дата] дейін [жеңілдік …].\nХабарлама алмау үшін СТОП деп жазыңыз" },
-  { id: "m12", title: "Новый мастер", goal: "рассказать о новости", seg: "all", approved: false, v: 1, need: "имя мастера",
-    ru: "{имя}, у нас новый мастер — [имя]. Записаться: ответьте на это сообщение.\nЧтобы не получать сообщения, ответьте СТОП",
-    kk: "{имя}, бізде жаңа шебер — [есімі]. Жазылу үшін жауап беріңіз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
+// библиотека в демо — шесть тем как в настоящей (сервер: src/services/broadcast/library.js), без правки; данные вымышленные
+const DEMO_VARS: TemplateVar[] = [
+  { key: "client.first_name", label: "Имя клиента", sample: "Арман" },
+  { key: "staff.name", label: "Мастер", sample: "Айдос" },
+  { key: "service.name", label: "Услуга", sample: "мужская стрижка" },
+  { key: "visit.days_since", label: "Дней после визита", sample: "28" },
+  { key: "booking.url", label: "Ссылка на запись", sample: "winchester.kz" },
 ];
+const DEMO_CATS = [
+  { id: "invite", label: "Приглашения" },
+  { id: "lapsed", label: "Давно не были" },
+  { id: "slots", label: "Свободное время" },
+  { id: "regular", label: "Постоянные клиенты" },
+  { id: "services", label: "Услуги" },
+  { id: "occasions", label: "Поводы" },
+  { id: "personal", label: "Персональные" },
+];
+const STOP = "Если такие сообщения больше не нужны, напишите «стоп».";
+const STOP_KK = "Мұндай хабарламалар қажет болмаса, «стоп» деп жазыңыз.";
+const DEMO_LIBRARY: LibraryItem[] = [
+  { id: "M01", title: "Пора обновить стрижку", cat: "invite", who: "Были 3–5 недель назад", goal: "напомнить о стрижке", seg: "pora", needs: [], check: "Ссылка на запись работает", approved: true, status: "approved", v: 2, kkChecked: false,
+    ru: `Здравствуйте, {{client.first_name}}! Если планировали обновить стрижку, удобное время можно выбрать на {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе, {{client.first_name}}! Шашты жаңартуды жоспарласаңыз, ыңғайлы уақытты {{booking.url}} сайтынан таңдай аласыз. ${STOP_KK}` },
+  { id: "M02", title: "Давно не были", cat: "lapsed", who: "Были 30–45 дней назад", goal: "мягко пригласить вернуться", seg: "davno", needs: [], check: "Клиент не записан на ближайшие дни", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `{{client.first_name}}, добрый день! Давно не виделись. Если захотите заглянуть на стрижку, будем рады. Запись: {{booking.url}}. ${STOP}`,
+    kk: `{{client.first_name}}, қайырлы күн! Көптен бері көрмедік. Шаш алдырғыңыз келсе, қуанамыз. Жазылу: {{booking.url}}. ${STOP_KK}` },
+  { id: "M05", title: "Постоянному клиенту", cat: "regular", who: "Были 3 раза и больше", goal: "поблагодарить", seg: "regular", needs: [], check: "Текст без обещаний скидок", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `Здравствуйте, {{client.first_name}}! Спасибо, что выбираете наш барбершоп. Когда понадобится стрижка, записаться можно здесь: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе, {{client.first_name}}! Біздің барбершопты таңдағаныңызға рақмет. Шаш алдыру керек болса, осы жерден жазылыңыз: {{booking.url}}. ${STOP_KK}` },
+  { id: "M08", title: "Свободное время сегодня", cat: "slots", who: "Кто был у этого мастера", goal: "предложить окно", seg: "all", needs: ["staff.name", "slot"], check: "Время у мастера действительно свободно прямо перед отправкой", approved: false, status: "facts", v: 1, kkChecked: false,
+    ru: `Здравствуйте! Сегодня у {{staff.name}} освободилось время в [время]. Хотите записаться? ${STOP}`,
+    kk: `Сәлеметсіз бе! Бүгін {{staff.name}} шеберде [уақыт] бос. Жазыласыз ба? ${STOP_KK}` },
+  { id: "M12", title: "Стрижка и борода", cat: "services", who: "Все, кому можно писать", goal: "рассказать об услуге", seg: "all", needs: [], check: "Услуга есть в прайсе", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `Здравствуйте! У нас можно записаться на стрижку и оформление бороды за один визит. Удобное время: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе! Бізде шаш алу мен сақалды бір келгенде жасатуға болады. Ыңғайлы уақыт: {{booking.url}}. ${STOP_KK}` },
+  { id: "M24", title: "Акция", cat: "occasions", who: "Все, кому можно писать", goal: "сообщить об утверждённой акции", seg: "all", needs: ["promo"], check: "Условия, срок и цена утверждены владельцем", approved: false, status: "facts", v: 1, kkChecked: false,
+    ru: `Здравствуйте! До [дата] действует [условия акции]. Записаться: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе! [күн] дейін [акция шарттары]. Жазылу: {{booking.url}}. ${STOP_KK}` },
+];
+const fillDemo = (t: string, name: string) =>
+  t
+    .replace(/\{\{client\.first_name\}\},?\s*/g, name ? `${name}, ` : "")
+    .replace(/Здравствуйте, (\S+), !/, "Здравствуйте, $1!")
+    .replace(/\{\{staff\.name\}\}/g, "Айдоса")
+    .replace(/\{\{booking\.url\}\}/g, "winchester.kz")
+    .replace(/\{\{[^}]+\}\}/g, "")
+    .replace(/, !/g, "!")
+    .replace(/^(\p{L})/u, (m) => m.toUpperCase());
 const wait = (ms = 260) => new Promise((r) => setTimeout(r, ms + Math.random() * 160));
 const STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
 const NO_GA = "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta.";
@@ -580,6 +614,12 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       ownerOnly("Одобрить текст может только владелец.");
       throw new ApiError("В демо тексты не одобряются — это делает владелец в настоящем пульте.", 409);
     },
+    async serviceVariant(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Менять тексты может только владелец.");
+      throw new ApiError("В демо тексты не меняются.", 409);
+    },
     async calendar(ws): Promise<CampaignCalendar> {
       await wait(300);
       const w = find(ws), base = !!(w.base && w.baseAt), t0 = Date.now();
@@ -612,7 +652,8 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     async templates(ws): Promise<TemplateLibrary> {
       await wait(250);
       find(ws);
-      return { owner: owner(), vars: ["имя", "мастер", "услуга", "дней", "компания", "ссылка"], items: DEMO_LIBRARY.map((x) => ({ ...x })) };
+      const items = DEMO_LIBRARY.map((x) => ({ ...x }));
+      return { owner: owner(), vars: DEMO_VARS, cats: DEMO_CATS, counts: { total: items.length, approved: items.filter((x) => x.approved).length, review: items.filter((x) => !x.approved).length }, items };
     },
     async templateSave(ws) {
       await wait(200);
@@ -620,13 +661,20 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       ownerOnly("Править и одобрять тексты может только владелец.");
       throw new ApiError("В демо тексты не сохраняются — это делает владелец в настоящем пульте.", 409);
     },
-    async templatePreview(ws, id, lang): Promise<TemplatePreview> {
+    async templatePreview(ws, q): Promise<TemplatePreview> {
       await wait(200);
       find(ws);
-      const x = DEMO_LIBRARY.find((i) => i.id === id);
-      if (!x) throw new ApiError("Нет текста.", 400);
-      const fill = (t: string, name: string) => t.replace(/\{имя\}/g, name).replace(/\{мастер\}/g, "мастер 1").replace(/\{услуга\}/g, "стрижка").replace(/\{дней\}/g, "28").replace(/\{компания\}/g, "Демо Барбер").replace(/\{ссылка\}/g, "https://example.com");
-      return { lang, demo: true, list: [{ to: "пример", text: fill(lang === "kk" ? x.kk : x.ru, "Клиент") }] };
+      const x = q.id ? DEMO_LIBRARY.find((i) => i.id === q.id) : null;
+      const text = x ? (q.lang === "kk" ? x.kk : x.ru) : q.text || "";
+      if (!text) throw new ApiError("Нет текста.", 400);
+      const blocked = /\[[^\]]*\]/.test(text);
+      return { lang: q.lang, demo: true, list: [{ to: "пример", name: "Арман", text: fillDemo(text, "Арман") }], noName: { text: fillDemo(text, "") }, missing: blocked ? ["условия в [скобках]"] : [], blocked };
+    },
+    async templateAction(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Менять библиотеку может только владелец.");
+      throw new ApiError("В демо библиотека не меняется.", 409);
     },
   };
 

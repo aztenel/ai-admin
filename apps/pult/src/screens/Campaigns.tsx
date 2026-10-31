@@ -19,7 +19,8 @@ import { CRM_STALE } from "@/campaigns/base/shared";
 import { CampaignSheet } from "@/campaigns/CampaignSheet";
 import ClientBase from "@/campaigns/ClientBase";
 import { CampaignList, ListSkeleton, UNFINISHED, useCampaignDetails } from "@/campaigns/History";
-import { BotNumber, MainNumber, NumberSkeleton } from "@/campaigns/Overview";
+import { BotNumber, ChannelCard, MainNumber, NumberSkeleton } from "@/campaigns/Overview";
+import GaWizard from "@/campaigns/GaWizard";
 import Library from "@/campaigns/Library";
 import Plan from "@/campaigns/Plan";
 import ServiceMessages from "@/campaigns/ServiceMessages";
@@ -54,15 +55,31 @@ function saveTab(t: Tab) {
   }
 }
 const TABS: { id: Tab; title: string; sub: string }[] = [
-  { id: "marketing", title: "Маркетинг", sub: "основной номер" },
-  { id: "service", title: "Сервисные", sub: "номер бота" },
+  { id: "marketing", title: "Маркетинг", sub: "рассылки" },
+  { id: "service", title: "Сервисные", sub: "напоминания" },
   { id: "plan", title: "Календарь", sub: "план и итоги" },
 ];
 
 type Preset = { segment?: SegmentSpec; channel?: "main" | "bot" };
-type Layer = { kind: "wizard"; preset?: Preset } | { kind: "campaign"; id: string } | { kind: "nomain" };
+type Layer = { kind: "wizard"; preset?: Preset } | { kind: "ga"; tplId?: string; seg?: string } | { kind: "campaign"; id: string } | { kind: "nomain" };
+// подвкладки маркетинга (ТЗ v3.0 §2.2): рассылки и аудитории · шаблоны · журнал прошедших
+type Sub = "campaigns" | "templates" | "journal";
+const SUB_KEY = "pult2.campaigns.sub";
+const SUBS: { id: Sub; label: string }[] = [
+  { id: "campaigns", label: "Рассылки" },
+  { id: "templates", label: "Шаблоны" },
+  { id: "journal", label: "Журнал" },
+];
+function readSub(): Sub {
+  try {
+    const v = localStorage.getItem(SUB_KEY);
+    return v === "templates" || v === "journal" ? v : "campaigns";
+  } catch {
+    return "campaigns";
+  }
+}
 
-const NO_MAIN = "Маркетинговые рассылки — только с основного номера WhatsApp (Meta). Он не подключён.";
+const NO_MAIN = "Рассылки шаблонами Meta уходят только с основного номера, а он не подключён.";
 
 export default function CampaignsScreen() {
   const ws = useStore((s) => s.wsId);
@@ -84,6 +101,15 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   const setTab = (t: Tab) => {
     setTabState(t);
     saveTab(t);
+  };
+  const [sub, setSubState] = useState<Sub>(readSub);
+  const setSub = (v: Sub) => {
+    setSubState(v);
+    try {
+      localStorage.setItem(SUB_KEY, v);
+    } catch {
+      /* частный режим */
+    }
   };
   const ov = useLoad((src) => src.campaignsOverview(ws), [ws]);
   const crm = useLoad((src) => src.crmSegments(ws), [ws]);
@@ -118,7 +144,10 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   // база и автосценарий — только у компании с базой клиентов; сбой загрузки — пусть база сама покажет ошибку
   const hasBase = crm.data ? crm.data.available : !!crm.error;
 
-  const newCampaign = (preset?: Preset) => setLayer(ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "wizard", preset });
+  // «Создать рассылку» — со второго номера (ТЗ v3.0 §5): мастер без Meta; шаблоном Meta — только если основной номер подключён
+  const newCampaign = (preset?: Preset) =>
+    setLayer(ov.data?.bot && preset?.channel !== "main" ? { kind: "ga", seg: preset?.segment?.id } : ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "wizard", preset });
+  const newMeta = () => setLayer(ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "wizard", preset: { channel: "main" } });
   const refresh = () => {
     void ov.reload();
     void crm.reload();
@@ -151,7 +180,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
           <IconButton icon={RefreshCw} label="Обновить" onClick={refresh} className={cn((ov.refreshing || crm.refreshing) && "[&>svg]:animate-spin")} />
           {tab === "marketing" && (
             <Button variant="primary" icon={Plus} className="max-md:hidden" disabled={ov.loading} onClick={() => newCampaign()}>
-              Новая рассылка
+              Создать рассылку
             </Button>
           )}
         </>
@@ -161,28 +190,43 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
 
       {tab === "marketing" ? (
         <div role="tabpanel" id="cmp-panel-marketing" aria-labelledby="cmp-tab-marketing">
-          {ov.loading ? <NumberSkeleton /> : ov.data ? <MainNumber ws={ws} ov={ov.data} owner={owner} onChanged={() => void ov.reload()} /> : loadError}
+          {ov.loading ? <NumberSkeleton /> : ov.data ? <ChannelCard ov={ov.data} onCreate={() => newCampaign()} /> : loadError}
           {staleError}
-          <Button variant="primary" size="lg" icon={Plus} className="mb-6 w-full md:hidden" disabled={ov.loading} onClick={() => newCampaign()}>
-            Новая рассылка
-          </Button>
-          <CampaignList title="В работе" rows={active} details={det.details} now={now} onOpen={openCampaign} page={30} />
-          {hasBase && <ClientBase key={`base${rev}`} ws={ws} owner={owner} onCreate={(spec: SegmentSpec) => newCampaign({ segment: spec, channel: "main" })} />}
-          {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
-          <Library key={`lib${rev}`} ws={ws} owner={owner} />
-          {ov.loading ? (
-            <ListSkeleton />
-          ) : past.length ? (
-            <CampaignList title="История" rows={past} details={det.details} now={now} onOpen={openCampaign} />
-          ) : ov.data && !active.length ? (
-            <Group title="История">
-              <p className="py-4 text-ui text-fg-2 pointer-coarse:text-base">
-                {ov.data.main.ready
-                  ? `Рассылок пока нет. Нажмите «Новая рассылка»${hasBase ? " или выберите сегмент в базе клиентов" : ""}. Сообщения уходят порциями, в часы отправки; тем, кто ответил «стоп», не пишем.`
-                  : "Рассылок пока нет."}
-              </p>
-            </Group>
-          ) : null}
+          <SubTabs value={sub} onChange={setSub} />
+          {sub === "campaigns" && (
+            <>
+              <CampaignList title="В работе и черновики" rows={active} details={det.details} now={now} onOpen={openCampaign} page={30} />
+              {!ov.loading && ov.data && !active.length && (
+                <Group title="В работе и черновики">
+                  <p className="py-4 text-ui text-fg-2 pointer-coarse:text-base">Рассылок пока нет. Нажмите «Создать рассылку» или выберите аудиторию ниже.</p>
+                </Group>
+              )}
+              {hasBase && <ClientBase key={`base${rev}`} ws={ws} owner={owner} onCreate={(spec: SegmentSpec) => newCampaign({ segment: spec })} />}
+              {ov.data && (
+                <>
+                  <h2 className="mb-2 mt-6 px-4 text-sm font-medium text-fg-3">Основной номер, шаблоны Meta</h2>
+                  <MainNumber ws={ws} ov={ov.data} owner={owner} onChanged={() => void ov.reload()} />
+                  {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
+                  {ov.data.main.ready && (
+                    <Button variant="outline" className="mb-6 w-full" onClick={newMeta}>
+                      Рассылка шаблоном Meta
+                    </Button>
+                  )}
+                </>
+              )}
+            </>
+          )}
+          {sub === "templates" && <Library key={`lib${rev}`} ws={ws} owner={owner} onUse={(x) => setLayer({ kind: "ga", tplId: x.id })} />}
+          {sub === "journal" &&
+            (ov.loading ? (
+              <ListSkeleton />
+            ) : past.length ? (
+              <CampaignList title="Прошедшие рассылки" rows={past} details={det.details} now={now} onOpen={openCampaign} />
+            ) : (
+              <Group title="Прошедшие рассылки">
+                <p className="py-4 text-ui text-fg-2 pointer-coarse:text-base">Завершённых рассылок пока нет.</p>
+              </Group>
+            ))}
         </div>
       ) : tab === "service" ? (
         <div role="tabpanel" id="cmp-panel-service" aria-labelledby="cmp-tab-service">
@@ -204,6 +248,18 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         onClose={closeLayer}
         onDone={(id) => {
           // рассылка создана (и, может быть, запущена) — открываем её лист вместо мастера и перечитываем обзор
+          setLayer({ kind: "campaign", id });
+          void ov.reload();
+        }}
+      />
+
+      <GaWizard
+        ws={ws}
+        owner={owner}
+        open={layer?.kind === "ga"}
+        preset={layer?.kind === "ga" ? { tplId: layer.tplId, seg: layer.seg } : undefined}
+        onClose={closeLayer}
+        onDone={(id) => {
           setLayer({ kind: "campaign", id });
           void ov.reload();
         }}
@@ -244,6 +300,27 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         {owner && ov.data?.main.why ? <p className="px-4 pb-2 text-sm text-fg-3">Что не так: {ov.data.main.why}</p> : null}
       </Sheet>
     </Page>
+  );
+}
+
+/** Подвкладки маркетинга: Рассылки · Шаблоны · Журнал. */
+function SubTabs({ value, onChange }: { value: Sub; onChange: (v: Sub) => void }) {
+  return (
+    <div role="tablist" aria-label="Маркетинг" className="mb-4 flex gap-5 border-b border-line px-1">
+      {SUBS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={value === t.id}
+          onClick={() => onChange(t.id)}
+          className={cn("relative -mb-px h-10 text-ui font-medium transition-colors pointer-coarse:h-11 pointer-coarse:text-base", value === t.id ? "text-fg" : "text-fg-2 hover:text-fg")}
+        >
+          {t.label}
+          {value === t.id && <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-brand-gold" />}
+        </button>
+      ))}
+    </div>
   );
 }
 

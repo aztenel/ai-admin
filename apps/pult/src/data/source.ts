@@ -88,6 +88,8 @@ export interface CampaignSource {
   serviceDryRun(ws: string): Promise<ServiceDryRun>;
   /** Одобрить текст сценария (или снять одобрение) — только владелец; v — версия, которую он видел. */
   serviceApprove(ws: string, id: string, v: number, on: boolean): Promise<void>;
+  /** Вариант текста сценария: новый (без variant), правка или выбор активного — только владелец. */
+  serviceVariant(ws: string, id: string, q: { variant?: string; ru?: string; kk?: string; active?: boolean }): Promise<void>;
   /** Календарь на 14 дней: сервисные и реклама отдельно, только числа. */
   calendar(ws: string): Promise<CampaignCalendar>;
   /** Итоги доставки за 7 или 30 дней: напоминания, отзывы, рассылки, ответы сотрудников. */
@@ -96,8 +98,10 @@ export interface CampaignSource {
   templates(ws: string): Promise<TemplateLibrary>;
   /** Сохранить текст (и одобрить или снять одобрение) — только владелец. Ошибка — ApiError с текстом сервера. */
   templateSave(ws: string, item: { id?: string; title: string; goal?: string; ru: string; kk: string; approved: boolean }): Promise<LibraryItem>;
-  /** Как текст увидят 3–5 клиентов (номера маской); нет базы — на примере. */
-  templatePreview(ws: string, id: string, lang: "ru" | "kk"): Promise<TemplatePreview>;
+  /** Как текст увидят 3–5 клиентов (номера маской); нет базы — на примере. По id из библиотеки или по своему тексту. */
+  templatePreview(ws: string, q: { id?: string; text?: string; lang: "ru" | "kk"; segment?: SegmentSpec }): Promise<TemplatePreview>;
+  /** Дублировать, убрать в архив или вернуть (только владелец). */
+  templateAction(ws: string, id: string, action: "duplicate" | "archive" | "restore"): Promise<LibraryItem>;
 }
 
 /**

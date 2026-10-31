@@ -243,7 +243,7 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
   let body: ReactNode = null, mark: ReactNode = null, action: ReactNode = null;
   if (attention) {
     mark = <span aria-hidden className="mx-1 size-2 shrink-0 rounded-full bg-critical" />;
-    const src = attention.source && attention.topic ? (attention.source.kind === "rm" ? " · на напоминание" : " · на рассылку") : "";
+    const src = attention.source && attention.topic ? (attention.source.kind === "rm" ? " · ответ на напоминание" : " · ответ на рассылку") : "";
     body = (
       <>
         <span className="font-semibold text-fg">{attention.label}</span>

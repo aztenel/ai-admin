@@ -18,7 +18,7 @@ import { statusOf } from "./History";
 
 const nf = new Intl.NumberFormat("ru-RU");
 const TONE: Record<Tone, string> = { ok: "text-positive", run: "text-accent-ink", warn: "text-fg", critical: "text-critical", muted: "text-fg-3" };
-const DONE_TOAST: Record<CampaignAct, string> = { start: "Рассылка запущена", pause: "Рассылка на паузе", stop: "Рассылка остановлена", delete: "Рассылка удалена" };
+const DONE_TOAST: Record<CampaignAct, string> = { start: "Рассылка запущена", pause: "Рассылка на паузе", stop: "Рассылка остановлена", delete: "Рассылка удалена", approve: "Рассылка одобрена", unapprove: "Одобрение снято" };
 const TICK_TOAST: Record<string, string> = {
   running: "Порция отправлена",
   wait: "Сейчас отправлять рано: рассылка ждёт часов отправки, предела или паузы",

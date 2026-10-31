@@ -46,7 +46,7 @@ type RowRaw = {
 };
 type BRaw = RowRaw & {
   cap?: number; from?: number; to?: number; text?: string; msg?: string; fallback?: string; img?: string; lang?: string; params?: string[];
-  segId?: string; crmAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
+  segId?: string; crmAt?: number; approvedBy?: string; approvedAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
   retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean;
 };
 type ListRaw = {
@@ -63,7 +63,7 @@ type ServiceRaw = {
   queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string; why?: string }[];
   total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean; journal?: boolean; enabled?: boolean; hold?: { at?: number; why?: string } | null;
   log?: { t?: number; k?: string; st?: string; why?: string; phone?: string; name?: string; date?: string; time?: string }[];
-  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string } }[];
+  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string }; cat?: string; variants?: { id: string; ru?: string; kk?: string; active?: boolean; approved?: boolean; v?: number; custom?: boolean }[] }[];
 };
 type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
@@ -102,7 +102,7 @@ function detail(b: BRaw): CampaignDetail {
   const d: CampaignDetail = { ...row(b), cap: n(b.cap), from: n(b.from), to: n(b.to), text: b.text || "", fallback: b.fallback || "", fails: b.fails || [], stalled: !!b.stalled };
   // необязательные поля — только если сервер их прислал (пусто и 0 — «нет»)
   const extra: Partial<CampaignDetail> = {
-    message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, startedAt: b.startedAt, lastSentAt: b.last,
+    message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, approvedBy: b.approvedBy, approvedAt: b.approvedAt, startedAt: b.startedAt, lastSentAt: b.last,
     nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure,
   };
   for (const [k, v] of Object.entries(extra)) if (v) (d as Record<string, unknown>)[k] = v;
@@ -164,6 +164,8 @@ function service(d: ServiceRaw): ServiceOverview {
     id: x.id, title: x.title || x.id, trigger: x.trigger || "", mode: (MODES as string[]).includes(x.mode || "") ? (x.mode as ServiceScenarioMode) : "off", channel: x.channel || "",
     note: x.note || "", v: n(x.v), kind: isKind(x.kind || "") ? (x.kind as ServiceKind) : "", approved: !!x.approved, approvedAt: n(x.approvedAt), vars: x.vars || [],
     preview: { ru: (x.preview && x.preview.ru) || "", kk: (x.preview && x.preview.kk) || "" },
+    ...(x.cat ? { cat: x.cat } : {}),
+    ...(Array.isArray(x.variants) ? { variants: x.variants.map((v) => ({ id: String(v.id), ru: v.ru || "", kk: v.kk || "", active: !!v.active, approved: !!v.approved, v: n(v.v), custom: !!v.custom })) } : {}),
   }));
   // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
   return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false,
@@ -200,6 +202,7 @@ export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown>
     consent: d.consent === true,
   };
   if (!bot) Object.assign(b, { tpl: (d.tpl || "").trim(), lang: (d.lang || "ru").trim(), params: d.params || [] });
+  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", ...(d.tplId ? { tplId: d.tplId } : {}) });
   if (d.source === "segment") b.segment = d.segment ? segBody(d.segment) : { id: "" };
   else {
     b.recipients = d.recipients || "";
@@ -222,7 +225,7 @@ export const liveCampaigns: CampaignSource = {
   },
   async checkCampaign(ws, draft) {
     const { seg, segOut, noDate, ...r } = await call<CheckRaw>("/api/bc/check", draftBody(ws, draft));
-    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
+    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], samples: r.samples || [], excluded: r.excluded || {}, ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
   },
   async createCampaign(ws, draft) {
     const d = await call<{ b: BRaw; dup: number; bad: number; cut: number }>("/api/bc/create", draftBody(ws, draft));
@@ -230,7 +233,7 @@ export const liveCampaigns: CampaignSource = {
   },
   async campaignAct(ws, id, act, force): Promise<CampaignActResult> {
     try {
-      const d = await call<{ b?: BRaw; gone?: boolean }>("/api/bc/act", { c: ws, id, act, ...(force ? { force: true } : {}) });
+      const d = await call<{ b?: BRaw; gone?: boolean }>("/api/bc/act", { c: ws, id, act, op: getOperator(), ...(force ? { force: true } : {}) });
       return d.gone || !d.b ? { kind: "deleted" } : { kind: "done", campaign: detail(d.b) };
     } catch (e) {
       if (e instanceof ApiError && e.confirm) return { kind: "confirm", question: e.confirm };
@@ -300,6 +303,9 @@ export const liveCampaigns: CampaignSource = {
   async serviceApprove(ws, id, v, on) {
     await call<{ ok: true }>("/api/bc/service/approve", { c: ws, id, v, on });
   },
+  async serviceVariant(ws, id, q) {
+    await call<{ ok: true }>("/api/bc/service/variant", { c: ws, id, ...q, op: getOperator() });
+  },
   async calendar(ws) {
     return call<CampaignCalendar>(`/api/bc/calendar?c=${enc(ws)}`);
   },
@@ -312,7 +318,10 @@ export const liveCampaigns: CampaignSource = {
   async templateSave(ws, item) {
     return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates", { c: ws, ...item, op: getOperator() })).item;
   },
-  async templatePreview(ws, id, lang) {
-    return call<TemplatePreview>("/api/bc/templates/preview", { c: ws, id, lang });
+  async templatePreview(ws, q) {
+    return call<TemplatePreview>("/api/bc/templates/preview", { c: ws, lang: q.lang, ...(q.id ? { id: q.id } : {}), ...(q.text ? { text: q.text } : {}), ...(q.segment ? { segment: segBody(q.segment) } : {}) });
+  },
+  async templateAction(ws, id, action) {
+    return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates/action", { c: ws, id, action, op: getOperator() })).item;
   },
 };
