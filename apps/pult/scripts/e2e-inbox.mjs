@@ -121,7 +121,7 @@ async function phoneRun(scheme) {
   await tab(page, "Ответы").click();
   ok(`${tag}: «Ответы» — только ответ на напоминание`, (await row(page, "Арман").count()) === 1 && (await page.locator("ul a[href^='#/inbox/']").count()) === 1);
   await tab(page, "Все").click();
-  ok(`${tag}: «Все» — с «спасибо», без чата только с нашим приглашением`, (await row(page, "Тимур").count()) === 1 && /Ещё \d+ — только наши сообщения/.test(await page.locator("section[aria-label='Чаты']").innerText()));
+  ok(`${tag}: «Все» — с «спасибо», без чата только с нашим приглашением`, (await row(page, "Тимур").count()) === 1 && /Ещё \d+: писали только мы/.test(await page.locator("section[aria-label='Чаты']").innerText()));
   await t.shot("1-list-all");
   await tab(page, "Нужен ответ").click();
   await t.shot("1-list-waiting");
@@ -155,7 +155,7 @@ async function phoneRun(scheme) {
   await page.waitForTimeout(500);
   ok(`${tag}: после вебхуков — «Прочитано» (две синие)`, (await log.getByRole("img", { name: "Прочитано" }).count()) >= 1);
   const head = await page.locator("section[aria-label^='Переписка'] header").innerText();
-  ok(`${tag}: в шапке — второй номер и кто ведёт`, /Второй номер/.test(head) && /ведёт вы/.test(head), head);
+  ok(`${tag}: в шапке — второй номер и кто ведёт`, /Второй WhatsApp/.test(head) && /ведёт вы/.test(head), head);
   ok(`${tag}: нет «Бот в этой компании выключен» и «Оператор, с телефона»`, !/Бот в этой компании выключен|Оператор, с телефона/.test(await page.content()));
   await t.shot("4-chat-ticks");
   await page.getByRole("button", { name: "Назад к чатам" }).first().click().catch(() => {});
@@ -167,7 +167,7 @@ async function phoneRun(scheme) {
   await page.getByRole("button", { name: /карточка клиента/ }).first().click();
   await page.waitForTimeout(500);
   const card = await page.locator("body").innerText();
-  ok(`${tag}: карточка — второй номер и «Ответ на напоминание»`, /Второй номер/.test(card) && /Ответ на напоминание/.test(card));
+  ok(`${tag}: карточка — второй номер и «Ответ на напоминание»`, /Второй WhatsApp/.test(card) && /Ответ на напоминание/.test(card));
   await t.shot("5-card-reminder");
   await page.getByRole("button", { name: "Назад к переписке" }).click();
   await page.getByRole("button", { name: /Назад к чатам/ }).click();
