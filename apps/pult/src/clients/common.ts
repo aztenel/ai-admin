@@ -19,6 +19,7 @@ const SOURCE: Record<string, string> = {
   manual: "вручную",
   chat: "переписка",
   site: "сайт",
+  demo: "демо-база (вымышленный клиент)",
   chat_stop: "клиент написал «стоп»",
   ga_journal: "клиент написал «стоп» (нашла сверка журнала Green-API)",
   ga_sweep: "клиент написал «стоп» (сверка журнала Green-API)",

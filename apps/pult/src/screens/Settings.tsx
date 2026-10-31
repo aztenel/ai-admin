@@ -4,7 +4,7 @@
 import { logoutWith } from "@/lib/push";
 import { Activity, Bell, Building2, ChevronRight, ExternalLink, KeyRound, MapPin, MessageCircle, Palette, Bot, type LucideIcon, Globe, LogOut } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { SyncPanel } from "@/clients/SyncPanel";
+import { DemoBase, SyncPanel } from "@/clients/SyncPanel";
 import type { ContactsStatus } from "@/model/contacts";
 import type { CampaignsOverview, ServiceOverview } from "@/model/campaigns";
 import { whenText } from "@/campaigns/base/shared";
@@ -205,7 +205,6 @@ function Diagnostics() {
       live = false;
     };
   }, [ws, st.rev]);
-  if (mode === "demo") return <Group><p className="py-3 text-sm text-fg-2">В демо диагностики нет.</p></Group>;
   if (!ws) return null;
   const now = Date.now();
   const d = st.data, sync = d?.sync;
@@ -259,6 +258,7 @@ function Diagnostics() {
           ))}
         </ul>
       </Group>
+      {d?.ready && d.stage === "preview" && (d.demoAllowed ?? d.owner) && <DemoBase ws={ws} status={d} onChanged={() => setSt((x) => ({ ...x, rev: x.rev + 1 }))} />}
       <button type="button" aria-expanded={tech} onClick={() => setTech(!tech)} className="mb-3 flex items-center gap-1.5 px-1 text-ui font-medium text-accent-ink">
         <ChevronRight aria-hidden className={cn("size-4 transition-transform", tech && "rotate-90")} />
         Для разработчика
@@ -269,7 +269,7 @@ function Diagnostics() {
             : !d ? <Group><p className="py-3 text-sm text-fg-3">Загружаю…</p></Group>
             : !d.ready ? <Group><p className="py-3 text-sm text-fg-2">{d.why || "База клиентов на этом адресе не подключена."}</p></Group>
             : <SyncPanel ws={ws} status={d} onChanged={() => setSt((x) => ({ ...x, rev: x.rev + 1 }))} />}
-          <Group title="Служебные страницы" note="Журнал, хранилища KV и D1, миграции, проверка Green-API. Открываются в новой вкладке, только владельцу.">
+          {mode !== "demo" && <Group title="Служебные страницы" note="Журнал, хранилища KV и D1, миграции, проверка Green-API. Открываются в новой вкладке, только владельцу.">
             {[
               ["/admin", "Панель владельца"],
               ["/diag/storage", "Хранилища и миграции"],
@@ -280,7 +280,7 @@ function Diagnostics() {
                 <ExternalLink aria-hidden className="size-4 text-fg-3" />
               </a>
             ))}
-          </Group>
+          </Group>}
         </>
       )}
     </>

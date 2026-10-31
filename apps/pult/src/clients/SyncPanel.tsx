@@ -4,7 +4,8 @@
 //   «Синхронизировать сейчас» — одна порция (на черновике нет: настоящий Altegio там читается только проверкой без записи);
 //   «Проверка без записи» — читает журнал и считает, что изменилось бы, ничего не записывая;
 //   «Проверить поля Altegio» — какие поля отдаёт журнал (только чтение, без имён и номеров в ответе);
-//   «Тестовые клиенты» — только на черновике: вымышленные клиенты через тот же код записи.
+// Демо-база (150 вымышленных клиентов) — отдельный блок DemoBase ниже: он стоит в «Диагностике» на уровне владельца, а не в разделе
+// для разработчика (ТЗ V3: демо включается явно и понятно).
 // Итог каждого действия — строками ниже кнопок; состояние перечитывается.
 // Проверка, которой ещё не было (уровень unknown), — серый «?» и «ещё не проверено», а не зелёная галочка (жалоба владельца 31.10.2026:
 // «ещё не было» выглядело как успех). Уровень показывается как прислал сервер — число 0 не делает проверку успешной.
@@ -14,7 +15,7 @@ import { Notice, nf, whenText } from "@/campaigns/base/shared";
 import { Confirm } from "@/components/overlay";
 import { Button, Field, InsetGroup } from "@/components/ui";
 import { cn, useNow } from "@/lib/utils";
-import type { CheckLevel, ContactsStatus, StopsAction, SyncMode } from "@/model/contacts";
+import type { CheckLevel, ContactsStatus, DemoOp, StopsAction, SyncMode } from "@/model/contacts";
 import { store } from "@/state/store";
 import { errMsg, scopeText } from "./common";
 
@@ -140,11 +141,6 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
                 Проверить поля Altegio
               </Button>
             )}
-            {d.stage === "preview" && (
-              <Button variant="secondary" icon={FlaskConical} busy={busy === "test"} disabled={!!busy} onClick={() => void sync("test", "Тестовые клиенты")}>
-                Тестовые клиенты
-              </Button>
-            )}
           </div>
           {out && <Output out={out} />}
         </InsetGroup>
@@ -236,6 +232,48 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
         onYes={() => void stops("migrate", "Перенос «стопов»")}
       />
     </div>
+  );
+}
+
+/**
+ * Демо-база черновика: «Загрузить демо-базу» / «Загрузить заново» / «Убрать демо-базу». Только черновик и владелец (сервер проверяет сам):
+ * 150 вымышленных клиентов, номера +7 700 000 60 00…61 49, повтор заменяет прежние. Настоящих имён и номеров там нет.
+ */
+export function DemoBase({ ws, status, onChanged }: { ws: string; status: ContactsStatus; onChanged: () => void }) {
+  const now = useNow();
+  const [busy, setBusy] = useState<DemoOp | "">("");
+  const [out, setOut] = useState<Out | null>(null);
+  const run = async (op: DemoOp) => {
+    setBusy(op);
+    setOut(null);
+    try {
+      const lines = await store.source!.demoBase(ws, op);
+      setOut({ title: "Демо-база", lines: lines.length ? lines : ["Готово."] });
+      onChanged();
+    } catch (e) {
+      setOut({ title: "Демо-база", lines: [errMsg(e)], error: true });
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <InsetGroup title="Демо-база">
+      <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">
+        150 вымышленных клиентов, чтобы проверить пульт: сегменты, запреты, рассылки. Настоящих имён и номеров там нет, сообщения им не уходят.
+        {status.demo && status.demoAt ? ` Загружена ${whenText(status.demoAt, now)}.` : " Сейчас не загружена."}
+      </p>
+      <div className="flex flex-wrap gap-2 pb-3">
+        <Button variant="tinted" icon={FlaskConical} busy={busy === "load"} disabled={!!busy} onClick={() => void run("load")}>
+          {status.demo ? "Загрузить заново" : "Загрузить демо-базу"}
+        </Button>
+        {status.demo && (
+          <Button variant="secondary" busy={busy === "clear"} disabled={!!busy} onClick={() => void run("clear")}>
+            Убрать демо-базу
+          </Button>
+        )}
+      </div>
+      {out && <Output out={out} />}
+    </InsetGroup>
   );
 }
 

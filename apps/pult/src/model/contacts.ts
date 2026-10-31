@@ -21,6 +21,8 @@ export type ImportAction = "new" | "update" | "same" | "dup" | "invalid";
 /** Решение по неоднозначному «стоп»: оставить запрет рекламы, закрыть все сообщения, снять (только владелец). */
 export type ReviewDecision = "keep" | "all" | "lift";
 export type SyncMode = "step" | "dry" | "test";
+/** Демо-база черновика: загрузить 150 вымышленных клиентов (повтор заменяет прежние) или убрать их. */
+export type DemoOp = "load" | "clear";
 export type StopsAction = "sweep" | "migrate-check" | "migrate";
 
 export type SyncWindow = { scope: SyncScope; label: string; lastOkAt: number | null; lastError: string | null };
@@ -60,6 +62,8 @@ export type ContactsStatus = {
   /** В базе загружена демо-база черновика: вымышленные клиенты (когда). */
   demo?: boolean;
   demoAt?: number;
+  /** Кнопки демо-базы доступны: черновик и владелец (сервер решает сам, пульт только показывает). */
+  demoAllowed?: boolean;
   sync: SyncState;
   /** Сверка «стопов» по журналу входящих Green-API (не надеемся на повтор вебхука): когда, ошибка, сколько нашла; channel null — номера Green-API нет. */
   stops: { lastOkAt: number | null; lastError: string | null; found: number; channel: "ga" | null };
@@ -69,7 +73,9 @@ export type ContactsStatus = {
 };
 
 export type ContactSegment = { id: string; label: string; rule: string; count: number; /** скольким из них можно писать рекламу */ ready: number };
-export type ContactSegments = { at: number; segments: ContactSegment[] };
+/** Короткие числа для шапки «Клиентов» с сервера: всего, с будущей записью, в сегменте (null — сегмент не выбран), запрещено писать. */
+export type ContactKpi = { total: number; withBooking: number; segment: number | null; forbidden: number };
+export type ContactSegments = { at: number; segments: ContactSegment[]; kpi?: ContactKpi };
 
 export type ContactRow = {
   id: string;

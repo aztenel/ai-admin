@@ -224,9 +224,9 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
         {(
           [
             ["Все клиенты", d.counts.contacts],
-            ["Есть запись", d.counts.upcoming],
+            ["Есть запись", segs.data?.kpi?.withBooking ?? d.counts.upcoming],
             ["Подходят по сегменту", seg ? (segList.find((s) => s.id === seg)?.count ?? 0) : null],
-            ["Запрещено писать", d.forbidden ?? d.counts.stops],
+            ["Запрещено писать", segs.data?.kpi?.forbidden ?? d.forbidden ?? d.counts.stops],
           ] as [string, number | null][]
         ).map(([label, v]) => (
           <div key={label} className="rounded-[0.875rem] bg-surface px-3 py-2">

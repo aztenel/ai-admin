@@ -397,6 +397,7 @@ export function createLiveSource(): DataSource {
     importConfirm: contactsApi("importConfirm"),
     importDiscard: contactsApi("importDiscard"),
     syncContacts: contactsApi("syncContacts"),
+    demoBase: contactsApi("demoBase"),
     probeAltegio: contactsApi("probeAltegio"),
     stopsAction: contactsApi("stopsAction"),
     externalUrl(page, ws) {

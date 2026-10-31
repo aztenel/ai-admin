@@ -68,6 +68,8 @@ type Ws = {
   errors: { at: number; scope: string; text: string }[];
   imports: Map<string, { rows: { row: number; phone: string; name: string; consent: "granted" | "denied" | null; action: ImportAction; error?: string }[] }>;
   seq: number;
+  /** Когда загружена демо-база (150 вымышленных клиентов, id «dm-…»); null — не загружена. */
+  demoAt?: number | null;
 };
 
 // ---------- номера ----------
@@ -374,6 +376,8 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         owner: role() === "owner",
         client: { id, name: w.name },
         counts,
+        ...(w.demoAt ? { demo: true, demoAt: w.demoAt } : {}),
+        ...(role() === "owner" && w.stage === "preview" ? { demoAllowed: true } : {}),
         sync: structuredClone(w.sync),
         stops: { lastOkAt: w.stopsAt, lastError: null, found: w.stopsFound, channel: w.altegio ? "ga" : null },
         probe: w.probe ? structuredClone(w.probe) : null,
@@ -656,6 +660,23 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       const add = makePeople(now, 5, 99 + w.seq, "9" + String(++w.seq % 10), true);
       for (const p of add) if (!w.people.some((x) => x.phone === p.phone)) w.people.unshift(p);
       return { sync: structuredClone(w.sync), report: { summary: [`Тестовые клиенты: добавлено ${add.length} (номера +7 700 000 9x xx)`, "Записаны тем же кодом, что и журнал Altegio"] } };
+    },
+    async demoBase(id, op) {
+      await wait(500);
+      ownerOnly(op === "load" ? "Загрузить демо-базу" : "Убрать демо-базу");
+      const w = ws(id), now = Date.now();
+      if (w.stage !== "preview") throw new ApiError("Демо-база есть только в тестовой версии.", 409);
+      const before = w.people.length;
+      w.people = w.people.filter((p) => !p.id.startsWith("dm-"));
+      if (op === "clear") {
+        w.demoAt = null;
+        return [`Демо-база убрана: ${before - w.people.length} вымышленных клиентов`, "Остальные клиенты на месте"];
+      }
+      // как на сервере: номера +7 700 000 60 00…61 49, имена вымышленные
+      const add = makePeople(now, 150, 61, "6", true).map((p, i) => ({ ...p, id: `dm-${i + 1}`, phone: `77000006${String(i).padStart(3, "0")}`, sources: [{ source: "demo", at: now }] }));
+      w.people = [...add, ...w.people];
+      w.demoAt = now;
+      return ["Демо-база загружена: 150 вымышленных клиентов", "Номера +7 700 000 60 00…61 49, настоящих номеров нет"];
     },
     async probeAltegio(id) {
       await wait(900);

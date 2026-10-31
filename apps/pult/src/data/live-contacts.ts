@@ -93,6 +93,7 @@ function status(x: unknown): ContactsStatus {
     // показатели ТЗ V3 и пометка демо-базы — если сервер их прислал
     ...(typeof obj(d.kpi).forbidden === "number" ? { forbidden: num(obj(d.kpi).forbidden) } : typeof c.forbidden === "number" ? { forbidden: num(c.forbidden) } : {}),
     ...(d.demo ? { demo: true, demoAt: num(d.demoAt) } : {}),
+    ...(d.demoAllowed === true ? { demoAllowed: true } : {}),
     sync: syncState(d.sync),
     stops: { lastOkAt: tm(sp.lastOkAt), lastError: str(sp.lastError) || null, found: num(sp.found), channel: sp.channel === "ga" ? "ga" : null },
     probe: report(d.probe),
@@ -255,9 +256,10 @@ export const liveContacts: ContactSource = {
     return status(await call<unknown>(`/api/contacts/status?c=${enc(ws)}`));
   },
   async contactSegments(ws): Promise<ContactSegments> {
-    const d = obj(await call<unknown>(`/api/contacts/segments?c=${enc(ws)}`));
+    const d = obj(await call<unknown>(`/api/contacts/segments?c=${enc(ws)}`)), k = obj(d.kpi);
     return {
       at: num(d.at),
+      ...(typeof k.total === "number" ? { kpi: { total: num(k.total), withBooking: num(k.withBooking), segment: typeof k.segment === "number" ? k.segment : null, forbidden: num(k.forbidden) } } : {}),
       segments: arr(d.segments).map((v) => {
         const o = obj(v);
         return { id: str(o.id), label: str(o.label), rule: str(o.rule), count: num(o.count), ready: num(o.ready) };
@@ -309,6 +311,9 @@ export const liveContacts: ContactSource = {
     const d = obj(await call<unknown>("/api/contacts/sync", { c: ws, mode }));
     const r = obj(d.report);
     return { sync: syncState(d.sync), ...(Object.keys(r).length ? { report: { summary: strs(r.summary) } } : {}) };
+  },
+  async demoBase(ws, op) {
+    return strs(obj(obj(await call<unknown>("/api/contacts/demo", { c: ws, op })).report).summary);
   },
   async probeAltegio(ws) {
     const d = obj(await call<unknown>("/api/contacts/probe", { c: ws }));

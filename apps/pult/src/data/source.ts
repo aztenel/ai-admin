@@ -34,6 +34,7 @@ import type {
   ContactCard,
   ContactPage,
   ContactSegments,
+  DemoOp,
   ContactsStatus,
   ImportDone,
   ImportInput,
@@ -130,6 +131,8 @@ export interface ContactSource {
   importDiscard(ws: string, id: string): Promise<void>;
   /** Только владелец: step — синхронизировать сейчас (порция), dry — проверка без записи, test — тестовые клиенты (черновик). */
   syncContacts(ws: string, mode: SyncMode): Promise<SyncResult>;
+  /** Только владелец и только черновик: демо-база из вымышленных клиентов — загрузить или убрать. Итог — строки отчёта. */
+  demoBase(ws: string, op: DemoOp): Promise<string[]>;
   /** Только владелец: какие поля отдаёт журнал Altegio (только чтение, без персональных данных в ответе). */
   probeAltegio(ws: string): Promise<Report>;
   /** Только владелец: сверка «стопов» по журналу Green-API, проверка и перенос старого списка «стоп» из KV. */

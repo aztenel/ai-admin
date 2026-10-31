@@ -185,6 +185,10 @@ async function openDiag(t) {
   await menuAction(t, /Проверка базы и Altegio/);
   await t.page.waitForURL(/#\/settings\/diagnostics/);
   const panel = t.page.locator("main");
+  await panel.getByText("Как работает сейчас", { exact: true }).waitFor();
+  // панель синхронизации — в разделе «Для разработчика» (свёрнут, ТЗ V3: два уровня диагностики)
+  const tech = panel.getByRole("button", { name: "Для разработчика" });
+  if ((await tech.getAttribute("aria-expanded")) !== "true") await tech.click();
   await panel.getByText("Проверки данных", { exact: true }).waitFor();
   return panel;
 }
@@ -193,18 +197,27 @@ async function backToClients(t) {
   await t.page.getByRole("list", { name: "Клиенты" }).or(t.page.getByText("Клиентов пока нет")).first().waitFor();
 }
 
-/** База пуста (живой режим, черновик) — «Тестовые клиенты» в панели синхронизации. */
+/** База пуста (живой режим, черновик) — «Загрузить демо-базу» (150 вымышленных клиентов) в Настройки → Диагностика. */
 async function seedIfEmpty(t) {
   const { page } = t;
   if ((await rows(page).count()) > 0) return;
   ok(`${t.tag}: пустая база — понятная подсказка, что делать`, /Клиентов пока нет/.test(await text(page.locator("main"))) && /добавить клиента вручную/i.test(await text(page.locator("main"))));
   await step(t, "empty");
   const panel = await openDiag(t);
-  await tap(panel.getByRole("button", { name: "Тестовые клиенты" }));
-  await panel.getByRole("status", { name: "Тестовые клиенты" }).waitFor({ timeout: 30_000 });
-  ok(`${t.tag}: тестовые клиенты записаны`, !/ошибк/i.test(await text(panel.getByRole("status", { name: "Тестовые клиенты" }))), await text(panel.getByRole("status", { name: "Тестовые клиенты" })));
+  const box = panel.locator("section").filter({ has: t.page.getByRole("heading", { name: "Демо-база" }) }).first();
+  ok(`${t.tag}: демо-база — объяснение без настоящих данных`, /150 вымышленных клиентов/.test(await text(box)) && /Настоящих имён и номеров там нет/.test(await text(box)), await text(box));
+  await tap(panel.getByRole("button", { name: "Загрузить демо-базу" }));
+  const st = panel.getByRole("status", { name: "Демо-база" });
+  await st.waitFor({ timeout: 30_000 });
+  ok(`${t.tag}: демо-база загружена (150)`, !/ошибк|нельзя|только/i.test(await text(st)) && /150/.test(await text(st)), await text(st));
+  await panel.getByRole("button", { name: "Убрать демо-базу" }).waitFor({ timeout: 10_000 });
+  ok(`${t.tag}: после загрузки — «Загрузить заново» и «Убрать демо-базу»`, await panel.getByRole("button", { name: "Загрузить заново" }).isVisible());
   await backToClients(t);
   await rows(page).first().waitFor({ timeout: 15_000 });
+  const banner = page.locator("main").getByText(/Демо-база: вымышленные клиенты/);
+  ok(`${t.tag}: в «Клиентах» видно, что база демо`, await banner.isVisible().catch(() => false), await text(page.locator("main")).then((x) => x.slice(0, 200)));
+  const kpi = page.getByRole("list", { name: "Показатели базы" }).or(page.locator("dl[aria-label='Показатели базы']")).first();
+  ok(`${t.tag}: показатели — все клиенты 150`, /Все клиенты\s*150/.test(await text(kpi)), await text(kpi));
 }
 
 /** Карточка первого клиента: открыть, номер полностью только здесь. */
@@ -455,7 +468,7 @@ async function owner(vp, scheme, tag) {
   await step(t, "sync-panel");
   for (const [btn, title] of [
     ["Проверка без записи", "Проверка без записи"],
-    ["Сверить «стопы» по Green-API", "Сверка «стопов»"],
+    ["Сверить «стопы»", "Сверка «стопов»"],
     ["Проверить", "Перенос «стопов»: проверка"],
   ]) {
     const b = panel.getByRole("button", { name: btn, exact: true });
@@ -508,6 +521,58 @@ async function otherZone(vp, scheme, tag) {
   await finish(t);
 }
 
+/** Демо-база черновика (ТЗ V3): загрузить 150 вымышленных клиентов, видно метку в «Клиентах», потом убрать — база как была. */
+async function demoBase(vp, scheme, tag) {
+  const t = await session({ role: "owner", c: DEMO ? "demo" : "winchester", vp, scheme, tag });
+  const { page } = t;
+  await page.getByRole("list", { name: "Клиенты" }).or(page.getByText("Клиентов пока нет")).first().waitFor();
+  const kpi = page.locator("dl[aria-label='Показатели базы']");
+  const total = async () => +((await text(kpi)).match(/Все клиенты\s*([\d\s\u00a0\u202f]+)/)?.[1] || "0").replace(/\D/g, "");
+  await kpi.waitFor();
+  const before = await total();
+  await menuAction(t, /Проверка базы и Altegio/);
+  await page.waitForURL(/#\/settings\/diagnostics/);
+  const main = page.locator("main");
+  const box = main.locator("section").filter({ has: page.getByRole("heading", { name: "Демо-база" }) }).first();
+  await box.waitFor();
+  ok(`${tag}: «Демо-база» — на уровне владельца, без раскрытия раздела для разработчика`, (await main.getByRole("button", { name: "Для разработчика" }).getAttribute("aria-expanded")) !== "true");
+  ok(`${tag}: демо-база — объяснение без настоящих данных`, /150 вымышленных клиентов/.test(await text(box)) && /Настоящих имён и номеров там нет/.test(await text(box)), await text(box));
+  await tap(box.getByRole("button", { name: /^Загрузить (демо-базу|заново)$/ }));
+  const st = box.getByRole("status", { name: "Демо-база" });
+  await st.waitFor({ timeout: 30_000 });
+  ok(`${tag}: демо-база загружена (150)`, /Демо-база загружена: 150 вымышленных клиентов/.test(await text(st)), await text(st));
+  await box.getByRole("button", { name: "Убрать демо-базу" }).waitFor({ timeout: 10_000 });
+  ok(`${tag}: после загрузки — «Загрузить заново» и «Убрать демо-базу»`, await box.getByRole("button", { name: "Загрузить заново" }).isVisible());
+  await step(t, "demo-loaded");
+  await backToClients(t);
+  await rows(page).first().waitFor({ timeout: 15_000 });
+  const banner = main.getByText(/Демо-база: вымышленные клиенты/);
+  await banner.waitFor({ timeout: 10_000 }).catch(() => {});
+  ok(`${tag}: в «Клиентах» видно, что база демо`, await banner.isVisible().catch(() => false), (await text(main)).slice(0, 200));
+  await page.waitForFunction(() => /Все клиенты\s*\d/.test(document.querySelector("dl[aria-label='Показатели базы']")?.textContent || ""));
+  const withDemo = await total();
+  ok(`${tag}: «Все клиенты» выросло на 150 (или до 150 без своих)`, withDemo >= 150 && withDemo >= before, `было ${before}, стало ${withDemo}`);
+  const listText = await text(page.getByRole("list", { name: "Клиенты" }));
+  ok(`${tag}: демо-клиенты в списке с номерами маской`, /\+7 700 \*\*\* \*\* \d\d/.test(listText) && !FULL.test(listText), listText.slice(0, 120));
+  FULL.lastIndex = 0;
+  await step(t, "demo-clients");
+  // убрать
+  await menuAction(t, /Проверка базы и Altegio/);
+  await page.waitForURL(/#\/settings\/diagnostics/);
+  const box2 = main.locator("section").filter({ has: page.getByRole("heading", { name: "Демо-база" }) }).first();
+  await tap(box2.getByRole("button", { name: "Убрать демо-базу" }));
+  await box2.getByRole("status", { name: "Демо-база" }).waitFor({ timeout: 30_000 });
+  ok(`${tag}: демо-база убрана`, /убран/i.test(await text(box2.getByRole("status", { name: "Демо-база" }))), await text(box2.getByRole("status", { name: "Демо-база" })));
+  await box2.getByRole("button", { name: "Загрузить демо-базу" }).waitFor({ timeout: 10_000 });
+  await backToClients(t);
+  await kpi.waitFor();
+  await page.waitForFunction(() => !/Демо-база: вымышленные/.test(document.querySelector("main")?.textContent || ""), null, { timeout: 10_000 }).catch(() => {});
+  ok(`${tag}: после «Убрать» метки демо нет`, !(await main.getByText(/Демо-база: вымышленные клиенты/).isVisible().catch(() => false)));
+  const after = await total();
+  ok(`${tag}: после «Убрать» число клиентов как до загрузки`, after === before, `до ${before}, после ${after}`);
+  await finish(t);
+}
+
 async function notReady(vp, scheme, tag) {
   const t = await session({ role: "owner", c: "demo-empty", vp, scheme, tag });
   const { page } = t;
@@ -538,6 +603,7 @@ try {
     await run("Сотрудник · компьютер, светлая", () => staff(DESK, "light", "staff-1280-light"));
     await run("Сотрудник · телефон в часовом поясе Нью-Йорка", () => otherZone(PHONE, "light", "staff-390-ny"));
   }
+  await run("Демо-база · загрузить и убрать, компьютер, светлая", () => demoBase(DESK, "light", "demo-1280-light"));
 } finally {
   await browser.close();
   await close();

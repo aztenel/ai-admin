@@ -226,11 +226,13 @@ export const liveCampaigns: CampaignSource = {
     return overview(await call<ListRaw>(`/api/bc/list?c=${enc(ws)}`));
   },
   async campaign(ws, id) {
-    return detail((await call<{ b: BRaw }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}`)).b);
+    // итоги (results) сервер кладёт рядом с b, а не внутри
+    const d = await call<{ b: BRaw; results?: BRaw["results"] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}`);
+    return detail({ ...d.b, results: d.results ?? d.b.results });
   },
   async campaignBad(ws, id) {
-    const d = await call<{ b: BRaw; bad?: string[] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}&bad=1`);
-    return { campaign: detail(d.b), lines: d.bad || [] };
+    const d = await call<{ b: BRaw; results?: BRaw["results"]; bad?: string[] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}&bad=1`);
+    return { campaign: detail({ ...d.b, results: d.results ?? d.b.results }), lines: d.bad || [] };
   },
   async checkCampaign(ws, draft) {
     const { seg, segOut, noDate, ...r } = await call<CheckRaw>("/api/bc/check", draftBody(ws, draft));
