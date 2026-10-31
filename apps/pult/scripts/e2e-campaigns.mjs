@@ -890,6 +890,11 @@ async function fixesPaging() {
   const { page } = t;
   await tap(page.getByRole("button", { name: "Обновить базу" }));
   await page.getByText("Читаю журнал Altegio… до минуты").waitFor({ state: "detached", timeout: 90_000 });
+  // реклама — только с подтверждённым согласием (31.10.2026): этим 130 вымышленным клиентам оно выдано, и сегмент перечитывается
+  const { grantSnap } = await import(new URL("../../../test/consent.mjs", import.meta.url).href);
+  await grantSnap(dl.bot.S.env, "winchester");
+  await page.reload();
+  await page.waitForLoadState("networkidle");
   const all = page.getByRole("button", { name: /^Сегмент «Вся база»/ });
   await all.waitFor();
   await tap(all);

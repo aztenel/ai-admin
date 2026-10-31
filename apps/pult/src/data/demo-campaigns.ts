@@ -456,7 +456,7 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
         ...[...new Set(base.map((p) => p.staff))].sort().map((m) => ({ id: `staff:${m}`, label: `Мастер: ${m}`, rule: "последний визит у мастера", n: ok.filter((p) => p.staff === m).length })),
       ];
       const info: CrmInfo | null = w.baseAt ? { at: w.baseAt, from: dayIso(w.baseAt - 90 * DAY), to: dayIso(w.baseAt + 60 * DAY), records: base.length * 2 + 9, visits: base.reduce((a, p) => a + p.v, 0), clients: base.length, masked: 3, bad: 0, att: { "1": base.reduce((a, p) => a + p.v, 0), "-1": 4, "0": 2 }, cut: false } : null;
-      return { owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, info };
+      return { owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: 0, fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, info };
     },
     async crmList(ws, spec, page = 1) {
       await wait(300);

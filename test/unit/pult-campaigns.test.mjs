@@ -5,7 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
-import { crmBuild } from "../../src/services/crm/snapshot.js";
+import { crmBuild as crmBuild0 } from "../../src/services/crm/snapshot.js";
+import { grantSnap, consentSkip } from "../consent.mjs";
+// рассылки по базе — только с подтверждённым согласием (31.10.2026): в проверках согласие выдаётся всем клиентам снимка (test/consent.mjs)
+const crmBuild = async (env, c, at) => { const r = await crmBuild0(env, c, at); await grantSnap(env, c.id); return r; };
 import { bcMeta } from "../../src/db/kv/broadcasts.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 
@@ -43,7 +46,7 @@ test("/api/bc/list: у номера бота Winchester — почему рас�
   assert.equal(CLIENTS.barber.gaNoBroadcast, undefined);
 });
 
-test("/api/bc/list: строка рассылки — кто создал, откуда получатели, сегмент и шаблон", async () => {
+test("/api/bc/list: строка рассылки — кто создал, откуда получатели, сегмент и шаблон", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = [rec(ph(101), 25), rec(ph(102), 30), rec(ph(103), 40)];
   const s = mk(ENV);

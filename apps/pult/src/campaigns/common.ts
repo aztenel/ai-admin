@@ -61,9 +61,10 @@ export const QUALITY: Record<NumberQuality, { label: string; tone: Tone }> = {
 /** Почему человека нет в сегментах (CrmOverview.excluded). */
 export const EXCLUDED: Record<keyof CrmOverview["excluded"], string> = {
   stop: "просили не писать",
+  noconsent: "нет подтверждённого согласия",
   fut: "уже записаны",
   recent: "были меньше 14 дней назад",
-  marketed: "уже писали за 14 дней",
+  marketed: "уже писали рекламу за 30 дней",
 };
 /** Отметки визитов в журнале Altegio (CrmInfo.att). Что ставят администраторы Winchester — не проверено, поэтому показываем как есть. */
 export const ATTENDANCE: Record<string, string> = { "1": "пришёл", "-1": "не пришёл — не считается", "0": "без отметки", "2": "подтвердил запись", нет: "без отметки" };

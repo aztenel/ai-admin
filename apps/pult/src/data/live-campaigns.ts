@@ -210,7 +210,8 @@ export const liveCampaigns: CampaignSource = {
       clients: n(d.clients),
       ok: n(d.ok),
       segments: d.segments || [],
-      excluded: d.excluded || { stop: 0, fut: 0, recent: 0, marketed: 0 },
+      excluded: { ...{ stop: 0, noconsent: 0, fut: 0, recent: 0, marketed: 0 }, ...(d.excluded || {}) },
+      consent: d.consent,
       info: d.info || null,
       ...(d.error ? { error: d.error, errorAt: n(d.errorAt) } : {}),
     };

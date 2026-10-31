@@ -193,8 +193,11 @@ export type CrmOverview = {
   /** Из них можно писать сейчас. */
   ok: number;
   segments: CrmSegment[];
-  /** Не пишем (каждый — по первой причине): просили не писать, записаны, были меньше 14 дней назад, уже писали за 14 дней. */
-  excluded: { stop: number; fut: number; recent: number; marketed: number };
+  /** Не пишем (каждый — по первой причине): просили не писать, нет подтверждённого согласия, записаны, были меньше 14 дней назад,
+   *  уже писали рекламу за 30 дней (31.10.2026). */
+  excluded: { stop: number; noconsent: number; fut: number; recent: number; marketed: number };
+  /** База согласий: ready — отвечает; why — почему рекламу сейчас нельзя никому. */
+  consent?: { ready: boolean; why: string; n: number };
   info: CrmInfo | null;
   /** Последнее обновление не удалось (и оно новее снимка) — текст и время. */
   error?: string;

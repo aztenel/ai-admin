@@ -90,6 +90,12 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   journal.push(rec("+7 700 XXX-X0-44", "Скрытый номер", 30, { staff: "Арман" })); // ключ журнала без права видеть телефоны — номер скрыт
   net.altJournal = journal;
   await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+  // реклама по базе — только с подтверждённым согласием (31.10.2026): у трёх из четырёх вымышленных клиентов оно есть (письменное),
+  // у каждого четвёртого — нет: он виден в «Не пишем — нет подтверждённого согласия»
+  if (sqliteOk) {
+    const { grantSnap } = await import(new URL("../../../test/consent.mjs", import.meta.url).href);
+    await grantSnap(S.env, "winchester", Array.from({ length: 40 }, (_, i) => i + 1).filter((i) => i % 4 !== 0).map((i) => "7700000" + String(2000 + i)));
+  }
 
   // Winchester, вкладка «Сервисные · номер бота»: три записи из журнала Altegio (с 30.10.2026 у Winchester напоминания — по всем записям
   // журнала со второго номера, без бота: services/reminders/journal.js). Очередь jrq:winchester строит тот же код (jrPlan) — накануне

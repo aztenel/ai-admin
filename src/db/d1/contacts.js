@@ -127,6 +127,12 @@ const K = `with k as (select c.id, c.name, c.phone, c.search, c.visits, c.first_
   case when exists (select 1 from outbound o where o.ws = c.ws and o.contact_id = c.id and o.purpose = 'marketing' and o.state in ('sending', 'sent', 'unknown') and o.created_at > ?2 - ?4) then 1 else 0 end as recent
   from contacts c where c.ws = ?1)`;
 
+/** Номера, которым можно рекламу по согласию и запретам (подтверждённое «да», нет запрета, решения не ждёт, нет паузы после
+ *  отмены) — для рассылок по базе Altegio (services/crm, ТЗ v2.0 §5). @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs */
+export async function consentReadyPhones(db, ws, now, kvStops, gapMs) {
+  const r = await db.prepare(`${K} select phone from k where consent = 'granted' and cconf = 1 and blocked = 0 and review = 0 and cooled = 0`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
+  return new Set((r.results || []).map((/** @type {any} */ x) => String(x.phone)));
+}
 /**
  * Числа по сегментам: всего и сколько из них можно писать рекламу (ready — условие сервиса).
  * @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs

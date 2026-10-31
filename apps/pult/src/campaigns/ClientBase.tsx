@@ -145,6 +145,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
           </Notice>
         )}
 
+        {has && d.consent && !d.consent.ready && <Notice tone="critical">{d.consent.why || "Рекламу сейчас нельзя никому: нет базы согласий."}</Notice>}
         {has && (
           <div className="py-3">
             <p className="text-ui text-fg pointer-coarse:text-base">Не пишем</p>

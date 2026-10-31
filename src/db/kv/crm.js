@@ -57,7 +57,7 @@ export async function bcmAdd(env, cid, day, phones) {
   await kvRetry(async () => { // чтение внутри повтора: вторая попытка — по свежим данным
     const had = JSON.parse((await env.KV.get(k)) || "[]");
     const all = [...new Set([...(Array.isArray(had) ? had : []).map(String), ...phones.map(p => String(p).replace(/\D/g, ""))])].filter(Boolean);
-    await env.KV.put(k, JSON.stringify(all), { expirationTtl: 15 * 86400 });
+    await env.KV.put(k, JSON.stringify(all), { expirationTtl: 31 * 86400 }); // 30 дней между рекламными сообщениями (31.10.2026)
   });
 }
 

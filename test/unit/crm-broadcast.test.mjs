@@ -5,7 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
-import { crmBuild } from "../../src/services/crm/snapshot.js";
+import { crmBuild as crmBuild0 } from "../../src/services/crm/snapshot.js";
+import { grantSnap, consentSkip } from "../consent.mjs";
+// рассылки по базе — только с подтверждённым согласием (31.10.2026): в проверках согласие выдаётся всем клиентам снимка (test/consent.mjs)
+const crmBuild = async (env, c, at) => { const r = await crmBuild0(env, c, at); await grantSnap(env, c.id); return r; };
 import { crmSegments } from "../../src/services/crm/segments.js";
 import { autoRun, autoOne, autoSet, autoGet, AUTO_DEF } from "../../src/services/crm/auto.js";
 import { bcCreate } from "../../src/services/broadcast/create.js";
@@ -45,7 +48,7 @@ async function base(env = ENV, at = NOW) {
   return s;
 }
 
-test("проверка рассылки из сегмента: получатели из снимка, номера из браузера не берутся, в ответе — только маской", async () => {
+test("проверка рассылки из сегмента: получатели из снимка, номера из браузера не берутся, в ответе — только маской", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER), sb = await login(s, STAFF_B);
   const r = await own.post("/api/bc/check", { ...FORM, segment: "pora", recipients: "8 701 999 00 01, Чужой" }), t = await r.text(), d = JSON.parse(t);
   assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
@@ -63,7 +66,7 @@ test("проверка рассылки из сегмента: получате�
   assert.ok(u.errors.some(e => /не найден/.test(e)), JSON.stringify(u));
 });
 
-test("создание рассылки из сегмента: список на сервере, src: crm, сегмент записан; без базы, со старой базой и пустой сегмент — отказ", async () => {
+test("создание рассылки из сегмента: список на сервере, src: crm, сегмент записан; без базы, со старой базой и пустой сегмент — отказ", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER), sw = await login(s, STAFF_W);
   const r = await sw.post("/api/bc/create", { ...FORM, segment: "pora", recipients: "8 701 999 00 01, Чужой" }), t = await r.text(), d = JSON.parse(t);
   assert.equal(r.status, 200, t); assert.equal(d.ok, true);
@@ -83,7 +86,7 @@ test("создание рассылки из сегмента: список на
   assert.equal((await own.post("/api/bc/create", { ...FORM, segment: "pora" }, { origin: "https://evil.example" })).status, 403);
 });
 
-test("отправка шаблона Meta ставит отметку «писали маркетинг» (bcm:) — раз за порцию; ошибка — без отметки; сегменты таких больше не берут", async () => {
+test("отправка шаблона Meta ставит отметку «писали маркетинг» (bcm:) — раз за порцию; ошибка — без отметки; сегменты таких больше не берут", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   const d = await (await own.post("/api/bc/create", { ...FORM, segment: "pora" })).json();
   net.graphReply = (u, i, r) => r.body && r.body.type === "template" && r.body.to === dg(109) ? new Response(JSON.stringify({ error: { code: 131026, message: "undeliverable" } }), { status: 400 }) : null;
@@ -96,7 +99,7 @@ test("отправка шаблона Meta ставит отметку «пис�
   assert.equal(tpls().find(x => x.body.to === dg(109)).body.template.components[0].parameters[0].text, "уважаемый клиент");
   const today = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10), k = `bcm:winchester:${today}`;
   assert.deepEqual(s.kv.json(k).sort(), [dg(101), dg(104)], "отметка — только тем, кому шаблон ушёл");
-  assert.equal(s.kv.ttl.get(k), 15 * 86400); assert.ok(s.kv.ops.put - puts0 < 12, "отметка — одной записью за порцию");
+  assert.equal(s.kv.ttl.get(k), 31 * 86400); assert.ok(s.kv.ops.put - puts0 < 12, "отметка — одной записью за порцию");
   const sg = await crmSegments(s.env, W, Date.now());
   assert.equal(sg.excluded.marketed, 2); assert.equal(sg.segments.find(x => x.id === "pora").n, 1);
   // повторная рассылка из того же сегмента — только тот, кому не дошло
@@ -110,7 +113,7 @@ test("отправка шаблона Meta ставит отметку «пис�
   }
 });
 
-test("отметки bcm ставит и отправка через Wazzapo; с номера Green-API — нет", async () => {
+test("отметки bcm ставит и отправка через Wazzapo; с номера Green-API — нет", { skip: consentSkip }, async () => {
   const sW = await base({ ...ENV, WA_VIA_WINCHESTER: "wazzapo" });
   const r = await bcCreate(sW.env, W, { ...FORM, segment: "pora" }, Date.now(), "owner", { start: true });
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -127,7 +130,7 @@ test("отметки bcm ставит и отправка через Wazzapo; с
   assert.ok(![...sG.kv.mem.keys()].some(k => k.startsWith("bcm:")), "Green-API отметок не ставит");
 });
 
-test("настройки автосценария: по умолчанию выключен; видят владелец и сотрудник, меняет только владелец; проверка полей", async () => {
+test("настройки автосценария: по умолчанию выключен; видят владелец и сотрудник, меняет только владелец; проверка полей", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER), sw = await login(s, STAFF_W), sb = await login(s, STAFF_B);
   const g = await sw.go("/api/bc/auto?c=winchester"), j = await g.json();
   assert.equal(g.status, 200); assert.equal(g.headers.get("cache-control"), "no-store");
@@ -175,7 +178,7 @@ async function autoBase(env = ENV) {
 // проверка номера WhatsApp в 10:03 дня at (qualityRun пишет qual:) — без сегодняшней проверки автосценарий день пропускает
 const checked = (s, at, quality = "GREEN", limit = 0) => s.kv.api.put("qual:winchester", JSON.stringify({ quality, limit, at: at - 3600e3 }));
 
-test("автосценарий: выключен — ничего; включён — в 11:00 ровно N дней, исключения, предел, раз в день; назавтра — следующие", async () => {
+test("автосценарий: выключен — ничего; включён — в 11:00 ровно N дней, исключения, предел, раз в день; назавтра — следующие", { skip: consentSkip }, async () => {
   const s = await autoBase();
   assert.equal(await autoRun(s.env, AT), 0, "по умолчанию выключен");
   assert.equal(bcs(s).length, 0); assert.ok(![...s.kv.mem.keys()].some(k => k.startsWith("bca:")), "выключенный — без отметки дня");
@@ -199,7 +202,7 @@ test("автосценарий: выключен — ничего; включё�
   assert.equal(net.tg.filter(x => /Пора на стрижку/.test(x.text || "") && /не отправлен/.test(x.text)).length, 0, "пропусков не было");
 });
 
-test("автосценарий пропускает день: жёлтое качество, сигнал Meta, старая база, номер не подключён, сбой хранилища — с сообщением в Telegram, один раз", async () => {
+test("автосценарий пропускает день: жёлтое качество, сигнал Meta, старая база, номер не подключён, сбой хранилища — с сообщением в Telegram, один раз", { skip: consentSkip }, async () => {
   let s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   await checked(s, AT, "YELLOW", 250);
@@ -244,7 +247,7 @@ test("автосценарий пропускает день: жёлтое ка�
   assert.ok(!net.tg.some(x => /7700000\d{4}/.test(x.text || "")), "в Telegram — без номеров клиентов");
 });
 
-test("автосценарий через фоновую задачу Worker: в 11:03 создаёт рассылку; сегодня некому — рассылки нет", async () => {
+test("автосценарий через фоновую задачу Worker: в 11:03 создаёт рассылку; сегодня некому — рассылки нет", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku", days: 50 });
   await s.cron(AT);
@@ -259,7 +262,7 @@ test("автосценарий через фоновую задачу Worker: в
 
 // находка проверки 19.10.2026: исключения проверялись только при создании рассылки — две рассылки по пересекающимся сегментам или ручная
 // «Пора на стрижку» и автосценарий писали одному человеку два платных шаблона, а кто записался после создания — всё равно получал
-test("исключения — и при отправке: пересекающиеся сегменты, ручная и автосценарий — один шаблон на номер; записался после создания — не пишем; старая база — пауза", async () => {
+test("исключения — и при отправке: пересекающиеся сегменты, ручная и автосценарий — один шаблон на номер; записался после создания — не пишем; старая база — пауза", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   const a = await (await own.post("/api/bc/create", { ...FORM, segment: "pora" })).json(); // 104 (Данияр, 3 визита, 22 дня) — и здесь,
   const p = await (await own.post("/api/bc/create", { ...FORM, name: "Постоянные", segment: "postoyannye" })).json(); // и здесь
@@ -300,7 +303,7 @@ test("исключения — и при отправке: пересекающ�
 });
 
 // находка проверки 19.10.2026: вчерашняя рассылка автосценария ждала предела номера и назавтра уходила вместе с новой — больше предела в день
-test("рассылка автосценария — только в день создания: назавтра остановлена с сообщением, не уходит", async () => {
+test("рассылка автосценария — только в день создания: назавтра остановлена с сообщением, не уходит", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   const r = await autoOne(s.env, W, AT - 86400e3); // вчера в 11:03 (29 дней сегодня — 28 вчера)
@@ -315,7 +318,7 @@ test("рассылка автосценария — только в день с�
 });
 
 // находки второй проверки 19.10.2026 (исправления первой)
-test("записался, а визит уже старше 90 дней — снимок помнит запись, рассылка, созданная раньше, ему не пишет; номер браузеру не уходит", async () => {
+test("записался, а визит уже старше 90 дней — снимок помнит запись, рассылка, созданная раньше, ему не пишет; номер браузеру не уходит", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   net.altJournal.push(rec(ph(301), 89, { name: "Тимур" }));
   await crmBuild(s.env, W, NOW);
@@ -331,7 +334,7 @@ test("записался, а визит уже старше 90 дней — сн
   assert.ok(!t.includes(dg(301)) && !t.includes("futOnly"), "номера только на сервере");
 });
 
-test("качество номера: без TG_TOKEN проверка всё равно записывается; качество не пришло — автосценарий пропускает день, пульт видит почему", async () => {
+test("качество номера: без TG_TOKEN проверка всё равно записывается; качество не пришло — автосценарий пропускает день, пульт видит почему", { skip: consentSkip }, async () => {
   const s = await autoBase(), own = await login(s, OWNER);
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   await s.kv.api.put("qual:winchester", JSON.stringify({ quality: "", limit: 250, at: AT - 3600e3 }));
@@ -341,7 +344,7 @@ test("качество номера: без TG_TOKEN проверка всё р�
   assert.ok(/не сообщили качество/.test(g.skip.why), JSON.stringify(g)); assert.deepEqual(g.qual, { quality: "", at: AT - 3600e3 });
 });
 
-test("«Продолжить» у вчерашней рассылки автосценария: сигнал Meta снимается, рассылка не уходит; без сигнала — отказ", async () => {
+test("«Продолжить» у вчерашней рассылки автосценария: сигнал Meta снимается, рассылка не уходит; без сигнала — отказ", { skip: consentSkip }, async () => {
   const s = await autoBase(), own = await login(s, OWNER);
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   const r = await autoOne(s.env, W, AT - 86400e3);
@@ -359,7 +362,7 @@ test("«Продолжить» у вчерашней рассылки автос
 });
 
 // находки третьей проверки 19.10.2026 (трое проверяющих, каждую находку перепроверили двое)
-test("оборванная порция: шаблон мог уйти каждому из неё — отметка «писали маркетинг» всем, следующая рассылка по базе им не пишет", async () => {
+test("оборванная порция: шаблон мог уйти каждому из неё — отметка «писали маркетинг» всем, следующая рассылка по базе им не пишет", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   const d = await (await own.post("/api/bc/create", { ...FORM, segment: "pora" })).json();
   assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
@@ -372,7 +375,7 @@ test("оборванная порция: шаблон мог уйти каждо
   assert.equal(again.valid, 0, "второй раз за 14 дней — нет");
 });
 
-test("автосценарий: записался после ночного снимка — не пишем (свежие записи из Altegio в 11:00); Altegio не ответил — день пропущен", async () => {
+test("автосценарий: записался после ночного снимка — не пишем (свежие записи из Altegio в 11:00); Altegio не ответил — день пропущен", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   net.altJournal.push(rec(ph(201), -1)); // Арман записался утром, снимок ночной его не видит
@@ -385,7 +388,7 @@ test("автосценарий: записался после ночного с�
   finally { net.altJournalFail = 0; }
 });
 
-test("автосценарий выключили, пока рассылка дня идёт, — она останавливается, не уходит", async () => {
+test("автосценарий выключили, пока рассылка дня идёт, — она останавливается, не уходит", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   const r = await autoOne(s.env, W, AT);
@@ -395,7 +398,7 @@ test("автосценарий выключили, пока рассылка д�
   assert.equal(b.status, "stopped"); assert.ok(/выключен/.test(b.note)); assert.equal(tpls().length, 0);
 });
 
-test("автосценарий: качество не зелёное (UNKNOWN), сбой чтения сигнала Meta — день пропущен; проверка в 10:00 не удалась — ещё попытка в 11:00", async () => {
+test("автосценарий: качество не зелёное (UNKNOWN), сбой чтения сигнала Meta — день пропущен; проверка в 10:00 не удалась — ещё попытка в 11:00", { skip: consentSkip }, async () => {
   let s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   await checked(s, AT, "UNKNOWN", 250);
@@ -416,7 +419,7 @@ test("автосценарий: качество не зелёное (UNKNOWN), 
   assert.equal(ok.state, "sent", JSON.stringify(ok)); assert.equal(s.kv.json("qual:winchester").quality, "GREEN");
 });
 
-test("сигнал Meta пришёл, когда рассылки дня уже нет: владелец снимает его кнопкой «Снять сигнал Meta», сотрудник — нет", async () => {
+test("сигнал Meta пришёл, когда рассылки дня уже нет: владелец снимает его кнопкой «Снять сигнал Meta», сотрудник — нет", { skip: consentSkip }, async () => {
   const s = await autoBase(), own = await login(s, OWNER), sw = await login(s, STAFF_W);
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   await s.kv.api.put("bchold:winchester", JSON.stringify({ tpl: { pora_na_strizhku: { at: AT, why: "шаблон приостановлен Meta" } } }));
@@ -430,7 +433,7 @@ test("сигнал Meta пришёл, когда рассылки дня уже 
   assert.ok(pg.includes("Снять сигнал Meta")); assert.ok(pg.includes("База клиентов из Altegio") && pg.includes("/api/crm/refresh"), "блок базы и кнопка «Обновить базу»");
 });
 
-test("очередь отправки не записалась — рассылка автосценария на паузе с объяснением, владелец узнаёт", async () => {
+test("очередь отправки не записалась — рассылка автосценария на паузе с объяснением, владелец узнаёт", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku" });
   s.kv.fail.put = k => k === "bcrun";
@@ -439,7 +442,7 @@ test("очередь отправки не записалась — рассыл
   const [b] = bcs(s); assert.equal(b.status, "paused"); assert.ok(/очередь/.test(b.note));
 });
 
-test("рассылка автосценария не успевает сегодня (часы закончились) — остановлена сразу, а не в полночь", async () => {
+test("рассылка автосценария не успевает сегодня (часы закончились) — остановлена сразу, а не в полночь", { skip: consentSkip }, async () => {
   const s = await autoBase();
   await autoSet(s.env, W, { on: true, tpl: "pora_na_strizhku", from: 11, to: 12 });
   const r = await autoOne(s.env, W, AT);
@@ -448,7 +451,7 @@ test("рассылка автосценария не успевает сегод
   assert.equal(b.status, "stopped"); assert.equal(tpls().length, 0); assert.ok(net.tg.some(x => /не успел отправить всем/i.test(x.text || "")));
 });
 
-test("ошибка Meta с номером получателя: в заметке рассылки и в Telegram номер скрыт", async () => {
+test("ошибка Meta с номером получателя: в заметке рассылки и в Telegram номер скрыт", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   const d = await (await own.post("/api/bc/create", { ...FORM, segment: "all" })).json();
   assert.equal(d.b.total, 5);
