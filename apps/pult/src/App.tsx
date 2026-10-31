@@ -6,6 +6,7 @@ import { ChunkBoundary } from "@/components/boundary";
 import { Toasts } from "@/components/overlay";
 import { Button, EmptyState, Spinner } from "@/components/ui";
 import { InboxScreen } from "@/inbox/InboxScreen";
+import { pushBoot, pushListen } from "@/lib/push";
 import { useRoute } from "@/lib/router";
 import { useThemeBoot } from "@/lib/theme";
 import { AppShell } from "@/shell/AppShell";
@@ -25,9 +26,18 @@ export default function App() {
   const ws = useStore((s) => s.workspace);
   const all = useStore((s) => s.conversations);
 
+  const wsId = useStore((s) => s.wsId);
+  const mode = useStore((s) => s.mode);
+
   useEffect(() => {
     store.boot();
   }, []);
+  // push-уведомления (ТЗ v2.0 §3): Service Worker, переход к чату по нажатию на уведомление, обновить подписку этой компании
+  useEffect(() => {
+    if (mode !== "live") return;
+    pushListen();
+    pushBoot(wsId);
+  }, [mode, wsId]);
 
   // заголовок вкладки и окна программы для Windows: сколько ждут ответа и какая компания
   const waiting = all.filter((c) => c.attention).length;

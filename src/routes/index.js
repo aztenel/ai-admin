@@ -15,6 +15,7 @@ import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
 import { contactsApi } from "../controllers/contacts.js";
+import { pushApi } from "../controllers/push.js";
 import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/pages.js";
 import { diag, storage } from "../controllers/diag.js";
 import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/altegio.js";
@@ -125,6 +126,11 @@ export async function route(request, env, ctx, pult) {
     if (P.startsWith("/api/contacts/")) {
       const s = await sessionRead(env, request);
       return s ? contactsApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
+    // ---- push-уведомления пульта /app/ на телефоны и компьютеры сотрудников (ТЗ v2.0 §3)
+    if (P.startsWith("/api/push/")) {
+      const s = await sessionRead(env, request);
+      return s ? pushApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);

@@ -24,7 +24,8 @@ test("сборка: index.html ссылается на свои файлы от�
   // части, которые пульт подгружает позже (раздел «Рассылки», мастер, демо): каждая есть в сборке
   for (const [name, f] of Object.entries(PULT_APP)) {
     if (!name.endsWith(".js")) continue;
-    for (const m of f.body.matchAll(/["'`]\.\/([\w.-]+\.(?:js|css))["'`]/g)) assert.ok(Object.hasOwn(PULT_APP, "assets/" + m[1]), `${name} подгружает ${m[1]} — он есть в сборке`);
+    // sw.js (push, ТЗ v2.0 §3) регистрируется от адреса страницы (/app/sw.js), а не от файла части — он в корне сборки
+    for (const m of f.body.matchAll(/["'`]\.\/([\w.-]+\.(?:js|css))["'`]/g)) assert.ok(Object.hasOwn(PULT_APP, (m[1] === "sw.js" ? "" : "assets/") + m[1]), `${name} подгружает ${m[1]} — он есть в сборке`);
   }
 });
 

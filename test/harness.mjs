@@ -58,7 +58,9 @@ export const net = {
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
   img: [],                     // запросы картинок Altegio (фото мастеров, assets.alteg.io и др.): адреса
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
-  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altCreated = []; }
+  push: [],                    // запросы к службам Web Push (Apple, Google, Mozilla, Microsoft): { url, headers, body (байты) }
+  pushReply: null,             // функция (rec) → Response | null: свой ответ службы push (410 — подписки нет)
+  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altCreated = []; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -237,6 +239,12 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.path === "/messages/send" && rec.method === "POST") return J({ message_id: "wzm-" + net.wz.length, provider_message_id: "wamid.wz." + net.wz.length, status: "accepted" });
     if (rec.path.startsWith("/phone-numbers/")) return J({ data: { phone_number_id: rec.path.split("/")[2], display_phone_number: "+7 700 000 00 99", verified_name: "Тест", quality_rating: "GREEN", messaging_limit_tier: "TIER_250" } });
     return J({ error: "not found" }, 404);
+  }
+  if (/^https:\/\/(([a-z0-9-]+\.)*push\.apple\.com|fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[a-z0-9-]+\.notify\.windows\.com)\//.test(url)) { // Web Push
+    const rec = { url, headers: { ...(init.headers || {}) }, body: init.body instanceof Uint8Array ? init.body : new Uint8Array(0) }; net.push.push(rec);
+    const own = net.pushReply && net.pushReply(rec);
+    if (own) return own;
+    return new Response(null, { status: 201 });
   }
   net.other.push(url);
   throw new Error("unexpected fetch " + url);

@@ -14,6 +14,7 @@ import { cn, useMedia } from "@/lib/utils";
 import { store, useStore } from "@/state/store";
 import { THEMES } from "@/shell/AppShell";
 import { Group, Page } from "./Page";
+import { PushSettings } from "./PushSettings";
 
 type Section = { id: string; title: string; icon: LucideIcon; render: () => ReactNode };
 
@@ -224,25 +225,27 @@ function Appearance() {
 
 function Notifications() {
   const mode = useStore((s) => s.mode);
+  const wsId = useStore((s) => s.wsId);
   const [st, setSt] = useState<NotifyState>(notifyState);
-  const text: Record<NotifyState, string> = {
-    on: "Включены. Когда клиент ждёт ответа, придёт уведомление — пульт должен быть открыт, можно в свёрнутой вкладке.",
-    ask: "Выключены. Включите, чтобы узнавать о клиентах, которые ждут ответа, не глядя в пульт.",
-    denied: "Браузер запретил уведомления для этого сайта. Разрешите их в настройках сайта (значок слева от адреса) и обновите страницу.",
-    unsupported: "Этот браузер не умеет показывать уведомления. На iPhone они работают, если добавить пульт на экран «Домой».",
-  };
-  return (
-    <Group note={mode === "demo" ? "В демо уведомления не приходят." : "Уведомления на закрытый телефон появятся в приложении (фаза 5)."}>
-      <div className="flex flex-wrap items-center gap-3 py-3">
-        <p className="min-w-0 flex-1 basis-64 text-sm text-fg-2">{text[st]}</p>
-        {st === "ask" && mode === "live" && (
-          <Button variant="primary" icon={Bell} onClick={async () => setSt(await askNotify())}>
+  if (mode === "demo")
+    return (
+      <Group>
+        <p className="py-3 text-sm text-fg-2">В демо уведомления не приходят.</p>
+      </Group>
+    );
+  // программа для Windows (Tauri) — уведомления Windows, пока программа открыта (push там не работает)
+  if ((window as unknown as { __TAURI__?: unknown }).__TAURI__)
+    return (
+      <Group>
+        <p className="py-3 text-sm text-fg-2">{st === "on" ? "Уведомления Windows включены: когда клиент ждёт ответа, придёт уведомление, пока программа открыта." : "Уведомления Windows выключены."}</p>
+        {st === "ask" && (
+          <Button variant="primary" icon={Bell} className="mb-3" onClick={async () => setSt(await askNotify())}>
             Включить
           </Button>
         )}
-      </div>
-    </Group>
-  );
+      </Group>
+    );
+  return wsId ? <PushSettings ws={wsId} /> : null;
 }
 
 function Logout({ className }: { className?: string }) {

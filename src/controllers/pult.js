@@ -43,7 +43,8 @@ export function pultApp(path, search, files) {
     if (!u) { const bin = atob(f.body); u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); APP_BYTES.set(name, u); }
     body = u;
   }
-  // assets/ — имена с хэшем содержимого (Vite): новая сборка — новые имена, поэтому старые можно кэшировать навсегда
-  const cache = name.startsWith("assets/") ? "public, max-age=31536000, immutable" : "public, max-age=3600";
+  // assets/ — имена с хэшем содержимого (Vite): новая сборка — новые имена, поэтому старые можно кэшировать навсегда;
+  // sw.js (push-уведомления, ТЗ v2.0 §3) — всегда сверять с сервером: иначе браузер до суток держал бы прежнюю версию
+  const cache = name.startsWith("assets/") ? "public, max-age=31536000, immutable" : name === "sw.js" ? "no-cache" : "public, max-age=3600";
   return new Response(body, { headers: { "content-type": f.type, "cache-control": cache, "x-content-type-options": "nosniff" } });
 }

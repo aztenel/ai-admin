@@ -11,7 +11,8 @@
     "check": "tsc -b",
     "shots": "node scripts/shots.mjs",
     "e2e:campaigns": "node scripts/e2e-campaigns.mjs",
-    "e2e:contacts": "node scripts/e2e-contacts.mjs"
+    "e2e:contacts": "node scripts/e2e-contacts.mjs",
+    "e2e:push": "node scripts/e2e-push.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
