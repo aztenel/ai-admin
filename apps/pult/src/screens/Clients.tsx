@@ -325,7 +325,7 @@ function SyncLine({ d, now, owner }: { d: ContactsStatus; now: number; owner: bo
   const s = d.sync;
   const failed = !!s.lastError && (!s.lastOkAt || (s.lastErrorAt || 0) > s.lastOkAt);
   if (!s.available || (!failed && !s.lastOkAt && !s.running)) return null;
-  const text = failed ? "Базу из Altegio не удалось обновить." : s.running ? "Обновляем базу из Altegio…" : `Обновлено ${ago(s.lastOkAt!, now)}`;
+  const text = failed ? "Базу из Altegio не удалось обновить." : s.running ? "Обновляем базу из Altegio…" : `База из Altegio обновлена ${ago(s.lastOkAt!, now)}`;
   return (
     <p role={failed ? "alert" : "status"} className={cn("mb-3 flex items-center gap-2 px-1 text-sm", failed ? "text-critical" : "text-fg-3")}>
       {failed ? <CircleAlert aria-hidden className="size-4 shrink-0" strokeWidth={2} /> : <CircleCheck aria-hidden className="size-4 shrink-0 text-positive" strokeWidth={2} />}

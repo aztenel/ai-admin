@@ -176,21 +176,34 @@ const text = (loc) => loc.innerText().catch(() => "");
 const rows = (page) => page.getByRole("list", { name: "Клиенты" }).locator("li");
 /** Кнопка в шапке: на телефоне — значок, на компьютере — кнопка с подписью. */
 const headerBtn = (t, phoneLabel, deskLabel) => t.page.getByRole("button", { name: t.phone ? phoneLabel : deskLabel, exact: true }).first();
+/** ТЗ v3.0 §2.1: импорт и проверки — в меню «⋯» шапки «Клиентов»; проверки открываются в Настройки → Диагностика (страница, не лист). */
+async function menuAction(t, item) {
+  await tap(t.page.getByRole("button", { name: "Ещё действия" }).first());
+  await tap(t.page.getByRole("menuitem", { name: item }));
+}
+async function openDiag(t) {
+  await menuAction(t, /Проверка базы и Altegio/);
+  await t.page.waitForURL(/#\/settings\/diagnostics/);
+  const panel = t.page.locator("main");
+  await panel.getByText("Проверки данных", { exact: true }).waitFor();
+  return panel;
+}
+async function backToClients(t) {
+  await t.page.evaluate(() => { location.hash = "#/clients"; });
+  await t.page.getByRole("list", { name: "Клиенты" }).or(t.page.getByText("Клиентов пока нет")).first().waitFor();
+}
 
 /** База пуста (живой режим, черновик) — «Тестовые клиенты» в панели синхронизации. */
 async function seedIfEmpty(t) {
   const { page } = t;
   if ((await rows(page).count()) > 0) return;
-  ok(`${t.tag}: пустая база — подсказка про тестовых клиентов`, /Тестовые клиенты/.test(await text(page.locator("main"))));
+  ok(`${t.tag}: пустая база — понятная подсказка, что делать`, /Клиентов пока нет/.test(await text(page.locator("main"))) && /добавить клиента вручную/i.test(await text(page.locator("main"))));
   await step(t, "empty");
-  await tap(headerBtn(t, "Синхронизация и проверки", "Синхронизация"));
-  const panel = page.getByRole("dialog", { name: "Синхронизация и проверки" });
-  await panel.waitFor();
+  const panel = await openDiag(t);
   await tap(panel.getByRole("button", { name: "Тестовые клиенты" }));
   await panel.getByRole("status", { name: "Тестовые клиенты" }).waitFor({ timeout: 30_000 });
   ok(`${t.tag}: тестовые клиенты записаны`, !/ошибк/i.test(await text(panel.getByRole("status", { name: "Тестовые клиенты" }))), await text(panel.getByRole("status", { name: "Тестовые клиенты" })));
-  await page.keyboard.press("Escape");
-  await panel.waitFor({ state: "detached" });
+  await backToClients(t);
   await rows(page).first().waitFor({ timeout: 15_000 });
 }
 
@@ -223,25 +236,31 @@ async function owner(vp, scheme, tag) {
   const { page } = t;
   await page.getByRole("list", { name: "Клиенты" }).or(page.getByText("Клиентов пока нет")).first().waitFor();
   await seedIfEmpty(t);
-  const sync = await text(page.locator("main button, main [role=status]").filter({ hasText: /Altegio/ }).first());
-  ok(`${tag}: строка состояния Altegio`, /Altegio/.test(sync), sync);
+  // строка состояния — только когда есть что сказать (ТЗ v3.0: без лишнего текста); есть — называет Altegio
+  const syncLoc = page.locator("main [role=status], main [role=alert]").filter({ hasText: /Altegio/ });
+  const sync = (await syncLoc.count()) ? await text(syncLoc.first()) : "";
+  ok(`${tag}: строка состояния Altegio — без технических слов`, !sync || /База из Altegio|Обновляем базу из Altegio|не удалось обновить/.test(sync), sync);
   const listText = await text(page.getByRole("list", { name: "Клиенты" }));
   ok(`${tag}: в списке номера только маской`, /\+7 700 \*\*\* \*\* \d\d/.test(listText), listText.slice(0, 120));
   await step(t, "list");
 
   // поиск по имени первого с именем
   const named = rows(page).filter({ hasNotText: "Без имени" }).first();
-  const who = (await text(named.locator("span.block").first())).trim();
-  await fill(page.getByPlaceholder("Имя или номер"), who);
+  const who = (await named.count()) ? (await text(named.locator("span.block").first())).trim() : "";
+  // тестовые клиенты черновика бывают без имён: тогда ищем по последним цифрам номера (маска показывает две)
+  const total = await rows(page).count();
+  const query = who || ((await text(rows(page).first())).match(/\*\* (\d\d)/) || [])[1] || "";
+  await fill(page.getByPlaceholder("Имя или номер"), query);
   // ответ на поиск: список перечитывается поверх прежнего — ждём, пока все строки станут про него (до 8 с)
   let found = [];
   for (let i = 0; i < 40; i++) {
     await page.waitForTimeout(200);
     if (await page.locator('section[aria-busy="true"]').count()) continue;
     found = await rows(page).allInnerTexts();
-    if (found.length && found.every((r) => r.includes(who))) break;
+    if (found.length && (who ? found.every((r) => r.includes(who)) : found.length < total)) break;
   }
-  ok(`${tag}: поиск «${who}» — все строки с этим именем`, found.length > 0 && found.every((r) => r.includes(who)), String(found.length));
+  // по имени — все строки с ним; по цифрам — меньше, чем всех (маска показывает только две последние цифры номера)
+  ok(`${tag}: поиск «${query}» — ${who ? "все строки с этим именем" : "список сузился"}`, !!query && found.length > 0 && (who ? found.every((r) => r.includes(who)) : found.length < total), `${found.length} из ${total}`);
   await step(t, "search");
   await page.getByRole("button", { name: "Очистить поиск" }).click();
   await page.waitForTimeout(700);
@@ -368,7 +387,7 @@ async function owner(vp, scheme, tag) {
   await closeCard(t);
 
   // импорт текстом: предпросмотр, основание согласия, загрузка
-  await tap(headerBtn(t, "Импорт из файла", "Импорт"));
+  await menuAction(t, "Импорт из файла");
   const imp = page.getByRole("dialog", { name: "Импорт клиентов" });
   await imp.waitFor();
   await fill(imp.getByLabel("Строки из таблицы"), IMPORT_TEXT);
@@ -383,7 +402,7 @@ async function owner(vp, scheme, tag) {
   await tap(imp.getByRole("button", { name: "Загрузить 2" }));
   await imp.getByText(/^Загружено/).waitFor();
   ok(`${tag}: импорт — 2 новых, в файле «да» у одного и «нет» у другого — обе отметки записаны`, /Новых клиентов:\s*2/.test(await text(imp)) && /согласий и отказов записано:\s*2/.test(await text(imp)), await text(imp));
-  ok(`${tag}: «да» из файла — не подтверждено`, /Согласий «да» из файла:\s*1\s*— не подтверждены/.test(await text(imp)), await text(imp));
+  ok(`${tag}: «да» из файла — не подтверждено`, /Согласий «да» из файла:\s*1, они не подтверждены/.test(await text(imp)), await text(imp));
   await step(t, "import-done");
   await tap(imp.getByRole("button", { name: "Готово" }));
   await imp.waitFor({ state: "detached" });
@@ -411,7 +430,7 @@ async function owner(vp, scheme, tag) {
   await page.waitForTimeout(700);
 
   // импорт файлом CSV и отмена
-  await tap(headerBtn(t, "Импорт из файла", "Импорт"));
+  await menuAction(t, "Импорт из файла");
   const imp2 = page.getByRole("dialog", { name: "Импорт клиентов" });
   await imp2.locator("input[type=file]").setInputFiles({ name: "clients.csv", mimeType: "text/csv", buffer: Buffer.from(CSV, "utf8") });
   await imp2.getByText(/clients\.csv/).waitFor();
@@ -423,9 +442,7 @@ async function owner(vp, scheme, tag) {
   await imp2.waitFor({ state: "detached" });
 
   // панель синхронизации
-  await tap(headerBtn(t, "Синхронизация и проверки", "Синхронизация"));
-  const panel = page.getByRole("dialog", { name: "Синхронизация и проверки" });
-  await panel.getByText("Проверки данных", { exact: true }).waitFor();
+  const panel = await openDiag(t);
   ok(`${tag}: панель — проверки данных списком`, (await panel.getByRole("list", { name: "Проверки данных" }).locator("li").count()) > 0);
   // «ещё не проверено» — серый «?», а не зелёная галочка
   const checks = panel.getByRole("list", { name: "Проверки данных" });
@@ -452,8 +469,7 @@ async function owner(vp, scheme, tag) {
     ok(`${tag}: «${btn}» — итог строками`, (await out.locator("li").count()) > 0, await text(out));
   }
   await step(t, "sync-actions");
-  await page.keyboard.press("Escape");
-  await panel.waitFor({ state: "detached" });
+  await backToClients(t);
   await finish(t);
 }
 
@@ -462,7 +478,9 @@ async function staff(vp, scheme, tag) {
   const { page } = t;
   await rows(page).first().waitFor({ timeout: 15_000 });
   ok(`${tag}: у сотрудника нет «Синхронизации»`, !(await page.getByRole("button", { name: /^Синхронизация/ }).count()));
-  ok(`${tag}: строка Altegio — просто текст`, (await page.getByRole("status").filter({ hasText: /Altegio/ }).count()) > 0);
+  await tap(page.getByRole("button", { name: "Ещё действия" }).first());
+  ok(`${tag}: у сотрудника в меню нет проверок Altegio`, !(await page.getByRole("menuitem", { name: /Проверка базы/ }).count()) && (await page.getByRole("menuitem", { name: "Импорт из файла" }).count()) === 1);
+  await page.keyboard.press("Escape");
   await step(t, "list");
   const { card } = await openFirst(t);
   // свой запрет и попытка снять: кнопки «Снять запрет» у сотрудника нет
