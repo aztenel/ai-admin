@@ -7,7 +7,7 @@ import { normPhone, maskPhone, fmtPhone, logSafe, maskPhones } from "../../lib/p
 import { stopKind } from "../conversation/stop-words.js";
 import { d1Ready, stageOf } from "../../db/d1/status.js";
 import { syncRows } from "../../db/d1/sync.js";
-import { contactNumbers, eventsOf, segmentCounts, contactsPage, contactCard, contactAdd, recompute } from "../../db/d1/contacts.js";
+import { contactNumbers, eventsOf, segmentCounts, contactsPage, contactCard, contactAdd, recompute, contactKpi } from "../../db/d1/contacts.js";
 import { contactOne, consentAdd, restrictionAdd, restrictionLift, reviewKeep, blocksLeft, issueOpen, legacyImport, restrictionActiveId, refusedAt, consentLast, restrictionGet, CLIENT_SOURCES } from "../../db/d1/rights.js";
 import { readHist } from "../../db/kv/chats.js";
 import { optoutPhones, optoutPut, optoutDel, optoutGet, sweepGet } from "../../db/kv/optout.js";
@@ -17,6 +17,7 @@ import { SEGMENTS, READY, GAP_MS, segWhere, marketWhy } from "./segments.js";
 import { stopPending } from "./stops.js";
 import { searchOf, dayStart, dayOf } from "./normalize.js";
 import { readTable, importPreview, importApply, importDiscard } from "./importer.js";
+import { demoState } from "./demo.js";
 
 export const PER = 50;
 const fail = (/** @type {string} */ code, /** @type {string} */ text, /** @type {string} */ field = "") => Object.assign(new Error(text), { code, field });
@@ -88,11 +89,12 @@ async function kvStops(env, ws) {
 
 /** Состояние для экрана «Клиенты». @param {Env} env @param {Client} c @param {number} now @param {boolean} owner */
 export async function contactsStatus(env, c, now, owner) {
-  const base = { stage: stageOf(env), owner, client: { id: c.id, name: c.name } };
+  // demoAllowed — кнопка «Загрузить демо-базу» есть (черновик и владелец); demo, demoAt — демо-база загружена и когда
+  const base = { stage: stageOf(env), owner, client: { id: c.id, name: c.name }, demoAllowed: owner && stageOf(env) === "preview" };
   const db = await d1Ready(env, now);
-  if (!db) return { ...base, ready: false, why: env.DB ? "База контактов не отвечает или подключена чужая база — откройте /diag/storage." : "База контактов ещё не подключена к этому адресу. Сейчас работает прежняя база клиентов в «Рассылках»." };
+  if (!db) return { ...base, demo: false, demoAt: null, ready: false, why: env.DB ? "База контактов не отвечает или подключена чужая база — откройте /diag/storage." : "База контактов ещё не подключена к этому адресу. Сейчас работает прежняя база клиентов в «Рассылках»." };
   const ws = c.id;
-  const [nums, rows, errs, probes, sweep] = await Promise.all([contactNumbers(db, ws, now), syncRows(db, ws, SRC), eventsOf(db, ws, ["sync_error", "sync_warn"], 10), eventsOf(db, ws, ["altegio_probe"], 1), sweepGet(env, ws)]);
+  const [nums, rows, errs, probes, sweep, demo] = await Promise.all([contactNumbers(db, ws, now), syncRows(db, ws, SRC), eventsOf(db, ws, ["sync_error", "sync_warn"], 10), eventsOf(db, ws, ["altegio_probe"], 1), sweepGet(env, ws), demoState(db, ws)]);
   const by = Object.fromEntries(rows.map((/** @type {any} */ r) => [r.scope, r])), plan = syncPlan(rows, now), init = initialInfo(plan.initial);
   const scoped = ["initial", ...WINDOWS.map(w => w.scope)].map(s => by[s]).filter(Boolean);
   const lastOkAt = Math.max(0, ...scoped.map((/** @type {any} */ r) => +r.last_ok_at || 0)) || null;
@@ -118,7 +120,7 @@ export async function contactsStatus(env, c, now, owner) {
     { id: "unknown", label: "Сообщения с неизвестным итогом", count: nums.unknownSends, level: nums.unknownSends ? "warn" : "ok", hint: nums.unknownSends ? "Решите в пульте: ушло или нет." : "Нет." }
   ];
   return {
-    ...base, ready: true,
+    ...base, ...demo, ready: true,
     counts: { contacts: nums.contacts, withVisits: nums.withVisits, upcoming: nums.upcoming, stops: nums.stops, review: nums.review },
     sync: {
       available: !why, ...(why ? { why } : {}), dryOnly: !real, initial: init, lastOkAt, lastError: lastErr ? String(lastErr.last_error) : null, lastErrorAt: lastErr ? +lastErr.last_error_at : null,
@@ -133,12 +135,19 @@ export async function contactsStatus(env, c, now, owner) {
   };
 }
 
-/** @param {Env} env @param {Client} c @param {number} now */
-export async function contactsSegments(env, c, now) {
+/**
+ * Сегменты с числами и короткие числа для шапки (kpi): всего, с будущей записью, в выбранном сегменте (seg; без него или «all» — null),
+ * с запретом («стоп», полный запрет, неоднозначный «стоп», отказ в согласии). Неизвестный сегмент — ошибка ввода.
+ * @param {Env} env @param {Client} c @param {number} now @param {string} [seg]
+ */
+export async function contactsSegments(env, c, now, seg = "") {
+  const sw = seg && seg !== "all" ? segWhere(seg) : null;
+  if (seg && seg !== "all" && !sw) throw fail("input", "Неизвестный сегмент.");
   const db = await dbOf(env, now), stops = await kvStops(env, c.id);
+  const [r0, kpi] = await Promise.all([segmentCounts(db, c.id, now, stops, GAP_MS, SEGMENTS, READY), contactKpi(db, c.id, now, stops, GAP_MS, sw)]);
   /** @type {{ segs: { id: string, count: number, ready: number }[], staff: { staff: string, count: number, ready: number }[] }} */
-  const r = await segmentCounts(db, c.id, now, stops, GAP_MS, SEGMENTS, READY);
-  return { at: now, segments: [...SEGMENTS.map((x, i) => ({ id: x.id, label: x.label, rule: x.rule, count: r.segs[i].count, ready: r.segs[i].ready })),
+  const r = r0;
+  return { at: now, kpi, ...(sw ? { seg } : {}), segments: [...SEGMENTS.map((x, i) => ({ id: x.id, label: x.label, rule: x.rule, count: r.segs[i].count, ready: r.segs[i].ready })),
     ...r.staff.map(x => ({ id: "staff:" + x.staff, label: "Мастер: " + x.staff, rule: "последний визит у мастера", count: x.count, ready: x.ready }))] };
 }
 

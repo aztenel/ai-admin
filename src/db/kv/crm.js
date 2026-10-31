@@ -61,6 +61,20 @@ export async function bcmAdd(env, cid, day, phones) {
   });
 }
 
+// убрать номера из отметки дня (демо-база черновика: настоящие номера остаются). → true, если что-то убрано
+/** @param {Env} env @param {string} cid @param {string} day @param {Set<string>} phones */
+export async function bcmDrop(env, cid, day, phones) {
+  const k = bcmKey(cid, day), v = await env.KV.get(k);
+  if (!v) return false;
+  /** @type {any[]} */ let had = []; try { had = JSON.parse(v) || []; } catch (e) {}
+  const rest = (Array.isArray(had) ? had : []).map(String).filter(p => !phones.has(p));
+  if (rest.length === had.length) return false;
+  if (rest.length) await kvRetry(() => env.KV.put(k, JSON.stringify(rest), { expirationTtl: 31 * 86400 })); else await kvRetry(() => env.KV.delete(k));
+  return true;
+}
+/** удалить снимок базы (демо-снимок при «Убрать демо-базу») @param {Env} env @param {string} cid */
+export const crmDrop = (env, cid) => kvRetry(() => env.KV.delete(crmKey(cid)));
+
 /** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
 export const autoLoad = async (env, cid) => JSON.parse((await env.KV.get(`bcauto:${cid}`)) || "null");
 /** @param {Env} env @param {string} cid @param {Record<string, any>} cfg */

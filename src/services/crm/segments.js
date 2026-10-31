@@ -13,7 +13,7 @@ import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number } }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number }, reasons?: Map<string, string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -70,7 +70,30 @@ export async function crmView(env, c, now) {
     return { ...x, d, why: stop.has(x.p) ? "stop" : !gate.phones.has(x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+  return { snap, rows, marked, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, reasons: gate.reasons, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+}
+
+// воронка рассылки по сегменту (ТЗ v3.0 P0): сколько всего, с правильным номером, в сегменте и почему не все получат. Кто получит,
+// решают crmView и crmPick — здесь только счёт по их же причинам; каждый человек — один раз, по первой причине (порядок crmView:
+// «стоп» → нет согласия → будущая запись → недавний визит → реклама за 30 дней). «Нет согласия» раскрывается по базе контактов D1
+// (marketingGate): «стоп» в D1, полный запрет, неоднозначный «стоп», отказ, не подтверждено, нет согласия; пауза после отменённой записи —
+// правило компании, а не разрешение. rules и consent — коды и числа; тексты и «нет данных для текста» добавляет проверка рассылки
+/** @param {CrmView} view @param {string} seg @param {{ days?: number, from?: number, to?: number, staff?: string }} [o] */
+export function crmFunnel(view, seg, o = {}) {
+  const snap = view.snap || {}, test = crmSegTest(seg), rules = /** @type {Record<string, number>} */ ({}), consent = /** @type {Record<string, number>} */ ({});
+  const valid = view.rows.length + (Array.isArray(snap.futOnly) ? snap.futOnly.length : 0);
+  let segment = 0;
+  for (const x of view.rows) {
+    if (!test || !test(x) || (o.days != null && x.d !== o.days) || (o.from != null && x.d < o.from) || (o.to != null && x.d > o.to) || (o.staff && x.staff !== o.staff)) continue;
+    segment++;
+    if (!x.why) continue;
+    if (x.why === "stop") consent.stop = (consent.stop || 0) + 1;
+    else if (x.why === "noconsent") {
+      const r = (view.reasons && view.reasons.get(x.p)) || "noconsent";
+      if (r === "cooldown") rules.cooldown = (rules.cooldown || 0) + 1; else consent[r] = (consent[r] || 0) + 1;
+    } else rules[x.why] = (rules[x.why] || 0) + 1;
+  }
+  return { total: valid + (+snap.masked || 0) + (+snap.bad || 0), valid, segment, rules, consent };
 }
 
 // кнопки с числами и сведения о снимке (для пульта)

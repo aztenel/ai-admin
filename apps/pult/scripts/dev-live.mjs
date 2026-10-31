@@ -1,7 +1,7 @@
 // Новый пульт на НАСТОЯЩЕМ коде бота, без сети: сервер бота из test/devserver.mjs (память вместо KV, заглушки Meta, Green-API,
 // Altegio, Telegram и «ИИ») + Vite с пультом по адресу /app/. Запросы /api/*, /login и т. п. Vite передаёт серверу бота — как будет на сайте.
 // Две компании, у каждой два номера: Meta Cloud API (wa, «основной номер») и Green-API (ga, «номер бота»):
-//   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов), рассылки с номера бота
+//   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов; с --demo — 150), рассылки с номера бота
 //                выключены кодом (gaNoBroadcast), ключ сотрудника staff-key-winch-0001; три записи через бота на номере бота —
 //                в очереди 8 напоминаний и просьб об отзыве (вкладка «Сервисные · номер бота»), 2 ушли за 3 дня;
 //   dent       — «Демо Дент»: без базы; сервер разрешает рассылки с номера бота (вебхук Green-API настроен), но пульт их не создаёт
@@ -11,7 +11,10 @@
 //   ещё сообщение клиента:      curl -X POST http://127.0.0.1:<порт бота>/_wa -d '{"c":"dent","from":"77001110001","text":"Привет"}'
 // Раздел «Клиенты» (/api/contacts/*): база D1 — как у черновика ai-admin-dev, но в памяти (test/d1.mjs на node:sqlite, Node 22+;
 // на Node 20 базы нет — раздел покажет «База клиентов ещё не подключена»), STAGE=preview: настоящий Altegio черновик читает только
-// проверкой без записи, для экрана — «Тестовые клиенты» в «Синхронизации» (scripts/e2e-contacts.mjs).
+// проверкой без записи, для экрана — «Загрузить демо-базу (150 вымышленных клиентов)» в «Синхронизации» (scripts/e2e-contacts.mjs).
+// Демо-база сразу при запуске: npm run dev:live -- --demo (или DEMO=1, или startDevLive({ demo: true })) — 150 вымышленных клиентов
+// Winchester тем же кодом, что кнопка владельца (src/services/contacts/demo.js): база D1, снимок для рассылок, «стопы», согласия,
+// три демо-рассылки с итогами и черновик; журнал заглушки Altegio — тот же (кнопка «Обновить базу» соберёт ту же базу). Нужен Node 22+.
 // Часы бота — как в проверках (test/clock.mjs): 3 октября 2026, 12:00 по Астане и дальше; даты журнала считаются от них.
 // Номера — вымышленные +7 700 000 xx xx (база) и +7 700 111 xx xx (чаты); имена придуманы.
 // Из другого скрипта (scripts/e2e-campaigns.mjs): const d = await startDevLive({ port }) → { app, bot, S, OWNER, STAFF_W, close }.
@@ -25,8 +28,8 @@ const GA = { id: "1101000001", token: "ga-token-dent" };
 const GAW = { id: "1101000002", token: "ga-token-winch" };
 export const STAFF_W = "staff-key-winch-0001";
 
-/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота. */
-export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0) } = {}) {
+/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота, demo — демо-база на 150 клиентов. */
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo") } = {}) {
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
   const { net, gaPass } = await import(new URL("../../../test/harness.mjs", import.meta.url).href);
@@ -90,13 +93,22 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     if (i % 11 === 0) journal.push(rec(phone, name, -(2 + (i % 5)), { staff, svc, att: 0 })); // будущая запись — в рассылки не попадёт
   }
   journal.push(rec("+7 700 XXX-X0-44", "Скрытый номер", 30, { staff: "Арман" })); // ключ журнала без права видеть телефоны — номер скрыт
-  net.altJournal = journal;
-  await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
-  // реклама по базе — только с подтверждённым согласием (31.10.2026): у трёх из четырёх вымышленных клиентов оно есть (письменное),
-  // у каждого четвёртого — нет: он виден в «Не пишем — нет подтверждённого согласия»
-  if (sqliteOk) {
-    const { grantSnap } = await import(new URL("../../../test/consent.mjs", import.meta.url).href);
-    await grantSnap(S.env, "winchester", Array.from({ length: 40 }, (_, i) => i + 1).filter((i) => i % 4 !== 0).map((i) => "7700000" + String(2000 + i)));
+  const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
+  if (demo && sqliteOk) {
+    // демо-база: тот же код, что «Загрузить демо-базу» у владельца на черновике; журнал заглушки Altegio — тот же, что у демо-базы
+    const { demoLoad, demoPlan } = await import(new URL("../../../src/services/contacts/demo.js", import.meta.url).href);
+    net.altJournal = demoPlan(NOW).after;
+    await demoLoad(S.env, CLIENTS.winchester, NOW);
+  } else {
+    if (demo) console.log("Демо-база нужна база D1 (node:sqlite, Node 22+) — запускаю без неё.");
+    net.altJournal = journal;
+    await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+    // реклама по базе — только с подтверждённым согласием (31.10.2026): у трёх из четырёх вымышленных клиентов оно есть (письменное),
+    // у каждого четвёртого — нет: он виден в «Не пишем — нет подтверждённого согласия»
+    if (sqliteOk) {
+      const { grantSnap } = await import(new URL("../../../test/consent.mjs", import.meta.url).href);
+      await grantSnap(S.env, "winchester", Array.from({ length: 40 }, (_, i) => i + 1).filter((i) => i % 4 !== 0).map((i) => "7700000" + String(2000 + i)));
+    }
   }
 
   // Winchester, вкладка «Сервисные · номер бота»: три записи из журнала Altegio (с 30.10.2026 у Winchester напоминания — по всем записям
@@ -108,7 +120,6 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const { jrPlan } = await import(new URL("../../../src/services/reminders/journal.js", import.meta.url).href);
   const { jrqSave } = await import(new URL("../../../src/db/kv/reminders.js", import.meta.url).href);
   const { putHist } = await import(new URL("../../../src/db/kv/chats.js", import.meta.url).href);
-  const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
   const madeAt = NOW - 3600e3; // записались час назад
   const booked = [
     { id: "77000001101", name: "Арман", day: -1, time: "12:00", svc: "Мужская стрижка", staff: "Данияр" },
@@ -169,13 +180,13 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     await vite.close();
     await new Promise((r) => bot.server.close(() => r(undefined)));
   };
-  return { app, bot, S, OWNER, STAFF_W, close };
+  return { app, bot, S, OWNER, STAFF_W, close, demo: !!(demo && sqliteOk) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { app, bot, OWNER } = await startDevLive();
+  const { app, bot, OWNER, demo } = await startDevLive();
   console.log(`Бот на заглушках: ${bot.url}   (фоновая отправка рассылок: curl -X POST ${bot.url}/_cron)
 Новый пульт:
-  Winchester (база клиентов, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
+  Winchester (${demo ? "демо-база: 150 вымышленных клиентов" : "база клиентов"}, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
   Демо Дент (без базы, рассылка списком):             ${app}?c=dent   владелец: ${OWNER}`);
 }

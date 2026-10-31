@@ -60,12 +60,16 @@ export async function blocksLeft(db, ws, contactId) {
  * @param {{ contactId: string, purpose: string, state: string, basis: string, source: string, actor: string, at: number, evidence?: string|null, evidenceRef?: string|null, confirmed?: boolean, givenAt?: number|null }} x
  */
 export async function consentAdd(db, ws, x) {
-  await db.batch([
+  await db.batch(consentStmts(db, ws, x));
+}
+/** Запросы одной строки согласия (для пачки: демо-база пишет сотню согласий одной транзакцией). @param {any} db @param {string} ws @param {Parameters<typeof consentAdd>[2]} x */
+export function consentStmts(db, ws, x) {
+  return [
     db.prepare("insert into consents (ws, contact_id, purpose, state, basis, source, actor, created_at, evidence, evidence_ref, confirmed, given_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(ws, x.contactId, x.purpose, x.state, x.basis.slice(0, 200), x.source, x.actor, x.at, x.evidence || null, x.evidenceRef ? x.evidenceRef.slice(0, 200) : null, x.confirmed ? 1 : 0, x.givenAt ?? null),
     db.prepare("insert into events (ws, event_key, kind, contact_id, actor, details, at) values (?, ?, 'consent', ?, ?, ?, ?) on conflict do nothing").bind(ws, `consent:${x.contactId}:${x.purpose}:${x.at}`, x.contactId, x.actor,
       JSON.stringify({ purpose: x.purpose, state: x.state, basis: x.basis.slice(0, 120), evidence: x.evidence || null, confirmed: !!x.confirmed }), x.at)
-  ]);
+  ];
 }
 
 // источники запретов, которые поставил сам клиент («стоп», кнопка и отказ Meta, перенос его «стопа» из KV): снять их можно только после

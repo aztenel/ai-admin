@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { sqliteOk, d1With } from "../d1.mjs";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
-import { syncStep, syncDry, syncTest, testJournal, dirRow } from "../../src/services/contacts/sync.js";
+import { syncStep, syncDry, dirRow } from "../../src/services/contacts/sync.js";
+import { demoLoad, demoPlan } from "../../src/services/contacts/demo.js";
 import { altProbe } from "../../src/services/contacts/probe.js";
 import { altRead } from "../../src/services/integrations/altegio/client.js";
 import { contactsSegments, contactsList, contactsCard, contactsStatus } from "../../src/services/contacts/index.js";
@@ -152,7 +153,7 @@ test("подозрительно пустой ответ Altegio не помеч
   assert.ok(st.errors.some(e => /удалённые не отмечаю/.test(e.text)), JSON.stringify(st.errors));
 });
 
-test("черновик: настоящий Altegio в базу не пишется — только проверка без записи; тестовые клиенты проходят тот же путь", { skip }, async () => {
+test("черновик: настоящий Altegio в базу не пишется — только проверка без записи; демо-база проходит тот же путь", { skip }, async () => {
   net.reset(); rid = 0;
   net.altJournal = [rec(ph(601), 25), rec(ph(602), 40), rec("+7 700 XXX-X1-05", 20)];
   const d = d1With("preview"), s = mk({ ...ENV, DB: d.db, STAGE: "preview" });
@@ -162,14 +163,14 @@ test("черновик: настоящий Altegio в базу не пишетс
   assert.ok(dry.summary.some(l => /В базу ничего не записано/.test(l)));
   assert.equal(d.raw.prepare("select count(*) n from contacts").get().n, 0, "номера настоящих клиентов в черновик не попали");
   assert.ok(!/7700000060/.test(JSON.stringify(d.raw.prepare("select details from events").all())), "в журнале — только числа");
-  const t = await syncTest(s.env, W, Date.now());
-  assert.match(t.summary[0], /Тестовые клиенты: 40/);
-  assert.ok(d.raw.prepare("select count(*) n from contacts").get().n === 40);
+  const t = await demoLoad(s.env, W, Date.now());
+  assert.match(t.summary[0], /Демо-база загружена: 150 вымышленных клиентов/);
+  assert.ok(d.raw.prepare("select count(*) n from contacts").get().n === 150);
   assert.ok(d.raw.prepare("select count(*) n from contacts where phone not like '7700000%'").get().n === 0, "только +7 700 000 xx xx");
   const card = await contactsCard(s.env, W, Date.now(), d.raw.prepare("select id from contacts where visits >= 3 limit 1").get().id);
   assert.ok(card.visits.length >= 3 && card.contact.phone.startsWith("+7 700 000"));
-  assert.equal(testJournal(NOW).filter(r => r.deleted).length, 1);
-  await assert.rejects(syncTest(mk({ ...ENV, DB: d1With("production").db }).env, W, Date.now()), e => e.code === "preview", "на боевом — нельзя");
+  assert.ok(demoPlan(NOW).after.filter(r => r.deleted).length >= 4, "отменённые записи в демо-журнале");
+  await assert.rejects(demoLoad(mk({ ...ENV, DB: d1With("production").db }).env, W, Date.now()), e => e.code === "preview", "на боевом — нельзя");
 });
 
 test("проба полей Altegio: только имена полей, доли и числа — без имён и номеров; отчёт в журнале", { skip }, async () => {

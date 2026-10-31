@@ -2205,6 +2205,7 @@
    "cut",
    "dup",
    "errors",
+   "funnel",
    "lang",
    "named",
    "ok",
@@ -2227,6 +2228,7 @@
    "cut",
    "dup",
    "errors",
+   "funnel",
    "lang",
    "named",
    "ok",
@@ -2258,6 +2260,7 @@
    "dup",
    "errors",
    "excluded",
+   "funnel",
    "lang",
    "named",
    "ok",
@@ -3033,6 +3036,9 @@
   "cache": "no-store",
   "json": [
    "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
    "owner",
    "ready",
    "stage",
@@ -3045,6 +3051,9 @@
   "cache": "no-store",
   "json": [
    "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
    "owner",
    "ready",
    "stage",
@@ -3065,6 +3074,9 @@
   "cache": "no-store",
   "json": [
    "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
    "owner",
    "ready",
    "stage",
@@ -3411,6 +3423,30 @@
    "error"
   ]
  },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "POST /api/contacts/add {\"c\":\"dent\",\"phone\":\"+77000000999\"} [anon]": {
   "status": 401,
   "type": "application/json",
@@ -3479,6 +3515,7 @@
    "dup",
    "errors",
    "excluded",
+   "funnel",
    "named",
    "ok",
    "preview",
