@@ -1,6 +1,7 @@
 // Настройки: только то, что работает или уже есть на сервере. Что меняется на других страницах (паспорт бота, ключи
 // сотрудников, подключение номеров), — ссылкой туда, а не неработающей кнопкой здесь.
 // На телефоне — список разделов → раздел (адрес #/settings/<раздел>); на компьютере — список слева, раздел справа.
+import { logoutWith } from "@/lib/push";
 import { Bell, Building2, ChevronRight, ExternalLink, KeyRound, MapPin, MessageCircle, Palette, Bot, type LucideIcon, Globe, LogOut } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { buttonClass, Button, Field, Segmented } from "@/components/ui";
@@ -254,7 +255,7 @@ function Logout({ className }: { className?: string }) {
   const url = mode === "live" && wsId ? store.source?.externalUrl("logout", wsId) : null;
   if (!url) return null;
   return (
-    <a href={url} className={buttonClass("ghost", "md", cn("-ml-2 text-critical hover:bg-critical-soft hover:text-critical max-md:ml-0", className))}>
+    <a href={url} onClick={(e) => (e.preventDefault(), void logoutWith(url, wsId))} className={buttonClass("ghost", "md", cn("-ml-2 text-critical hover:bg-critical-soft hover:text-critical max-md:ml-0", className))}>
       <LogOut aria-hidden className="size-4" strokeWidth={2} />
       Выйти
     </a>

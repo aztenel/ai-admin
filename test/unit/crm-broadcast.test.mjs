@@ -462,3 +462,30 @@ test("ошибка Meta с номером получателя: в заметк�
   assert.equal(b.status, "paused"); assert.ok(/\*\*\*/.test(b.note), b.note);
   assert.ok(![101, 102, 104, 109, 110].some(i => b.note.includes(dg(i)) || t.includes(dg(i)) || net.tg.some(x => (x.text || "").includes(dg(i)))), b.note);
 });
+
+test("отправка по базе: согласие проверяется перед каждой порцией списком разрешённых — отозвали согласие после создания — не пишем; база согласий недоступна — пауза (31.10.2026)", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const d = await (await own.post("/api/bc/create", { ...FORM, segment: "pora" })).json();
+  const who = s.kv.json(`bcr:winchester:${d.b.id}:0`).map(x => x[0]);
+  assert.ok(who.length >= 2, "в рассылке минимум двое");
+  // у первого согласие отозвали после создания рассылки
+  const { consentAdd } = await import("../../src/db/d1/rights.js");
+  const id1 = String((await s.env.DB.prepare("select id from contacts where ws = ? and phone = ?").bind("winchester", who[0]).first()).id);
+  await consentAdd(s.env.DB, "winchester", { contactId: id1, purpose: "marketing", state: "denied", basis: "клиент отказался", source: "manual", actor: "owner", at: 2, evidence: "client_stop", confirmed: true });
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
+  await s.cron();
+  const to = tpls().map(x => x.body.to);
+  assert.ok(!to.includes(who[0]), "отозвавшему согласие — нет");
+  assert.ok(to.length >= 1, "остальным — да");
+  // база согласий пропала — следующая рассылка встаёт на паузу, а не уходит
+  const d2 = await (await own.post("/api/bc/create", { ...FORM, name: "Ещё раз", segment: "davno" })).json();
+  if (d2.ok) {
+    net.graph.length = 0;
+    await own.post("/api/bc/act", { c: "winchester", id: d2.b.id, act: "start" });
+    const db = s.env.DB; delete s.env.DB;
+    await s.cron();
+    s.env.DB = db;
+    assert.equal(tpls().length, 0, "без базы согласий — ни одного сообщения");
+    assert.match(String(s.kv.json(`bc:winchester:${d2.b.id}`).note || ""), /согласи/);
+  }
+});

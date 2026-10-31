@@ -1,5 +1,6 @@
 // Каркас: на планшете и компьютере — узкая полоса разделов слева, на телефоне — вкладки снизу (прячутся внутри переписки,
 // как в мессенджерах). Разделов немного: ежедневная работа — чаты и заявки; база клиентов — «Клиенты»; редкое — в настройках.
+import { logoutWith } from "@/lib/push";
 import { ClipboardList, Contact, Laptop, LogOut, UserRound, Megaphone, MessagesSquare, Moon, Settings, Sun, WifiOff, type LucideIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "@/components/overlay";
@@ -143,7 +144,7 @@ function AccountMenu() {
           Настройки
         </MenuItem>
         {logout && (
-          <MenuItem onSelect={() => (location.href = logout)}>
+          <MenuItem onSelect={() => void logoutWith(logout, wsId)}>
             <LogOut aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
             Выйти
           </MenuItem>

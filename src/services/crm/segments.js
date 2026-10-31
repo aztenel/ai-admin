@@ -13,7 +13,7 @@ import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, gate?: { ready: boolean, why: string, n: number } }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number } }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -70,7 +70,7 @@ export async function crmView(env, c, now) {
     return { ...x, d, why: stop.has(x.p) ? "stop" : !gate.phones.has(x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+  return { snap, rows, marked, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
 }
 
 // кнопки с числами и сведения о снимке (для пульта)

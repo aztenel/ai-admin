@@ -14,6 +14,7 @@ import { local } from "../../lib/time.js";
 import { hash } from "../../lib/crypto.js";
 import { notifyOnce } from "./telegram.js";
 import { opName } from "../inbox/operator.js";
+import { staffMark } from "../auth/session.js";
 import { webpushSend, pushHostOk } from "../integrations/webpush/client.js";
 import { vapidGenerate, vapidOk, unb64u, p256Ok } from "../integrations/webpush/crypto.js";
 import { pushVapidGet, pushVapidPut, pushSubId, pushSubGet, pushSubPut, pushSubDel, pushSubs, pushSeen } from "../../db/kv/push.js";
@@ -90,10 +91,13 @@ export async function pushConfig(env, cid) {
 
 /**
  * Подписать устройство (или обновить подписку: та же подписка — тот же ключ KV).
- * @param {Env} env @param {string} cid @param {any} b { sub, op, prefs } @param {string} role @param {string} ua @param {number} now
+ * Подписка живёт не дольше входа, которым её сделали (until — срок сессии), а подписка сотрудника — пока действует его ключ (mk —
+ * отпечаток ключа сотрудника): уволенному сотруднику после смены ключа уведомления не приходят (проверка безопасности 31.10.2026).
+ * @param {Env} env @param {string} cid @param {any} b { sub, op, prefs } @param {{ role: string, exp?: number }} s сессия @param {string} ua @param {number} now
  * @returns {Promise<{ status: number, body: any }>}
  */
-export async function pushSubscribe(env, cid, b, role, ua, now) {
+export async function pushSubscribe(env, cid, b, s, ua, now) {
+  const role = s && s.role;
   const sub = subOf(b.sub);
   if (!sub) return { status: 400, body: { error: "Браузер прислал подписку, которую сервер не принимает. Обновите страницу и включите ещё раз." } };
   const k = await vapidKeys(env);
@@ -102,7 +106,8 @@ export async function pushSubscribe(env, cid, b, role, ua, now) {
   if (!was && (await pushSubs(env, cid, MAX_SUBS + 1)).length >= MAX_SUBS) return { status: 409, body: { error: `У компании уже ${MAX_SUBS} устройств с уведомлениями. Выключите их на старых устройствах.` } };
   const prefs = prefsOf(b.prefs !== undefined ? b.prefs : was && was.prefs);
   const op = b.op !== undefined ? opName(b.op) : (was && was.op) || "";
-  await pushSubPut(env, cid, id, { ...sub, op, role: role === "owner" ? "owner" : "staff", prefs, at: (was && was.at) || now, seen: now, vk: k.publicKey, ua: String(ua || "").slice(0, 160) });
+  const mk = role === "owner" ? "" : await staffMark(env, cid), until = Number((s && s.exp) || 0) || now + 30 * 86400e3;
+  await pushSubPut(env, cid, id, { ...sub, op, role: role === "owner" ? "owner" : "staff", prefs, at: (was && was.at) || now, seen: now, vk: k.publicKey, ua: String(ua || "").slice(0, 160), mk, until });
   return { status: 200, body: { ok: true, prefs, op } };
 }
 /** Настройки этого устройства. @param {Env} env @param {string} cid @param {any} b { endpoint, prefs, op } */
@@ -128,7 +133,7 @@ const lastTest = new Map();
 export async function pushTest(env, cid, b, now) {
   if (!pushHostOk(b.endpoint)) return { status: 400, body: { error: "Устройство не подписано." } };
   const id = await pushSubId(String(b.endpoint)), sub = await pushSubGet(env, cid, id);
-  if (!sub) return { status: 404, body: { error: "Уведомления на этом устройстве выключены — включите их заново." } };
+  if (!sub || !(await subLive(env, cid, sub, now))) { if (sub) await pushSubDel(env, cid, id); return { status: 404, body: { error: "Уведомления на этом устройстве выключены — включите их заново." } }; }
   if (now - (lastTest.get(id) || 0) < 10e3) return { status: 429, body: { error: "Проверка уже отправлена — подождите несколько секунд." } };
   lastTest.set(id, now);
   const k = await vapidKeys(env);
@@ -137,6 +142,14 @@ export async function pushTest(env, cid, b, now) {
   if (r.gone) { await pushSubDel(env, cid, id); return { status: 410, body: { error: "Служба уведомлений браузера отозвала подписку. Включите уведомления заново." } }; }
   if (!r.ok) return { status: 502, body: { error: r.status ? `Служба уведомлений ответила ошибкой ${r.status}. Попробуйте позже.` : "Служба уведомлений не ответила. Попробуйте позже." } };
   return { status: 200, body: { ok: true } };
+}
+
+/** Подписка ещё действует: вход, которым её сделали, не истёк, ключ сотрудника не меняли. Старые подписки без срока — до 30 дней
+ *  с последнего входа. @param {Env} env @param {string} cid @param {any} s @param {number} now */
+async function subLive(env, cid, s, now) {
+  if ((+s.until || (+s.seen || +s.at || 0) + 30 * 86400e3) < now) return false;
+  if (s.role === "staff") { const cur = await staffMark(env, cid); return !!cur && s.mk === cur; }
+  return true;
 }
 
 // повторы: память экземпляра (одновременные вебхуки) + KV (другие экземпляры)
@@ -160,7 +173,10 @@ export async function pushNotify(env, cid, ev) {
     }
     const c = CLIENTS[cid], company = String((c && c.name) || "Пульт");
     if (ev.critical) { try { await notifyOnce(env, `push:${cid}:${ev.kind}`, `⚠️ ${company}: ${GENERIC[ev.kind]}${ev.line ? ` (${String(ev.line).slice(0, 40)})` : ""}`, cid); } catch (e) {} }
-    const all = await pushSubs(env, cid);
+    const subs = await pushSubs(env, cid), live = await Promise.all(subs.map(s => subLive(env, cid, s, now)));
+    // вход истёк или ключ сотрудника сменили — подписку удаляем, ему не пишем
+    await Promise.all(subs.filter((_, i) => !live[i]).map(s => pushSubDel(env, cid, s.id).catch(() => {})));
+    const all = subs.filter((_, i) => live[i]);
     if (!all.length) return res;
     const k = await vapidKeys(env);
     if (!k) { res.skipped = all.length; return res; }

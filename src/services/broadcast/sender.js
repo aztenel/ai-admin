@@ -206,8 +206,13 @@ export async function bcTick(env, cid, id, gaBusy) {
     // проверки 19.10.2026): две рассылки по пересекающимся сегментам или ручная «Пора на стрижку» и автосценарий иначе пишут одному
     // человеку два платных шаблона; кто записался или пришёл после создания рассылки — тоже не получит. Старая база — пауза: не видно, кто записался
     const no = new Set();
+    /** @type {Set<string> | null} */ let allow = null;
     if (b.src === "crm" && take > 0) {
       const view = await crmView(env, CLIENTS[cid], now);
+      // реклама — только тем, у кого подтверждённое согласие сейчас (список разрешённых, а не список исключений: человек, которого
+      // нет в свежем снимке, тоже не получит; проверка безопасности 31.10.2026). База согласий не отвечает — пауза
+      if (!view.gate || !view.gate.ready) return await stopFor(`${(view.gate && view.gate.why) || "База согласий не отвечает."} Рассылка на паузе — «Продолжить», когда база снова доступна.`);
+      allow = view.allow || new Set();
       if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return await stopFor("База клиентов из Altegio не обновлялась больше 3 дней — по ней не видно, кто уже записался. Обновите базу в разделе сегментов и нажмите «Продолжить».");
       for (const x of view.rows) if (x.why && x.why !== "stop") no.add(x.p);
       for (const p of view.marked || []) no.add(p);
@@ -222,7 +227,7 @@ export async function bcTick(env, cid, id, gaBusy) {
     for (const [digits, name] of items) {
       if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
       if (stop.has(digits)) { b.skipped++; done++; continue; }
-      if (no.has(digits)) { b.excl = (b.excl || 0) + 1; done++; continue; }
+      if (no.has(digits) || (allow && !allow.has(digits))) { b.excl = (b.excl || 0) + 1; done++; continue; }
       did = true;
       const r = ga ? await bcSendGa(env, digits, b, name, route.ga) : await sendTemplate(env, digits, b, name, route);
       if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga) marked.push(digits); continue; }

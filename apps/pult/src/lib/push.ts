@@ -138,6 +138,13 @@ export async function pushDisable(ws: string): Promise<void> {
   if (sub && !Object.keys(marks()).length) await sub.unsubscribe().catch(() => false);
 }
 
+/** Выход из пульта: сначала выключаем уведомления этого устройства (иначе после выхода они приходили бы и дальше — проверка
+ *  безопасности 31.10.2026), не дольше 2 секунд, потом — на /logout. */
+export async function logoutWith(url: string, ws: string | null) {
+  if (ws) await Promise.race([pushDisable(ws).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+  location.href = url;
+}
+
 /** При открытии пульта: Service Worker, переход к чату по нажатию на уведомление, отметка «push включён здесь». */
 export function pushBoot(ws: string | null) {
   if (!("serviceWorker" in navigator)) return;

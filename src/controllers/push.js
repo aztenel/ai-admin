@@ -27,7 +27,7 @@ export async function pushApi(request, env, url, s) {
     if (typeof b.endpoint !== "undefined" && typeof b.endpoint !== "string") return jsonP({ error: "Устройство не подписано." }, 400);
     /** @type {{ status: number, body: any } | null} */
     let r = null;
-    if (P === "/api/push/subscribe") r = await pushSubscribe(env, cid, b, s.role, request.headers.get("user-agent") || "", now);
+    if (P === "/api/push/subscribe") r = await pushSubscribe(env, cid, b, s, request.headers.get("user-agent") || "", now);
     else if (P === "/api/push/prefs") r = await pushPrefsSet(env, cid, b);
     else if (P === "/api/push/unsubscribe") r = await pushUnsubscribe(env, cid, b);
     else if (P === "/api/push/test") r = await pushTest(env, cid, b, now);

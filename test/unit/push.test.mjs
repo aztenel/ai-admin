@@ -168,3 +168,26 @@ test("ключи VAPID из переменных важнее KV; неверны
   const cfg = await (await staff.go("/api/push/config?c=winchester")).json();
   assert.equal(cfg.enabled, false); assert.match(cfg.why, /VAPID/);
 });
+
+test("уволенному сотруднику (ключ сменили) и после истёкшего входа уведомления не приходят — подписка удаляется (проверка безопасности 31.10.2026)", async () => {
+  net.reset();
+  const env = { ...ENV };
+  const s = mk(env), staff = await login(s, STAFF_W), own = await login(s, OWNER), ds = device(), dow = device();
+  assert.equal((await post(staff, "/api/push/subscribe", { c: "winchester", sub: ds.sub, op: "Ержан" })).status, 200);
+  assert.equal((await post(own, "/api/push/subscribe", { c: "winchester", sub: dow.sub, op: "Владелец" })).status, 200);
+  let r = await pushNotify(s.env, "winchester", { kind: "inbound", key: "k1", chat: { ch: "ga", id: "77000000001" } });
+  assert.equal(r.sent, 2);
+  const stored = [...s.kv.mem.entries()].filter(([k]) => k.startsWith("wp:winchester:")).map(([, v]) => JSON.parse(v));
+  assert.ok(stored.every(x => x.until > Date.now()), "подписка помнит срок входа");
+  // владелец сменил ключ сотрудника — прежний сотрудник больше не получает
+  s.env.KEY_WINCHESTER = "staff-key-winch-NEW-0002";
+  net.push.length = 0;
+  r = await pushNotify(s.env, "winchester", { kind: "inbound", key: "k2", chat: { ch: "ga", id: "77000000001" } });
+  assert.equal(r.sent, 1); assert.ok(!net.push.some(x => x.url === ds.sub.endpoint), "старому сотруднику — ничего");
+  assert.equal([...s.kv.mem.keys()].filter(k => k.startsWith("wp:winchester:")).length, 1, "его подписка удалена");
+  // вход владельца истёк — подписка тоже перестаёт действовать
+  for (const [k, v] of s.kv.mem.entries()) if (k.startsWith("wp:winchester:")) { const j = JSON.parse(v); j.until = Date.now() - 1000; s.kv.mem.set(k, JSON.stringify(j)); }
+  net.push.length = 0;
+  r = await pushNotify(s.env, "winchester", { kind: "inbound", key: "k3", chat: { ch: "ga", id: "77000000001" } });
+  assert.equal(r.sent, 0); assert.equal(net.push.length, 0);
+});
