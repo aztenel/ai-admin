@@ -2356,6 +2356,78 @@
    "error"
   ]
  },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "GET /api/launch/status?c=barber [anon]": {
   "status": 401,
   "type": "application/json",
@@ -4821,6 +4893,30 @@
   ]
  },
  "POST /api/bc/check {\"c\":\"dent\",\"ch\":\"ga\",\"segment\":\"all\",\"tplId\":\"M01\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
   "cache": "no-store",

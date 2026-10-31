@@ -3,14 +3,14 @@
 // Файл отдаёт наш сервер (/api/inbox/media, вход обязателен), ключей и ссылок провайдера в браузере нет.
 // Голосовые WhatsApp — Ogg Opus: Safari на iPhone (до iOS 18.4) их не играет — тогда файл расшифровывается здесь же
 // (ogg-opus-decoder, грузится только когда нужен) и играется как WAV. Не открылось — понятная причина, сообщение остаётся.
-import { Download, FileText, Image as ImageIcon, MapPin, Pause, Phone, Play, Video, X } from "lucide-react";
+import { Download, FileText, Image as ImageIcon, MapPin, Maximize2, Pause, Phone, Play, Video, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "@/model/types";
 import { cn } from "@/lib/utils";
 
 type Media = NonNullable<Message["media"]>;
 const fmtDur = (s: number) => (Number.isFinite(s) && s > 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
-const fmtSize = (n?: number) => (!n ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} МБ`);
+export const fmtSize = (n?: number) => (!n ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} МБ`);
 
 /** Текст ошибки сервера (он пишет понятные причины: «Файл недоступен: WhatsApp хранит файлы ограниченное время…»). */
 async function why(url: string) {
@@ -24,13 +24,25 @@ async function why(url: string) {
   }
 }
 
-export function MediaView({ media, onDark }: { media: Media; onDark: boolean }) {
-  if (!media.url) return <Unavailable kind={media.kind} text="Файл не сохранился в переписке." />;
-  if (media.kind === "image" || media.kind === "sticker") return <ImageView url={media.url} />;
+/** onOpen — открыть фото или видео на весь экран (просмотр — один на ленту: его открывает и меню сообщения «Открыть»).
+ *  mine — файл отправили мы (подпись картинки для читалок). */
+export function MediaView({ media, onDark, onOpen, mine }: { media: Media; onDark: boolean; onOpen?: (v: Viewer) => void; mine?: boolean }) {
+  // файл не сохранился (например, не знаем, ушёл ли он): имя видно, открыть нельзя
+  if (!media.url) return media.name && media.kind !== "location" && media.kind !== "contact" ? <DocView media={media} /> : <Unavailable kind={media.kind} text="Файл не сохранился в переписке." />;
+  if (media.kind === "image" || media.kind === "sticker") return <ImageView url={media.url} onOpen={onOpen} mine={mine} />;
   if (media.kind === "audio") return <VoicePlayer url={media.url} onDark={onDark} />;
-  if (media.kind === "video") return <VideoView url={media.url} />;
+  if (media.kind === "video") return <VideoView url={media.url} onOpen={onOpen} />;
   if (media.kind === "location" || media.kind === "contact") return <Unavailable kind={media.kind} text={media.kind === "location" ? "Геолокация. Откройте в WhatsApp" : "Контакт. Откройте в WhatsApp"} />;
   return <DocView media={media} />;
+}
+/** Что открыто на весь экран. */
+export type Viewer = { kind: "image" | "video"; url: string; name?: string };
+/** Открыть файл сообщения: фото и видео — на весь экран, документ — в новой вкладке (PDF) или скачать. */
+export function openMedia(media: Media, onOpen: (v: Viewer) => void) {
+  if (!media.url) return;
+  if (media.kind === "image" || media.kind === "sticker") return onOpen({ kind: "image", url: media.url, name: media.name });
+  if (media.kind === "video") return onOpen({ kind: "video", url: media.url, name: media.name });
+  window.open(media.url, "_blank", "noopener");
 }
 
 function Unavailable({ kind, text }: { kind: Media["kind"]; text: string }) {
@@ -43,31 +55,38 @@ function Unavailable({ kind, text }: { kind: Media["kind"]; text: string }) {
   );
 }
 
-function ImageView({ url }: { url: string }) {
+function ImageView({ url, onOpen, mine }: { url: string; onOpen?: (v: Viewer) => void; mine?: boolean }) {
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState("");
   if (err) return <Unavailable kind="image" text={err} />;
+  const alt = mine ? "Отправленное фото" : "Фото от клиента";
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="-mx-1.5 -mt-0.5 mb-1 block overflow-hidden rounded-xl" aria-label="Открыть фото">
-        <img src={url} alt="Фото от клиента" loading="lazy" onError={() => why(url).then((t) => setErr(t || "Фото не открылось."))} className="max-h-80 w-full min-w-40 bg-surface-2 object-cover" />
+      <button type="button" onClick={() => (onOpen ? onOpen({ kind: "image", url }) : setOpen(true))} className="-mx-1.5 -mt-0.5 mb-1 block overflow-hidden rounded-xl" aria-label="Открыть фото">
+        <img src={url} alt={alt} loading="lazy" onError={() => !url.startsWith("blob:") && why(url).then((t) => setErr(t || "Фото не открылось."))} className="max-h-80 w-full min-w-40 bg-surface-2 object-cover" />
       </button>
-      {open && <Lightbox url={url} onClose={() => setOpen(false)} />}
+      {open && <Lightbox v={{ kind: "image", url }} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+/** Просмотр на весь экран: фото или видео, «Скачать», «Закрыть», Esc. */
+export function Lightbox({ v, onClose }: { v: Viewer; onClose: () => void }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
   }, [onClose]);
+  const what = v.kind === "video" ? "видео" : "фото";
   return (
-    <div role="dialog" aria-modal="true" aria-label="Фото" className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 pb-safe pt-safe" onClick={onClose}>
-      <img src={url} alt="Фото от клиента" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+    <div role="dialog" aria-modal="true" aria-label={v.kind === "video" ? "Видео" : "Фото"} className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 pb-safe pt-safe" onClick={onClose}>
+      {v.kind === "video" ? (
+        <video src={v.url} controls autoPlay playsInline className="max-h-full max-w-full bg-black" onClick={(e) => e.stopPropagation()} />
+      ) : (
+        <img src={v.url} alt="Фото" className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+      )}
       <div className="absolute right-3 top-[calc(var(--safe-t)+0.75rem)] flex gap-2">
-        <a href={url} download className="grid size-11 place-items-center rounded-full bg-white/15 text-white" aria-label="Скачать фото" onClick={(e) => e.stopPropagation()}>
+        <a href={v.url} download={v.name || ""} className="grid size-11 place-items-center rounded-full bg-white/15 text-white" aria-label={`Скачать ${what}`} onClick={(e) => e.stopPropagation()}>
           <Download aria-hidden className="size-5" />
         </a>
         <button type="button" onClick={onClose} className="grid size-11 place-items-center rounded-full bg-white/15 text-white" aria-label="Закрыть">
@@ -78,32 +97,48 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
   );
 }
 
-function VideoView({ url }: { url: string }) {
+function VideoView({ url, onOpen }: { url: string; onOpen?: (v: Viewer) => void }) {
   const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
   if (err) return <Unavailable kind="video" text={err} />;
   return (
-    <video controls playsInline preload="metadata" src={url} onError={() => why(url).then((t) => setErr(t || "Видео не открывается в браузере. Скачайте файл."))} className="-mx-1.5 -mt-0.5 mb-1 block max-h-80 w-full min-w-48 rounded-xl bg-black" />
+    <span className="relative -mx-1.5 -mt-0.5 mb-1 block">
+      <video controls playsInline preload="metadata" src={url} onError={() => !url.startsWith("blob:") && why(url).then((t) => setErr(t || "Видео не открывается в браузере. Скачайте файл."))} className="block max-h-80 w-full min-w-48 rounded-xl bg-black" />
+      <button
+        type="button"
+        onClick={() => (onOpen ? onOpen({ kind: "video", url }) : setOpen(true))}
+        aria-label="Видео на весь экран"
+        className="absolute right-2 top-2 grid size-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm hover:bg-black/70"
+      >
+        <Maximize2 aria-hidden className="size-4" strokeWidth={2} />
+      </button>
+      {open && <Lightbox v={{ kind: "video", url }} onClose={() => setOpen(false)} />}
+    </span>
   );
 }
 
 function DocView({ media }: { media: Media }) {
   const name = media.name || "Файл";
   const pdf = /pdf/i.test(media.mime || "") || /\.pdf$/i.test(name);
+  const Icon = media.kind === "image" ? ImageIcon : media.kind === "video" ? Video : FileText;
   return (
-    <span className="mb-1 flex items-center gap-2.5">
-      <FileText aria-hidden className="size-8 shrink-0 opacity-75" strokeWidth={1.5} />
+    <span className="mb-1 flex min-w-48 items-center gap-2.5">
+      <Icon aria-hidden className="size-8 shrink-0 opacity-75" strokeWidth={1.5} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{name}</span>
         <span className="block text-xs opacity-75">{[fmtSize(media.size), pdf ? "PDF" : ""].filter(Boolean).join(" · ") || "Документ"}</span>
       </span>
-      {pdf && (
+      {/* файла на сервере нет (не знаем, ушёл ли он): только имя, без ссылок */}
+      {media.url && pdf && (
         <a href={media.url} target="_blank" rel="noopener" className="text-sm font-medium underline underline-offset-2">
           Открыть
         </a>
       )}
-      <a href={media.url} download={name} className="grid size-9 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label={`Скачать ${name}`}>
-        <Download aria-hidden className="size-4" />
-      </a>
+      {media.url && (
+        <a href={media.url} download={name} className="grid size-9 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label={`Скачать ${name}`}>
+          <Download aria-hidden className="size-4" />
+        </a>
+      )}
     </span>
   );
 }

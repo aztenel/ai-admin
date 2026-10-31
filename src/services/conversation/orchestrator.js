@@ -242,8 +242,10 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   const phoneInText = (phonesIn(text).find(p => !ownPhones.has(p.phone)) || {}).phone || "";
   if (phoneInText) saved.profile.phone = phoneInText;
   const who = opts.phone || saved.profile.phone || "телефон не указан";
+  // номер сообщения клиента у Green-API и его цитата: на это сообщение сотрудник отвечает из пульта цитатой, по номеру приходят правки (31.10.2026)
+  const inMeta = { ...(opts.mid ? { mid: String(opts.mid).slice(0, 80) } : {}), ...(opts.qt ? { qt: opts.qt } : {}) };
   const save = async (userText, reply) => {
-    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), t: nowMs }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
+    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), t: nowMs, ...inMeta }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
     const put = async () => {
       let n = saved.n + 1, t = saved.turns.concat(add), prof = saved.profile, cur = null;
       try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) {}
@@ -353,7 +355,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   // lastBot и lastUser — защите ответа: ИИ прошлым ответом предложил другого мастера, а клиент согласился, не назвав его (проверка 19.10.2026)
   const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile, lastBot, lastUser: text };
 
-  const userTurn = { role: "user", text: maskPhones(text), t: nowMs };
+  const userTurn = { role: "user", text: maskPhones(text), t: nowMs, ...inMeta };
   let turns = saved.turns.concat([userTurn]).slice(-MAX_TURNS); // это уходит в ИИ; в хранилище остаётся вся история (HIST_KEEP)
   while (turns.length && turns[0].role !== "user") turns.shift();
   const userAll = turns.filter(t => t.role === "user").map(t => t.text).join(" \n ");

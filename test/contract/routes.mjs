@@ -109,6 +109,8 @@ const R = [
   ["POST", "/api/bc/act", { c: "barber", act: "approve" }], ["POST", "/api/bc/act", { c: "dent", act: "approve" }],
   ["POST", "/api/bc/check", { c: "barber", ch: "ga", segment: "pora", tplId: "M01" }], ["POST", "/api/bc/check", { c: "dent", ch: "ga", segment: "all", tplId: "M01" }],
   ["GET", "/api/inbox/catalog?c=barber"], ["GET", "/api/inbox/times?c=barber&date=2026-11-02"], ["GET", "/api/inbox/times?c=dent"],
+  // «Полноценные чаты» (31.10.2026): файл клиенту со второго номера — компания и чат в адресе, тело — файл (multipart); чужая компания — 403
+  ["POST", "/api/inbox/send-file?c=barber&ch=ga&id=77010000001", {}], ["POST", "/api/inbox/send-file?c=barber&ch=wa&id=77010000001", {}], ["POST", "/api/inbox/send-file?c=dent&ch=wa&id=77010000055", {}],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],

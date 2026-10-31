@@ -14,11 +14,22 @@ import type {
   ConversationRef,
   ConversationSummary,
   InboxSnapshot,
+  MediaKind,
   Message,
+  Quote,
   Session,
   Workspace,
   WorkspaceOption,
 } from "@/model/types";
+
+/** Вид файла по типу — как его покажет пузырь (сервер решает так же: services/inbox/send.js, fileKind). */
+export function fileKindOf(f: { type: string; name: string }): MediaKind {
+  const t = (f.type || "").toLowerCase(), n = (f.name || "").toLowerCase();
+  if (/^image\/(jpeg|png|webp|gif)$/.test(t) || (!t && /\.(jpe?g|png|webp|gif)$/.test(n))) return "image";
+  if (/^video\/(mp4|quicktime|3gpp|webm)$/.test(t) || (!t && /\.(mp4|mov|3gp|webm)$/.test(n))) return "video";
+  if (/^audio\//.test(t) || (!t && /\.(mp3|ogg|opus|m4a|aac|wav|amr)$/.test(n))) return "audio";
+  return "document";
+}
 
 // разделы чатов (ТЗ v2.0 §2.1): нужен ответ, записи и изменения, ответы на рассылки и напоминания, назначено мне, все, готово
 export type Filter = "waiting" | "booking" | "replies" | "mine" | "all" | "done";
@@ -163,6 +174,7 @@ class Store {
       navigate({ name: "inbox" }, { replace: true });
     }
     resetNotify();
+    for (const k of [...this.pending.keys()]) this.forgetFile(k); // неотправленные файлы прежней компании
     this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, showOut: false, outOnly: 0, operators: [], filter: v && FILTERS.includes(v.filter) ? v.filter : "waiting", scope: v?.scope || { kind: "all" } });
     // адрес с ?c= — как у рабочего пульта (/inbox?c=…): ссылку можно открыть заново и переслать коллеге
     const u = new URL(location.href);
@@ -283,28 +295,85 @@ class Store {
     });
   }
 
-  /** Отправка: сообщение сразу в ленте; не ушло — остаётся с пометкой и кнопкой «Повторить». */
-  async send(key: string, text: string, retryId?: string) {
+  /** Отправка: сообщение сразу в ленте; не ушло — остаётся с пометкой и кнопкой «Повторить». id сообщения — он же rid для сервера:
+   *  «Повторить» после обрыва связи шлёт тот же rid, и сервер второй раз клиенту не отправит. quote — ответ на сообщение. */
+  async send(key: string, text: string, retryId?: string, quote?: Quote) {
     const ws = this.state.wsId, ref = parseKey(key);
     if (!this.src || !ws || !ref) return;
     const id = retryId || `out-${Date.now()}`;
-    const m: Message = { id, from: "operator", text, at: Date.now(), delivery: "sending" };
-    const box = (this.state.outbox[key] || []).filter((x) => x.id !== id);
-    this.set({ outbox: { ...this.state.outbox, [key]: [...box, m] } });
+    const was = (this.state.outbox[key] || []).find((x) => x.id === id);
+    const q = quote || was?.quote;
+    const m: Message = { id, from: "operator", text, at: Date.now(), delivery: "sending", ...(q ? { quote: q } : {}) };
+    this.setOutbox(key, (box) => [...box.filter((x) => x.id !== id), m]);
     try {
-      const data = await this.src.send(ws, ref, text);
-      this.set({ outbox: { ...this.state.outbox, [key]: (this.state.outbox[key] || []).filter((x) => x.id !== id) } });
+      const data = await this.src.send(ws, ref, text, { rid: id, ...(q ? { quote: q.mid } : {}) });
+      this.setOutbox(key, (box) => box.filter((x) => x.id !== id));
       this.applyDetail(key, data);
       return { ok: true as const, warning: data.warning };
     } catch (e) {
-      const error = errText(e);
-      this.set({ outbox: { ...this.state.outbox, [key]: (this.state.outbox[key] || []).map((x) => (x.id === id ? { ...x, delivery: "failed" as const, error } : x)) } });
-      if (e instanceof ApiError && e.offline) this.set({ offline: true });
-      return { ok: false as const, error };
+      return this.failOutgoing(key, id, e);
     }
   }
+
+  /** Файлы — по одному, по очереди: каждый сразу в ленте своим пузырём со своим состоянием («отправляется», ушло, не ушло).
+   *  Подпись — у одного файла, цитата — у первого. Вернёт предупреждения сервера (например, «не знаем, ушло ли»). */
+  async sendFiles(key: string, files: File[], caption: string, quote?: Quote) {
+    const ws = this.state.wsId, ref = parseKey(key);
+    if (!this.src?.sendFile || !ws || !ref || !files.length) return [];
+    const now = Date.now(), seed = Math.random().toString(36).slice(2, 8);
+    const items = files.map((file, i) => ({ id: `file-${now}-${seed}-${i}`, file, caption: files.length === 1 ? caption : "", quote: i === 0 ? quote : undefined }));
+    for (const it of items) this.pending.set(it.id, it);
+    this.setOutbox(key, (box) => [...box, ...items.map((it) => this.fileMessage(it, now))]);
+    const warnings: string[] = [];
+    for (const it of items) {
+      const r = await this.uploadOne(key, it.id);
+      if (r?.ok && r.warning) warnings.push(r.warning);
+    }
+    return [...new Set(warnings)];
+  }
+  /** «Повторить» у файла, который не ушёл: тот же rid — если первый раз файл всё-таки дошёл, сервер второй раз не отправит. */
+  async retryFile(key: string, id: string) {
+    const r = await this.uploadOne(key, id);
+    return r?.ok && r.warning ? [r.warning] : [];
+  }
+  private pending = new Map<string, { id: string; file: File; caption: string; quote?: Quote; url?: string }>();
+  private fileMessage(it: { id: string; file: File; caption: string; quote?: Quote; url?: string }, at: number): Message {
+    const kind = fileKindOf(it.file);
+    // фото и видео видно сразу, до ответа сервера: ссылка на файл в этом браузере (освобождается, когда пузырь уходит)
+    if (!it.url && (kind === "image" || kind === "video")) it.url = URL.createObjectURL(it.file);
+    return { id: it.id, from: "operator", text: it.caption, at, delivery: "sending", hasFile: true, ...(it.quote ? { quote: it.quote } : {}), media: { kind, name: it.file.name, mime: it.file.type, size: it.file.size, ...(it.url ? { url: it.url } : {}) } };
+  }
+  private async uploadOne(key: string, id: string) {
+    const ws = this.state.wsId, ref = parseKey(key), it = this.pending.get(id);
+    if (!this.src?.sendFile || !ws || !ref || !it) return null;
+    this.setOutbox(key, (box) => box.map((x) => (x.id === id ? { ...x, delivery: "sending" as const, error: undefined } : x)));
+    try {
+      const data = await this.src.sendFile(ws, ref, it.file, { rid: id, caption: it.caption, ...(it.quote ? { quote: it.quote.mid } : {}) });
+      this.forgetFile(id);
+      this.setOutbox(key, (box) => box.filter((x) => x.id !== id));
+      this.applyDetail(key, data);
+      return { ok: true as const, warning: data.warning };
+    } catch (e) {
+      return this.failOutgoing(key, id, e);
+    }
+  }
+  private forgetFile(id: string) {
+    const it = this.pending.get(id);
+    if (it?.url) setTimeout(() => URL.revokeObjectURL(it.url!), 30e3); // картинка ещё может показываться, пока грузится файл с сервера
+    this.pending.delete(id);
+  }
+  private failOutgoing(key: string, id: string, e: unknown) {
+    const error = errText(e);
+    this.setOutbox(key, (box) => box.map((x) => (x.id === id ? { ...x, delivery: "failed" as const, error } : x)));
+    if (e instanceof ApiError && e.offline) this.set({ offline: true });
+    return { ok: false as const, error };
+  }
+  private setOutbox(key: string, f: (box: Message[]) => Message[]) {
+    this.set({ outbox: { ...this.state.outbox, [key]: f(this.state.outbox[key] || []) } });
+  }
   dropOutgoing(key: string, id: string) {
-    this.set({ outbox: { ...this.state.outbox, [key]: (this.state.outbox[key] || []).filter((x) => x.id !== id) } });
+    this.forgetFile(id);
+    this.setOutbox(key, (box) => box.filter((x) => x.id !== id));
   }
 
   async act(key: string, act: ChatAction, extra?: ChatActionExtra): Promise<ActResult> {

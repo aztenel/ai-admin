@@ -3,14 +3,30 @@
 // отвечающий сменился. Время — мелко внутри пузыря.
 // Прокрутка: новое сообщение прокручивает вниз, только если вы и так внизу; иначе — кнопка «Новые сообщения».
 // Положение в каждом чате запоминается: вернулись в чат — та же точка ленты.
-import { ArrowDown, BellRing, Bot, Megaphone, RotateCcw, Smartphone, Trash2, UserRound } from "lucide-react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+// Действия с сообщением («Ответить», «Копировать», «Открыть»): на телефоне — долгое нажатие, на компьютере — «⋯» при наведении
+// и правая кнопка мыши. Ответить цитатой можно только на втором номере (Green-API) и только на сообщение с номером у провайдера.
+import { ArrowDown, BellRing, Bot, Copy, Megaphone, MoreHorizontal, Maximize2, Reply, RotateCcw, Smartphone, Trash2, UserRound } from "lucide-react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui";
-import type { ConversationDetail, Message } from "@/model/types";
+import { Menu, MenuContent, MenuItem, MenuTrigger, toast } from "@/components/overlay";
+import type { ConversationDetail, Message, Quote, Sender } from "@/model/types";
 import { dayLabel, sameDay, timeHM } from "@/lib/format";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { MediaView } from "./MediaView";
+import { Lightbox, MediaView, openMedia, type Viewer } from "./MediaView";
 import { Ticks } from "./Ticks";
+
+/** «[клиент прислал фото]», «[сотрудник отправил файл]» — служебная подпись сервера у файла: её не показываем и не копируем. */
+export const isPlaceholder = (m: Message) => !!m.media && /^\[[^\]]{1,60}\]$/.test(m.text.trim());
+const MEDIA_NAME: Record<string, string> = { audio: "Голосовое", image: "Фото", video: "Видео", document: "Файл", sticker: "Стикер", location: "Геолокация", contact: "Контакт" };
+/** Коротко, о чём сообщение — для цитаты. */
+export function quoteOfMessage(m: Message): Quote | null {
+  if (!m.mid) return null;
+  const text = isPlaceholder(m) || !m.text.trim() ? (m.media ? MEDIA_NAME[m.media.kind] + (m.media.name && m.media.kind === "document" ? ` «${m.media.name}»` : "") : "") : m.text.replace(/\s+/g, " ").trim().slice(0, 120);
+  return { mid: m.mid, text, from: m.from };
+}
+export const quoteWho = (from: Sender, contactName?: string) => (from === "contact" ? contactName || "Клиент" : from === "bot" ? "Бот" : "Сотрудник");
+const UNKNOWN_NOTE = "Не знаем, ушло ли сообщение. Проверьте в WhatsApp, прежде чем отправлять ещё раз.";
 
 const positions = new Map<string, { top: number; count: number }>();
 const GROUP_GAP = 6 * 60e3;
@@ -43,12 +59,26 @@ function items(messages: Message[], campaign: ConversationDetail["campaign"]): I
   return out;
 }
 
-export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { convKey: string; detail: ConversationDetail; outbox: Message[]; now: number; onRetry: (m: Message) => void; onDrop: (m: Message) => void }) {
+export function Messages({ convKey, detail, outbox, now, onRetry, onDrop, onReply }: { convKey: string; detail: ConversationDetail; outbox: Message[]; now: number; onRetry: (m: Message) => void; onDrop: (m: Message) => void; onReply?: (q: Quote) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
   const count = detail.messages.length + outbox.length;
   const seen = useRef(count);
   const [below, setBelow] = useState(0);
+  const [viewer, setViewer] = useState<Viewer | null>(null);
+  const reply = detail.canQuote ? onReply : undefined;
+  const contactName = detail.contact.name || detail.contact.profileName;
+
+  // нажали на цитату — к исходному сообщению, если оно в загруженной переписке, и подсветить его на миг
+  const jump = useCallback((mid: string) => {
+    const el = box.current?.querySelector<HTMLElement>(`[data-mid="${CSS.escape(mid)}"]`);
+    if (!el) return toast("Исходного сообщения уже нет в переписке.");
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("msg-flash");
+    void el.offsetWidth;
+    el.classList.add("msg-flash");
+    setTimeout(() => el.classList.remove("msg-flash"), 1600);
+  }, []);
 
   const toEnd = useCallback((smooth = false) => {
     const el = box.current;
@@ -80,12 +110,13 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
     else if (grew > 0) setBelow((b) => b + grew);
   }, [count, outbox, toEnd]);
 
-  // поле ответа выросло или открылась клавиатура: если были внизу — остаёмся внизу
+  // поле ответа выросло, открылась клавиатура, догрузилась картинка: если были внизу — остаёмся внизу; если читали выше — место не прыгает
   useEffect(() => {
     const el = box.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => atEnd.current && (el.scrollTop = el.scrollHeight));
     ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
   }, []);
 
@@ -113,12 +144,12 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
                 Рассылка {it.name ? `«${it.name}»` : ""} в {timeHM(it.at)}. Клиент мог ответить на неё.
               </SystemNote>
             ) : (
-              <Bubble key={it.m.id} m={it.m} first={it.first} last={it.last} label={it.label} />
+              <Bubble key={it.m.id} m={it.m} first={it.first} last={it.last} label={it.label} onReply={reply} onOpen={setViewer} onJump={jump} contactName={contactName} />
             ),
           )}
           {outbox.map((m, i) => (
             <Fragment key={m.id}>
-              <Bubble m={m} first={i === 0 && detail.messages.at(-1)?.from !== "operator"} last label={i === 0 && voice(detail.messages.filter((x) => x.from !== "contact").at(-1) || m) !== "op:"} />
+              <Bubble m={m} first={i === 0 && detail.messages.at(-1)?.from !== "operator"} last label={i === 0 && voice(detail.messages.filter((x) => x.from !== "contact").at(-1) || m) !== "op:"} onOpen={setViewer} onJump={jump} contactName={contactName} />
               {m.delivery === "failed" && (
                 <div className="mb-2 mt-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right text-xs text-critical">
                   <span className="max-w-[36ch]">{m.error || "Не отправлено"}</span>
@@ -146,6 +177,7 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
           Новые сообщения
         </button>
       )}
+      {viewer && <Lightbox v={viewer} onClose={() => setViewer(null)} />}
     </div>
   );
 }
@@ -175,15 +207,23 @@ function whoOf(m: Message) {
   return null;
 }
 
-function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: boolean; label: boolean }) {
+type BubbleProps = { m: Message; first: boolean; last: boolean; label: boolean; onReply?: (q: Quote) => void; onOpen: (v: Viewer) => void; onJump: (mid: string) => void; contactName?: string };
+
+function Bubble({ m, first, last, label, onReply, onOpen, onJump, contactName }: BubbleProps) {
   const out = m.from !== "contact";
   // «[клиент прислал фото]» — служебная подпись сервера: у файла её не показываем (ТЗ v2.0 §2.2 — меньше технических строк)
-  const isPlaceholder = !!m.media && /^\[[^\]]{1,60}\]$/.test(m.text.trim());
-  const text = isPlaceholder ? "" : m.text;
+  const text = isPlaceholder(m) ? "" : m.text;
   const who = label ? whoOf(m) : null;
   // макет Figma «Переписка»: у напоминания и рассылки подпись внутри пузыря, латунью; у сотрудника и бота — над пузырём
   const inside = !!who && (m.auto === "service" || m.auto === "campaign");
   const dark = m.from === "operator";
+  // что можно сделать с сообщением: ответить цитатой (второй номер, есть номер у провайдера), копировать текст, открыть файл
+  const q = onReply && !m.delivery && !m.deleted ? quoteOfMessage(m) : null;
+  const canOpen = !!m.media?.url && !m.delivery && ["image", "sticker", "video", "document"].includes(m.media.kind);
+  const acts = !m.delivery && (!!q || !!text.trim() || canOpen);
+  const [menu, setMenu] = useState(false);
+  const press = useLongPress(() => acts && setMenu(true));
+  const sendingFile = m.delivery === "sending" && m.hasFile;
   return (
     <div className={cn("flex flex-col", out ? "items-end" : "items-start", first ? "mt-3" : "mt-[3px]", m.delivery === "sending" && "animate-msg-in")}>
       {who && !inside && (
@@ -192,34 +232,139 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
           {who.text}
         </span>
       )}
-      <div
-        className={cn(
-          "relative max-w-[min(30rem,82%)] rounded-[1.125rem] px-3 py-[0.4375rem] text-md leading-[1.375rem] md:max-w-[min(34rem,72%)] md:text-base md:leading-[1.3125rem]",
-          m.from === "contact" && "bg-bubble-in text-fg",
-          m.from === "bot" && "bg-bubble-bot text-fg",
-          m.from === "operator" && "bg-bubble-op text-bubble-op-fg",
-          last && (out ? "rounded-br-[0.375rem]" : "rounded-bl-[0.375rem]"),
-          m.delivery === "sending" && "opacity-70",
-          (m.delivery === "failed" || m.status === "failed") && "ring-1 ring-critical",
-          m.reaction && "mb-3",
+      <div className={cn("group/msg flex w-full items-center gap-1", out ? "flex-row-reverse" : "flex-row")}>
+        <div
+          data-mid={m.mid || undefined}
+          {...(acts ? press : {})}
+          onContextMenu={acts ? (e) => (e.preventDefault(), setMenu(true)) : undefined}
+          className={cn(
+            "relative min-w-0 max-w-[min(30rem,82%)] rounded-[1.125rem] px-3 py-[0.4375rem] text-md leading-[1.375rem] md:max-w-[min(34rem,72%)] md:text-base md:leading-[1.3125rem]",
+            // долгое нажатие на телефоне открывает действия — без системного меню выделения и «Сохранить картинку»
+            acts && "pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]",
+            m.from === "contact" && "bg-bubble-in text-fg",
+            m.from === "bot" && "bg-bubble-bot text-fg",
+            m.from === "operator" && "bg-bubble-op text-bubble-op-fg",
+            last && (out ? "rounded-br-[0.375rem]" : "rounded-bl-[0.375rem]"),
+            m.delivery === "sending" && "opacity-70",
+            (m.delivery === "failed" || m.status === "failed") && "ring-1 ring-critical",
+            m.reaction && "mb-3",
+          )}
+        >
+          {inside && <span className="mb-0.5 mt-0.5 block text-xs font-medium text-brand-gold">{who.text}</span>}
+          {m.quote && <QuoteBlock q={m.quote} dark={dark} contactName={contactName} onJump={onJump} />}
+          {m.media && <MediaView media={m.media} onDark={dark} onOpen={onOpen} mine={out} />}
+          {text && (
+            <p className={cn("whitespace-pre-wrap break-words [overflow-wrap:anywhere]", m.deleted && "line-through opacity-60")}>
+              {text}
+              <span aria-hidden className={cn("inline-block", sendingFile ? "w-28" : out ? "w-16" : m.edited || m.deleted ? "w-24" : "w-11")} />
+            </p>
+          )}
+          <span className={cn("tnum flex items-center gap-1 text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 justify-end", dark ? "text-bubble-op-fg/80" : "text-fg-3")}>
+            {m.deleted ? <span>удалено</span> : m.edited ? <span>изменено</span> : null}
+            {sendingFile ? (
+              <span className="flex items-center gap-1">
+                <span aria-hidden className="size-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+                отправляется
+              </span>
+            ) : (
+              <time>{m.delivery === "sending" ? "…" : timeHM(m.at)}</time>
+            )}
+            {out && !m.delivery && <Ticks status={m.status} error={m.statusError} onDark={dark} />}
+          </span>
+          {m.reaction && <span aria-label={`Реакция клиента: ${m.reaction}`} className={cn("absolute -bottom-3 rounded-full border border-line bg-surface px-1.5 text-sm leading-6 shadow-sm", out ? "left-2" : "right-2")}>{m.reaction}</span>}
+        </div>
+        {acts && (
+          <Menu open={menu} onOpenChange={setMenu}>
+            <MenuTrigger asChild>
+              {/* на компьютере — при наведении на сообщение; на телефоне невидима (действия — долгим нажатием), но меню открывается рядом с ней */}
+              <button
+                type="button"
+                aria-label="Действия с сообщением"
+                className="grid size-7 shrink-0 place-items-center rounded-full text-fg-3 opacity-0 transition-opacity hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 group-hover/msg:opacity-100 data-[state=open]:opacity-100 pointer-coarse:pointer-events-none pointer-coarse:opacity-0!"
+              >
+                <MoreHorizontal aria-hidden className="size-4" strokeWidth={2} />
+              </button>
+            </MenuTrigger>
+            <MenuContent align={out ? "end" : "start"} className="min-w-[11rem]">
+              {q && (
+                <MenuItem onSelect={() => onReply?.(q)}>
+                  <Reply aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Ответить
+                </MenuItem>
+              )}
+              {!!text.trim() && (
+                <MenuItem onSelect={() => void copyText(text).then((ok) => toast(ok ? "Текст скопирован" : "Не удалось скопировать. Выделите текст и скопируйте вручную.", ok ? "neutral" : "critical"))}>
+                  <Copy aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Копировать
+                </MenuItem>
+              )}
+              {canOpen && m.media && (
+                <MenuItem onSelect={() => openMedia(m.media!, onOpen)}>
+                  <Maximize2 aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Открыть
+                </MenuItem>
+              )}
+            </MenuContent>
+          </Menu>
         )}
-      >
-        {inside && <span className="mb-0.5 mt-0.5 block text-xs font-medium text-brand-gold">{who.text}</span>}
-        {m.media && <MediaView media={m.media} onDark={dark} />}
-        {text && (
-          <p className={cn("whitespace-pre-wrap break-words [overflow-wrap:anywhere]", m.deleted && "line-through opacity-60")}>
-            {text}
-            <span aria-hidden className={cn("inline-block", out ? "w-16" : m.edited || m.deleted ? "w-24" : "w-11")} />
-          </p>
-        )}
-        <span className={cn("tnum flex items-center gap-1 text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 justify-end", dark ? "text-bubble-op-fg/80" : "text-fg-3")}>
-          {m.deleted ? <span>удалено</span> : m.edited ? <span>изменено</span> : null}
-          <time>{m.delivery === "sending" ? "…" : timeHM(m.at)}</time>
-          {out && !m.delivery && <Ticks status={m.status} error={m.statusError} onDark={dark} />}
-        </span>
-        {m.reaction && <span aria-label={`Реакция клиента: ${m.reaction}`} className={cn("absolute -bottom-3 rounded-full border border-line bg-surface px-1.5 text-sm leading-6 shadow-sm", out ? "left-2" : "right-2")}>{m.reaction}</span>}
       </div>
       {out && m.status === "failed" && <span className="mt-1 max-w-[36ch] text-right text-xs text-critical">Не доставлено{m.statusError ? `: ${m.statusError}` : ""}</span>}
+      {/* ответа на отправку не было: сообщение могло уйти, само не повторяется (CLAUDE.md §5.2) */}
+      {out && m.status === "unknown" && !m.delivery && <span className="mt-1 max-w-[36ch] text-right text-xs text-fg-2">{UNKNOWN_NOTE}</span>}
     </div>
   );
+}
+
+/** Цитата в пузыре: чьё сообщение и его начало; нажатие — к исходному сообщению. */
+function QuoteBlock({ q, dark, contactName, onJump }: { q: Quote; dark: boolean; contactName?: string; onJump: (mid: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onJump(q.mid)}
+      aria-label={`Ответ на сообщение: ${quoteWho(q.from, contactName)}. ${q.text}. Показать сообщение`}
+      className={cn(
+        "-mx-1.5 mb-1 mt-0.5 block w-[calc(100%+0.75rem)] min-w-36 rounded-[0.625rem] border-l-[3px] px-2 py-1 text-left text-sm leading-[1.125rem]",
+        dark ? "border-bubble-op-fg/70 bg-black/15 hover:bg-black/20" : "border-accent bg-black/[0.045] hover:bg-black/[0.07] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]",
+      )}
+    >
+      <span className={cn("block truncate text-xs font-semibold", dark ? "text-bubble-op-fg" : "text-accent-ink")}>{quoteWho(q.from, contactName)}</span>
+      <span className={cn("line-clamp-2 break-words", dark ? "text-bubble-op-fg/85" : "text-fg-2")}>{q.text || "Сообщение"}</span>
+    </button>
+  );
+}
+
+/** Долгое нажатие пальцем (450 мс, без сдвига): открыть действия. Обычное касание и прокрутка ленты работают как раньше;
+ *  касание, которое закончилось долгим нажатием, не открывает фото под пальцем. */
+function useLongPress(fire: () => void) {
+  const t = useRef(0), start = useRef<{ x: number; y: number } | null>(null), fired = useRef(false);
+  const stop = () => {
+    clearTimeout(t.current);
+    start.current = null;
+  };
+  return {
+    onPointerDown: (e: RPointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      fired.current = false;
+      start.current = { x: e.clientX, y: e.clientY };
+      clearTimeout(t.current);
+      t.current = window.setTimeout(() => {
+        fired.current = true;
+        start.current = null;
+        navigator.vibrate?.(8);
+        fire();
+      }, 450);
+    },
+    onPointerMove: (e: RPointerEvent) => {
+      const s = start.current;
+      if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) stop();
+    },
+    onPointerUp: stop,
+    onPointerCancel: stop,
+    onClickCapture: (e: RMouseEvent) => {
+      if (!fired.current) return;
+      fired.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  };
 }

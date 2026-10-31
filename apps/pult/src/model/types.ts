@@ -95,11 +95,17 @@ export type ConversationSummary = {
 };
 
 export type MediaKind = "audio" | "image" | "video" | "document" | "sticker" | "location" | "contact";
+/** Цитата: сообщение, на которое это ответ (номер у провайдера, начало текста, чьё). */
+export type Quote = { mid: string; text: string; from: Sender };
 export type Message = {
   id: string;
   from: Sender;
   text: string;
   at: number;
+  /** Номер сообщения у провайдера (Green-API): на него можно ответить цитатой. */
+  mid?: string;
+  /** Это ответ на другое сообщение. */
+  quote?: Quote;
   /** Человек ответил прямо с телефона (приложение WhatsApp), а не из пульта. */
   via?: "phone";
   /** Имя сотрудника, который ответил из пульта. */
@@ -116,6 +122,8 @@ export type Message = {
   /** Только у сообщений, которые пульт ещё отправляет или не смог отправить. */
   delivery?: "sending" | "failed";
   error?: string;
+  /** Неотправленный файл: «Повторить» отправит его снова. */
+  hasFile?: boolean;
 };
 
 export type RequestKind = "lead" | "cancel" | "change" | "callback";
@@ -140,6 +148,10 @@ export type ConversationDetail = {
   bookedNote: string;
   requests: ChatRequest[];
   reply: ReplyState;
+  /** Можно отправить файл из пульта (только второй номер, Green-API). У основного номера и чата сайта — нет. */
+  canFiles?: boolean;
+  /** Можно ответить на конкретное сообщение цитатой (только второй номер). */
+  canQuote?: boolean;
   /** Реквизиты для оплаты из паспорта — администратор вставляет их в ответ сам. */
   payment?: string;
   /** Недавняя рассылка: клиент мог ответить на неё. */

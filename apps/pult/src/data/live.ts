@@ -35,7 +35,7 @@ import { getOperator } from "@/lib/operator";
 type ChRaw = "wa" | "ga" | "web";
 type ListRowRaw = { ch: ChRaw; id: string; t: number; li: number; s: string; d: "" | "u" | "a" | "b"; nm: string; ph: string; nd: string; pu: number; st: 0 | 1; bk: number; tp?: string; rs?: string; as?: string; dn?: 1; ls?: string };
 type ListRaw = { client: { id: string; name: string; off: boolean }; need: number; total: number; more: boolean; chats: ListRowRaw[]; now: number; lines?: Record<string, { label: string; phone?: string }>; ops?: string[]; outOnly?: number };
-type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string };
+type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; mid?: string; q?: { mid: string; x: string; r: "u" | "a" | "b" }; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string };
 type ReqRaw = { id: string; kind: string; name: string; service: string; time: string; note: string; at: string };
 type ChatRaw = {
   promo: { at: number; name: string; text: string } | null;
@@ -43,7 +43,7 @@ type ChatRaw = {
   bookings: string[]; pend: string[]; booked: string;
   need: { why: string; text: string; at: number; tp?: string; src?: { k: "rm" | "bc"; at: number; text: string } } | null; paused: number; stop: boolean; off: boolean;
   assignee?: string; done?: number; line?: { ch: string; label: string }; audit?: { t: number; w: string; a: string; to?: string }[];
-  canSend: boolean; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string;
+  canSend: boolean; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean;
 };
 type LeadRaw = { id: string; name: string; phone: string; service: string; time: string; note: string; status: string; kind: string; source: string; ts: number };
 type StudioClientRaw = { id: string; name: string; kind: string; niche: string; off: boolean; booking: string };
@@ -134,7 +134,7 @@ function botState(off: boolean, stop: boolean | number, pausedUntil: number, now
 // служебная подпись сервера о файле → коротко, как в мессенджере
 const MEDIA_PREVIEW: [RegExp, string][] = [[/голосов/, "Голосовое"], [/фото|картин|изображ/, "Фото"], [/видео/, "Видео"], [/стикер/, "Стикер"], [/геолок|мест/, "Геолокация"], [/контакт/, "Контакт"], [/файл|документ/, "Файл"]];
 function previewText(s: string) {
-  const m = /^\[клиент прислал ([^\]]+)\]$/.exec(s.trim());
+  const m = /^\[(?:клиент прислал|сотрудник отправил) ([^\]]+)\]$/.exec(s.trim());
   if (!m) return s;
   return (MEDIA_PREVIEW.find(([re]) => re.test(m[1])) || [null, "Файл"])[1];
 }
@@ -173,6 +173,8 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
   const messages: Message[] = d.turns.map((t, i) => {
     const from = t.r === "u" ? "contact" : t.r === "a" ? "operator" : "bot";
     const m: Message = { id: `${t.t}-${i}`, from, text: t.x || "", at: t.t || 0 };
+    if (t.mid) m.mid = t.mid;
+    if (t.q?.mid) m.quote = { mid: t.q.mid, text: t.q.x || "", from: t.q.r === "u" ? "contact" : t.q.r === "b" ? "bot" : "operator" };
     if (t.op) m.operator = t.op;
     if (t.auto) m.auto = t.auto;
     if (status(t.st)) m.status = status(t.st);
@@ -212,6 +214,8 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     bookedNote: d.booked || "",
     requests: (d.reqs || []).map((q): ChatRequest => ({ id: q.id, kind: reqKind(q.kind), name: q.name, service: q.service, time: q.time, note: q.note })),
     reply,
+    canFiles: !!d.canFiles && reply.allowed,
+    canQuote: !!d.canQuote && reply.allowed,
     payment: d.pay,
     campaign: d.promo || undefined,
     warning: warn,
@@ -315,8 +319,32 @@ export function createLiveSource(): DataSource {
       marks.mark(ws, keyOf(ref.channelId, ref.externalId));
       return detail(ws, d);
     },
-    async send(ws, ref, text) {
-      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator() });
+    async send(ws, ref, text, opts) {
+      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) });
+      marks.mark(ws, keyOf(ref.channelId, ref.externalId));
+      return detail(ws, d.chat, d.warn);
+    },
+    async sendFile(ws, ref, file, opts) {
+      // файл — телом запроса (multipart); компания и чат — в адресе: сервер проверяет права до того, как читает файл
+      const fd = new FormData();
+      fd.set("file", file, file.name);
+      if (opts.caption) fd.set("caption", opts.caption);
+      if (opts.quote) fd.set("quote", opts.quote);
+      if (opts.rid) fd.set("rid", opts.rid);
+      const op = getOperator();
+      if (op) fd.set("op", op);
+      let r: Response;
+      try {
+        r = await fetch(`/api/inbox/send-file?c=${enc(ws)}&ch=${enc(ref.channelId)}&id=${enc(ref.externalId)}`, { method: "POST", credentials: "same-origin", body: fd });
+      } catch {
+        // связь оборвалась: файл мог дойти до сервера — «Повторить» отправит тот же rid, второй раз клиенту он не уйдёт
+        throw new ApiError("Нет связи с сервером. Проверьте интернет и нажмите «Повторить»: второй раз файл не уйдёт.", 0, true);
+      }
+      if (r.status === 401) {
+        location.href = "/login?next=" + enc(location.pathname + location.search + location.hash);
+        throw new ApiError("Нужно войти заново.", 401);
+      }
+      const d = await parse<{ ok: true; chat: ChatRaw; warn?: string }>(r);
       marks.mark(ws, keyOf(ref.channelId, ref.externalId));
       return detail(ws, d.chat, d.warn);
     },

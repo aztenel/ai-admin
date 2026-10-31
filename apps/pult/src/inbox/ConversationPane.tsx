@@ -8,7 +8,7 @@ import { getOperator, setOperator } from "@/lib/operator";
 import { Avatar, Button, EmptyState, IconButton, Skeleton } from "@/components/ui";
 import { dataMode } from "@/data/source";
 import { channelOf, channelTitle } from "@/model/channels";
-import type { BotState, ChatAction, ChatActionExtra, ConversationDetail, ConversationSummary, Message, Workspace } from "@/model/types";
+import type { BotState, ChatAction, ChatActionExtra, ConversationDetail, ConversationSummary, Message, Quote, Workspace } from "@/model/types";
 import { formatPhone, until, waited } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
 import { store, useStore } from "@/state/store";
@@ -63,9 +63,25 @@ export function ConversationPane({
   };
   const take = () => (me ? act("take", "Чат у вас") : setAssignOpen(true));
   const close = () => act("resolve", "Чат закрыт");
+  // ответ на конкретное сообщение (цитата) — у каждого чата свой; уходит с ближайшим сообщением или первым файлом
+  const [quoteFor, setQuoteFor] = useState<{ key: string; q: Quote } | null>(null);
+  const quote = quoteFor?.key === convKey ? quoteFor.q : null;
   const send = async (text: string, retryId?: string) => {
-    const r = await store.send(convKey, text, retryId);
+    const q = retryId ? undefined : quote || undefined;
+    if (!retryId) setQuoteFor(null);
+    const r = await store.send(convKey, text, retryId, q);
     if (r?.ok && r.warning) toast(r.warning, "critical");
+  };
+  const sendFiles = async (files: File[], caption: string) => {
+    const q = quote || undefined;
+    setQuoteFor(null);
+    const warn = await store.sendFiles(convKey, files, caption, q);
+    if (warn.length) toast(warn.join(" "), "critical");
+  };
+  const retry = async (m: Message) => {
+    if (!m.hasFile) return send(m.text, m.id);
+    const warn = await store.retryFile(convKey, m.id);
+    if (warn.length) toast(warn.join(" "), "critical");
   };
 
   return (
@@ -175,8 +191,9 @@ export function ConversationPane({
             detail={d}
             outbox={outbox}
             now={now}
-            onRetry={(m) => send(m.text, m.id)}
+            onRetry={retry}
             onDrop={(m) => store.dropOutgoing(convKey, m.id)}
+            onReply={(q) => setQuoteFor({ key: convKey, q })}
           />
           {d.requests.map((q) => (
             <RequestCard key={q.id} q={q} since={d.attention?.since} now={now} canMessage={d.reply.allowed} booking={!!ws.capabilities.booking} onDone={(text) => store.complete(convKey, q.id, text)} />
@@ -193,6 +210,10 @@ export function ConversationPane({
             onSend={(t) => send(t)}
             onTimes={ws.capabilities.booking ? () => setTimesOpen(true) : undefined}
             address={ws.branches.find((b) => b.address)?.address}
+            onFiles={d.canFiles ? sendFiles : undefined}
+            quote={d.canQuote ? quote : null}
+            onClearQuote={() => setQuoteFor(null)}
+            contactName={d.contact.name || d.contact.profileName}
           />
         </>
       ) : ds?.error ? (

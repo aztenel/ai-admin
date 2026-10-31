@@ -326,6 +326,10 @@
 .app-root[data-kb="1"] .hide-kb { display: none; }
 .app-root[data-kb="1"] .pb-tabbar { padding-bottom: 1rem; }
 
+/* нажали на цитату — исходное сообщение на миг обводится акцентом (Messages.tsx, jump) */
+.msg-flash { animation: msg-flash 1.5s var(--ease-out-soft); }
+@keyframes msg-flash { 0%, 40% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
 }
