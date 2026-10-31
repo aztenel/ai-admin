@@ -104,6 +104,7 @@ export const NEED_LABEL: Record<string, string> = {
   off: "Ждёт ответа", // бот выключен — это не причина ждать, а просто новое сообщение (ТЗ v2.0 §2.2)
   send: "Ответ не дошёл",
   noshow: "Не пришёл на запись",
+  task: "Задача",
 };
 /** Тема входящего важнее причины: «Просит перенести» понятнее, чем «Ждёт ответа». */
 const TOPIC_LABEL: Record<string, string> = { book: "Хочет записаться", move: "Просит перенести", cancel: "Просит отменить", late: "Опаздывает", time: "Спрашивает время записи" };
@@ -111,7 +112,7 @@ const SRC_LABEL: Record<string, string> = { rm: "Ответ на напомин�
 const STATUSES = new Set<DeliveryStatus>(["queued", "sent", "delivered", "read", "failed", "unknown"]);
 const status = (s?: string) => (s && STATUSES.has(s as DeliveryStatus) ? (s as DeliveryStatus) : undefined);
 const topic = (t?: string) => (t && t in TOPIC_LABEL ? (t as Topic) : undefined);
-const needLabel = (why: string, tp?: string, src?: string, text?: string) => (tp && TOPIC_LABEL[tp]) || (why === "off" && src && SRC_LABEL[src]) || NEED_LABEL[why] || text || "Нужен ответ";
+const needLabel = (why: string, tp?: string, src?: string, text?: string) => (why === "task" && text ? `Задача: ${text}` : "") || (tp && TOPIC_LABEL[tp]) || (why === "off" && src && SRC_LABEL[src]) || NEED_LABEL[why] || text || "Нужен ответ";
 const digits = (s: string) => String(s || "").replace(/\D/g, "");
 const keyOf = (ch: string, id: string) => `${ch}:${id}`;
 

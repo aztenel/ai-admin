@@ -18,6 +18,9 @@ import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
 import { growthReport } from "../services/digest.js";
 import { mediaFile } from "../services/inbox/media.js";
+import { siteConf } from "../services/sitebook/config.js";
+import { siteCatalog } from "../services/sitebook/catalog.js";
+import { siteTimes } from "../services/sitebook/slots.js";
 import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
@@ -71,6 +74,16 @@ export async function inboxApi(request, env, url, s, ctx) {
     return jsonP({ client, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
 
+  // свободное время из Altegio прямо в пульте (ТЗ v2.0 §7, «Посмотреть время»): те же расчёты, что у записи с сайта (мастер, услуги,
+  // помещается ли услуга целиком) — только чтение, ничего не записывается
+  if (M === "GET" && (P === "/api/inbox/catalog" || P === "/api/inbox/times")) {
+    const conf = siteConf(env, c);
+    if (!conf || !env.ALTEGIO_PARTNER || !(conf.loc > 0)) return jsonP({ available: false, why: "Свободное время видно у компании с онлайн-записью Altegio." });
+    try {
+      const r = P === "/api/inbox/catalog" ? await siteCatalog(env, c, conf, now) : await siteTimes(env, c, conf, q, now);
+      return jsonP({ available: true, ...(r.res || {}) }, r.http === 200 ? 200 : r.http || 502);
+    } catch (e) { console.log("inbox times", String(e).slice(0, 120)); return jsonP({ error: "Altegio сейчас не ответил — попробуйте через минуту." }, 502); }
+  }
   if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)
     /** @type {any} */
     let leads; try { leads = await allLeads(env, cid); } catch (e) { return jsonP({ error: "Хранилище не отвечает — попробуйте обновить через минуту." }, 503); }
@@ -99,7 +112,8 @@ export async function inboxApi(request, env, url, s, ctx) {
       promo,
       ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t)),
       bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
-      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
+      late: p.late && now - p.late.at < 6 * 3600e3 ? p.late : null,
+      need: p.need ? { why: p.need.why, text: p.need.why === "task" ? String(p.need.text || "задача") : /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
       assignee: (p.as && p.as.n) || "", done: p.done || 0, line: { ch, label: lineLabel(cid, ch, lineChans(env, cid)) },
       audit: (p.audit || []).slice(-12), paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
       canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
@@ -182,6 +196,15 @@ export async function inboxApi(request, env, url, s, ctx) {
       h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, act === "take" ? "take" : to ? "assign" : "unassign", act === "take" ? "" : to); });
     }
     else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); });
+    else if (act === "late") { // клиент предупредил об опоздании (ТЗ v2.0 §4 S09, §7): отметка в чате, мастера предупреждает сотрудник сам
+      const min = Math.max(0, Math.min(180, Math.round(+b.min || 0)));
+      h = await logTurns(env.KV, hk, [], pr => { pr.late = { at: now, min }; chatAudit(pr, now, who, "late", min ? `${min} мин` : ""); });
+    }
+    else if (act === "task") { // задача по чату — в очереди «Нужен ответ», пока её не закроют «Готово»
+      const text = clean(String(b.text || ""), 200);
+      if (!text) return jsonP({ error: "Напишите, что нужно сделать." }, 400);
+      h = await logTurns(env.KV, hk, [], pr => { pr.need = { at: now, why: "task", text }; delete pr.done; chatAudit(pr, now, who, "task", text.slice(0, 32)); });
+    }
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
       h = await logTurns(env.KV, hk, [], pr => { delete pr.pausedUntil; delete pr.fw; delete pr.need; });

@@ -244,6 +244,16 @@ function NearestBookings({ convKey }: { convKey: string }) {
               <span className="block text-sm text-fg-3">
                 {r.state} · {r.source} · № {r.id}
               </span>
+              <button
+                type="button"
+                className="mt-1 text-sm font-medium text-accent"
+                onClick={() => {
+                  const t = `Вы записаны: ${dayShort(r.date)}, ${r.time}, мастер ${r.staff || "—"}${r.services ? `, ${r.services}` : ""}. Ждём вас!`;
+                  void navigator.clipboard?.writeText(t).then(() => toast("Подтверждение скопировано — вставьте в ответ"), () => toast(t));
+                }}
+              >
+                Скопировать подтверждение
+              </button>
             </span>
           </p>
         ))

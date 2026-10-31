@@ -207,6 +207,6 @@ export type InboxSnapshot = {
 
 /** Запись клиента в Altegio для карточки чата (только чтение журнала). */
 export type BookingCard = { id: string; date: string; time: string; staff: string; services: string; minutes?: number; state: string; source: string };
-export type ChatAction = "pause" | "resume" | "resolve" | "forget" | "take" | "assign" | "reopen";
+export type ChatAction = "pause" | "resume" | "resolve" | "forget" | "take" | "assign" | "reopen" | "task" | "late";
 /** Дополнительно к действию: кому назначить, закрыть несмотря на вопрос клиента. */
-export type ChatActionExtra = { to?: string; force?: boolean };
+export type ChatActionExtra = { to?: string; force?: boolean; text?: string; min?: number };

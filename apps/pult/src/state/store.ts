@@ -318,6 +318,13 @@ class Store {
       return { error: errText(e) };
     }
   }
+  /** GET к API пульта текущей компании (свободное время Altegio). В демо — «недоступно». */
+  async inboxApi<T>(path: string): Promise<T> {
+    const ws = this.state.wsId;
+    if (this.state.mode !== "live" || !ws) return { available: false, why: "В демо свободное время не показывается." } as T;
+    const { call } = await import("@/data/live");
+    return call<T>(path + (path.includes("?") ? "&" : "?") + "c=" + encodeURIComponent(ws));
+  }
   /** Ближайшие записи клиента в Altegio — для карточки чата. */
   async bookingCard(key: string) {
     const ws = this.state.wsId, ref = parseKey(key);

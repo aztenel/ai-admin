@@ -197,3 +197,20 @@ test("карточка ближайшей записи Altegio: только ч�
   await noKey.gaText("winchester", INST, from, "Привет");
   assert.equal((await (await b2.go(`/api/inbox/booking?c=winchester&ch=ga&id=${from}`)).json()).available, false);
 });
+
+test("задача по чату — в очереди «Нужен ответ» до «Готово»; отметка «опаздывает» — в журнале чата", async () => {
+  net.reset();
+  const s = mk(ENV), b = await login(s), from = "77000000309";
+  await s.gaText("winchester", INST, from, "Буду минут на 10 позже");
+  await b.post("/api/inbox/send", { c: "winchester", ch: "ga", id: from, text: "Хорошо, ждём", op: "Айгерим" });
+  let r = await (await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "late", min: 10, op: "Айгерим" })).json();
+  assert.equal(r.chat.late.min, 10); assert.equal(r.chat.audit.at(-1).a, "late");
+  assert.equal((await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "task", text: "" })).status, 400);
+  r = await (await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "task", text: "Предупредить мастера Тони", op: "Айгерим" })).json();
+  assert.equal(r.chat.need.why, "task"); assert.equal(r.chat.need.text, "Предупредить мастера Тони");
+  assert.equal((await list(b)).chats.find(x => x.id === from).nd, "task");
+  r = await (await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "resolve", force: true, op: "Айгерим" })).json();
+  assert.equal(r.chat.need, null);
+  const nowa = await (await b.go("/api/inbox/times?c=winchester")).json();
+  assert.equal(nowa.available, false, "без ключа Altegio — «свободное время недоступно», а не ошибка");
+});

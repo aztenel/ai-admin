@@ -102,6 +102,7 @@ const R = [
   ["POST", "/api/push/prefs", { c: "barber" }], ["POST", "/api/push/unsubscribe", { c: "barber" }], ["POST", "/api/push/test", { c: "barber" }],
   ["GET", "/api/bc/templates?c=barber"], ["GET", "/api/bc/templates?c=dent"], ["POST", "/api/bc/templates", { c: "barber" }], ["POST", "/api/bc/templates/preview", { c: "barber" }],
   ["POST", "/api/bc/service/dry", { c: "barber" }], ["POST", "/api/bc/service/approve", { c: "barber" }],
+  ["GET", "/api/inbox/catalog?c=barber"], ["GET", "/api/inbox/times?c=barber&date=2026-11-02"], ["GET", "/api/inbox/times?c=dent"],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],

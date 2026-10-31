@@ -1,7 +1,7 @@
 // Переписка: шапка (кто, через какой номер, кто ведёт) и в ней же — плашка состояния с главным действием; лента;
 // просьба клиента карточкой над полем ответа; поле ответа. Шапка показывается сразу по строке списка — не ждём загрузки.
 // На телефоне у «назад» — сколько ещё чатов ждут человека (как число непрочитанных у «назад» в «Сообщениях» iPhone).
-import { BellOff, CheckCheck, ChevronLeft, CircleAlert, Eraser, Globe, Hand, MessageCircle, MoreHorizontal, PanelRight, Phone, RefreshCw, RotateCcw, Undo2, UserRound, UserRoundCheck, Users } from "lucide-react";
+import { BellOff, CheckCheck, ChevronLeft, CircleAlert, Eraser, Globe, Hand, MessageCircle, MoreHorizontal, PanelRight, Phone, RefreshCw, RotateCcw, Undo2, UserRound, UserRoundCheck, Users, CalendarClock, ListTodo, Clock3 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Confirm, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Sheet, toast } from "@/components/overlay";
 import { getOperator, setOperator } from "@/lib/operator";
@@ -15,6 +15,7 @@ import { store, useStore } from "@/state/store";
 import { Composer } from "./Composer";
 import { Messages } from "./Messages";
 import { RequestCard } from "./RequestCard";
+import { TimesSheet } from "./TimesSheet";
 
 const EMPTY: Message[] = [];
 
@@ -49,6 +50,7 @@ export function ConversationPane({
 
   const [ask, setAsk] = useState<{ text: string; a: ChatAction; ok: string; extra?: ChatActionExtra } | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [timesOpen, setTimesOpen] = useState(false);
   const me = getOperator();
   const assignee = d?.assignee || summary?.assignee;
   const done = d ? d.done : summary?.done;
@@ -119,6 +121,18 @@ export function ConversationPane({
                     Открыть снова
                   </MenuItem>
                 )}
+                <MenuItem onSelect={() => setTimesOpen(true)}>
+                  <CalendarClock aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Свободное время…
+                </MenuItem>
+                <MenuItem onSelect={() => { const t = prompt("Что нужно сделать? Задача будет в «Нужен ответ», пока её не закроют «Готово»."); if (t && t.trim()) void act("task", "Задача добавлена", { text: t.trim() } as ChatActionExtra); }}>
+                  <ListTodo aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Создать задачу…
+                </MenuItem>
+                <MenuItem onSelect={() => { const m = prompt("Клиент опаздывает. На сколько минут?", "10"); if (m !== null) void act("late", "Отметили: клиент опаздывает", { min: +m || 0 } as ChatActionExtra); }}>
+                  <Clock3 aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
+                  Клиент опаздывает…
+                </MenuItem>
                 <MenuSeparator />
                 {bot.state === "active" && (
                   <MenuItem onSelect={() => act("pause", "Чат у вас: бот молчит 12 часов")}>
@@ -184,6 +198,7 @@ export function ConversationPane({
       )}
 
       <Confirm open={!!ask} onOpenChange={(v) => !v && setAsk(null)} title="Закрыть чат?" text={ask?.text || ""} yes="Закрыть без ответа" onYes={() => ask && act(ask.a, ask.ok, { ...ask.extra, force: true })} />
+      <TimesSheet open={timesOpen} onOpenChange={setTimesOpen} />
       <AssignSheet
         open={assignOpen}
         onOpenChange={setAssignOpen}
