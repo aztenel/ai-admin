@@ -33,19 +33,31 @@ export function fileKind(mime, name) {
   if (/^audio\//.test(t) || (!t && /\.(mp3|ogg|opus|m4a|aac|wav|amr)$/.test(n))) return "audio";
   return "document";
 }
-/** Что не так с файлом: пусто — можно отправлять. @param {{ name: string, size: number }} f */
-export function fileProblem(f) {
-  if (!(f.size > 0)) return "Файл пустой. Выберите другой.";
-  if (f.size > FILE_MAX) return TOO_BIG;
-  if (RISKY.test(String(f.name || "").trim())) return "Такой файл отправить нельзя: программы, страницы и скрипты из пульта не отправляются.";
-  return "";
-}
-/** Имя для WhatsApp: без путей, с расширением (Green-API узнаёт вид файла по расширению). @param {string} name @param {string} mime @param {string} kind */
+// тип файла от браузера: страницы, картинки svg, скрипты и программы — как и по расширению, не отправляем
+const RISKY_MIME = /^(text\/(html|javascript|ecmascript)|application\/(xhtml\+xml|(x-)?javascript|ecmascript|x-(msdownload|msdos-program|msi|sh|bat|httpd-php|java-archive)|vnd\.android\.package-archive|vnd\.microsoft\.portable-executable|java-archive)|image\/svg\+xml)\b/i;
+const BLOCKED = "Такой файл отправить нельзя: программы, страницы и скрипты из пульта не отправляются.";
+/** @param {any} s */
+const noTail = s => String(s || "").replace(/[.\s]+$/, ""); // «evil.html.» и «evil.html » — это тоже .html (Windows отбрасывает точку и пробел в конце)
+/** Имя для WhatsApp: без путей, без точек и пробелов в конце, с расширением (Green-API узнаёт вид файла по расширению).
+ *  @param {string} name @param {string} mime @param {string} kind */
 export function uploadName(name, mime, kind) {
-  let n = fileName(name, kind);
+  let n = noTail(fileName(noTail(name), kind)) || fileName("", kind);
   const e = EXT[String(mime || "").split(";")[0].trim().toLowerCase()];
   if (!/\.[a-z0-9]{1,8}$/i.test(n) && e) n += "." + e;
   return n;
+}
+/**
+ * Можно ли отправить файл и как он уйдёт. Опасный тип проверяется по ИТОГОВОМУ имени (тому, что уйдёт в WhatsApp и откроется
+ * в пульте), по исходному имени и по типу от браузера: иначе «evil.ht"ml» после чистки имени стал бы «evil.html» (ревью безопасности 31.10.2026).
+ * @param {{ name: string, size: number, mime: string }} f
+ * @returns {{ ok: true, kind: "image" | "video" | "audio" | "document", name: string } | { ok: false, status: number, error: string }}
+ */
+export function filePlan(f) {
+  if (!(f.size > 0)) return { ok: false, status: 400, error: "Файл пустой. Выберите другой." };
+  if (f.size > FILE_MAX) return { ok: false, status: 413, error: TOO_BIG };
+  const kind = fileKind(f.mime, noTail(f.name)), name = uploadName(f.name, f.mime, kind);
+  if (RISKY.test(name) || RISKY.test(noTail(f.name)) || RISKY_MIME.test(String(f.mime || "").trim())) return { ok: false, status: 400, error: BLOCKED };
+  return { ok: true, kind, name };
 }
 
 // ---- ответ на сообщение (цитата)
@@ -68,11 +80,15 @@ export function quoteOf(turns, mid) {
   }
   return null;
 }
-/** Цитата в пульте: сама реплика, если она ещё в переписке, иначе — то, что запомнили при ответе. @param {any[]} turns @param {any} t */
+/** Цитата в пульте: сама реплика, если она ещё в переписке, иначе — то, что запомнили при ответе (сервер собрал это из нашей же
+ *  переписки: quoteOf). Автора не додумываем: без него цитаты нет — иначе у клиента появилась бы цитата «от сотрудника».
+ *  @param {any[]} turns @param {any} t */
 export function quoteView(turns, t) {
   const q = t && t.qt;
   if (!q || !q.mid) return null;
-  return quoteOf(turns, String(q.mid)) || { mid: String(q.mid).slice(0, 80), x: snip(q.x || "", 120), r: q.r === "u" || q.r === "b" ? q.r : "a" };
+  const live = quoteOf(turns, String(q.mid));
+  if (live) return live;
+  return q.r === "u" || q.r === "a" || q.r === "b" ? { mid: String(q.mid).slice(0, 80), x: snip(q.x || "", 120), r: q.r } : null;
 }
 
 // ---- отправка файла

@@ -25,7 +25,7 @@ import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
-import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, fileKind, fileProblem, uploadName, quoteOf, quoteView, gaSendFile, sendOnce } from "../services/inbox/send.js";
+import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce } from "../services/inbox/send.js";
 /** @import { Env } from "../lib/types.js" */
 
 // кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
@@ -219,9 +219,9 @@ export async function inboxApi(request, env, url, s, ctx) {
     return saveReply({ ...adminTurn(msg, r), ...(qt ? { qt } : {}) }, r);
   }
   if (isFile && file) {
-    const bad = fileProblem(file);
-    if (bad) return jsonP({ error: bad }, bad === TOO_BIG ? 413 : 400);
-    const f = file, kind = fileKind(f.mime, f.name), name = uploadName(f.name, f.mime, kind);
+    const plan = filePlan(file); // опасный тип — по итоговому имени, исходному имени и типу файла
+    if (!plan.ok) return jsonP({ error: plan.error }, plan.status);
+    const f = file, { kind, name } = plan;
     const r = await sendOnce(env, cid, ch, id, rid, () => gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : ""));
     if ("dup" in r) return dupAnswer(r);
     if (!r.ok) return jsonP({ error: r.error }, 409);

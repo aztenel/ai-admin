@@ -11,6 +11,7 @@ import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
 import { applyStatus, patchTurn, stOf } from "../../services/inbox/status.js";
 import { statStatus } from "../../services/inbox/stats.js";
 import { inboundPush, failedPush } from "../../services/inbox/notify.js";
+import { quoteOf } from "../../services/inbox/send.js";
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {any} md */
@@ -66,10 +67,17 @@ export async function handleGreen(body, env, origin, r) {
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
   if (md.typeMessage === "editedMessage" || md.typeMessage === "deletedMessage" || md.typeMessage === "reactionMessage") return gaChange(env, digitsId, gx, md); // не новое сообщение
-  // клиент ответил на конкретное сообщение (цитата WhatsApp): номер того сообщения — в реплике (пульт показывает цитату над текстом).
-  // participant — автор цитаты: сам клиент или мы
+  // клиент ответил на конкретное сообщение (цитата WhatsApp): пульт покажет цитату над текстом. Текст и автор цитаты в вебхуке —
+  // от клиента (их можно подделать: «сотрудник написал: бесплатно»), поэтому цитату берём только из нашей переписки по номеру
+  // сообщения: нет такого сообщения — цитаты нет (ревью безопасности 31.10.2026)
   const qm = md.typeMessage === "quotedMessage" ? md.quotedMessage || {} : null;
-  const qt = qm && qm.stanzaId ? { mid: String(qm.stanzaId).slice(0, 80), x: clean(String(qm.textMessage || qm.caption || ""), 120), r: String(qm.participant || "") === chatId ? "u" : "a" } : null;
+  let qt = null;
+  if (qm && qm.stanzaId) {
+    try {
+      const niche = await nicheOf(env, "ga", digitsId, gx), h = niche ? await readHist(env, `h:ga:${niche}:${digitsId}`) : null;
+      qt = h ? quoteOf(h.turns || [], String(qm.stanzaId).slice(0, 80)) : null;
+    } catch (e) { console.log("ga quote", String(e)); }
+  }
   const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}) };
   const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();

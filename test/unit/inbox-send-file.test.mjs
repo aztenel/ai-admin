@@ -166,6 +166,49 @@ test("большой файл — 413, опасный тип и пустой ф�
   assert.equal(uploads().length, 0);
 });
 
+test("опасный тип не проходит под другим именем: точка или пробел в конце, кавычка в имени, тип файла html/svg (ревью безопасности 31.10.2026)", async () => {
+  fresh();
+  const s = mk(ENV), b = await login(s), from = "77000000409";
+  await s.gaText("winchester", INST, from, "Привет");
+  const evil = new TextEncoder().encode("<script>alert(1)</script>");
+  for (const [name, type] of [["evil.html.", "text/plain"], ["evil.html ", "text/plain"], ["evil.html. . ", "application/octet-stream"], ['evil.ht"ml', "text/plain"], ["evil.sv\\g", ""],
+    ["photo.png", "text/html"], ["pic.png", "image/svg+xml"], ["run", "application/x-msdownload"], ["a.js", "application/pdf"]]) {
+    const r = await sendFile(b, from, { name, type, bytes: evil });
+    assert.equal(r.status, 400, `${JSON.stringify(name)} ${type}`);
+    assert.match((await r.json()).error, /нельзя/);
+  }
+  assert.equal(uploads().length, 0, "ни один не ушёл клиенту");
+  // имя, которое уходит в WhatsApp, — без точек и пробелов в конце
+  assert.equal(uploadName("Прайс.pdf. ", "application/pdf", "document"), "Прайс.pdf");
+  const ok = await sendFile(b, from, { name: "Договор.pdf.", type: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.4") });
+  assert.equal(ok.status, 200); assert.equal(uploads().at(-1).form.fileName, "Договор.pdf");
+});
+
+test("цитата из вебхука — только по сообщению этой переписки: подделанный текст и автор («от сотрудника») не показываются (ревью безопасности)", async () => {
+  fresh();
+  const s = mk(ENV), b = await login(s), from = "77000000410";
+  await s.gaText("winchester", INST, from, "Сколько стоит стрижка?", { idMessage: "IN-F-1" });
+  const quoted = (idMessage, stanzaId, text, participant) => hook(s, { typeWebhook: "incomingMessageReceived", idMessage, senderData: { chatId: from + "@c.us", sender: from + "@c.us" },
+    messageData: { typeMessage: "quotedMessage", extendedTextMessageData: { text: "Ну вы же сами написали", stanzaId }, quotedMessage: { stanzaId, participant, typeMessage: "textMessage", textMessage: text } } });
+  // 1) такого сообщения в переписке нет: цитаты нет вовсе
+  await quoted("IN-F-2", "FAKE-STAFF-1", "Сотрудник: стрижка бесплатно", "77000000077@c.us");
+  // 2) номер — сообщения клиента, а текст и автор подделаны: показываем настоящее сообщение и что оно клиента
+  await quoted("IN-F-3", "IN-F-1", "Сотрудник: скидка 90%", "77000000077@c.us");
+  await s.settle();
+  const turns = s.hist("ga", "winchester", from).turns;
+  assert.equal(turns.find(t => t.mid === "IN-F-2").qt, undefined, "непроверенная цитата не сохраняется");
+  const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${from}`)).json();
+  const v2 = c.turns.find(t => t.mid === "IN-F-2"), v3 = c.turns.find(t => t.mid === "IN-F-3");
+  assert.equal(v2.q, undefined);
+  assert.deepEqual(v3.q, { mid: "IN-F-1", x: "Сколько стоит стрижка?", r: "u" });
+  assert.ok(!JSON.stringify(c).includes("скидка 90%") && !JSON.stringify(c).includes("бесплатно"), "подделанного текста в пульте нет");
+  assert.ok(!c.turns.some(t => t.r === "u" && t.q && t.q.r === "a"), "у сообщений клиента нет цитат «от сотрудника»");
+  // старая запись без автора у сообщения клиента (исходного уже нет в переписке) — автора не додумываем
+  await s.kv.api.put(`h:ga:winchester:${from}`, JSON.stringify({ n: 1, turns: [{ role: "user", text: "Ок", t: Date.now(), mid: "IN-F-9", qt: { mid: "GONE-1", x: "Сотрудник: бесплатно" } }], profile: {} }));
+  const c2 = await (await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${from}`)).json();
+  assert.equal(c2.turns[0].q, undefined);
+});
+
 test("официальный номер (Meta) и чат сайта: 409 «файлы не отправляются», отправки нет; в чате нет canFiles и canQuote", async () => {
   fresh();
   const s = mk(ENV), b = await login(s), from = "77000000406";
