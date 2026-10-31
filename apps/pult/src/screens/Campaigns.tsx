@@ -61,7 +61,7 @@ const TABS: { id: Tab; title: string; sub: string }[] = [
 ];
 
 type Preset = { segment?: SegmentSpec; channel?: "main" | "bot" };
-type Layer = { kind: "wizard"; preset?: Preset } | { kind: "ga"; tplId?: string; seg?: string } | { kind: "campaign"; id: string } | { kind: "nomain" };
+type Layer = { kind: "wizard"; preset?: Preset } | { kind: "ga"; tplId?: string; seg?: string } | { kind: "choose"; preset?: Preset } | { kind: "campaign"; id: string } | { kind: "nomain" };
 // подвкладки маркетинга (ТЗ v3.0 §2.2): рассылки и аудитории · шаблоны · журнал прошедших
 type Sub = "campaigns" | "templates" | "journal";
 const SUB_KEY = "pult2.campaigns.sub";
@@ -145,9 +145,17 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   const hasBase = crm.data ? crm.data.available : !!crm.error;
 
   // «Создать рассылку» — со второго номера (ТЗ v3.0 §5): мастер без Meta; шаблоном Meta — только если основной номер подключён
+  //   подключены оба номера — сначала вопрос «С какого номера?» (ТЗ v3.0 §5.1: клиент должен знать, откуда придёт сообщение)
   const newCampaign = (preset?: Preset) =>
-    setLayer(ov.data?.bot && preset?.channel !== "main" ? { kind: "ga", seg: preset?.segment?.id } : ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "wizard", preset });
-  const newMeta = () => setLayer(ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "wizard", preset: { channel: "main" } });
+    setLayer(
+      ov.data?.bot && ov.data.main.ready && !preset?.channel
+        ? { kind: "choose", preset }
+        : ov.data?.bot && preset?.channel !== "main"
+          ? { kind: "ga", seg: preset?.segment?.id }
+          : ov.data && !ov.data.main.ready
+            ? { kind: "nomain" }
+            : { kind: "wizard", preset },
+    );
   const refresh = () => {
     void ov.reload();
     void crm.reload();
@@ -207,11 +215,6 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
                   <h2 className="mb-2 mt-6 px-4 text-sm font-medium text-fg-3">Основной номер, шаблоны Meta</h2>
                   <MainNumber ws={ws} ov={ov.data} owner={owner} onChanged={() => void ov.reload()} />
                   {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
-                  {ov.data.main.ready && (
-                    <Button variant="outline" className="mb-6 w-full" onClick={newMeta}>
-                      Рассылка шаблоном Meta
-                    </Button>
-                  )}
                 </>
               )}
             </>
@@ -252,6 +255,35 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
           void ov.reload();
         }}
       />
+
+      <Sheet
+        open={layer?.kind === "choose"}
+        onOpenChange={(v) => !v && closeLayer()}
+        title="С какого номера отправить?"
+        description="Клиент получит сообщение с выбранного номера, ответ придёт в чат этого номера."
+      >
+        <div className="space-y-2 px-4 pb-4">
+          {(
+            [
+              ["bot", "Второй WhatsApp", "Обычное сообщение. Имя и данные клиента подставляются сами. Запуск рассылок с этого номера пока выключен."],
+              ["main", "Основной номер, шаблон Meta", "Только шаблоном, одобренным Meta в её кабинете."],
+            ] as const
+          ).map(([ch, title, sub]) => (
+            <button
+              key={ch}
+              type="button"
+              onClick={() => {
+                const preset = layer?.kind === "choose" ? layer.preset : undefined;
+                setLayer(ch === "bot" ? { kind: "ga", seg: preset?.segment?.id } : { kind: "wizard", preset: { ...preset, channel: "main" } });
+              }}
+              className="flex w-full flex-col rounded-2xl bg-surface-2 px-4 py-3 text-left hover:brightness-[0.98]"
+            >
+              <span className="font-semibold">{title}</span>
+              <span className="text-sm text-fg-2">{sub}</span>
+            </button>
+          ))}
+        </div>
+      </Sheet>
 
       <GaWizard
         ws={ws}

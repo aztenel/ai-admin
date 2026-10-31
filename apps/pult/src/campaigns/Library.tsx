@@ -70,8 +70,12 @@ export default function Library({ ws, owner, onUse }: { ws: string; owner: boole
       <p className="mb-3 flex items-center gap-2 px-1 text-ui text-fg-2 pointer-coarse:text-base">
         <BookOpenText aria-hidden className="size-5 shrink-0 text-brand-gold" strokeWidth={1.75} />
         <span>
-          <b className="tnum font-semibold text-fg">{nf.format(items.length)}</b> {plural(items.length, ["шаблон", "шаблона", "шаблонов"])} · одобрено{" "}
-          <b className="tnum font-semibold text-fg">{nf.format(approved)}</b> · на проверке <b className="tnum font-semibold text-fg">{nf.format(items.length - approved)}</b>
+          {/* числа не отрываются от слов при переносе на телефоне */}
+          <span className="whitespace-nowrap">
+            <b className="tnum font-semibold text-fg">{nf.format(items.length)}</b> {plural(items.length, ["шаблон", "шаблона", "шаблонов"])}
+          </span>{" "}
+          · <span className="whitespace-nowrap">одобрено <b className="tnum font-semibold text-fg">{nf.format(approved)}</b></span>{" "}
+          · <span className="whitespace-nowrap">на проверке <b className="tnum font-semibold text-fg">{nf.format(items.length - approved)}</b></span>
         </span>
       </p>
       <label className="relative mb-3 block">
@@ -251,14 +255,15 @@ function TemplateSheet({ ws, lib, item, canEdit, onClose, onSaved, onUse }: { ws
     >
       <div className="space-y-3 px-4 pb-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div role="radiogroup" aria-label="Вид" className="inline-flex rounded-lg bg-surface-2 p-0.5 text-sm">
-            {(
-              [
-                ["preview", "Пример клиента"],
-                ["edit", "Редактор"],
-              ] as const
-            ).map(([m, label]) =>
-              m === "edit" && !canEdit ? null : (
+          {/* сотруднику редактора нет — переключатель из одного пункта не показываем */}
+          {canEdit && (
+            <div role="radiogroup" aria-label="Вид" className="inline-flex rounded-lg bg-surface-2 p-0.5 text-sm">
+              {(
+                [
+                  ["preview", "Пример клиента"],
+                  ["edit", "Редактор"],
+                ] as const
+              ).map(([m, label]) => (
                 <button
                   key={m}
                   type="button"
@@ -272,9 +277,9 @@ function TemplateSheet({ ws, lib, item, canEdit, onClose, onSaved, onUse }: { ws
                 >
                   {label}
                 </button>
-              ),
-            )}
-          </div>
+              ))}
+            </div>
+          )}
           <div role="radiogroup" aria-label="Язык" className="inline-flex rounded-lg bg-surface-2 p-0.5 text-sm">
             {(["ru", "kk"] as const).map((l) => (
               <button key={l} type="button" role="radio" aria-checked={lang === l} onClick={() => setLang(l)} className={cn("rounded-md px-3 py-1 pointer-coarse:py-1.5", lang === l ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-2")}>

@@ -238,8 +238,8 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
               <span className="text-critical">{b.why || "Номер не на связи."}</span>
             </Field>
           )}
-          <Field label="Вебхук">
-            {b.hook ? <span className="text-positive">ведёт в бота</span> : <span className="text-critical">не настроен</span>}
+          <Field label="Входящие">
+            {b.hook ? <span className="text-positive">приходят в пульт</span> : <span className="text-critical">не приходят</span>}
           </Field>
           {!b.hook && b.warn && <p className="py-2.5 text-sm text-fg-2">{b.warn}</p>}
           <Field label="Рассылками за 24 часа">

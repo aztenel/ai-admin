@@ -3,13 +3,15 @@
 // Запуск: npm run e2e:campaigns [папка для снимков]   (или node scripts/e2e-campaigns.mjs <папка>)
 // Playwright — PLAYWRIGHT_PATH или /opt/node-tools/node_modules/playwright/index.mjs; Chromium — /opt/pw-browsers/chromium (CHROMIUM меняет).
 //
-// Что проходит (решение владельца 19.10.2026: маркетинг — только основной номер, сервисные — номер бота):
-//  · владелец Winchester: обзор номера → «Обновить базу» → сегмент → люди (номера маской) → рассылка по сегменту: проверить → пробная →
-//    создать и запустить → POST /_cron боту → ход «N из N отправлено»; автосценарий: без шаблона — ошибка, с шаблоном — включён;
-//    вкладка «Сервисные · номер бота»; на компьютере — рассылка «запустить позже» и запуск из листа, ошибка сервера в настройках
-//    автосценария, сигнал Meta (заложен в хранилище бота) снимается кнопкой владельца;
-//  · сотрудник Winchester: нет «Обновить базу», настроек автосценария, «Снять сигнал Meta»; в мастере нет выбора номера и рассылки
-//    текстом с номера бота; вкладка «Сервисные» показывает номер бота и что бот шлёт сам;
+// Что проходит (ТЗ v3.0, 31.10.2026: вкладки «Маркетинг» (Рассылки / Шаблоны / Журнал), «Сервисные», «Календарь»; рассылка шаблоном Meta —
+// с основного номера, рассылка со второго номера — черновик и одобрение, запуск выключен):
+//  · владелец Winchester: обзор номера → «Обновить базу» → сегмент → люди (номера маской) → «Создать рассылку по сегменту» → «Основной
+//    номер, шаблон Meta»: проверить → пробная → создать и запустить → POST /_cron боту → ход «N из N отправлено» → «Журнал»; автосценарий:
+//    без шаблона — ошибка, с шаблоном — включён; «Сервисные» (тексты по категориям, одобрение); «Шаблоны» (поиск, фильтр, пример
+//    WhatsApp, одобрение) → «Использовать» → мастер второго номера → одобрена; «Календарь» месяца и итоги; на компьютере — рассылка
+//    «запустить позже» и запуск из листа, ошибка сервера в настройках автосценария, сигнал Meta снимается кнопкой владельца;
+//  · сотрудник Winchester: нет «Обновить базу», настроек автосценария, «Снять сигнал Meta»; шаблоны только смотреть; по одобренному
+//    владельцем шаблону — только черновик; «Сервисные» — только смотреть;
 //  · владелец «Демо Дент» (без базы): маркетинговая рассылка вставленным списком с основного номера;
 //  · находки проверки 19.10.2026 — отдельными сессиями в конце (fixes*): каждый шаг до правки не проходил; собранный пульт без связи
 //    проверяется на свежей сборке во временной папке (vite build + vite preview с тем же ботом).
@@ -169,6 +171,22 @@ async function fill(loc, value) {
   await loc.fill(value);
 }
 const cron = (t) => t.page.request.post(`${dl.bot.url}/_cron`).then((r) => r.status());
+/** Вкладка внутри «Маркетинга»: Рассылки / Шаблоны / Журнал (ТЗ v3.0 §2.2). */
+async function subTab(page, name) {
+  await page.getByRole("tablist", { name: "Маркетинг" }).getByRole("tab", { name, exact: true }).click();
+}
+/** «Создать рассылку» (ТЗ v3.0): подключены оба номера — сначала вопрос «С какого номера?»; эти шаги проверяют рассылку шаблоном Meta. */
+async function chooseMeta(page) {
+  const ch = page.getByRole("dialog", { name: "С какого номера отправить?" });
+  if (await ch.waitFor({ timeout: 4000 }).then(() => true, () => false)) await ch.getByRole("button", { name: /Основной номер, шаблон Meta/ }).click();
+}
+async function openMeta(page, how = "tap") {
+  const b = page.getByRole("button", { name: "Создать рассылку" }).first();
+  if (how === "click") await b.click();
+  else await tap(b);
+  await chooseMeta(page);
+}
+
 const text = (loc) => loc.innerText().catch(() => "");
 
 /** Лист открытой рассылки: ход «N из M отправлено» (опрос раз в 5 с) — ждём, пока отправлено = всего. */
@@ -204,7 +222,7 @@ async function ownerWinchesterPhone() {
   const t = await session({ key: dl.OWNER, c: "winchester", vp: PHONE, scheme: "light", tag: "w-owner-390-light", own: [TEST_TO.replace(/\D/g, "")] });
   const { page } = t;
   const tabs = page.getByRole("tablist", { name: "Вид рассылок" });
-  ok("три вкладки: «Маркетинг · основной номер», «Сервисные · номер бота», «Календарь · план и итоги»", (await tabs.getByRole("tab").count()) === 3 && /Маркетинг/.test(await text(tabs)) && /номер бота/.test(await text(tabs)) && /Календарь/.test(await text(tabs)));
+  ok("три вкладки: «Маркетинг», «Сервисные», «Календарь»", (await tabs.getByRole("tab").count()) === 3 && /Маркетинг/.test(await text(tabs)) && /Сервисные/.test(await text(tabs)) && /Календарь/.test(await text(tabs)));
   await page.getByText("Основной номер", { exact: true }).first().waitFor();
   ok("обзор: основной номер, качество и предел Meta", /высокое/.test(await text(page.getByText("Качество", { exact: true }).first().locator(".."))) && /1\s?000/.test(await text(page.getByText("Предел Meta").locator("..").first())));
   ok("ссылки на старую страницу /broadcast нет", !(await page.locator('a[href*="/broadcast"]').count()));
@@ -218,7 +236,7 @@ async function ownerWinchesterPhone() {
   ok("база собрана: клиентов за 90 дней и доступно", /Клиентов/.test(await text(page.getByText("База клиентов из Altegio").locator("xpath=ancestor::section[1]"))));
   await reveal(page.getByText("База клиентов из Altegio").first());
   await step(t, "base");
-  await reveal(page.getByText("Сегменты — кому можно писать сейчас"));
+  await reveal(page.getByText("Кому можно писать сейчас"));
   await step(t, "segments");
 
   // сегмент → люди (маска)
@@ -236,6 +254,7 @@ async function ownerWinchesterPhone() {
 
   // рассылка по сегменту: мастер открывается сразу на «Сообщение»
   await tap(dlg.getByRole("button", { name: "Создать рассылку по сегменту" }));
+  await chooseMeta(page);
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   await wiz.getByRole("heading", { name: "Сообщение" }).waitFor();
   const wtext = await text(wiz);
@@ -279,9 +298,13 @@ async function ownerWinchesterPhone() {
   await step(t, "campaign-sent");
   await page.keyboard.press("Escape");
   await sheet.waitFor({ state: "detached" });
+  // ТЗ v3.0 §2.2: прошедшие рассылки — во вкладке «Маркетинг» → «Журнал»
+  await subTab(page, "Журнал");
   const hist = page.getByRole("button", { name: /^Пора на стрижку · \d\d\.\d\d/ });
   await hist.first().waitFor({ timeout: 10_000 }).catch(() => {});
-  ok("рассылка в истории: завершена, отправлено всем", new RegExp(`Завершена[\\s\\S]*отправлено ${poraN} из ${poraN}`).test(await text(hist.first())), await text(hist.first()));
+  ok("рассылка в журнале: завершена, отправлено всем", new RegExp(`Завершена[\\s\\S]*отправлено ${poraN} из ${poraN}`).test(await text(hist.first())), await text(hist.first()));
+  await step(t, "journal");
+  await subTab(page, "Рассылки");
   // кому ушёл шаблон, тем 14 дней не пишем: плитка сегмента обновляется сама, без «Обновить»
   const emptied = page.getByRole("button", { name: /^Сегмент «Пора на стрижку»: 0 / });
   await emptied.waitFor({ timeout: 10_000 }).catch(() => {});
@@ -307,16 +330,16 @@ async function ownerWinchesterPhone() {
   await reveal(sw);
   await step(t, "auto-on");
 
-  // вкладка «Сервисные · номер бота»: что уходит само со второго номера (с 30.10.2026 — по журналу Altegio, без бота) и очередь
+  // вкладка «Сервисные»: что уходит само со второго номера (с 30.10.2026 — по журналу Altegio, без бота) и очередь
   // из хранилища бота (dev-live.mjs: jrq:winchester, отметки rms:)
   await page.getByRole("tab", { name: /Сервисные/ }).click();
   const svc = page.getByRole("tabpanel");
   await svc.getByText("Что уходит само").waitFor();
   const stext = await text(svc);
-  ok("сервисные: номер бота на связи, вебхук ведёт в бота", /на связи/.test(stext) && /ведёт в бота/.test(stext));
-  ok("сервисные: маркетинга с номера бота нет — с причиной", /Маркетинговых рассылок с этого номера нет/.test(stext));
+  ok("сервисные: второй номер на связи, входящие приходят в пульт", /на связи/.test(stext) && /приходят в пульт/.test(stext) && !/Вебхук/.test(stext));
+  ok("сервисные: здесь только сообщения по записям — рассылок и «Создать рассылку» нет", /Отсюда уходят напоминания и ответы клиентам/.test(stext) && !(await svc.getByRole("button", { name: /Создать рассылку/ }).count()) && !(await page.getByRole("button", { name: "Создать рассылку" }).count()));
   ok("сервисные: что бот шлёт сам (18:00, за 2 часа, отзыв)", /Накануне в 18:00/.test(stext) && /За 2 часа/.test(stext) && /отзыв/.test(stext) && /Администратору ничего делать не нужно/.test(stext));
-  ok("сервисные: кому — по всем записям журнала Altegio, отзыв — с отметкой «пришёл»", /по всем записям журнала Altegio/.test(stext) && /отмечено «пришёл»/.test(stext) && !/прямо в Altegio, бот не напоминает/.test(stext));
+  ok("сервисные: кому — по всем записям журнала Altegio, отзыв — с отметкой «пришёл»", /по всем записям Altegio/.test(stext) && /отмечено «пришёл»/.test(stext) && !/прямо в Altegio, бот не напоминает/.test(stext));
   ok("[12] сервисные: со второго номера (Winchester — по журналу, без бота), не «бот шлёт сам»", /Уходят сами со второго номера/.test(stext) && !/Отправляет бот сам/.test(stext), stext.slice(0, 300));
   ok("сервисные: работает только на боевом сайте", /только с боевого сайта/.test(stext) && /С черновика они не отправляются/.test(stext));
   ok("сервисные: все три вида включены, у отзыва — ссылка 2ГИС", (await svc.getByText("включено", { exact: true }).count()) === 3 && (await svc.locator('a[href^="https://2gis.kz/"]').count()) === 1);
@@ -328,21 +351,26 @@ async function ownerWinchesterPhone() {
   // ТЗ v2.0 §4: последние решения по очереди, тексты сообщений с одобрением владельца, проверка по журналу без отправки
   const log = svc.getByRole("list", { name: "Последние решения" });
   await reveal(log);
-  ok("сервисные: последние решения — перенос отменил напоминание, неявка — задача администратору; номера маской", /отменено — запись перенесена/.test(await text(log)) && /задача администратору/.test(await text(log)) && /\+7 700 \*\*\* \*\* 04/.test(await text(log)), (await text(log)).slice(0, 400));
-  const cat = svc.getByRole("list", { name: "Тексты сообщений" });
-  await reveal(cat);
-  ok("сервисные: каталог S01–S18, напоминания одобрены, подтверждение — ждёт одобрения", (await cat.locator("li").count()) === 18 && /S03 Напоминание накануне\s*одобрено/.test(await text(cat)) && /S01 Новая запись — подтверждение\s*ждёт одобрения/.test(await text(cat)), (await text(cat)).slice(0, 300));
-  const s03 = cat.locator("li").filter({ hasText: "S03 Напоминание накануне" });
+  ok("сервисные: последние решения — перенос отменил напоминание, неявка — задача администратору; номера маской", /отменено: запись перенесена/.test(await text(log)) && /задача администратору/.test(await text(log)) && /\+7 700 \*\*\* \*\* 04/.test(await text(log)), (await text(log)).slice(0, 400));
+  // ТЗ v3.0 §6: тексты по категориям (Запись, Напоминания, …), без номеров сценариев в заголовках
+  const cat = svc.locator('ul[aria-label^="Тексты"]');
+  const rem = svc.getByRole("list", { name: "Тексты: Напоминания" });
+  await reveal(svc.getByRole("list", { name: "Тексты сообщений" }));
+  const all = await text(svc);
+  ok("сервисные: каталог из 18 сценариев по категориям, напоминания одобрены, подтверждение — ждёт одобрения", (await cat.locator(":scope > li").count()) === 18 && (await rem.count()) === 1 && /Напоминание накануне\s*одобрено/.test(await text(rem)) && /Подтверждение новой записи\s*ждёт одобрения/.test(await text(svc.getByRole("list", { name: "Тексты сообщений" }))) && !/\bS\d\d\b/.test(all), all.slice(-600));
+  const s03 = rem.locator(":scope > li").filter({ hasText: "Напоминание накануне" });
+  await reveal(s03);
   await tap(s03.getByRole("button", { name: "Қазақша" }));
-  ok("сервисные: пример текста на казахском", /Еске салу/.test(await text(s03)));
+  ok("сервисные: пример текста на казахском", /Еске саламыз/.test(await text(s03)));
   await step(t, "service-texts");
-  const s01 = cat.locator("li").filter({ hasText: "S01 Новая запись" });
+  const s01 = svc.getByRole("list", { name: "Тексты сообщений" }).locator(":scope > li").filter({ has: page.getByText("Подтверждение новой записи", { exact: true }) });
+  await reveal(s01);
   await tap(s01.getByRole("button", { name: "Одобрить текст" }));
   await s01.getByText("одобрено", { exact: true }).waitFor();
-  ok("сервисные: владелец одобрил текст S01", (await s01.getByRole("button", { name: "Снять одобрение" }).count()) === 1);
+  ok("сервисные: владелец одобрил текст подтверждения", (await s01.getByRole("button", { name: "Снять одобрение" }).count()) === 1);
   await tap(s01.getByRole("button", { name: "Снять одобрение" }));
   const back = await s01.getByText("ждёт одобрения", { exact: true }).waitFor({ timeout: 10000 }).then(() => true, () => false);
-  ok("сервисные: одобрение S01 снято", back, (await text(s01)).slice(0, 300));
+  ok("сервисные: одобрение подтверждения снято", back, (await text(s01)).slice(0, 300));
   const dry = svc.getByRole("button", { name: "Проверить по журналу (без отправки)" });
   await reveal(dry);
   await tap(dry);
@@ -356,45 +384,125 @@ async function ownerWinchesterPhone() {
   return poraN;
 }
 
-/** ТЗ v2.0 §5, §6, §8: библиотека текстов во вкладке «Маркетинг» и вкладка «Календарь» (14 дней, итоги доставки). Только числа, без номеров. */
+/** ТЗ v3.0 §4–§6, §8: «Шаблоны» во вкладке «Маркетинг» (поиск, фильтры, вид у клиента в WhatsApp, одобрение), мастер второго номера
+ *  (Кому → Сообщение → Проверка → Когда → Итог; черновик и одобрение, запуск выключен) и «Календарь» месяца с итогами доставки.
+ *  Владелец проходит первым и одобряет «Будний день» — сотрудник потом сохраняет по нему черновик. Только числа и маски, без номеров. */
+const TPL = "Будний день"; // M10, сегмент «Вся база», без [скобок]
 async function planTab(t, owner) {
   const { page } = t;
   await page.getByRole("tab", { name: /Маркетинг/ }).click();
-  const lib = page.getByRole("list", { name: "Библиотека текстов" });
+  await subTab(page, "Шаблоны");
+  const lib = page.getByRole("list", { name: "Шаблоны" });
   await lib.waitFor({ timeout: 15000 });
-  await reveal(lib);
-  ok(`${t.tag}: библиотека — 28 текстов, сначала 5, «Показать все»`, /28 текстов/.test(await text(page.getByText(/текстов, одобрено/).first())) && (await lib.locator(":scope > li").count()) === 5 && (await page.getByRole("button", { name: "Показать все 28" }).count()) === 1);
-  const first = lib.locator(":scope > li").first();
-  await tap(first.getByRole("button").first());
-  await tap(first.getByRole("button", { name: "Қазақша" }));
-  ok(`${t.tag}: библиотека — текст на казахском`, /[әғқңөұүһі]/i.test(await text(first)), (await text(first)).slice(0, 200));
-  await tap(first.getByRole("button", { name: "Пример" }));
-  await first.getByText(/Так увид/).waitFor({ timeout: 10000 });
-  ok(`${t.tag}: библиотека — пример без полных номеров`, !/7700000\d{4}/.test(await text(first)) && !/\{имя\}/.test(await text(first.locator("[aria-live]"))));
+  const head = await text(page.getByText(/шаблон\S* · одобрено/).first());
+  ok(`${t.tag}: шаблоны — 28 тем и счётчик одобренных`, /28 шаблонов/.test(head) && (await lib.locator(":scope > li").count()) === 28, head);
+  ok(`${t.tag}: шаблоны — в списке нет номеров тем и служебных слов`, !/\bM\d\d\b|\{\{|Marketing|KV|D1/.test(await text(lib)));
+  await step(t, "templates");
+  // поиск и фильтр по категории
+  const search = page.getByRole("searchbox", { name: "Поиск по шаблонам" });
+  await fill(search, "борода");
+  await page.waitForFunction(() => document.querySelectorAll('[aria-label="Шаблоны"] > li').length < 28, null, { timeout: 5000 }).catch(() => {});
+  ok(`${t.tag}: шаблоны — поиск «борода»`, /Стрижка и борода/.test(await text(lib)) && (await lib.locator(":scope > li").count()) < 28);
+  await tap(page.getByRole("button", { name: "Очистить поиск" }));
+  const chips = page.getByRole("radiogroup", { name: "Какие шаблоны показать" });
+  await tap(chips.getByRole("radio", { name: "Свободное время" }));
+  ok(`${t.tag}: шаблоны — фильтр «Свободное время»`, (await lib.locator(":scope > li").count()) === 5 && /Свободное окно сегодня/.test(await text(lib)), String(await lib.locator(":scope > li").count()));
+  await step(t, "templates-filter");
+  await tap(chips.getByRole("radio", { name: "Свободное время" }));
+  await tap(chips.getByRole("radio", { name: "Все" }));
+
+  // шаблон с [скобками]: одобрить нельзя
+  await tap(lib.getByRole("button", { name: /^Акция/ }));
+  const promo = page.getByRole("dialog", { name: "Акция" });
+  await promo.waitFor();
+  await promo.getByText(/впишите настоящие условия/).waitFor({ timeout: 10000 }).catch(() => {});
+  ok(`${t.tag}: «Акция» — нужны данные: просьба вписать условия`, /впишите настоящие условия/.test(await text(promo)));
+  ok(`${t.tag}: «Акция» — ${owner ? "одобрить нельзя, пока есть [скобки]" : "нет кнопки «Одобрить»"}`, owner ? await promo.getByRole("button", { name: "Одобрить", exact: true }).isDisabled() : !(await promo.getByRole("button", { name: "Одобрить", exact: true }).count()));
+  await page.keyboard.press("Escape");
+  await promo.waitFor({ state: "detached" });
+
+  // «Будний день»: вид у клиента в WhatsApp на русском и казахском
+  await tap(lib.getByRole("button", { name: new RegExp(`^${TPL}`) }));
+  const sh = page.getByRole("dialog", { name: TPL });
+  await sh.waitFor();
+  const bubble = sh.locator("figure").first();
+  await bubble.waitFor({ timeout: 10000 });
+  const btext = await text(bubble);
+  ok(`${t.tag}: шаблон — пример в WhatsApp без вставок, скобок и полных номеров`, !/[{}\[\]]/.test(btext) && /стоп/.test(btext) && !FULL.test(btext), btext.slice(0, 200));
+  FULL.lastIndex = 0;
+  ok(`${t.tag}: шаблон — что проверить перед отправкой`, /Что проверить перед отправкой/.test(await text(sh)));
+  await tap(sh.getByRole("radio", { name: "Қазақша" }));
+  await sh.getByText("Казахский текст ещё не проверил носитель языка.").waitFor({ timeout: 10000 });
+  await page.waitForFunction(() => /[әғқңөұүһі]/i.test(document.querySelector('[role=dialog] figure')?.textContent || ""), null, { timeout: 10000 }).catch(() => {});
+  ok(`${t.tag}: шаблон — казахский с пометкой «не проверил носитель»`, /[әғқңөұүһі]/i.test(await text(sh.locator("figure").first())));
+  await step(t, "template-kk");
+  await tap(sh.getByRole("radio", { name: "Русский" }));
   if (owner) {
-    await tap(first.getByRole("button", { name: "Одобрить текст" }));
-    await first.getByRole("button", { name: "Снять одобрение" }).waitFor({ timeout: 10000 });
-    ok(`${t.tag}: библиотека — владелец одобрил текст`, /одобрен/.test(await text(first)));
-    await step(t, "library-approved");
-    await tap(first.getByRole("button", { name: "Снять одобрение" }));
-    await first.getByRole("button", { name: "Одобрить текст" }).waitFor({ timeout: 10000 });
-    await tap(page.getByRole("button", { name: "Показать все 28" }));
-    const br = lib.locator(":scope > li").filter({ hasText: "нужно дописать" }).first();
-    await reveal(br);
-    await tap(br.getByRole("button").first());
-    ok(`${t.tag}: библиотека — текст с [скобками] одобрить нельзя`, await br.getByRole("button", { name: "Одобрить текст" }).isDisabled());
+    ok(`${t.tag}: шаблон — владельцу есть «Редактор», «Изменить», «Дублировать»`, (await sh.getByRole("radio", { name: "Редактор" }).count()) === 1 && (await sh.getByRole("button", { name: "Изменить" }).count()) === 1 && (await sh.getByRole("button", { name: "Дублировать" }).count()) === 1);
+    await tap(sh.getByRole("radio", { name: "Редактор" }));
+    const ed = sh.getByRole("textbox", { name: "Текст на русском" });
+    await ed.waitFor();
+    ok(`${t.tag}: редактор — вставки понятными словами, без {{…}}`, !/\{\{/.test(await ed.inputValue()) && (await sh.getByRole("button", { name: /Имя клиента/ }).count()) === 1, (await ed.inputValue()).slice(0, 160));
+    await step(t, "template-editor");
+    await tap(sh.getByRole("button", { name: "Отмена" }));
+    await tap(sh.getByRole("button", { name: "Одобрить", exact: true }));
+    await sh.getByRole("button", { name: "Снять одобрение" }).waitFor({ timeout: 10000 });
+    ok(`${t.tag}: шаблон одобрен владельцем — «Использовать» доступно`, await sh.getByRole("button", { name: "Использовать" }).isEnabled());
+    await step(t, "template-approved");
   } else {
-    ok(`${t.tag}: библиотека — сотрудник не правит и не одобряет`, !(await lib.getByRole("button", { name: /Одобрить текст|Изменить/ }).count()));
-    await step(t, "library-staff");
+    ok(`${t.tag}: шаблон — сотрудник не правит и не одобряет`, !(await sh.getByRole("radio", { name: "Редактор" }).count()) && !(await sh.getByRole("button", { name: /^(Одобрить|Снять одобрение|Изменить|Дублировать)$/ }).count()));
+    await step(t, "template-staff");
   }
 
+  // мастер второго номера: Кому → Сообщение → Проверка → Когда → Итог (у сотрудника — по тексту, который одобрил владелец раньше)
+  const use = sh.getByRole("button", { name: "Использовать" });
+  const usable = await use.isEnabled();
+  ok(`${t.tag}: «${TPL}» одобрен — «Использовать» доступно`, usable);
+  if (!usable) return;
+  await tap(use);
+  const gw = page.getByRole("dialog", { name: "Новая рассылка" });
+  await gw.waitFor();
+  ok(`${t.tag}: мастер — второй номер, шаг 1 из 5 «Кому»`, /Второй WhatsApp · шаг 1 из 5: Кому/.test(await text(gw)));
+  await tap(gw.getByRole("radiogroup", { name: "Сегмент" }).getByRole("radio", { name: /Вся база/ }));
+  await step(t, "ga-who");
+  await tap(gw.getByRole("button", { name: "Далее" }));
+  await gw.getByRole("radiogroup", { name: "Сообщение" }).waitFor();
+  ok(`${t.tag}: мастер — выбран шаблон «${TPL}»`, (await gw.getByRole("radio", { name: new RegExp(`^${TPL}`) }).getAttribute("aria-checked")) === "true");
+  await tap(gw.getByRole("button", { name: "Далее" }));
+  await gw.getByText(/^Получат:/).waitFor({ timeout: 15000 });
+  const ctext = await text(gw);
+  const valid = Number((ctext.match(/Получат:\s*([\d\s]+)/) || [])[1]?.replace(/\s/g, "") || 0);
+  ok(`${t.tag}: проверка — есть кому, без вставок и полных номеров, примеры номеров маской`, valid > 0 && !/\{\{|\[/.test(ctext) && !/7700000\d{4}/.test(ctext) && /\+7 700 \*\*\* \*\* \d\d/.test(ctext), ctext.slice(0, 400).replace(/\n+/g, " / "));
+  ok(`${t.tag}: проверка — кто не получит и почему`, /Не получат/.test(ctext));
+  await step(t, "ga-check");
+  await tap(gw.getByRole("button", { name: "Далее" }));
+  await gw.getByText(/Не больше в день/).waitFor();
+  await tap(gw.getByRole("button", { name: "Далее" }));
+  await gw.getByText(/Запуск рассылок со второго номера пока выключен/).waitFor();
+  ok(`${t.tag}: итог — «запуск выключен», ${owner ? "есть «Одобрить»" : "только «Сохранить черновик»"}`, (await gw.getByRole("button", { name: "Сохранить черновик" }).count()) === 1 && (await gw.getByRole("button", { name: "Одобрить", exact: true }).count()) === (owner ? 1 : 0) && !(await gw.getByRole("button", { name: /Запустить/ }).count()));
+  await step(t, "ga-summary");
+  await tap(gw.getByRole("button", { name: owner ? "Одобрить" : "Сохранить черновик", exact: true }));
+  const cs = page.getByRole("dialog").filter({ hasText: /Запуск рассылок со второго номера пока выключен: его включает владелец/ });
+  await cs.waitFor({ timeout: 15000 });
+  const cst = await text(cs);
+  ok(`${t.tag}: лист рассылки — ${owner ? "одобрена" : "черновик"}, кнопки «Запустить» нет`, (owner ? /Одобрена/.test(cst) : /Черновик\./.test(cst)) && !(await cs.getByRole("button", { name: /^Запустить/ }).count()), cst.slice(0, 300));
+  ok(`${t.tag}: одно уведомление за раз`, (await page.locator("[aria-live=polite].fixed > *").count()) <= 1);
+  await step(t, "ga-saved");
+  await page.keyboard.press("Escape");
+  await cs.waitFor({ state: "detached" });
+
+  // календарь месяца: сетка дней, точки сервисных и рекламы, выбранный день; итоги доставки
   await page.getByRole("tab", { name: /Календарь/ }).click();
-  const cal = page.getByRole("list", { name: "Календарь на 14 дней" });
-  const calOk = await cal.waitFor({ timeout: 15000 }).then(() => true, () => false);
   const panel = page.getByRole("tabpanel");
-  ok(`${t.tag}: календарь — 14 дней, сервисные и реклама отдельно`, calOk && (await cal.locator(":scope > li").count()) === 14 && /Сервисные:/.test(await text(cal)) && /Реклама:/.test(await text(cal)), (await text(panel)).slice(0, 400));
-  ok(`${t.tag}: календарь — первый день «Сегодня», потом «Завтра»`, /^Сегодня/.test(await text(cal.locator(":scope > li").first())) && /^Завтра/.test(await text(cal.locator(":scope > li").nth(1))));
+  const grid = panel.getByRole("grid");
+  const calOk = await grid.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  const cells = grid.getByRole("gridcell");
+  ok(`${t.tag}: календарь — сетка месяца с днями недели`, calOk && (await cells.count()) >= 28 && (await grid.getByRole("columnheader").count()) === 7, (await text(panel)).slice(0, 300));
+  const day = panel.getByRole("list", { name: "Выбранный день" });
+  ok(`${t.tag}: календарь — выбран сегодняшний день, сервисные и реклама`, (await grid.locator('[aria-selected="true"]').count()) === 1 && /Сервисные:|ничего не запланировано/.test(await text(day)), (await text(day)).slice(0, 200));
   await step(t, "plan-calendar");
+  await tap(panel.getByRole("button", { name: "Следующий месяц" }));
+  ok(`${t.tag}: календарь — следующий месяц`, (await grid.getAttribute("aria-label")) !== null && (await panel.getByRole("button", { name: "Следующий месяц" }).isDisabled()));
   const stats = panel.getByRole("list", { name: /Итоги за/ }).or(panel.getByText(/Числа появятся|отчётов о доставке не было/)).first();
   await stats.waitFor({ timeout: 15000 });
   await reveal(stats);
@@ -422,7 +530,7 @@ async function staffWinchester(vp, scheme) {
   await step(t, "auto-readonly");
 
   // мастер: выбора номера и текста с номера бота нет
-  await tap(page.getByRole("button", { name: "Новая рассылка" }).first());
+  await openMeta(page);
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   await wiz.getByText(/основного номера/).first().waitFor();
   await wiz.getByRole("radiogroup", { name: "Сегмент базы" }).or(wiz.getByLabel("Номера и имена")).first().waitFor();
@@ -441,12 +549,12 @@ async function staffWinchester(vp, scheme) {
   const svc = page.getByRole("tabpanel");
   await svc.getByText("Что уходит само").waitFor();
   const stext = await text(svc);
-  ok(`${t.tag}: сервисные — номер бота и что уходит само`, /Номер бота/.test(stext) && /на связи/.test(stext) && /Накануне в 18:00/.test(stext) && /Уходят сами со второго номера/.test(stext));
+  ok(`${t.tag}: сервисные — номер бота и что уходит само`, /Второй WhatsApp/.test(stext) && /на связи/.test(stext) && /Накануне в 18:00/.test(stext) && /Уходят сами со второго номера/.test(stext));
   await svcQueue(t, svc);
   // переключатель языка примера текста — не действие: кроме него кнопок нет
   ok(`${t.tag}: сервисные — только смотреть, кнопок нет`, !(await svc.getByRole("button").filter({ hasNotText: /^(Русский|Қазақша)$/ }).count()) && !(await svc.getByRole("switch").count()));
-  ok(`${t.tag}: сервисные — тексты сообщений видны, одобрить нельзя`, (await svc.getByRole("list", { name: "Тексты сообщений" }).locator("li").count()) === 18 && !(await svc.getByRole("button", { name: /Одобрить текст|Проверить по журналу/ }).count()));
-  ok(`${t.tag}: [17] сотруднику — без слов «боевой сайт / черновик», время по Астане`, !/боевого сайта|черновик/i.test(await text(svc)) && /Время — по Астане/.test(await text(svc)));
+  ok(`${t.tag}: сервисные — тексты сообщений видны, одобрить нельзя`, (await svc.locator('ul[aria-label^="Тексты"] > li').count()) === 18 && !(await svc.getByRole("button", { name: /Одобрить текст|Проверить по журналу/ }).count()));
+  ok(`${t.tag}: [17] сотруднику — без слов «боевой сайт / черновик», время по Астане`, !/боевого сайта|черновик/i.test(await text(svc)) && /Время по Астане/.test(await text(svc)));
   await step(t, "service-tab");
   await planTab(t, false);
   await finish(t);
@@ -484,7 +592,7 @@ async function ownerWinchesterDesk() {
   await dlg.waitFor({ state: "detached" });
 
   // мастер на компьютере: одна форма, «запустить позже», запуск из листа
-  await page.getByRole("button", { name: "Новая рассылка" }).first().click();
+  await openMeta(page, "click");
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   const seg = wiz.getByRole("radiogroup", { name: "Сегмент базы" });
   await seg.waitFor();
@@ -552,7 +660,7 @@ async function ownerDent(vp, scheme, full) {
   ok(`${t.tag}: базы клиентов у «Дента» нет — блока нет`, !(await page.getByText("База клиентов из Altegio").count()));
   await step(t, "overview");
   if (full) {
-    await tap(page.getByRole("button", { name: "Новая рассылка" }).first());
+    await openMeta(page);
     const wiz = page.getByRole("region", { name: "Новая рассылка" });
     const list = wiz.getByLabel("Номера и имена");
     await list.waitFor();
@@ -600,13 +708,15 @@ async function gallery(vp, scheme, { botOff = false } = {}) {
   const { page } = t;
   await page.getByRole("button", { name: /^Сегмент «Вся база»/ }).waitFor();
   await step(t, "overview");
-  await reveal(page.getByText("Сегменты — кому можно писать сейчас"));
+  await reveal(page.getByText("Кому можно писать сейчас"));
   await step(t, "segments");
   await reveal(page.getByText("Автосценарий «Пора на стрижку»").first());
   await step(t, "auto");
-  await reveal(page.getByText("История").first());
+  await subTab(page, "Журнал");
+  await page.getByText("Прошедшие рассылки").first().waitFor();
   await step(t, "history");
-  await tap(page.getByRole("button", { name: "Новая рассылка" }).first());
+  await subTab(page, "Рассылки");
+  await openMeta(page);
   await page.getByRole("region", { name: "Новая рассылка" }).getByText(/основного номера/).first().waitFor();
   await step(t, "wizard");
   await page.keyboard.press("Escape");
@@ -668,7 +778,7 @@ async function fixesDent() {
   await page.getByText("Основной номер", { exact: true }).first().waitFor();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: "Новая рассылка" }).first().click();
+  await openMeta(page, "click");
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   await fill(wiz.getByLabel("Номера и имена"), DENT_LIST.join("\n"));
   await fill(wiz.getByLabel("Название шаблона в Meta"), "osen_skidka");
@@ -714,7 +824,7 @@ async function fixesDent() {
   await sheet10.waitFor({ state: "detached" }).catch(() => {});
   const inWork = page.getByRole("button", { name: /^Рассылка по списку · \d\d\.\d\d/ });
   ok("[10] рассылка — в «В работе»", (await inWork.count()) > 0);
-  await page.getByRole("button", { name: "Новая рассылка" }).first().click();
+  await openMeta(page, "click");
   await wiz.getByLabel("Номера и имена").waitFor();
   ok("[10] снова «Новая рассылка»: не черновик уже созданной (нет «Продолжаем черновик», согласие не отмечено, список пуст)", !(await wiz.getByText("Продолжаем черновик").count()) && !(await wiz.getByRole("checkbox", { name: /Это клиенты компании/ }).isChecked()) && (await wiz.getByLabel("Номера и имена").inputValue()) === "");
   await step(t, "fix10-new-wizard-clean");
@@ -768,7 +878,7 @@ async function fixesHold() {
   const t = await session({ key: dl.STAFF_W, c: "winchester", vp: DESK, scheme: "light", tag: "fix-hold-staff-1280" });
   const { page } = t;
   await page.getByRole("alert").filter({ hasText: "Сигнал от Meta" }).waitFor();
-  await page.getByRole("button", { name: "Новая рассылка" }).first().click();
+  await openMeta(page, "click");
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   await wiz.getByRole("radiogroup", { name: "Сегмент базы" }).waitFor();
   await fill(wiz.getByLabel("Название шаблона в Meta"), "davno_ne_byli");
@@ -903,7 +1013,7 @@ async function fixesPhone() {
   await page.waitForFunction(() => document.querySelector('[role=switch][aria-checked="true"]'), null, { timeout: 10_000 });
 
   // мастер: подписи сегментов [16], «Убрать уточнение» [15], «назад» — на прошлый шаг [11], «Начать заново» [15]
-  await tap(page.getByRole("button", { name: "Новая рассылка" }).first());
+  await openMeta(page);
   const wiz = page.getByRole("region", { name: "Новая рассылка" });
   await wiz.getByRole("radiogroup", { name: "Сегмент базы" }).waitFor();
   const davno = (await text(wiz.locator("label", { hasText: "Давно не были" }).first())).replace(/\s+/g, " ");
@@ -935,7 +1045,7 @@ async function fixesPhone() {
   await page.goBack();
   await wiz.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
   ok("[11] на первом шаге «назад» закрывает мастер, раздел «Рассылки» на месте", !(await wiz.count()) && (await page.getByRole("heading", { name: "Рассылки" }).count()) > 0);
-  await tap(page.getByRole("button", { name: "Новая рассылка" }).first());
+  await openMeta(page);
   const again = wiz.getByRole("button", { name: "Начать заново" });
   await again.waitFor();
   const h2 = (await again.boundingBox())?.height || 0;

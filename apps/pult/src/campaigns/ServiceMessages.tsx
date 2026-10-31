@@ -492,7 +492,8 @@ function ScenarioRow({ ws, owner, x, onChanged }: { ws: string; owner: boolean; 
           </Button>
         </div>
       )}
-      {owner && x.mode === "auto" && <Variants ws={ws} x={x} onChanged={onChanged} />}
+      {/* у сценария без своего текста (он собирается из других) вариантов нет */}
+      {owner && x.mode === "auto" && !!x.preview.ru && <Variants ws={ws} x={x} onChanged={onChanged} />}
     </li>
   );
 }
