@@ -7,7 +7,7 @@
 // Каждое окно — одна пачка D1 (транзакция) вместе с курсором: сбой посреди окна не оставляет половины данных.
 // Аренда в sync_state: кнопка и фоновая задача одновременно не синхронизируют. Только чтение Altegio (GET).
 // На черновике (STAGE=preview) настоящий Altegio не пишется в D1: только «проверка без записи» и проба полей, а для экрана —
-// тестовые клиенты (CONTACTS_DEV_REAL=1 разрешает запись — только по решению владельца).
+// демо-база из вымышленных клиентов (demo.js; CONTACTS_DEV_REAL=1 разрешает запись — только по решению владельца).
 /** @import { Env, Client } from "../../lib/types.js" */
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { logSafe } from "../../lib/phone.js";
@@ -21,7 +21,6 @@ import { altLoc } from "../booking/book.js";
 import { d1Ready, stageOf } from "../../db/d1/status.js";
 import { syncRows, leaseTake, leaseFree, syncOkStmt, syncCursorStmt, syncFail, syncClearStmt } from "../../db/d1/sync.js";
 import { windowApply, ownersOf, windowCount, recompute, contactsByPhones, eventPut, directoryApply } from "../../db/d1/contacts.js";
-import { restrictionAdd, consentAdd } from "../../db/d1/rights.js";
 import { foldWindow, dayOf, dayAdd, dayStart, altMs, searchOf } from "./normalize.js";
 import { altText as altClean } from "../integrations/altegio/client.js";
 import { COOL_DAYS } from "./segments.js";
@@ -105,7 +104,7 @@ export async function syncStep(env, c, now, opts = {}) {
   if (!db) throw fail("db", "База контактов не подключена.");
   const why = syncWhy(env, c);
   if (why) throw fail("setup", why);
-  if (!realAllowed(env)) throw fail("preview", "Черновик: настоящий Altegio в базу черновика не загружается — только «Проверка без записи». Для экрана — «Тестовые клиенты».");
+  if (!realAllowed(env)) throw fail("preview", "Черновик: настоящий Altegio в базу черновика не загружается — только «Проверка без записи». Для экрана — «Загрузить демо-базу (150 вымышленных клиентов)».");
   const ws = c.id, token = newId(), t0 = Date.now();
   if (!(await leaseTake(db, ws, SRC, token, now, SYNC.leaseMs))) throw fail("busy", "Синхронизация уже идёт — подождите минуту.");
   const done = [];
@@ -196,47 +195,7 @@ export async function syncDry(env, c, now) {
   return report;
 }
 
-// ---- тестовые клиенты черновика: синтетический журнал в формате Altegio проходит тот же путь записи, что и настоящий
-const NAMES = ["Арман", "Ерлан", "Данияр", "Тимур", "Нурлан", "Азамат", "Руслан", "Санжар", "Олжас", "Бауыржан", "Максим", "Иван", "Алексей", "Дамир", "Ильяс", "Марат", "Аслан", "Бекзат", "Канат", "Роман"];
-const STAFF = ["Мастер А", "Мастер Б", "Мастер В"], SVC = ["Мужская стрижка", "Борода", "Стрижка + борода", "Отец и сын", "Детская стрижка"];
-/** Синтетический журнал: 40 клиентов, визиты за 150 дней, будущие записи, скрытый номер, удалённая запись, «не пришёл». @param {number} now */
-export function testJournal(now) {
-  const list = [], at = (/** @type {number} */ d, /** @type {number} */ h) => new Date(dayStart(dayAdd(dayOf(now), d)) + h * 3600e3).toISOString().replace(".000Z", "+00:00");
-  let id = 900000;
-  for (let i = 0; i < 40; i++) {
-    const phone = "+7 700 000 " + String(10 + Math.floor(i / 10)).padStart(2, "0") + " " + String(10 + (i % 90)).padStart(2, "0");
-    const name = NAMES[i % NAMES.length] + (i >= NAMES.length ? " " + (i + 1) : "");
-    const gap = [7, 22, 25, 30, 33, 40, 50, 65, 80, 100][i % 10], visits = 1 + (i % 4);
-    for (let v = 0; v < visits; v++) {
-      const d = -(gap + v * 28);
-      list.push({ id: ++id, datetime: at(d, 11 + (i % 8)), create_date: at(d - 3, 10), client: { id: 5000 + i, name, phone }, staff: { id: 1 + (i % 3), name: STAFF[i % 3] }, services: [{ id: 1, title: SVC[(i + v) % SVC.length] }], attendance: v === 1 && i % 9 === 0 ? -1 : 1, deleted: false });
-    }
-    if (i % 5 === 0) list.push({ id: ++id, datetime: at(2 + (i % 12), 15), create_date: at(-1, 12), client: { id: 5000 + i, name, phone }, staff: { id: 1, name: STAFF[0] }, services: [{ id: 1, title: SVC[0] }], attendance: 0, deleted: false });
-  }
-  list.push({ id: ++id, datetime: at(-10, 13), client: { id: 6001, name: "Скрытый номер", phone: "+7 707 XXX-X7-44" }, staff: { id: 2, name: STAFF[1] }, services: [{ id: 1, title: SVC[0] }], attendance: 1 });
-  list.push({ id: ++id, datetime: at(3, 12), client: { id: 5001, name: NAMES[1], phone: "+7 700 000 10 11" }, staff: { id: 2, name: STAFF[1] }, services: [{ id: 1, title: SVC[1] }], attendance: 0, deleted: true });
-  list.push({ id: ++id, datetime: at(-2, 12), staff: { id: 3, name: STAFF[2] }, services: [], comment: "перерыв" });
-  return list;
-}
-/** Залить тестовых клиентов (только черновик). @param {Env} env @param {Client} c @param {number} now */
-export async function syncTest(env, c, now) {
-  if (stageOf(env) !== "preview") throw fail("preview", "Тестовые клиенты — только на черновике.");
-  const db = await d1Ready(env, now);
-  if (!db) throw fail("db", "База контактов не подключена.");
-  const st = await applyWindow(db, c.id, testJournal(now), dayAdd(dayOf(now), -160), dayAdd(dayOf(now), 30), false, now, []);
-  // примеры правил на экране: двое написали «стоп» (отказ клиента), у двоих согласие подтверждено в салоне, у двоих — из файла (не подтверждено)
-  const ids = await contactsByPhones(db, c.id, ["77000001012", "77000001013", "77000001014", "77000001015", "77000001016", "77000001017"]);
-  const id = (/** @type {string} */ p) => (ids.get(p) || { id: "" }).id;
-  for (const p of ["77000001012", "77000001013"]) if (id(p)) {
-    await restrictionAdd(db, c.id, { contactId: id(p), kind: "marketing_optout", reason: "STOP", source: "chat_stop", actor: "webhook", at: now - 5 * 86400e3, eventKey: `test-stop:${p}` });
-    await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "denied", basis: "клиент написал «стоп»", source: "chat_stop", actor: "webhook", at: now - 5 * 86400e3, evidence: "client_stop", confirmed: true, givenAt: now - 5 * 86400e3 });
-  }
-  for (const p of ["77000001014", "77000001015"]) if (id(p)) await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "granted", basis: "устно в салоне (тест)", source: "manual", actor: "owner", at: now, evidence: "oral", confirmed: true, givenAt: now });
-  for (const p of ["77000001016", "77000001017"]) if (id(p)) await consentAdd(db, c.id, { contactId: id(p), purpose: "marketing", state: "granted", basis: "анкета (тестовый файл)", source: "import", actor: "owner", at: now, evidence: "import", evidenceRef: "файл «тест.csv»", confirmed: false });
-  await eventPut(db, c.id, `test:${now}`, "test_data", { contacts: st.contacts, bookings: st.bookings }, now, "owner");
-  return { summary: [`Тестовые клиенты: ${st.contacts} (номера +7 700 000 xx xx), записей ${st.bookings}, из них скрытый номер — ${st.masked}, удалённых — ${st.deleted}, «не пришёл» — ${st.missed}.`,
-    "Для примера: двое написали «стоп», у двоих согласие подтверждено в салоне, у двоих — из файла (не подтверждено), у одного — пауза после отменённой записи."] };
-}
+// Вымышленные клиенты для экрана черновика — демо-база (./demo.js): тот же путь записи (applyWindow), 150 человек, только кнопкой владельца.
 
 /** Фоновая задача: раз в 5 минут — шаг синхронизации компаний с базой клиентов (crm) и флагом MSG_V2_<ID>=1. @param {Env} env @param {number} now */
 export async function contactsRun(env, now) {

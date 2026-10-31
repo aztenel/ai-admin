@@ -120,7 +120,7 @@ const R = [
   ["GET", "/api/contacts/card?c=barber&id=x"], ["POST", "/api/contacts/add", { c: "barber", phone: "+77000000999" }], ["POST", "/api/contacts/consent", { c: "barber", id: "x" }],
   ["POST", "/api/contacts/restrict", { c: "barber", id: "x" }], ["POST", "/api/contacts/lift", { c: "barber", id: "x" }], ["POST", "/api/contacts/review", { c: "barber", id: "x", decision: "lift" }],
   ["POST", "/api/contacts/import", { c: "barber", text: "+77000000999" }], ["POST", "/api/contacts/import/confirm", { c: "barber", id: "x" }], ["POST", "/api/contacts/sync", { c: "barber", mode: "step" }],
-  ["POST", "/api/contacts/probe", { c: "barber" }], ["POST", "/api/contacts/stops", { c: "barber", action: "sweep" }], ["POST", "/api/contacts/add", { c: "dent", phone: "+77000000999" }], ["GET", "/api/contacts/nope?c=barber"],
+  ["POST", "/api/contacts/probe", { c: "barber" }], ["POST", "/api/contacts/stops", { c: "barber", action: "sweep" }], ["POST", "/api/contacts/demo", { c: "barber", op: "clear" }], ["POST", "/api/contacts/add", { c: "dent", phone: "+77000000999" }], ["GET", "/api/contacts/nope?c=barber"],
   // рассылка из сегмента базы (номера строит сервер, наружу — маской) и автосценарий «Пора на стрижку» (менять — только владелец)
   ["POST", "/api/bc/check", { c: "dent", segment: "all" }], ["POST", "/api/bc/create", { c: "barber", segment: "pora" }], ["POST", "/api/bc/create", { c: "dent", segment: "all" }],
   ["GET", "/api/bc/service?c=barber"], ["GET", "/api/bc/service?c=dent"],

@@ -16,6 +16,7 @@ import { serviceInfo, serviceApprove, serviceVariant } from "../services/reminde
 import { jrDry } from "../services/reminders/journal.js";
 import { libraryOf, librarySave, libraryAction, libraryPreview, libCounts, varsOf, CATS } from "../services/broadcast/library.js";
 import { calendarOf } from "../services/crm/calendar.js";
+import { bcResults } from "../services/broadcast/results.js";
 import { statsOf } from "../services/inbox/stats.js";
 import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
@@ -68,7 +69,9 @@ export async function bcApi(request, env, url, s) {
     const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));
     if (!b) return jsonP({ error: "Рассылка не найдена." }, 404);
     // номера с ошибками рассылки по базе Altegio — только маской, как в /api/crm/list: полные номера базы браузеру не уходят (находка проверки 19.10.2026)
-    return jsonP({ b: pub(b), now, ...(q.get("bad") ? { bad: (b.bad || []).map((/** @type {any[]} */ [d, code]) => `${b.src === "crm" ? maskPhone(d) : "+" + d}: ${BC_HINT[code] || "код " + code}`) } : {}) });
+    // results — итоги по получателям из D1 и «записались после» (14 дней; связь по времени, не доказательство), null — данных нет
+    const results = await bcResults(env, cid, b, now);
+    return jsonP({ b: pub(b), now, results, ...(b.demo ? { demo: 1 } : {}), ...(q.get("bad") ? { bad: (b.bad || []).map((/** @type {any[]} */ [d, code]) => `${b.src === "crm" ? maskPhone(d) : "+" + d}: ${BC_HINT[code] || "код " + code}`) } : {}) });
   }
   if (M === "GET" && P === "/api/bc/auto") { // автосценарий «Пора на стрижку»: настройки, кому он написал бы сегодня, почему недоступен
     try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await autoInfo(env, c, now)) }); }

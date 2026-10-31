@@ -19,11 +19,11 @@ import { bcSeg, bcOptouts } from "./segments.js";
 import { bcRun, bcGaMsg, bcGaText, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "./sender.js";
 import { render, dataFor, normName, textIssues, toCanonical, MISSING_WHY } from "./render.js";
 import { libraryOf, companyOf, DEMO } from "./library.js";
-import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy } from "../crm/segments.js";
+import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel } from "../crm/segments.js";
 
 /** @typedef {{ list: any[], dup: number, bad: string[], badN: number, cut: number, errors: string[], empty: string, noList: boolean,
  *   seg?: { label: string, out: number, noDate: number }, crm: { id: string, label: string, at: number, total: number } | null,
- *   rows?: any[], why?: Record<string, number> }} Recipients */
+ *   rows?: any[], why?: Record<string, number>, view?: CrmView, spec?: { id: string, days?: number, from?: number, to?: number, staff?: string } }} Recipients */
 
 // почему человеку из сегмента не пишем — по-человечески (коды — crmView и render.js)
 /** @type {Record<string, string>} */
@@ -33,6 +33,25 @@ const MISSING_CODE = /** @type {Record<string, string>} */ ({ "staff.name": "nos
 for (const [k, code] of Object.entries(MISSING_CODE)) EXCL_WHY[code] = MISSING_WHY[k];
 /** @param {Record<string, number>} m @returns {{ code: string, why: string, n: number }[]} */
 const exclList = m => Object.entries(m).filter(([, n]) => n > 0).map(([code, n]) => ({ code, why: EXCL_WHY[code] || code, n })).sort((a, b) => b.n - a.n);
+
+// воронка (ТЗ v3.0 P0): причины словами. Правила компании — недавний визит, запись, реклама за 30 дней, пауза после отмены, нет данных
+// для текста; разрешения на связь — «стоп», запрет, отказ, нет или не подтверждено согласие. Кого исключать, не меняет: только числа
+/** @type {Record<string, string>} */
+export const RULE_WHY = { ...EXCL_WHY, cooldown: "пауза после отменённой записи" };
+/** @type {Record<string, string>} */
+export const CONSENT_WHY = { stop: "просили не писать («стоп»)", block: "запрет: не писать вообще", review: "неоднозначный «стоп», ждёт решения",
+  denied: "отказались от рекламы", unconfirmed: "согласие не подтверждено (из файла или Altegio)", noconsent: "нет согласия на рекламу" };
+/** @param {Record<string, number>} m @param {Record<string, string>} words */
+const whyList = (m, words) => Object.entries(m).filter(([, n]) => n > 0).map(([code, n]) => ({ code, why: words[code] || code, n })).sort((a, b) => b.n - a.n);
+/** @param {Recipients} rc @param {Record<string, number>} blocked кому из сегмента не собрать текст @param {number} allowed */
+function funnelOf(rc, blocked, allowed) {
+  if (!rc.view || !rc.view.snap || !rc.spec) return null;
+  const sp = rc.spec, f = crmFunnel(rc.view, sp.id, { days: sp.days, from: sp.from, to: sp.to, staff: sp.staff }), rules = { ...f.rules };
+  for (const [k, n] of Object.entries(blocked)) rules[k] = (rules[k] || 0) + n;
+  const gate = rc.view.gate;
+  return { total: f.total, valid: f.valid, segment: f.segment, rules: whyList(rules, RULE_WHY), consent: whyList(f.consent, CONSENT_WHY), allowed,
+    ...(gate && !gate.ready && gate.why ? { note: gate.why } : {}) };
+}
 
 /** рассылка со второго номера по сегменту базы @param {Record<string, any>} body */
 const gaCrm = body => body.ch === "ga" && body.segment != null && body.segment !== "";
@@ -110,10 +129,11 @@ async function crmRecipients(env, c, body, now, o) {
   const age = Math.floor((now - view.snap.at) / 86400e3);
   if (now - view.snap.at > CRM_FRESH_BC) return { ...none, errors: [`база клиентов обновлялась ${age} дн. назад: обновите её, кто-то из сегмента мог уже записаться`] };
   const flt = { days: sp.days, from: sp.from, to: sp.to, staff: sp.staff };
+  const spec = { id: sp.id, ...(sp.days != null ? { days: sp.days } : {}), ...(sp.from != null ? { from: sp.from } : {}), ...(sp.to != null ? { to: sp.to } : {}), ...(sp.staff ? { staff: sp.staff } : {}) };
   const all = (await crmPick(env, c, sp.id, now, { ...flt, view })) || [], label = crmSegLabel(sp);
   const picked = o.limit ? all.slice(0, o.limit) : all;
   return { ...none, list: picked.map(x => [x.phone, bcName(x.name)]), errors: [], crm: { id: sp.id, label, at: view.snap.at, total: all.length }, // имя — как из Excel: пометки администратора («Арман должник») в сообщение не попадут
-    rows: picked, why: crmSegWhy(view, sp.id, flt),
+    rows: picked, why: crmSegWhy(view, sp.id, flt), view, spec,
     empty: picked.length ? "" : `в сегменте «${label}» сейчас некому писать: остальные просили не писать, без согласия на рекламу, уже записаны, были меньше 14 дней назад или реклама уже была за 30 дней` };
 }
 
@@ -143,6 +163,7 @@ export async function bcCheck(env, c, body0, now) {
   return { ok: list.length > 0 && !errors.length, valid: list.length, named: list.filter(x => x[1]).length, dup: rc.dup, bad: rc.bad, badN: rc.badN, cut: rc.cut, stopped: list.filter(x => stop.has(x[0])).length,
     ...(rc.seg ? { segOut: rc.seg.out, noDate: rc.seg.noDate, seg: rc.seg.label } : {}), ...(rc.crm ? { segment: rc.crm, excluded: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }) } : {}),
     ...(g ? { tplId: g.tplId, lang: g.lang, text: f.msg, samples: gr ? gr.samples : [] } : {}),
+    ...(body.segment != null && body.segment !== "" ? { funnel: funnelOf(rc, gr ? gr.blocked : {}, list.length) } : {}),
     sample: list.slice(0, 5).map(x => (rc.crm ? maskPhone(x[0]) : "+" + x[0]) + " · " + (x[1] || "без имени")), errors,
     preview: f.ch === "ga" ? (gr ? gr.samples.slice(0, 1).map(x => x.text) : f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) };
 }

@@ -63,9 +63,10 @@ export async function windowApply(db, ws, q) {
         deleted = excluded.deleted, gone = excluded.gone, hash = excluded.hash, last_seen_at = excluded.last_seen_at
       where bookings.hash is not excluded.hash`).bind(ws, s, JSON.stringify(part)));
   }
-  // окно прочитано целиком: записи этого окна, которых в ответе нет, удалены в Altegio (администратор удаляет — запись пропадает)
+  // окно прочитано целиком: записи этого окна, которых в ответе нет, удалены в Altegio (администратор удаляет — запись пропадает).
+  // Записи демо-базы черновика ('demo-…') в настоящем журнале не бывают — их не трогаем
   if (q.window) list.push(db.prepare(`update bookings set deleted = 1, gone = 'vanished', hash = 'deleted', last_seen_at = ?1
-    where ws = ?2 and deleted = 0 and starts_at >= ?3 and starts_at < ?4 and record_id not in (select value from json_each(?5))`).bind(s, ws, q.window.from, q.window.to, JSON.stringify(q.window.ids)));
+    where ws = ?2 and deleted = 0 and starts_at >= ?3 and starts_at < ?4 and record_id not like 'demo-%' and record_id not in (select value from json_each(?5))`).bind(s, ws, q.window.from, q.window.to, JSON.stringify(q.window.ids)));
   // отменённая или пропавшая будущая запись не возвращает клиента в рекламу сразу: пауза (cooldown) на ?3 мс, одна на запись
   // (legacy_key 'cancel:<запись>'); запись нашлась снова (перенос за край окна) — пауза снимается. Решение владельца 31.10.2026
   if (q.coolMs) {
@@ -96,7 +97,7 @@ export async function ownersOf(db, ws, rows) {
 }
 /** Сколько не удалённых записей в окне сейчас в базе. @param {any} db @param {string} ws @param {number} from @param {number} to */
 export async function windowCount(db, ws, from, to) {
-  return +((await db.prepare("select count(*) n from bookings where ws = ? and deleted = 0 and starts_at >= ? and starts_at < ?").bind(ws, from, to).first("n")) || 0);
+  return +((await db.prepare("select count(*) n from bookings where ws = ? and deleted = 0 and starts_at >= ? and starts_at < ? and record_id not like 'demo-%'").bind(ws, from, to).first("n")) || 0);
 }
 
 /** Пересчитать сводку: where — 'stale' (ближайшая запись уже прошла), 'all' или список id. @param {any} db @param {string} ws @param {number} now @param {'stale'|'all'|string[]} which */
@@ -132,6 +133,34 @@ const K = `with k as (select c.id, c.name, c.phone, c.search, c.visits, c.first_
 export async function consentReadyPhones(db, ws, now, kvStops, gapMs) {
   const r = await db.prepare(`${K} select phone from k where consent = 'granted' and cconf = 1 and blocked = 0 and review = 0 and cooled = 0`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
   return new Set((r.results || []).map((/** @type {any} */ x) => String(x.phone)));
+}
+// почему реклама закрыта — первая причина по порядку: полный запрет, неоднозначный «стоп» (ждёт решения; его запрет тоже в blocked),
+// «стоп» (D1 или KV), отказ в согласии, согласие не подтверждено, согласия нет, пауза после отменённой записи; '' — можно (ровно
+// условие consentReadyPhones)
+const GATE_WHY = `case when full = 1 then 'block' when review = 1 then 'review' when blocked = 1 then 'stop' when consent = 'denied' then 'denied'
+  when consent = 'granted' and cconf <> 1 then 'unconfirmed' when consent <> 'granted' then 'noconsent' when cooled = 1 then 'cooldown' else '' end`;
+/**
+ * То же, что consentReadyPhones, и причина для остальных (воронка рассылки показывает, почему человек не получит; ТЗ v3.0 P0).
+ * @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs
+ * @returns {Promise<{ phones: Set<string>, why: Map<string, string> }>}
+ */
+export async function consentGate(db, ws, now, kvStops, gapMs) {
+  const r = await db.prepare(`${K} select phone, ${GATE_WHY} as why from k`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
+  const phones = new Set(), why = new Map();
+  for (const x of r.results || []) { if (x.why) why.set(String(x.phone), String(x.why)); else phones.add(String(x.phone)); }
+  return { phones, why };
+}
+/**
+ * Числа для шапки «Клиентов»: всего, с будущей записью, в выбранном сегменте (null — сегмент не выбран), с запретом
+ * (действующий «стоп» или полный запрет, неоднозначный «стоп», отказ в согласии). seg — условие сегмента (?5 — мастер).
+ * @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs @param {{ where: string, staff?: string } | null} seg
+ */
+export async function contactKpi(db, ws, now, kvStops, gapMs, seg) {
+  const r = await db.prepare(`${K} select count(*) total, coalesce(sum(booked), 0) booked,
+    coalesce(sum(case when blocked = 1 or review = 1 or consent = 'denied' then 1 else 0 end), 0) forbidden,
+    ${seg ? `coalesce(sum(case when (${seg.where}) then 1 else 0 end), 0)` : "null"} seg from k`)
+    .bind(ws, now, JSON.stringify(kvStops), gapMs, ...(seg && seg.where.includes("?5") ? [seg.staff || ""] : [])).first(); // ?5 — только у «Мастер: …»
+  return { total: +((r && r.total) || 0), withBooking: +((r && r.booked) || 0), segment: seg ? +((r && r.seg) || 0) : null, forbidden: +((r && r.forbidden) || 0) };
 }
 /**
  * Числа по сегментам: всего и сколько из них можно писать рекламу (ready — условие сервиса).
