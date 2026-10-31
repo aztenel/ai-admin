@@ -187,6 +187,8 @@ export function ConversationPane({
             phone={d.contact.phone}
             now={now}
             onSend={(t) => send(t)}
+            onTimes={ws.capabilities.booking ? () => setTimesOpen(true) : undefined}
+            address={ws.branches.find((b) => b.address)?.address}
           />
         </>
       ) : ds?.error ? (

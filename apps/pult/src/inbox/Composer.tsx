@@ -10,13 +10,38 @@ import { channelTitle } from "@/model/channels";
 import type { Channel, ReplyState } from "@/model/types";
 import { until } from "@/lib/format";
 import { isTouch } from "@/lib/viewport";
+import { store } from "@/state/store";
 
 const drafts = new Map<string, string>();
 const FROM: Record<string, string> = { "Основной WhatsApp": "с основного номера", "Второй WhatsApp": "со второго номера" };
-// Общие фразы — не про конкретный бизнес (те же, что у рабочего пульта, pult/app.js QUICK)
-const QUICK = ["Здравствуйте! Чем могу помочь?", "Подскажите, пожалуйста, ваше имя и телефон.", "Ждём вас! Если планы изменятся, напишите заранее.", "Спасибо за обращение! Перезвоню вам в течение 10 минут."];
+// Быстрые ответы (ТЗ v3.0 §7): короткие фразы администратора. «Когда моя запись?» — только из журнала Altegio (карточка записи),
+// «Свободное время» открывает список свободного времени из Altegio; выдуманных данных в ответах нет.
+const QUICK: { label: string; text: string }[] = [
+  { label: "Перенос", text: "Подскажите, на какой день и время вам удобно перенести запись?" },
+  { label: "Отмена", text: "Запись отменили. Если захотите записаться снова, напишите нам." },
+  { label: "Ждём вас", text: "Ждём вас! Если планы изменятся, напишите заранее." },
+  { label: "Уточнить имя", text: "Подскажите, пожалуйста, как к вам обращаться?" },
+];
+const MON_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const dayText = (d: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  return m ? `${+m[3]} ${MON_GEN[+m[2] - 1]}` : d;
+};
 
-export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend }: { convKey: string; channel?: Channel; reply: ReplyState; payment?: string; botActive: boolean; multiChannel: boolean; phone?: string; now: number; onSend: (text: string) => void }) {
+export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend, onTimes, address }: { convKey: string; channel?: Channel; reply: ReplyState; payment?: string; botActive: boolean; multiChannel: boolean; phone?: string; now: number; onSend: (text: string) => void; onTimes?: () => void; address?: string }) {
+  // ближайшая запись клиента из журнала Altegio — для ответа «Когда моя запись?»; грузится при открытии меню
+  const [visit, setVisit] = useState<{ key: string; text: string | null } | null>(null);
+  const loadVisit = () => {
+    if (visit?.key === convKey) return;
+    setVisit({ key: convKey, text: null });
+    store.bookingCard(convKey).then(
+      (c) => {
+        const r = c.records?.find((x) => x.state !== "deleted") || c.records?.[0];
+        setVisit({ key: convKey, text: r ? `Вы записаны на ${dayText(r.date)} в ${r.time}${r.staff ? `, мастер ${r.staff}` : ""}. Ждём вас!` : null });
+      },
+      () => setVisit({ key: convKey, text: null }),
+    );
+  };
   const [text, setText] = useState(() => drafts.get(convKey) || "");
   const ta = useRef<HTMLTextAreaElement>(null);
 
@@ -70,7 +95,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
         </p>
       )}
       <div className="mx-auto flex max-w-[50rem] items-end gap-1">
-        <Menu>
+        <Menu onOpenChange={(v) => v && loadVisit()}>
           <MenuTrigger asChild>
             <IconButton icon={Zap} label="Быстрые ответы и реквизиты" className="text-fg-3" />
           </MenuTrigger>
@@ -88,9 +113,33 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
               </>
             )}
             <MenuLabel>Быстрые ответы</MenuLabel>
+            {visit?.key === convKey && visit.text && (
+              <MenuItem onSelect={() => insert(visit.text!)}>
+                <span className="min-w-0">
+                  <span className="block font-medium">Когда запись</span>
+                  <span className="line-clamp-2 text-xs text-fg-3">{visit.text}</span>
+                </span>
+              </MenuItem>
+            )}
+            {onTimes && (
+              <MenuItem onSelect={onTimes}>
+                <span className="font-medium">Свободное время…</span>
+              </MenuItem>
+            )}
+            {address && (
+              <MenuItem onSelect={() => insert(`Наш адрес: ${address}.`)}>
+                <span className="min-w-0">
+                  <span className="block font-medium">Адрес</span>
+                  <span className="line-clamp-1 text-xs text-fg-3">{address}</span>
+                </span>
+              </MenuItem>
+            )}
             {QUICK.map((q) => (
-              <MenuItem key={q} onSelect={() => insert(q)}>
-                <span className="line-clamp-2">{q}</span>
+              <MenuItem key={q.label} onSelect={() => insert(q.text)}>
+                <span className="min-w-0">
+                  <span className="block font-medium">{q.label}</span>
+                  <span className="line-clamp-2 text-xs text-fg-3">{q.text}</span>
+                </span>
               </MenuItem>
             ))}
           </MenuContent>
