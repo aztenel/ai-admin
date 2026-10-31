@@ -22,12 +22,33 @@ import type {
   ServiceOverview,
   ServiceQueueItem,
   ServiceScenario,
+  CalendarDay,
+  CampaignCalendar,
+  LibraryItem,
+  MessageStats,
+  TemplateLibrary,
+  TemplatePreview,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
 import { ApiError } from "./errors";
 import type { CampaignSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
+// библиотека в демо — четыре темы из настоящей (сервер: src/services/broadcast/library.js), без правки
+const DEMO_LIBRARY: LibraryItem[] = [
+  { id: "m01", title: "Пора на стрижку", goal: "напомнить о визите", seg: "pora", approved: true, v: 1,
+    ru: "{имя}, прошло {дней} дней с прошлой стрижки. Записаться к {мастер}: ответьте на это сообщение.\nЧтобы не получать сообщения, ответьте СТОП",
+    kk: "{имя}, соңғы шаш алудан {дней} күн өтті. {мастер} шеберіне жазылу үшін осы хабарламаға жауап беріңіз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
+  { id: "m02", title: "Давно не были", goal: "вернуть клиента", seg: "davno", approved: false, v: 1,
+    ru: "{имя}, давно вас не видели в «{компания}». Будем рады снова: ответьте, подберём удобное время.\nЧтобы не получать сообщения, ответьте СТОП",
+    kk: "{имя}, «{компания}» сізді көптен бері көрмеді. Қайта келсеңіз қуанамыз: жауап беріңіз, ыңғайлы уақыт табамыз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
+  { id: "m05", title: "Скидка ко дню рождения", goal: "поздравить", seg: "all", approved: false, v: 1, need: "условия скидки",
+    ru: "{имя}, с днём рождения! Дарим [скидку …] на {услуга} до [дата].\nЧтобы не получать сообщения, ответьте СТОП",
+    kk: "{имя}, туған күніңізбен! {услуга} қызметіне [дата] дейін [жеңілдік …].\nХабарлама алмау үшін СТОП деп жазыңыз" },
+  { id: "m12", title: "Новый мастер", goal: "рассказать о новости", seg: "all", approved: false, v: 1, need: "имя мастера",
+    ru: "{имя}, у нас новый мастер — [имя]. Записаться: ответьте на это сообщение.\nЧтобы не получать сообщения, ответьте СТОП",
+    kk: "{имя}, бізде жаңа шебер — [есімі]. Жазылу үшін жауап беріңіз.\nХабарлама алмау үшін СТОП деп жазыңыз" },
+];
 const wait = (ms = 260) => new Promise((r) => setTimeout(r, ms + Math.random() * 160));
 const STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
 const NO_GA = "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta.";
@@ -558,6 +579,54 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       find(ws);
       ownerOnly("Одобрить текст может только владелец.");
       throw new ApiError("В демо тексты не одобряются — это делает владелец в настоящем пульте.", 409);
+    },
+    async calendar(ws): Promise<CampaignCalendar> {
+      await wait(300);
+      const w = find(ws), base = !!(w.base && w.baseAt), t0 = Date.now();
+      const days = Array.from({ length: 14 }, (_, k): CalendarDay => {
+        const date = new Date(t0 + k * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10), svc = base ? [3, 5, 2, 4, 6, 1, 0][k % 7] : 0;
+        const cand = base ? [4, 2, 0, 3, 5, 1, 2][k % 7] : 0, allowed = Math.max(0, cand - 1);
+        return {
+          date,
+          service: { total: svc, kinds: svc ? { d1: Math.ceil(svc / 2), h2: Math.floor(svc / 2) } : {} },
+          marketing: base ? { candidates: cand, allowed, planned: 0, excluded: cand ? ({ noconsent: cand - allowed } as Record<string, number>) : {} } : null,
+        };
+      });
+      return { today: days[0].date, auto: base ? { on: false, days: 28, cap: 20, tpl: false } : null, baseAt: w.baseAt || 0, days };
+    },
+    async messageStats(ws, days): Promise<MessageStats> {
+      await wait(250);
+      const w = find(ws), k = days === 30 ? 4 : 1, has = !!(w.base && w.baseAt);
+      const z = { sent: 0, delivered: 0, read: 0, failed: 0, replied: 0 };
+      return {
+        available: true,
+        days,
+        by: {
+          service: has ? { sent: 18 * k, delivered: 17 * k, read: 12 * k, failed: 1 * k, replied: 4 * k } : z,
+          review: has ? { sent: 6 * k, delivered: 6 * k, read: 4 * k, failed: 0, replied: 1 * k } : z,
+          campaign: z,
+          admin: { sent: 25 * k, delivered: 24 * k, read: 20 * k, failed: 0, replied: 0 },
+        },
+      };
+    },
+    async templates(ws): Promise<TemplateLibrary> {
+      await wait(250);
+      find(ws);
+      return { owner: owner(), vars: ["имя", "мастер", "услуга", "дней", "компания", "ссылка"], items: DEMO_LIBRARY.map((x) => ({ ...x })) };
+    },
+    async templateSave(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Править и одобрять тексты может только владелец.");
+      throw new ApiError("В демо тексты не сохраняются — это делает владелец в настоящем пульте.", 409);
+    },
+    async templatePreview(ws, id, lang): Promise<TemplatePreview> {
+      await wait(200);
+      find(ws);
+      const x = DEMO_LIBRARY.find((i) => i.id === id);
+      if (!x) throw new ApiError("Нет текста.", 400);
+      const fill = (t: string, name: string) => t.replace(/\{имя\}/g, name).replace(/\{мастер\}/g, "мастер 1").replace(/\{услуга\}/g, "стрижка").replace(/\{дней\}/g, "28").replace(/\{компания\}/g, "Демо Барбер").replace(/\{ссылка\}/g, "https://example.com");
+      return { lang, demo: true, list: [{ to: "пример", text: fill(lang === "kk" ? x.kk : x.ru, "Клиент") }] };
     },
   };
 

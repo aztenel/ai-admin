@@ -204,7 +204,7 @@ async function ownerWinchesterPhone() {
   const t = await session({ key: dl.OWNER, c: "winchester", vp: PHONE, scheme: "light", tag: "w-owner-390-light", own: [TEST_TO.replace(/\D/g, "")] });
   const { page } = t;
   const tabs = page.getByRole("tablist", { name: "Вид рассылок" });
-  ok("две вкладки: «Маркетинг · основной номер» и «Сервисные · номер бота»", (await tabs.getByRole("tab").count()) === 2 && /Маркетинг/.test(await text(tabs)) && /номер бота/.test(await text(tabs)));
+  ok("три вкладки: «Маркетинг · основной номер», «Сервисные · номер бота», «Календарь · план и итоги»", (await tabs.getByRole("tab").count()) === 3 && /Маркетинг/.test(await text(tabs)) && /номер бота/.test(await text(tabs)) && /Календарь/.test(await text(tabs)));
   await page.getByText("Основной номер", { exact: true }).first().waitFor();
   ok("обзор: основной номер, качество и предел Meta", /высокое/.test(await text(page.getByText("Качество", { exact: true }).first().locator(".."))) && /1\s?000/.test(await text(page.getByText("Предел Meta").locator("..").first())));
   ok("ссылки на старую страницу /broadcast нет", !(await page.locator('a[href*="/broadcast"]').count()));
@@ -351,8 +351,57 @@ async function ownerWinchesterPhone() {
   if (!dryOk) ok("сервисные: проверка по журналу ответила", false, (await text(svc)).slice(-500));
   ok("сервисные: проверка по журналу — без отправки, номера маской", /Записей в журнале: \d+/.test(await text(res)) && !/7700000\d{4}/.test(await text(svc)));
   await step(t, "service-dry-run");
+  await planTab(t, true);
   await finish(t);
   return poraN;
+}
+
+/** ТЗ v2.0 §5, §6, §8: библиотека текстов во вкладке «Маркетинг» и вкладка «Календарь» (14 дней, итоги доставки). Только числа, без номеров. */
+async function planTab(t, owner) {
+  const { page } = t;
+  await page.getByRole("tab", { name: /Маркетинг/ }).click();
+  const lib = page.getByRole("list", { name: "Библиотека текстов" });
+  await lib.waitFor({ timeout: 15000 });
+  await reveal(lib);
+  ok(`${t.tag}: библиотека — 28 текстов, сначала 5, «Показать все»`, /28 текстов/.test(await text(page.getByText(/текстов, одобрено/).first())) && (await lib.locator(":scope > li").count()) === 5 && (await page.getByRole("button", { name: "Показать все 28" }).count()) === 1);
+  const first = lib.locator(":scope > li").first();
+  await tap(first.getByRole("button").first());
+  await tap(first.getByRole("button", { name: "Қазақша" }));
+  ok(`${t.tag}: библиотека — текст на казахском`, /[әғқңөұүһі]/i.test(await text(first)), (await text(first)).slice(0, 200));
+  await tap(first.getByRole("button", { name: "Пример" }));
+  await first.getByText(/Так увид/).waitFor({ timeout: 10000 });
+  ok(`${t.tag}: библиотека — пример без полных номеров`, !/7700000\d{4}/.test(await text(first)) && !/\{имя\}/.test(await text(first.locator("[aria-live]"))));
+  if (owner) {
+    await tap(first.getByRole("button", { name: "Одобрить текст" }));
+    await first.getByRole("button", { name: "Снять одобрение" }).waitFor({ timeout: 10000 });
+    ok(`${t.tag}: библиотека — владелец одобрил текст`, /одобрен/.test(await text(first)));
+    await step(t, "library-approved");
+    await tap(first.getByRole("button", { name: "Снять одобрение" }));
+    await first.getByRole("button", { name: "Одобрить текст" }).waitFor({ timeout: 10000 });
+    await tap(page.getByRole("button", { name: "Показать все 28" }));
+    const br = lib.locator(":scope > li").filter({ hasText: "нужно дописать" }).first();
+    await reveal(br);
+    await tap(br.getByRole("button").first());
+    ok(`${t.tag}: библиотека — текст с [скобками] одобрить нельзя`, await br.getByRole("button", { name: "Одобрить текст" }).isDisabled());
+  } else {
+    ok(`${t.tag}: библиотека — сотрудник не правит и не одобряет`, !(await lib.getByRole("button", { name: /Одобрить текст|Изменить/ }).count()));
+    await step(t, "library-staff");
+  }
+
+  await page.getByRole("tab", { name: /Календарь/ }).click();
+  const cal = page.getByRole("list", { name: "Календарь на 14 дней" });
+  const calOk = await cal.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  const panel = page.getByRole("tabpanel");
+  ok(`${t.tag}: календарь — 14 дней, сервисные и реклама отдельно`, calOk && (await cal.locator(":scope > li").count()) === 14 && /Сервисные:/.test(await text(cal)) && /Реклама:/.test(await text(cal)), (await text(panel)).slice(0, 400));
+  ok(`${t.tag}: календарь — первый день «Сегодня», потом «Завтра»`, /^Сегодня/.test(await text(cal.locator(":scope > li").first())) && /^Завтра/.test(await text(cal.locator(":scope > li").nth(1))));
+  await step(t, "plan-calendar");
+  const stats = panel.getByRole("list", { name: /Итоги за/ }).or(panel.getByText(/Числа появятся|отчётов о доставке не было/)).first();
+  await stats.waitFor({ timeout: 15000 });
+  await reveal(stats);
+  ok(`${t.tag}: итоги — напоминания и ответы сотрудников, без номеров`, /Напоминания/.test(await text(panel)) || /Числа появятся/.test(await text(panel)));
+  ok(`${t.tag}: календарь и итоги — полных номеров нет`, !/7700000\d{4}/.test(await t.page.content()));
+  await tap(panel.getByRole("radio", { name: "30 дней" }).or(panel.getByRole("button", { name: "30 дней" })).first());
+  await step(t, "plan-stats");
 }
 
 // =====================================================================================================================
@@ -399,6 +448,7 @@ async function staffWinchester(vp, scheme) {
   ok(`${t.tag}: сервисные — тексты сообщений видны, одобрить нельзя`, (await svc.getByRole("list", { name: "Тексты сообщений" }).locator("li").count()) === 18 && !(await svc.getByRole("button", { name: /Одобрить текст|Проверить по журналу/ }).count()));
   ok(`${t.tag}: [17] сотруднику — без слов «боевой сайт / черновик», время по Астане`, !/боевого сайта|черновик/i.test(await text(svc)) && /Время — по Астане/.test(await text(svc)));
   await step(t, "service-tab");
+  await planTab(t, false);
   await finish(t);
 }
 

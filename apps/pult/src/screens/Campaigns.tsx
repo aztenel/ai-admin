@@ -9,6 +9,8 @@
 // лист по центру на компьютере. Открытый лист — своя запись истории: жест «назад» закрывает лист, а не уводит из раздела; в мастере на
 // телефоне «назад» — на прошлый шаг (как стрелка мастера), созданную, но не запущенную рассылку — в её лист (Wizard: backRef).
 // Выбранная вкладка запоминается на этом устройстве (localStorage pult2.campaigns.tab).
+// ТЗ v2.0 (31.10.2026): третья вкладка «Календарь · план и итоги» — 14 дней вперёд (сервисные и реклама отдельно) и итоги доставки;
+// во вкладке «Маркетинг» — «Библиотека текстов» (28 тем RU/KZ, одобрение владельцем).
 import { CircleAlert, Plus, RefreshCw } from "lucide-react";
 import { Dialog as D } from "radix-ui";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -18,6 +20,8 @@ import { CampaignSheet } from "@/campaigns/CampaignSheet";
 import ClientBase from "@/campaigns/ClientBase";
 import { CampaignList, ListSkeleton, UNFINISHED, useCampaignDetails } from "@/campaigns/History";
 import { BotNumber, MainNumber, NumberSkeleton } from "@/campaigns/Overview";
+import Library from "@/campaigns/Library";
+import Plan from "@/campaigns/Plan";
 import ServiceMessages from "@/campaigns/ServiceMessages";
 import { useLoad } from "@/campaigns/useLoad";
 import { ChunkBoundary } from "@/components/boundary";
@@ -32,11 +36,12 @@ import { Group, Page } from "./Page";
 // мастер — отдельный кусок: грузится, только когда его открыли
 const Wizard = lazy(() => import("@/campaigns/Wizard"));
 
-type Tab = "marketing" | "service";
+type Tab = "marketing" | "service" | "plan";
 const TAB_KEY = "pult2.campaigns.tab";
 function readTab(): Tab {
   try {
-    return localStorage.getItem(TAB_KEY) === "service" ? "service" : "marketing";
+    const v = localStorage.getItem(TAB_KEY);
+    return v === "service" || v === "plan" ? v : "marketing";
   } catch {
     return "marketing";
   }
@@ -51,6 +56,7 @@ function saveTab(t: Tab) {
 const TABS: { id: Tab; title: string; sub: string }[] = [
   { id: "marketing", title: "Маркетинг", sub: "основной номер" },
   { id: "service", title: "Сервисные", sub: "номер бота" },
+  { id: "plan", title: "Календарь", sub: "план и итоги" },
 ];
 
 type Preset = { segment?: SegmentSpec; channel?: "main" | "bot" };
@@ -163,6 +169,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
           <CampaignList title="В работе" rows={active} details={det.details} now={now} onOpen={openCampaign} page={30} />
           {hasBase && <ClientBase key={`base${rev}`} ws={ws} owner={owner} onCreate={(spec: SegmentSpec) => newCampaign({ segment: spec, channel: "main" })} />}
           {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
+          <Library key={`lib${rev}`} ws={ws} owner={owner} />
           {ov.loading ? (
             <ListSkeleton />
           ) : past.length ? (
@@ -177,11 +184,15 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
             </Group>
           ) : null}
         </div>
-      ) : (
+      ) : tab === "service" ? (
         <div role="tabpanel" id="cmp-panel-service" aria-labelledby="cmp-tab-service">
           {ov.loading ? <NumberSkeleton /> : ov.data ? <BotNumber ov={ov.data} /> : failed ? loadError : null}
           {staleError}
           <ServiceMessages key={`svc${rev}`} ws={ws} owner={owner} />
+        </div>
+      ) : (
+        <div role="tabpanel" id="cmp-panel-plan" aria-labelledby="cmp-tab-plan">
+          <Plan key={`plan${rev}`} ws={ws} />
         </div>
       )}
 
@@ -236,7 +247,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   );
 }
 
-/** Вкладки «Маркетинг · основной номер» / «Сервисные · номер бота». На телефоне — в две строки, на компьютере — в одну. */
+/** Вкладки «Маркетинг · основной номер» / «Сервисные · номер бота» / «Календарь · план и итоги». На телефоне — в две строки, на компьютере — в одну. */
 function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -247,7 +258,7 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
     refs.current[j]?.focus();
   };
   return (
-    <div role="tablist" aria-label="Вид рассылок" className="mb-5 grid grid-cols-2 gap-0.5 rounded-[0.75rem] bg-surface-3 p-0.5 dark:bg-surface-2">
+    <div role="tablist" aria-label="Вид рассылок" className="mb-5 grid grid-cols-3 gap-0.5 rounded-[0.75rem] bg-surface-3 p-0.5 dark:bg-surface-2">
       {TABS.map((t, i) => {
         const on = value === t.id;
         return (

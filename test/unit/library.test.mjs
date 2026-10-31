@@ -40,3 +40,17 @@ test("правка и одобрение — только владелец; [с�
   const pv = await (await staff.post("/api/bc/templates/preview", { c: "winchester", id: "M01", lang: "kk" })).json();
   assert.equal(pv.ok, true); assert.ok(pv.list.length >= 1); assert.match(pv.list[0].text, /стоп/);
 });
+
+test("черновик (STAGE=preview) рассылку не запускает: проверка и создание работают, запуск — 409; BC_DEV_REAL=1 (заглушки) — запускает", async () => {
+  net.reset();
+  const META = { WA_TOKEN_BARBER: "tok-barber", APP_SECRET_BARBER: "sec-barber", PHONE_NUMBER_ID_BARBER: "900222" };
+  const FORM = { c: "barber", name: "Октябрь", tpl: "promo_october", lang: "ru", text: "Здравствуйте, {{1}}! Чтобы не получать сообщения, ответьте СТОП", params: "{имя}", recipients: "+7 701 111 00 01, Арман", cap: 100, from: 10, to: 20, consent: true };
+  for (const [extra, want] of [[{}, 409], [{ BC_DEV_REAL: "1" }, 200]]) {
+    const s = mk({ STAGE: "preview", ...META, ...extra }), own = await login(s, "owner-key-123456");
+    const c = await (await own.post("/api/bc/create", FORM)).json();
+    assert.equal(c.ok, true, JSON.stringify(c));
+    const r = await own.post("/api/bc/act", { c: "barber", id: c.b.id, act: "start" });
+    assert.equal(r.status, want);
+    if (want === 409) assert.match((await r.json()).error, /черновик/);
+  }
+});

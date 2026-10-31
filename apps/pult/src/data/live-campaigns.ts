@@ -4,6 +4,11 @@
 // Полные номера клиентов базы сервер не отдаёт — здесь их нет и быть не может; ответы не пишутся ни в консоль, ни в localStorage.
 import type {
   AutoInfo,
+  CampaignCalendar,
+  LibraryItem,
+  MessageStats,
+  TemplateLibrary,
+  TemplatePreview,
   AutoSettings,
   BotNumberState,
   CampaignActResult,
@@ -31,6 +36,7 @@ import type {
 } from "@/model/campaigns";
 import { ApiError } from "./errors";
 import { call, enc } from "./live";
+import { getOperator } from "@/lib/operator";
 import type { CampaignSource } from "./source";
 
 // ---------- ответы сервера ----------
@@ -293,5 +299,20 @@ export const liveCampaigns: CampaignSource = {
   },
   async serviceApprove(ws, id, v, on) {
     await call<{ ok: true }>("/api/bc/service/approve", { c: ws, id, v, on });
+  },
+  async calendar(ws) {
+    return call<CampaignCalendar>(`/api/bc/calendar?c=${enc(ws)}`);
+  },
+  async messageStats(ws, days) {
+    return call<MessageStats>(`/api/bc/stats?c=${enc(ws)}&days=${days}`);
+  },
+  async templates(ws) {
+    return call<TemplateLibrary>(`/api/bc/templates?c=${enc(ws)}`);
+  },
+  async templateSave(ws, item) {
+    return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates", { c: ws, ...item, op: getOperator() })).item;
+  },
+  async templatePreview(ws, id, lang) {
+    return call<TemplatePreview>("/api/bc/templates/preview", { c: ws, id, lang });
   },
 };

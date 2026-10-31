@@ -479,3 +479,62 @@ export type ServiceOverview = {
   /** Каталог сервисных сценариев S01–S18. */
   catalog?: ServiceScenario[];
 };
+
+// ---- Календарь, итоги доставки, библиотека текстов (ТЗ v2.0 §5, §6, §8; сервер — /api/bc/calendar, /api/bc/stats, /api/bc/templates)
+
+/** Один день календаря: сервисные (очередь бота) и реклама (автосценарий) — отдельно, только числа. */
+export type CalendarDay = {
+  /** ГГГГ-ММ-ДД по Астане. */
+  date: string;
+  service: { total: number; kinds: Partial<Record<ServiceKind, number>> };
+  /** null — у компании нет базы клиентов (реклама по базе не считается). */
+  marketing: {
+    /** Сколько клиентов в этот день дойдут до «N дней с визита». */
+    candidates: number;
+    /** Из них можно писать (согласие, нет записи, нет «стоп», 30 дней без рекламы). */
+    allowed: number;
+    /** Сколько уйдёт: автосценарий включён и есть шаблон — не больше предела в день; иначе 0. */
+    planned: number;
+    /** Почему нельзя: причина → сколько (noconsent, stop, booked, recent, marketed…). */
+    excluded: Record<string, number>;
+  } | null;
+};
+export type CampaignCalendar = {
+  today: string;
+  /** Автосценарий: включён, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы. */
+  auto: { on: boolean; days: number; cap: number; tpl: boolean } | null;
+  /** Когда собрана база клиентов (мс), 0 — не собрана. */
+  baseAt: number;
+  days: CalendarDay[];
+};
+
+export type StatSource = "service" | "review" | "campaign" | "admin";
+export type StatCounts = { sent: number; delivered: number; read: number; failed: number; replied: number };
+export type MessageStats = {
+  /** false — на этом адресе нет базы D1: числа не копятся (why — почему). */
+  available: boolean;
+  why?: string;
+  days: number;
+  by: Record<StatSource, StatCounts>;
+};
+
+/** Текст из библиотеки (28 стартовых тем RU/KZ + свои). approved — одобрил владелец; в тексте [скобки] — одобрить нельзя. */
+export type LibraryItem = {
+  id: string;
+  title: string;
+  goal: string;
+  /** Сегмент базы, для которого задуман текст (all, pora, uhodyat…). */
+  seg: string;
+  ru: string;
+  kk: string;
+  /** Что вписать перед одобрением («условия акции» и т. п.). */
+  need?: string;
+  custom?: boolean;
+  approved: boolean;
+  /** Версия текста (растёт при каждой правке), кто и когда правил. */
+  v?: number;
+  at?: number;
+  by?: string;
+};
+export type TemplateLibrary = { owner: boolean; vars: string[]; items: LibraryItem[] };
+export type TemplatePreview = { lang: "ru" | "kk"; demo: boolean; list: { to: string; text: string }[] };

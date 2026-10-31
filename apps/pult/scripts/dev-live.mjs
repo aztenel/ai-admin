@@ -33,6 +33,8 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const { sqliteOk, d1With } = await import(new URL("../../../test/d1.mjs", import.meta.url).href);
   const bot = await start(botPort, {
     ...(sqliteOk ? { DB: d1With("preview").db, STAGE: "preview" } : {}),
+    // запуск рассылки на черновике закрыт (ТЗ v2.0: в dev — только проверка); здесь Meta и Green-API — заглушки, настоящих отправок нет
+    BC_DEV_REAL: "1",
     WA_TOKEN_DENT: "tok-dent",
     APP_SECRET_DENT: "sec-dent",
     PHONE_NUMBER_ID_DENT: "900111",
