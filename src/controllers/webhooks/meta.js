@@ -76,7 +76,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     const now = Date.now();
     await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
     const said = maskPhones(redact(String(text).slice(0, MAX_LEN)));
-    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}) }], (p, h) => { p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why: "off", at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
+    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => { p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why: "off", at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
     try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
     return;
   }
@@ -104,7 +104,8 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   }
   /** @type {any[]} */ const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
-  const r = /** @type {any} */ (await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: /** @param {any} f */ f => later.push(f) }));
+  const r = /** @type {any} */ (await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: /** @param {any} f */ f => later.push(f),
+    ...(wx && wx.msgId ? { mid: wx.msgId } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) })); // номер сообщения Green-API (на него отвечают цитатой) и цитата клиента
   try {
     if (r.paused) return; // клиентом занимается администратор — бот молчит
     if (r.isNew) {

@@ -66,7 +66,11 @@ export async function handleGreen(body, env, origin, r) {
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
   if (md.typeMessage === "editedMessage" || md.typeMessage === "deletedMessage" || md.typeMessage === "reactionMessage") return gaChange(env, digitsId, gx, md); // не новое сообщение
-  const gxm = { ...gx, msgId: String(id || "") };
+  // клиент ответил на конкретное сообщение (цитата WhatsApp): номер того сообщения — в реплике (пульт показывает цитату над текстом).
+  // participant — автор цитаты: сам клиент или мы
+  const qm = md.typeMessage === "quotedMessage" ? md.quotedMessage || {} : null;
+  const qt = qm && qm.stanzaId ? { mid: String(qm.stanzaId).slice(0, 80), x: clean(String(qm.textMessage || qm.caption || ""), 120), r: String(qm.participant || "") === chatId ? "u" : "a" } : null;
+  const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}) };
   const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
   const niche0 = r.shared ? "" : r.client; // компания номера: по ней — push сотрудникам (общий демо-номер — без push)

@@ -1,6 +1,6 @@
 // @ts-check
-// Пульт чатов: HTTP-контроллер /api/inbox/* (список, чат, ответ, действия, файлы, заявки).
-import { jsonP, sameOrigin } from "../lib/http.js";
+// Пульт чатов: HTTP-контроллер /api/inbox/* (список, чат, ответ, файл клиенту, действия, файлы, заявки).
+import { jsonP, sameOrigin, readCapped } from "../lib/http.js";
 import { clean, snip } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
@@ -25,6 +25,7 @@ import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
+import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, fileKind, fileProblem, uploadName, quoteOf, quoteView, gaSendFile, sendOnce } from "../services/inbox/send.js";
 /** @import { Env } from "../lib/types.js" */
 
 // кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
@@ -50,10 +51,12 @@ export function inboxMe(env, s) {
 /** @param {Request} request @param {Env} env @param {URL} url @param {any} s @param {any} [ctx] */
 export async function inboxApi(request, env, url, s, ctx) {
   const P = url.pathname, M = request.method, q = url.searchParams;
+  // файл клиенту: тело — сам файл (multipart), поэтому компания и чат — в адресе, а тело читается только после проверки прав
+  const isFile = M === "POST" && P === "/api/inbox/send-file", jb = M === "POST" && !isFile;
   /** @type {Record<string, any>} */
   let b = {};
-  if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); try { b = (await request.json()) || {}; } catch (e) {} }
-  const cid = String((M === "POST" ? b.c : q.get("c")) || "");
+  if (M === "POST") { if (!sameOrigin(request, url)) return jsonP({ error: "Запрос отклонён." }, 403); if (jb) { try { b = (await request.json()) || {}; } catch (e) {} } }
+  const cid = String((jb ? b.c : q.get("c")) || "");
   if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
   const c = CLIENTS[cid], now = Date.now();
 
@@ -107,7 +110,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     return jsonP({ leads: leads.slice(-60).reverse().map((/** @type {any} */ l) => ({ id: l.id, name: l.name || "", phone: l.phone || "", service: l.service || "", time: l.time || "", note: l.note || "", status: l.status || "", kind: l.kind || "lead", source: l.source || "", ts: leadTs(l) })), partial: !!leads.unread });
   }
 
-  const ch = String((M === "POST" ? b.ch : q.get("ch")) || ""), id = String((M === "POST" ? b.id : q.get("id")) || "");
+  const ch = String((jb ? b.ch : q.get("ch")) || ""), id = String((jb ? b.id : q.get("id")) || "");
   if (!/** @type {any} */ (CHAT_ID)[ch] || !/** @type {any} */ (CHAT_ID)[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
   /** @type {any} */
@@ -117,6 +120,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   const fgAt = await readForgot(env.KV, hk);
   applyForget(h, fgAt);
   let p = h.profile || {};
+  const gaOn = ch === "ga" && !!(gaRoute(env, cid) || gaShared(env));
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id;
     /** @type {any[]} */
@@ -127,13 +131,15 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (ch !== "web") { try { const bl = JSON.parse((await env.KV.get("bclast:" + cid)) || "null"); if (bl && bl.text) promo = { at: bl.at, name: bl.name || "", text: bl.text }; } catch (e) {} }
     return {
       promo,
-      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t)),
+      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t, h.turns || [])),
       bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
       late: p.late && now - p.late.at < 6 * 3600e3 ? p.late : null,
       need: p.need ? { why: p.need.why, text: p.need.why === "task" ? String(p.need.text || "задача") : /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
       assignee: (p.as && p.as.n) || "", done: p.done || 0, line: { ch, label: lineLabel(cid, ch, lineChans(env, cid)) },
       audit: (p.audit || []).slice(-12), paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
-      canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
+      canSend: ch !== "web" && (ch === "ga" ? gaOn : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {}),
+      // файлы и ответ на конкретное сообщение — только со второго номера (Green-API): у Meta и чата сайта из пульта этого нет
+      canFiles: gaOn, canQuote: gaOn
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
@@ -152,14 +158,24 @@ export async function inboxApi(request, env, url, s, ctx) {
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
 
-  // ответ администратора клиенту
-  /** @param {string} text */
-  const sendTo = async text => {
+  /** @type {{ blob: Blob, name: string, mime: string, size: number } | null} */
+  let file = null;
+  if (isFile) { // со второго номера (Green-API); у Meta и чата сайта отправки файлов из пульта нет — и тело не читаем
+    if (ch !== "ga") return jsonP({ error: NO_FILES }, 409);
+    if (!gaOn) return jsonP({ error: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." }, 409);
+    const up = await readUpload(request);
+    if (!up.ok) return jsonP({ error: up.error }, up.status);
+    file = up.file; b = up.fields;
+  }
+
+  // ответ администратора клиенту; quote — номер сообщения у Green-API, на которое это ответ
+  /** @param {string} text @param {string} [quote] @returns {Promise<{ ok: boolean, id?: string, unknown?: boolean, error?: string }>} */
+  const sendTo = async (text, quote) => {
     if (ch === "web") return { ok: false, error: "В чат на сайте ответить нельзя. Позвоните клиенту." };
     if (ch === "ga") { // номер Green-API клиента (или общий номер воркера, через который пришёл этот чат)
       const gr = gaRoute(env, cid) || gaShared(env);
       if (!gr) return { ok: false, error: "Green-API не настроен." };
-      const r = await sendGreen(env, id + "@c.us", text, gr, true);
+      const r = await sendGreen(env, id + "@c.us", text, gr, true, quote);
       if (r.ok) return { ok: true, id: r.id || "" };
       if (!r.status || r.status >= 500) return { ok: true, unknown: true, error: "" }; // ответа нет — сообщение могло уйти: статус «?», само не повторяется
       return { ok: false, error: `Green-API не принял сообщение: ${gaWhy(r, gr)}.` };
@@ -175,17 +191,44 @@ export async function inboxApi(request, env, url, s, ctx) {
   /** реплика сотрудника с номером сообщения у провайдера и статусом (галочки, ТЗ v2.0 §2.3) @param {string} text @param {any} r */
   const adminTurn = (text, r) => ({ role: "model", text, t: now, by: "admin", ...(op ? { op } : {}), ...(r && r.id ? { mid: String(r.id).slice(0, 80), st: "sent" } : r && r.unknown ? { st: "unknown" } : {}) });
   if (M === "POST") await chatTouchOp(env, cid, op, now);
-  if (P === "/api/inbox/send") {
-    if (!msg) return jsonP({ error: "Напишите сообщение." }, 400);
-    const r = await sendTo(msg);
-    if (!r.ok) return jsonP({ error: r.error }, 409);
-    // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
-    let warn = "";
-    try { h = await logTurns(env.KV, hk, [adminTurn(msg, r)], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; if (op && !pr.as) pr.as = { n: op, at: now, by: op }; }); }
+  // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
+  /** @param {any} turn @param {{ unknown?: boolean }} r */
+  const saveReply = async (turn, r) => {
+    let warn = r.unknown ? UNKNOWN_SENT : ""; // ответа на отправку нет: само не повторяется, сотрудник проверяет в WhatsApp
+    try { h = await logTurns(env.KV, hk, [turn], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; if (op && !pr.as) pr.as = { n: op, at: now, by: op }; }); }
     catch (e) { console.log("inbox log", String(e)); warn = "Сообщение клиенту ушло, но не сохранилось в переписке (хранилище не ответило). Второй раз не отправляйте."; } // сообщение уже у клиента: ошибка здесь привела бы к повторной отправке
     applyForget(h, fgAt); // ответ пульту — тоже без того, что забыто (копию до очистки мог записать вебхук в другом месте сети)
     p = h.profile || {};
     return jsonP({ ok: true, chat: await view(), ...(warn ? { warn } : {}) });
+  };
+  // тот же rid второй раз (двойное нажатие, повтор запроса браузером после обрыва): клиенту ничего не уходит, пульт получает переписку
+  /** @param {{ dup: string, unknown?: boolean }} r */
+  const dupAnswer = async r => r.dup === "busy" ? jsonP({ error: BUSY }, 409) : jsonP({ ok: true, dup: true, chat: await view(), ...(r.unknown ? { warn: UNKNOWN_SENT } : {}) });
+  const rid = String(b.rid || "").slice(0, 64), quoteId = String(b.quote || "").slice(0, 80);
+  // ответ на конкретное сообщение (цитата WhatsApp): только со второго номера и только на сообщение этой переписки
+  const qt = quoteId ? quoteOf(h.turns || [], quoteId) : null;
+  if ((P === "/api/inbox/send" || isFile) && quoteId) {
+    if (!gaOn) return jsonP({ error: "На этом номере ответить на конкретное сообщение нельзя." }, 400);
+    if (!qt) return jsonP({ error: QUOTE_GONE }, 400);
+  }
+  if (P === "/api/inbox/send") {
+    if (!msg) return jsonP({ error: "Напишите сообщение." }, 400);
+    const r = await sendOnce(env, cid, ch, id, rid, () => sendTo(msg, qt ? qt.mid : ""));
+    if ("dup" in r) return dupAnswer(r);
+    if (!r.ok) return jsonP({ error: r.error }, 409);
+    return saveReply({ ...adminTurn(msg, r), ...(qt ? { qt } : {}) }, r);
+  }
+  if (isFile && file) {
+    const bad = fileProblem(file);
+    if (bad) return jsonP({ error: bad }, bad === TOO_BIG ? 413 : 400);
+    const f = file, kind = fileKind(f.mime, f.name), name = uploadName(f.name, f.mime, kind);
+    const r = await sendOnce(env, cid, ch, id, rid, () => gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : ""));
+    if ("dup" in r) return dupAnswer(r);
+    if (!r.ok) return jsonP({ error: r.error }, 409);
+    // файл в истории — как у клиента: вид, имя, тип, размер, номер сообщения (по нему файл открывается в пульте: downloadFile)
+    // и ссылка Green-API из ответа на отправку (её пробуем первой). Подпись — текстом реплики; без подписи — служебная строка для ИИ
+    const m = { k: kind, name, ...(f.mime ? { mime: f.mime.slice(0, 60) } : {}), size: f.size, ...(r.id ? { id: r.id } : {}), ...("url" in r && r.url ? { url: r.url } : {}) };
+    return saveReply({ ...adminTurn(msg || `[сотрудник отправил ${FILE_WORD[kind]}]`, r), m, ...(qt ? { qt } : {}) }, r);
   }
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
@@ -263,10 +306,12 @@ export async function inboxApi(request, env, url, s, ctx) {
 }
 
 // реплика для пульта: кто (u — клиент, a — сотрудник, b — бот или автоматическое сообщение), имя сотрудника, файл, статус отправки,
-// вид автоматического сообщения (rm — напоминание или отзыв, bc — рассылка)
-/** @param {any} t */
-function turnView(t) {
-  return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0,
+// вид автоматического сообщения (rm — напоминание или отзыв, bc — рассылка), номер сообщения у провайдера (mid — на него можно
+// ответить цитатой) и цитата, если реплика — ответ на другое сообщение (q: { mid, x — начало текста, r — чьё })
+/** @param {any} t @param {any[]} turns */
+function turnView(t, turns) {
+  const q = quoteView(turns, t);
+  return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.mid ? { mid: String(t.mid) } : {}), ...(q ? { q } : {}),
     ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}) } } : {}),
     ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),
     ...(t.ed ? { ed: 1 } : {}), ...(t.del ? { del: 1 } : {}), ...(t.re ? { re: String(t.re).slice(0, 8) } : {}) };
@@ -276,4 +321,23 @@ function turnView(t) {
 function srcView(turns, src) {
   const t = turns.find(x => x && x.role !== "user" && +x.t === +src.at);
   return { k: src.k, at: src.at || 0, text: t ? snip(t.text, 140) : "" };
+}
+
+// файл из пульта: multipart/form-data — file, caption, quote, op, rid. Тело читаем сами с пределом: без Content-Length (или с ложным)
+// formData() прочитал бы всё целиком
+/** @param {Request} request */
+async function readUpload(request) {
+  const fail = (/** @type {number} */ status, /** @type {string} */ error) => ({ ok: /** @type {const} */ (false), status, error });
+  const ct = request.headers.get("content-type") || "";
+  if (!ct.startsWith("multipart/form-data")) return fail(400, "Выберите файл.");
+  const raw = await readCapped(request, FILE_MAX + 256 * 1024);
+  if (!raw) return fail(413, TOO_BIG);
+  /** @type {FormData} */ let f;
+  try { f = await new Response(/** @type {any} */ (raw), { headers: { "content-type": ct } }).formData(); }
+  catch (e) { return fail(400, "Файл не прочитался. Выберите его ещё раз."); }
+  const up = /** @type {any} */ (f.get("file"));
+  if (!up || typeof up === "string" || typeof up.arrayBuffer !== "function") return fail(400, "Выберите файл.");
+  const str = (/** @type {string} */ k) => { const v = f.get(k); return typeof v === "string" ? v : ""; };
+  return { ok: /** @type {const} */ (true), file: { blob: /** @type {Blob} */ (up), name: String(up.name || "").slice(0, 200), mime: String(up.type || "").slice(0, 100), size: +up.size || 0 },
+    fields: { text: str("caption").slice(0, 4000), quote: str("quote"), op: str("op"), rid: str("rid") } };
 }

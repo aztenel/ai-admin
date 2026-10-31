@@ -16,7 +16,7 @@ import { waRoute } from "../channels/index.js";
 export const MEDIA_MAX = 100 * 1024 * 1024; // у Green-API файлы до 100 МБ
 // открываются в браузере; остальное — скачивание
 const INLINE = /^(image\/(jpeg|png|webp|gif|heic|heif)|audio\/[a-z0-9.+-]+|video\/(mp4|3gpp|quicktime|webm|mpeg)|application\/pdf)$/i;
-const RISKY = /\.(html?|xhtml|svg|js|mjs|exe|msi|bat|cmd|com|scr|vbs|ps1|jar|apk|app|dmg|sh|php)$/i;
+export const RISKY = /\.(html?|xhtml|svg|js|mjs|exe|msi|bat|cmd|com|scr|vbs|ps1|jar|apk|app|dmg|sh|php)$/i; // и отправка из пульта (send.js)
 
 /** Тип и как отдавать: { type, inline }. @param {string} type @param {string} [name] */
 export function mediaKind(type, name) {

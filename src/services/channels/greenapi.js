@@ -7,12 +7,13 @@ import { notifyOnce } from "../notifications/telegram.js";
 import { gaShared } from "../integrations/greenapi/webhook.js";
 import { gaCall, gaCode, gaWhy } from "../integrations/greenapi/client.js";
 
-// → { ok, id } или { ok: false, status, code, error }. quiet — без сигнала администратору (рассылка и пульт сообщают о сбое сами)
-/** @param {Env} env @param {string} chatId @param {any} message @param {any=} r @param {boolean=} quiet @returns {Promise<Record<string, any>>} */
-export async function sendGreen(env, chatId, message, r, quiet) {
+// → { ok, id } или { ok: false, status, code, error }. quiet — без сигнала администратору (рассылка и пульт сообщают о сбое сами);
+// quote — номер сообщения у Green-API, на которое это ответ (цитата в WhatsApp, ответ сотрудника из пульта)
+/** @param {Env} env @param {string} chatId @param {any} message @param {any=} r @param {boolean=} quiet @param {string=} quote @returns {Promise<Record<string, any>>} */
+export async function sendGreen(env, chatId, message, r, quiet, quote) {
   r = r || gaShared(env);
   if (!r) return { ok: false, status: 0, code: "ga:off", error: "Green-API не настроен" };
-  const x = await gaCall(r, "sendMessage", { chatId, message: String(message).slice(0, 4000), typingTime: 1500 });
+  const x = await gaCall(r, "sendMessage", { chatId, message: String(message).slice(0, 4000), typingTime: 1500, ...(quote ? { quotedMessageId: String(quote).slice(0, 80) } : {}) });
   if (x.ok) return { ok: true, id: String(x.j.idMessage || "") };
   console.log("GA send", x.status, logSafe(x.text.slice(0, 300)));
   const res = { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };

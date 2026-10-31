@@ -51,7 +51,7 @@ export const net = {
   mediaReply: null,            // (url, init) → Response | null: файлы по ссылкам провайдеров (inbox-v2.test.mjs)              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
   altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
-  ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
+  ga: [],                      // запросы к Green-API: { url, host, inst, op, token, body, form } (form — поля multipart: файл как { name, size, type })
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
@@ -223,8 +223,10 @@ globalThis.fetch = async (u, init = {}) => {
   }
   if (net.mediaReply) { const own = net.mediaReply(url, init); if (own) return own; } // файлы провайдеров (ссылки Green-API на голосовые и фото)
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
-  if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}
-    const rec = { url, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null }; net.ga.push(rec);
+  if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}; файлы (sendFileByUpload) — multipart на хосте media
+    const form = typeof FormData !== "undefined" && init.body instanceof FormData ? init.body : null;
+    const fields = form ? Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { name: v.name, size: v.size, type: v.type }])) : null;
+    const rec = { url, host: new URL(url).host, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: form ? null : init.body ? JSON.parse(init.body) : null, ...(fields ? { form: fields } : {}) }; net.ga.push(rec);
     const own = net.gaReply && net.gaReply(rec);
     if (own) return own;
     if (rec.op === "getStateInstance") return J({ stateInstance: net.gaState });
@@ -232,6 +234,7 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.op === "getSettings") return J({ wid: "77000000077@c.us", webhookUrl: "", webhookUrlToken: "", delaySendMessagesMilliseconds: 5000, incomingWebhook: "no", outgoingWebhook: "no", outgoingMessageWebhook: "no", outgoingAPIMessageWebhook: "no", stateWebhook: "no", ...st });
     if (rec.op === "setSettings") { Object.assign(st, rec.body); return J({ saveSettings: true }); }
     if (rec.op === "sendMessage" || rec.op === "sendFileByUrl") return J({ idMessage: "GA" + net.ga.length });
+    if (rec.op === "sendFileByUpload") return J({ idMessage: "GAF" + net.ga.length, urlFile: `https://media.green-api.test/out/${net.ga.length}/${encodeURIComponent(fields && fields.fileName || "file")}` });
     return J({ message: "unknown method" }, 404);
   }
   if (url.startsWith("https://wazzapo.kz/api/v2/external/")) { // Wazzapo: ключ в заголовке X-API-Key

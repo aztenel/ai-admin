@@ -1,5 +1,6 @@
 // @ts-check
-// Пульт: служебные ключи KV (ТЗ v2.0): номера каналов компании (ln:), имена сотрудников, которые работали в пульте (ops:).
+// Пульт: служебные ключи KV (ТЗ v2.0): номера каналов компании (ln:), имена сотрудников, которые работали в пульте (ops:),
+// отметки отправки из пульта (snd:) — защита от двойной отправки.
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
@@ -18,3 +19,15 @@ export async function opsTouch(env, cid, name, now) {
   const next = [{ n: name, at: now }, ...cur.filter(x => x.n !== name)].slice(0, 20);
   try { await env.KV.put("ops:" + cid, JSON.stringify(next), { expirationTtl: 90 * 86400 }); } catch (e) { console.log("ops", String(e)); }
 }
+
+// отметка отправки из пульта: snd:<компания>:<канал>:<чат>:<rid> — «идёт» ({ st: "busy" }) или «готово» ({ st: "done", id, unknown }),
+// 10 минут. rid присылает пульт на каждое сообщение и каждый файл: двойное нажатие и повтор запроса браузером после обрыва связи
+// не отправляют клиенту второй раз (как sb: у записи с сайта)
+/** @param {string} cid @param {string} ch @param {string} chat @param {string} rid */
+const sndKey = (cid, ch, chat, rid) => `snd:${cid}:${ch}:${chat}:${rid}`;
+/** @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid @returns {Promise<any>} */
+export async function sendMarkGet(env, cid, ch, chat, rid) { try { return JSON.parse((await env.KV.get(sndKey(cid, ch, chat, rid))) || "null"); } catch (e) { return null; } }
+/** @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid @param {any} v */
+export async function sendMarkPut(env, cid, ch, chat, rid, v) { await env.KV.put(sndKey(cid, ch, chat, rid), JSON.stringify(v), { expirationTtl: 600 }); }
+/** @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid */
+export async function sendMarkDrop(env, cid, ch, chat, rid) { await env.KV.delete(sndKey(cid, ch, chat, rid)); }

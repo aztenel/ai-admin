@@ -24,6 +24,26 @@ export async function gaCall(r, op, body, ms = 15000, query = "") {
   } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
   finally { clearTimeout(timer); }
 }
+// Файлы Green-API принимает на отдельном хосте media: apiUrl https://1103.api.green-api.com → https://1103.media.green-api.com,
+// https://api.green-api.com → https://media.green-api.com (кабинет Green-API показывает оба адреса рядом; вживую не проверено)
+/** @param {string} [base] @returns {string} */
+export function gaMediaBase(base) {
+  try { const u = new URL(String(base || GA_BASE)); u.hostname = u.hostname.replace(/(^|\.)api\./, "$1media."); return u.origin; }
+  catch (e) { return GA_BASE.replace("//api.", "//media."); }
+}
+// запрос к Green-API с файлом (multipart/form-data, например sendFileByUpload) → как у gaCall. Сам не повторяется: файл мог уйти,
+// а второй раз клиент получил бы его дважды (CLAUDE.md §5.2). status 0 — Green-API не ответил (обрыв, срок вышел)
+/** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string }>} */
+export async function gaUpload(r, op, form, ms = 60000) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+  try {
+    const res = await fetch(`${gaMediaBase(r.base)}/waInstance${r.id}/${op}/${r.token}`, { method: "POST", body: form, signal: ac.signal });
+    const text = await res.text().catch(() => "");
+    let j = {}; try { j = JSON.parse(text) || {}; } catch (e) {}
+    return { ok: res.ok, status: res.status, j: typeof j === "object" ? j : {}, text };
+  } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
+  finally { clearTimeout(timer); }
+}
 // ответ Green-API → код причины (подсказки — в GA_HINT)
 /** @param {any} x @returns {string} */
 export function gaCode(x) {
