@@ -63,7 +63,7 @@ type ServiceRaw = {
   queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string; why?: string }[];
   total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean; journal?: boolean; enabled?: boolean; hold?: { at?: number; why?: string } | null;
   log?: { t?: number; k?: string; st?: string; why?: string; phone?: string; name?: string; date?: string; time?: string }[];
-  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string }; cat?: string; variants?: { id: string; ru?: string; kk?: string; active?: boolean; approved?: boolean; v?: number; custom?: boolean }[] }[];
+  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string }; cat?: string; catLabel?: string; variants?: { id: string; ru?: string; kk?: string; active?: boolean; approved?: boolean; v?: number; builtin?: boolean }[] }[];
 };
 type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
@@ -164,8 +164,8 @@ function service(d: ServiceRaw): ServiceOverview {
     id: x.id, title: x.title || x.id, trigger: x.trigger || "", mode: (MODES as string[]).includes(x.mode || "") ? (x.mode as ServiceScenarioMode) : "off", channel: x.channel || "",
     note: x.note || "", v: n(x.v), kind: isKind(x.kind || "") ? (x.kind as ServiceKind) : "", approved: !!x.approved, approvedAt: n(x.approvedAt), vars: x.vars || [],
     preview: { ru: (x.preview && x.preview.ru) || "", kk: (x.preview && x.preview.kk) || "" },
-    ...(x.cat ? { cat: x.cat } : {}),
-    ...(Array.isArray(x.variants) ? { variants: x.variants.map((v) => ({ id: String(v.id), ru: v.ru || "", kk: v.kk || "", active: !!v.active, approved: !!v.approved, v: n(v.v), custom: !!v.custom })) } : {}),
+    ...(x.catLabel || x.cat ? { cat: x.catLabel || x.cat } : {}),
+    ...(Array.isArray(x.variants) ? { variants: x.variants.map((v) => ({ id: String(v.id), ru: v.ru || "", kk: v.kk || "", active: !!v.active, approved: !!v.approved, v: n(v.v), builtin: !!v.builtin })) } : {}),
   }));
   // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
   return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false,
@@ -225,7 +225,7 @@ export const liveCampaigns: CampaignSource = {
   },
   async checkCampaign(ws, draft) {
     const { seg, segOut, noDate, ...r } = await call<CheckRaw>("/api/bc/check", draftBody(ws, draft));
-    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], samples: r.samples || [], excluded: r.excluded || {}, ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
+    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], samples: r.samples || [], excluded: Array.isArray(r.excluded) ? r.excluded : [], ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
   },
   async createCampaign(ws, draft) {
     const d = await call<{ b: BRaw; dup: number; bad: number; cut: number }>("/api/bc/create", draftBody(ws, draft));

@@ -295,8 +295,8 @@ export type CampaignCheck = {
   preview: string[];
   /** Второй номер, база: готовые тексты для 3–5 клиентов (номер маской). */
   samples?: { to: string; text: string }[];
-  /** Кому не уйдёт и почему: причина → сколько. */
-  excluded?: Record<string, number>;
+  /** Кому не уйдёт и почему (текст сервера) и сколько. */
+  excluded?: { code: string; why: string; n: number }[];
 };
 
 export type CampaignCreated = {
@@ -428,7 +428,7 @@ export type ServiceScenario = {
   /** Варианты текста (ТЗ v3.0 §6): уходит активный и одобренный. */
   variants?: ServiceVariant[];
 };
-export type ServiceVariant = { id: string; ru: string; kk: string; active: boolean; approved: boolean; v: number; custom?: boolean };
+export type ServiceVariant = { id: string; ru: string; kk: string; active: boolean; approved: boolean; v: number; builtin?: boolean };
 /** Что ушло бы по настоящему журналу Altegio — проверка без отправки и без записи (только владелец). */
 export type ServiceDryItem = {
   kind: ServiceKind;

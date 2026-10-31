@@ -255,16 +255,16 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
                   Получат: <b className="tnum">{nf.format(valid)}</b> {plural(valid, ["клиент", "клиента", "клиентов"])}
                 </span>
               </p>
-              {!!Object.keys(check.data.excluded || {}).length && (
+              {!!check.data.excluded?.filter((x) => x.n > 0).length && (
                 <div className="rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
                   <p className="mb-1 font-medium text-fg-2">Не получат</p>
                   <ul className="space-y-0.5 text-fg-2">
-                    {Object.entries(check.data.excluded || {})
-                      .filter(([, n]) => n > 0)
-                      .map(([k, n]) => (
-                        <li key={k} className="flex justify-between gap-3">
-                          <span>{WHY[k] || k}</span>
-                          <span className="tnum">{nf.format(n)}</span>
+                    {check.data.excluded
+                      .filter((x) => x.n > 0)
+                      .map((x) => (
+                        <li key={x.code} className="flex justify-between gap-3">
+                          <span>{x.why || WHY[x.code] || x.code}</span>
+                          <span className="tnum">{nf.format(x.n)}</span>
                         </li>
                       ))}
                   </ul>
