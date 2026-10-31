@@ -16,6 +16,8 @@ import { serviceInfo, serviceApprove } from "../services/reminders/info.js";
 import { jrDry } from "../services/reminders/journal.js";
 import { libraryOf, librarySave, render, VARS } from "../services/broadcast/library.js";
 import { crmPick } from "../services/crm/segments.js";
+import { calendarOf } from "../services/crm/calendar.js";
+import { statsOf } from "../services/inbox/stats.js";
 import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, GA_CAP } from "../services/broadcast/sender.js";
@@ -76,6 +78,12 @@ export async function bcApi(request, env, url, s) {
   if (M === "GET" && P === "/api/bc/service") { // сервисные сообщения с номера бота (пульт): что бот шлёт сам, очередь — номера маской
     try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ...(await serviceInfo(env, c, now)) }); }
     catch (e) { console.log("bc service", String(e)); return jsonP({ error: BUSY }, 503); }
+  }
+  if (M === "GET" && P === "/api/bc/calendar") { // календарь на 14 дней: сервисные и реклама отдельно, только числа (ТЗ v2.0 §6)
+    try { return jsonP(await calendarOf(env, c, now)); } catch (e) { console.log("bc calendar", String(e)); return jsonP({ error: BUSY }, 503); }
+  }
+  if (M === "GET" && P === "/api/bc/stats") { // аналитика исходящих за 7 или 30 дней: отправлено, доставлено, прочитано, не дошло, ответили (ТЗ v2.0 §8)
+    try { return jsonP(await statsOf(env, cid, now, +(url.searchParams.get("days") || 7))); } catch (e) { console.log("bc stats", String(e)); return jsonP({ error: BUSY }, 503); }
   }
   if (M === "GET" && P === "/api/bc/templates") { // библиотека рекламных текстов (ТЗ v2.0 §5): 28 стартовых тем RU/KZ, правки владельца, свои тексты
     try { return jsonP({ owner: s.role === "owner", vars: VARS, items: await libraryOf(env, c) }); }

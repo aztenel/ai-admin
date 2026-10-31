@@ -6,11 +6,13 @@
 import { readHist } from "../../db/kv/chats.js";
 import { pushNotify } from "../notifications/push.js";
 import { lineLabel, lineChans } from "./lines.js";
+import { statReply } from "./stats.js";
 
 /** @param {Env} env @param {string} ch @param {string} cid @param {string} digits @param {string} msgId номер входящего у провайдера (повтор вебхука — без второго push) */
 export async function inboundPush(env, ch, cid, digits, msgId) {
   try {
     const h = await readHist(env, `h:${ch}:${cid}:${digits}`);
+    if (h) await statReply(env, cid, ch, digits, h.turns || [], Date.now()); // ответ на напоминание или рассылку — в аналитику, и на «спасибо» тоже
     const p = (h && h.profile) || {}, need = p.need;
     if (!h || !need || p.stop) return;
     const turns = h.turns || [], last = [...turns].reverse().find((/** @type {any} */ t) => t && t.role === "user");

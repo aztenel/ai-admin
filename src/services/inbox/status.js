@@ -53,9 +53,11 @@ export async function patchTurn(env, hk, mid, ours, fn) {
     return "nomsg";
   });
 }
-/** Статус нашего сообщения из вебхука. @param {Env} env @param {string} hk @param {string} mid @param {string} status @param {string} [desc] */
-export function applyStatus(env, hk, mid, status, desc) {
+/** Статус нашего сообщения из вебхука. seen(t) — реплика нашлась (для счётчиков, и при повторе: там повтор не считается).
+ *  @param {Env} env @param {string} hk @param {string} mid @param {string} status @param {string} [desc] @param {(t: any) => void} [seen] */
+export function applyStatus(env, hk, mid, status, desc, seen) {
   return patchTurn(env, hk, mid, true, t => {
+    if (seen) seen(t);
     const next = stNext(t.st, status);
     if (!next) return false;
     t.st = next;

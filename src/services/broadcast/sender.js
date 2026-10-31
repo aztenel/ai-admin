@@ -6,6 +6,7 @@ import { TZ, local, hhmm, isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
 import { bcChunkKey, bcPut, bcGet } from "../../db/kv/broadcasts.js";
 import { bcmAdd, autoLoad } from "../../db/kv/crm.js";
+import { logTurns } from "../../db/kv/chats.js";
 import { logSafe } from "../../lib/phone.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/constants.js";
@@ -65,6 +66,21 @@ export async function bcSendGa(env, digits, b, name, r) {
   if (!b.img) return sendGreen(env, chatId, text, r, true);
   const x = await gaCall(r, "sendFileByUrl", { chatId, urlFile: b.img, fileName: bcFileName(b.img), caption: text.slice(0, 1024) }); // картинка с подписью
   return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
+}
+// сообщение рассылки — в переписку клиента (ТЗ v2.0 §2.1, 31.10.2026): раньше его там не было, и ответ на рассылку выглядел обычным
+// сообщением без повода, раздел «Ответы на рассылки» его не видел, а галочки (отчёты Green-API) некуда было ставить. Чат только с нашим
+// сообщением в очередь «Нужен ответ» не встаёт — пульт прячет его под «только наши сообщения». Ключи разные (у каждого клиента
+// свой чат) — по 10 одновременно. Сбой записи рассылку не останавливает
+/** @param {Env} env @param {string} cid @param {any} b @param {[string, string, string][]} list @param {number} now */
+async function bcLog(env, cid, b, list, now) {
+  const ch = b.ch === "ga" ? "ga" : "wa", bc = String(b.id || "bc").slice(0, 40);
+  for (let i = 0; i < list.length; i += 10) {
+    await Promise.all(list.slice(i, i + 10).map(([digits, name, mid]) => {
+      const text = b.ch === "ga" ? bcGaText(b, name) : `[Рассылка «${String(b.name || "").slice(0, 60)}» — шаблон ${String(b.tpl || "").slice(0, 60)}]`;
+      return logTurns(env.KV, `h:${ch}:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc, by: "bc", ...(mid ? { mid: mid.slice(0, 80) } : {}), st: "sent" }])
+        .catch(e => console.log("bc log", String(e).slice(0, 120)));
+    }));
+  }
 }
 // сведения о номере из Meta: качество и предел получателей за 24 часа
 /** @param {Env} env @param {any} route */
@@ -188,6 +204,7 @@ export async function bcTick(env, cid, id, gaBusy) {
   if ((await env.KV.get(lk)) !== token) return { b, state: "busy" };
   let sentNow = 0, did = false;
   const marked = /** @type {string[]} */ ([]); // кому шаблон ушёл (или мог уйти) в этой порции — отметка «писали маркетинг»
+  const logged = /** @type {[string, string, string][]} */ ([]); // кому ушло: номер, имя, номер сообщения у провайдера — в переписку
   try {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
@@ -230,7 +247,7 @@ export async function bcTick(env, cid, id, gaBusy) {
       if (no.has(digits) || (allow && !allow.has(digits))) { b.excl = (b.excl || 0) + 1; done++; continue; }
       did = true;
       const r = ga ? await bcSendGa(env, digits, b, name, route.ga) : await sendTemplate(env, digits, b, name, route);
-      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga) marked.push(digits); continue; }
+      if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || "")]); continue; }
       if (!ga && r.code === 0) marked.push(digits); // связь оборвалась — шаблон мог уйти: второй раз за 14 дней такому клиенту не пишем
       const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
       if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь
@@ -254,6 +271,7 @@ export async function bcTick(env, cid, id, gaBusy) {
     // отметка «писали маркетинг» — раз за порцию, а не за каждое сообщение (KV пишет ключ не чаще раза в секунду). Только шаблоны Meta и
     // Wazzapo: с номера Green-API маркетинг по базе не уходит. Сбой отметки рассылку не останавливает — в журнал без номеров
     if (marked.length) { try { await bcmAdd(env, cid, isoDay(now), marked); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
+    if (logged.length) await bcLog(env, cid, b, logged, now);
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
       const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);
       return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${why}).` : halt.kind === "temp" ? `${bcFrom(b)} больше часа не принимает сообщения (${why}).` : `${ga ? "Green-API отклонил" : "Meta отклонила"} отправку (${why}).`);

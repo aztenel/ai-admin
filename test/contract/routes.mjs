@@ -100,7 +100,7 @@ const R = [
   ["GET", "/api/inbox/list?c=barber&v=2"], ["GET", "/api/inbox/list?c=dent&v=2"], ["GET", "/api/inbox/booking?c=barber&ch=wa&id=77010000001"], ["GET", "/api/inbox/booking?c=dent&ch=wa&id=77010000055"],
   ["GET", "/api/push/config?c=barber"], ["GET", "/api/push/config?c=dent"], ["POST", "/api/push/subscribe", { c: "barber" }], ["POST", "/api/push/subscribe", { c: "dent" }],
   ["POST", "/api/push/prefs", { c: "barber" }], ["POST", "/api/push/unsubscribe", { c: "barber" }], ["POST", "/api/push/test", { c: "barber" }],
-  ["GET", "/api/bc/templates?c=barber"], ["GET", "/api/bc/templates?c=dent"], ["POST", "/api/bc/templates", { c: "barber" }], ["POST", "/api/bc/templates/preview", { c: "barber" }],
+  ["GET", "/api/bc/templates?c=barber"], ["GET", "/api/bc/templates?c=dent"], ["POST", "/api/bc/templates", { c: "barber" }], ["POST", "/api/bc/templates/preview", { c: "barber" }], ["GET", "/api/bc/calendar?c=barber"], ["GET", "/api/bc/calendar?c=dent"], ["GET", "/api/bc/stats?c=barber"], ["GET", "/api/bc/stats?c=dent"],
   ["POST", "/api/bc/service/dry", { c: "barber" }], ["POST", "/api/bc/service/approve", { c: "barber" }],
   ["GET", "/api/inbox/catalog?c=barber"], ["GET", "/api/inbox/times?c=barber&date=2026-11-02"], ["GET", "/api/inbox/times?c=dent"],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],

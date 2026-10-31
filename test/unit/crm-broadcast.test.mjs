@@ -195,6 +195,10 @@ test("автосценарий: выключен — ничего; включё�
   assert.deepEqual(tpls().map(x => x.body.to), [dg(202), dg(201)]);
   assert.equal(tpls()[0].body.template.components[0].parameters[0].text, "Данияр");
   assert.equal(s.kv.json(`bc:winchester:${b.id}`).status, "done");
+  // сообщение рассылки — в переписке клиента (ТЗ v2.0 §2.1): ответ на него попадёт в «Ответы на рассылки»; чат только с ним — не в очереди
+  const last = s.kv.json(`h:wa:winchester:${dg(202)}`).turns.at(-1);
+  assert.equal(last.bc, b.id); assert.equal(last.by, "bc"); assert.equal(last.st, "sent"); assert.ok(/pora_na_strizhku/.test(last.text));
+  assert.equal(s.kv.json(`h:wa:winchester:${dg(202)}`).profile.need, undefined);
   await checked(s, AT + 86400e3);
   const r = await autoOne(s.env, W, AT + 86400e3); // назавтра: 28 дней — у Ерлана (вчера было 27); база — суточной давности
   assert.equal(r.state, "sent"); assert.equal(r.n, 1);
@@ -488,4 +492,16 @@ test("отправка по базе: согласие проверяется п
     assert.equal(tpls().length, 0, "без базы согласий — ни одного сообщения");
     assert.match(String(s.kv.json(`bc:winchester:${d2.b.id}`).note || ""), /согласи/);
   }
+});
+
+test("календарь на 14 дней: реклама — кто в этот день дойдёт до N дней, кому можно и почему нельзя; сервисные — отдельно; без номеров", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER);
+  await own.post("/api/bc/auto", { c: "winchester", days: 28, tpl: "pora_na_strizhku", on: true });
+  const r = await (await own.go("/api/bc/calendar?c=winchester")).json();
+  assert.equal(r.days.length, 14); assert.equal(r.auto.days, 28);
+  const sum = r.days.reduce((a, d) => a + (d.marketing ? d.marketing.candidates : 0), 0);
+  assert.ok(sum >= 1, JSON.stringify(r.days.map(d => d.marketing)));
+  for (const d of r.days) if (d.marketing) { assert.ok(d.marketing.allowed <= d.marketing.candidates); assert.ok(d.marketing.planned <= d.marketing.allowed); }
+  assert.ok(!/7700000\d{4}/.test(JSON.stringify(r)), "без номеров");
+  assert.ok("service" in r.days[0]);
 });

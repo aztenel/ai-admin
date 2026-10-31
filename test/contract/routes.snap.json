@@ -1800,6 +1800,129 @@
    "error"
   ]
  },
+ "GET /api/bc/calendar?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/calendar?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "POST /api/bc/service/dry {\"c\":\"barber\"} [anon]": {
   "status": 401,
   "type": "application/json",

@@ -8,7 +8,8 @@ import { sendGreen } from "../../services/channels/greenapi.js";
 import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/holds.js";
 import { readHist, putHist, kvRetry, gaShared } from "../../services/channels/deps.js";
 import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
-import { applyStatus, patchTurn } from "../../services/inbox/status.js";
+import { applyStatus, patchTurn, stOf } from "../../services/inbox/status.js";
+import { statStatus } from "../../services/inbox/stats.js";
 import { inboundPush, failedPush } from "../../services/inbox/notify.js";
 /** @import { Env } from "../../lib/types.js" */
 
@@ -27,8 +28,10 @@ export async function handleGreen(body, env, origin, r) {
       const niche = await nicheOf(env, "ga", to.replace(/\D/g, ""), r.shared ? {} : { client: r.client });
       if (niche) {
         try {
-          const ch0 = await applyStatus(env, `h:ga:${niche}:${to.replace(/\D/g, "")}`, String(body.idMessage || ""), st, String(body.description || ""));
-          if (ch0 === "changed" && /^(failed|noAccount|notInGroup|suspended)$/.test(st)) await failedPush(env, "ga", niche, to.replace(/\D/g, ""), String(body.idMessage || ""));
+          /** @type {any} */ let turn = null;
+          const mid = String(body.idMessage || ""), ch0 = await applyStatus(env, `h:ga:${niche}:${to.replace(/\D/g, "")}`, mid, st, String(body.description || ""), t => { turn = t; });
+          if (ch0 === "changed" && /^(failed|noAccount|notInGroup|suspended)$/.test(st)) await failedPush(env, "ga", niche, to.replace(/\D/g, ""), mid);
+          if (turn) await statStatus(env, niche, "ga", mid, turn, stOf(st), Date.now()); // аналитика (ТЗ v2.0 §8): повтор отчёта не считается
         } catch (e) { console.log("ga status", String(e)); }
       }
     }
