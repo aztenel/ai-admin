@@ -91,7 +91,7 @@ export async function route(request, env, ctx, pult) {
       const s = await sessionRead(env, request);
       if (!s) return jsonP({ error: "Войдите заново." }, 401);
       if (M === "GET" && P === "/api/inbox/me") return jsonP({ owner: s.role === "owner", c: s.role === "staff" ? s.cid : "" });
-      return inboxApi(request, env, url, s);
+      return inboxApi(request, env, url, s, ctx);
     }
     // ---- проверка запуска (чек-лист подключений и экзамен бота)
     if (M === "GET" && P === "/launch") {

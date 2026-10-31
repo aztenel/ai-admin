@@ -233,9 +233,10 @@ section("WhatsApp на несколько клиентов");
   const own = S.browser(); await own.go("/studio?key=" + OWNER);
   await own.post("/api/studio/save", { ...PASS, isNew: false, off: true });
   net.reset();
+  // чат уже ждёт ответа (заявка выше): пометка «новая заявка» и время ожидания остаются, добавляется тема «перенос» (ТЗ v2.0 §2.1)
   await S.waText("/wa/acme", "77051110001", "А можно перенести?", o);
   const h = S.hist("wa", "acme", "77051110001");
-  ok("бот выключен: клиенту ничего не уходит, сообщение лежит в чате с пометкой, администратор предупреждён", net.graph.length === 0 && net.gemini.length === 0 && h.turns.at(-1).text === "А можно перенести?" && h.profile.need.why === "off" && net.tg.some(x => /Бот выключен/.test(x.text) && x.chat_id === "555000111"), JSON.stringify([net.graph.length, h.turns.at(-1), net.tg]));
+  ok("бот выключен: клиенту ничего не уходит, сообщение лежит в чате с пометкой, администратор предупреждён", net.graph.length === 0 && net.gemini.length === 0 && h.turns.at(-1).text === "А можно перенести?" && h.profile.need.why === "lead" && h.profile.need.tp === "move" && net.tg.some(x => /Бот выключен/.test(x.text) && x.chat_id === "555000111"), JSON.stringify([net.graph.length, h.turns.at(-1), net.tg]));
   const cw = await S.chat("acme", "k9", "Здравствуйте");
   ok("бот выключен: в веб-чате — просьба написать в WhatsApp или позвонить", /отвечает администратор/.test(cw.reply) && net.gemini.length === 0);
   await own.post("/api/studio/save", { ...PASS, isNew: false, off: false });
@@ -265,7 +266,7 @@ section("пульт чатов");
 
   d = await J(await staff.go("/api/inbox/list?c=acme&f=need"));
   const row = d.chats.find(x => x.id === A);
-  ok("список «Ждут ответа»: чат с пометкой, именем, номером и началом последнего сообщения", d.client.name === "Barber House" && row && row.nd === "off" && row.nm === "Данияр" && row.ph === "+" + A && /перенести/.test(row.s) && row.d === "u" && d.need >= 1, JSON.stringify(d).slice(0, 500));
+  ok("список «Ждут ответа»: чат с пометкой, именем, номером и началом последнего сообщения", d.client.name === "Barber House" && row && row.nd === "lead" && row.tp === "move" && row.nm === "Данияр" && row.ph === "+" + A && /перенести/.test(row.s) && row.d === "u" && d.need >= 1, JSON.stringify(d).slice(0, 500));
   const lops = S.kv.ops.list, gops = S.kv.ops.get;
   await staff.go("/api/inbox/list?c=acme&f=all");
   ok("список чатов — один запрос списка ключей и ни одного чтения чата", S.kv.ops.list - lops === 1 && S.kv.ops.get - gops <= 2, `list ${S.kv.ops.list - lops}, get ${S.kv.ops.get - gops}`);

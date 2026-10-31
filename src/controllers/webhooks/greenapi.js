@@ -8,6 +8,7 @@ import { sendGreen } from "../../services/channels/greenapi.js";
 import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/holds.js";
 import { readHist, putHist, kvRetry, gaShared } from "../../services/channels/deps.js";
 import { handleWAText, handleWAMedia, watchSend } from "./meta.js";
+import { applyStatus, patchTurn } from "../../services/inbox/status.js";
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {any} md */
@@ -19,10 +20,14 @@ export async function handleGreen(body, env, origin, r) {
   const type = body?.typeWebhook, iid = body?.instanceData?.idInstance;
   if (iid !== undefined && iid !== null && String(iid) !== r.id) { console.log("ga: сообщение другого инстанса", String(iid).slice(0, 20)); return; } // адрес вебхука вставлен в кабинет другого номера
   if (type === "stateInstanceChanged") return gaStateSignal(env, r, String(body.stateInstance || ""));
-  if (type === "outgoingMessageStatus") { // отчёт о доставке: «у номера нет WhatsApp», «не доставлено», ограничение номера
-    const st = String(body.status || "");
+  if (type === "outgoingMessageStatus") { // отчёт о доставке: галочки в пульте (ТЗ v2.0 §2.3) и сигналы «у номера нет WhatsApp», ограничение номера
+    const st = String(body.status || ""), to = String(body.chatId || "");
+    if (to.endsWith("@c.us")) {
+      const niche = await nicheOf(env, "ga", to.replace(/\D/g, ""), r.shared ? {} : { client: r.client });
+      if (niche) { try { await applyStatus(env, `h:ga:${niche}:${to.replace(/\D/g, "")}`, String(body.idMessage || ""), st, String(body.description || "")); } catch (e) { console.log("ga status", String(e)); } }
+    }
     if (GA_STATE_BAD[st]) return gaStateSignal(env, r, st);
-    if ((st === "noAccount" || st === "failed") && hasClient(r.client)) await waFailed(env, { client: r.client }, [{ code: "ga:" + st, to: String(body.chatId || "").replace(/\D/g, "") }]);
+    if ((st === "noAccount" || st === "failed") && hasClient(r.client)) await waFailed(env, { client: r.client }, [{ code: "ga:" + st, to: to.replace(/\D/g, "") }]);
     return;
   }
   const chatId = body?.senderData?.chatId || "";
@@ -40,7 +45,9 @@ export async function handleGreen(body, env, origin, r) {
       if (mid && seen.includes(mid)) return; // Green-API повторил доставку
       h.profile.echo = seen.concat(mid ? [mid] : []).slice(-20);
       h.profile.pausedUntil = Math.max(h.profile.pausedUntil || 0, now + PAUSE_MS); delete h.profile.need;
-      h.turns = (h.turns || []).concat([{ role: "model", text: gaText(body.messageData), t: now, by: "admin", m: "phone" }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+      const md = body.messageData || {};
+      if (md.typeMessage === "editedMessage" || md.typeMessage === "deletedMessage" || md.typeMessage === "reactionMessage") return; // правка и удаление своего сообщения с телефона — не новый ответ
+      h.turns = (h.turns || []).concat([{ role: "model", text: gaText(md), t: now, by: "admin", m: "phone", ...(mid ? { mid: mid.slice(0, 80), st: "sent" } : {}) }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
       await putHist(env.KV, hk, h);
     });
     return;
@@ -49,12 +56,37 @@ export async function handleGreen(body, env, origin, r) {
   const id = body.idMessage;
   if (id && await seenBefore(env, id)) return;
   const md = body.messageData || {};
-  const send = watchSend(env, "ga", digitsId, gx, t => sendGreen(env, chatId, t, r));
+  if (md.typeMessage === "editedMessage" || md.typeMessage === "deletedMessage" || md.typeMessage === "reactionMessage") return gaChange(env, digitsId, gx, md); // не новое сообщение
+  const gxm = { ...gx, msgId: String(id || "") };
+  const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
-  if (text) return handleWAText(env, "ga", digitsId, text, send, gx);
+  if (text) return handleWAText(env, "ga", digitsId, text, send, gxm);
   /** @type {Record<string, string>} */
   const kinds = { audioMessage: "audio", imageMessage: "image", videoMessage: "video", documentMessage: "document", stickerMessage: "sticker", locationMessage: "location", contactMessage: "contact", contactsArrayMessage: "contact" };
   const kind = kinds[md.typeMessage];
   if (!kind) return; // реакции, опросы и прочее — без ответа
-  return handleWAMedia(env, "ga", digitsId, kind, md.fileMessageData?.downloadUrl || null, (md.fileMessageData?.caption || "").trim(), send, gx, { mime: md.fileMessageData?.mimeType || "" });
+  const fd = md.fileMessageData || {};
+  // id сообщения нужен, чтобы взять у Green-API новую ссылку на файл (downloadFile), когда старая устареет; имя файла — только у документов
+  return handleWAMedia(env, "ga", digitsId, kind, fd.downloadUrl || null, (fd.caption || "").trim(), send, gxm, { id: String(id || ""), mime: fd.mimeType || "", ...(kind === "document" && fd.fileName ? { name: String(fd.fileName) } : {}) });
+}
+
+// клиент исправил или удалил своё сообщение, поставил реакцию на наше: меняем ту реплику, которую видит пульт (Green-API присылает
+// stanzaId — номер того сообщения). Нового ответа не нужно, очередь «Нужен ответ» не трогаем
+/** @param {Env} env @param {string} digits @param {any} gx @param {any} md */
+async function gaChange(env, digits, gx, md) {
+  const niche = await nicheOf(env, "ga", digits, gx);
+  if (!niche) return;
+  const hk = `h:ga:${niche}:${digits}`;
+  try {
+    if (md.typeMessage === "editedMessage") {
+      const e = md.editedMessageData || {}, txt = clean(String(e.textMessage || ""), 1000);
+      if (e.stanzaId && txt) await patchTurn(env, hk, String(e.stanzaId), false, t => { if (t.text === txt) return false; t.text = txt; t.ed = 1; return true; });
+    } else if (md.typeMessage === "deletedMessage") {
+      const e = md.deletedMessageData || {};
+      if (e.stanzaId) await patchTurn(env, hk, String(e.stanzaId), false, t => { if (t.del) return false; t.del = 1; return true; });
+    } else {
+      const q = md.quotedMessage || {}, emo = String((md.extendedTextMessageData || {}).text || "").slice(0, 8);
+      if (q.stanzaId) await patchTurn(env, hk, String(q.stanzaId), true, t => { if (t.re === emo) return false; if (emo) t.re = emo; else delete t.re; return true; });
+    }
+  } catch (e) { console.log("ga change", String(e)); }
 }

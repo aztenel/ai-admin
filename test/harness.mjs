@@ -47,7 +47,8 @@ export const net = {
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
   altClients: [],              // справочник клиентов (POST /locations/{локация}/clients/search): { id, name, surname, phone, first_visit_date, last_visit_date, visits_count, nl (разрешил рассылки), pd }
-  altCreated: [],              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
+  altCreated: [],
+  mediaReply: null,            // (url, init) → Response | null: файлы по ссылкам провайдеров (inbox-v2.test.mjs)              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
   altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
   ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
@@ -58,7 +59,7 @@ export const net = {
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
   img: [],                     // запросы картинок Altegio (фото мастеров, assets.alteg.io и др.): адреса
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
-  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altCreated = []; }
+  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altCreated = []; this.mediaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -218,6 +219,7 @@ globalThis.fetch = async (u, init = {}) => {
     if (/\/(masters|images)\//.test(url)) return new Response(pngFace(url), { headers: { "content-type": "image/png" } });
     return new Response("not found", { status: 404 });
   }
+  if (net.mediaReply) { const own = net.mediaReply(url, init); if (own) return own; } // файлы провайдеров (ссылки Green-API на голосовые и фото)
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
   if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}
     const rec = { url, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null }; net.ga.push(rec);

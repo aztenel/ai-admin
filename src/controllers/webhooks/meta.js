@@ -7,6 +7,7 @@ import { snip } from "../../lib/text.js";
 import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
 import { fixedOf, nicheOf, seenBefore, waCoex, markOptout, botOff } from "../../services/channels/index.js";
+import { inboundNeed } from "../../services/inbox/queue.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
@@ -73,7 +74,8 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   if (niche && CLIENTS[niche] && botOff(env, CLIENTS[niche], channel)) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего
     const now = Date.now();
     await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
-    await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
+    const said = maskPhones(redact(String(text).slice(0, MAX_LEN)));
+    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}) }], (p, h) => { p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why: "off", at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
     try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
     return;
   }
@@ -132,20 +134,22 @@ export async function handleWAMedia(env, channel, fromDigits, kind, link, captio
       if (!(await env.KV.get(tk))) {
         await env.KV.put(tk, "1", { expirationTtl: 120 });
         const phone = normPhone(fromDigits) || "+" + fromDigits;
-        await notify(env, `${MEDIA_LABEL[kind] || "Сообщение"} от клиента — ${c.name}\n${phone}${caption ? `\nПодпись: «${caption.slice(0, 200)}»` : ""}${link ? `\n${link}` : ""}`, c.id);
+        // без ссылки на сам файл: это закрытая ссылка провайдера на личный файл клиента — файл открывается в пульте (ТЗ v2.0 §2.4)
+        await notify(env, `${MEDIA_LABEL[kind] || "Сообщение"} от клиента — ${c.name}\n${phone}${caption ? `\nПодпись: «${caption.slice(0, 200)}»` : ""}\nОткрыть — в пульте чатов.`, c.id);
       }
     } catch (e) { console.log("media note", String(e)); }
   }
   // что прислал клиент, остаётся в истории чата: администратор видит это в пульте (и может открыть файл), а ИИ знает, что клиент что-то присылал
-  const now = Date.now(), m = { k: kind, ...(media && media.id ? { id: String(media.id).slice(0, 120) } : {}), ...(media && media.mime ? { mime: String(media.mime).slice(0, 60) } : {}), ...(link ? { url: String(link).slice(0, 500) } : {}) };
-  const inTurn = kind === "sticker" ? null : { role: "user", text: `[клиент прислал ${MEDIA_WORD[kind] || "сообщение"}]`, t: now, m };
+  const now = Date.now(), m = { k: kind, ...(media && media.id ? { id: String(media.id).slice(0, 120) } : {}), ...(media && media.mime ? { mime: String(media.mime).slice(0, 60) } : {}), ...(media && media.name ? { name: String(media.name).slice(0, 120) } : {}), ...(link ? { url: String(link).slice(0, 500) } : {}) };
+  // у Green-API id файла — это номер сообщения: по нему же приходят правка, удаление и реакция (mid)
+  const inTurn = kind === "sticker" ? null : { role: "user", text: `[клиент прислал ${MEDIA_WORD[kind] || "сообщение"}]`, t: now, m, ...(channel === "ga" && media && media.id ? { mid: String(media.id).slice(0, 80) } : {}) };
   /** @param {any} reply */
   const note = async (reply) => {
     if (!inTurn) return;
     try {
-      await logTurns(env.KV, hk, reply ? [inTurn, { role: "model", text: reply, t: now }] : [inTurn], p => {
+      await logTurns(env.KV, hk, reply ? [inTurn, { role: "model", text: reply, t: now }] : [inTurn], (p, h) => {
         delete p.cxAsk; delete p.mvAsk; // бот спросил «Отменить запись …?», а клиент ответил голосовым или картинкой: вопрос снимается, следующее «ок» записи не удалит
-        p.li = now; if (!p.stop) p.need = { at: now, why: paused ? "human" : "media" };
+        p.li = now; if (!p.stop) inboundNeed(p, h.turns.slice(0, -2 + (reply ? 0 : 1)), { kind, why: paused ? "human" : "media", at: now });
         if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
       });
     } catch (e) { console.log("history", String(e)); }

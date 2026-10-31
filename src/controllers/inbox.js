@@ -5,26 +5,29 @@ import { clean, snip } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
-import { PAUSE_MS, GRAPH } from "../config/constants.js";
+import { PAUSE_MS } from "../config/constants.js";
 import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
 import { eraseClient } from "../services/inbox/erase.js";
-import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaShared, gaRoute, gaWhy, waCreds, WA_HINT } from "../services/inbox/deps.js";
+import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaShared, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
-import { wzOn, wzMedia } from "../services/channels/wazzapo.js";
 import { waRoute, waBotOff, botOff } from "../services/channels/index.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
 import { growthReport } from "../services/digest.js";
+import { mediaFile } from "../services/inbox/media.js";
+import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
+import { opName, opWho } from "../services/inbox/operator.js";
+import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
 /** @import { Env } from "../lib/types.js" */
 
 // ================= ПУЛЬТ ЧАТОВ: администратор видит переписку и отвечает клиенту сам =================
 // У официального WhatsApp нет приложения на телефоне: без пульта администратору негде ответить клиенту, а бот обещает именно это («он ответит вам здесь»).
 // Список чатов — один запрос KV.list (метаданные ключей истории), чат — одно чтение ключа. Ответ администратора уходит через тот же номер, бот в этом чате замолкает на 2 часа.
-/** @param {Request} request @param {Env} env @param {URL} url @param {any} s */
-export async function inboxApi(request, env, url, s) {
+/** @param {Request} request @param {Env} env @param {URL} url @param {any} s @param {any} [ctx] */
+export async function inboxApi(request, env, url, s, ctx) {
   const P = url.pathname, M = request.method, q = url.searchParams;
   /** @type {Record<string, any>} */
   let b = {};
@@ -46,7 +49,8 @@ export async function inboxApi(request, env, url, s) {
         for (const k of (r && r.keys) || []) {
           const m = k.metadata || {}, id = String(k.name).slice(prefix.length);
           if (!/** @type {any} */ (CHAT_ID)[ch].test(id)) continue;
-          rows.push({ ch, id, t: m.t || 0, li: m.li || 0, s: m.s || "", d: m.d || "", nm: m.nm || "", ph: ch === "web" ? m.ph || "" : "+" + id, nd: m.nd || "", pu: m.pu > now ? m.pu : 0, st: m.st ? 1 : 0, bk: m.bk || 0 });
+          rows.push({ ch, id, t: m.t || 0, li: m.li || 0, s: m.s || "", d: m.d || "", nm: m.nm || "", ph: ch === "web" ? m.ph || "" : "+" + id, nd: m.nd || "", pu: m.pu > now ? m.pu : 0, st: m.st ? 1 : 0, bk: m.bk || 0,
+            ...(m.tp ? { tp: m.tp } : {}), ...(m.rs ? { rs: m.rs } : {}), ...(m.as ? { as: m.as } : {}), ...(m.dn ? { dn: 1 } : {}), ...(m.ls ? { ls: m.ls } : {}) });
         }
         if (!r || r.list_complete || !r.cursor) break;
         cursor = r.cursor; if (page === 2) more = true;
@@ -54,7 +58,16 @@ export async function inboxApi(request, env, url, s) {
     }
     rows.sort((a, b2) => (b2.li || b2.t) - (a.li || a.t));
     const need = rows.filter(r => r.nd).length;
-    return jsonP({ client: { id: cid, name: c.name, off: waBotOff(env, c), ...(chans.length === 2 && env["WA_TOKEN_" + cid.toUpperCase()] ? { two: true, offGa: botOff(env, c, "ga") } : {}) }, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
+    const client = { id: cid, name: c.name, off: waBotOff(env, c), ...(chans.length === 2 && env["WA_TOKEN_" + cid.toUpperCase()] ? { two: true, offGa: botOff(env, c, "ga") } : {}) };
+    if (q.get("v") === "2") {
+      // новый пульт (ТЗ v2.0 §2.1): все чаты, где клиент писал (до 1000), и отдельно — сколько чатов только с нашими сообщениями
+      // (напоминания, ответы с телефона без ответа клиента): раньше они занимали 200 мест списка и вытесняли настоящие переписки
+      const inb = rows.filter(r => r.li || r.d === "u" || r.nd), out = rows.filter(r => !(r.li || r.d === "u" || r.nd));
+      const lines = await linesOf(env, cid, lineChans(env, cid), ctx);
+      return jsonP({ client, lines, ops: await opsOf(env, cid), need, total: inb.length, outOnly: out.length, more: more || inb.length > 1000,
+        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now });
+    }
+    return jsonP({ client, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
 
   if (M === "GET" && P === "/api/inbox/leads") { // последние заявки клиента для вкладки «Лиды» (те же, что на странице /leads)
@@ -83,34 +96,22 @@ export async function inboxApi(request, env, url, s) {
     if (ch !== "web") { try { const bl = JSON.parse((await env.KV.get("bclast:" + cid)) || "null"); if (bl && bl.text) promo = { at: bl.at, name: bl.name || "", text: bl.text }; } catch (e) {} }
     return {
       promo,
-      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => ({ r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url) } } : {}) })),
+      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t)),
       bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
-      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0 } : null, paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
+      need: p.need ? { why: p.need.why, text: /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
+      assignee: (p.as && p.as.n) || "", done: p.done || 0, line: { ch, label: lineLabel(cid, ch, lineChans(env, cid)) },
+      audit: (p.audit || []).slice(-12), paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
       canSend: ch !== "web" && (ch === "ga" ? !!(gaRoute(env, cid) || gaShared(env)) : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {})
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
 
-  if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото. Отдаём только файл, который есть в этой переписке
+  if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото, видео, документ. Только файл этой переписки (services/inbox/media.js)
     const mid = q.get("mid"), t = mid ? (h.turns || []).find((/** @type {any} */ x) => x.m && x.m.id === mid) : (h.turns || [])[+(/** @type {any} */ (q.get("n")))];
     if (!t || !t.m || !(t.m.id || t.m.url)) return jsonP({ error: "Файл не найден." }, 404);
-    try {
-      if (t.m.url) { const u = new URL(t.m.url); if (u.protocol !== "https:") throw new Error("bad url"); const r = await fetch(u.href); if (!r.ok) throw new Error("media " + r.status); return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || t.m.mime || "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": "inline", "x-content-type-options": "nosniff" } }); }
-      const route = waRoute(env, cid, p); if (!route) throw new Error("no route");
-      const token = waCreds(env, route).token;
-      if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: файл отдаёт их API
-        const r = await wzMedia(env, token, t.m.id); if (!r) throw new Error("wz media");
-        const type = String(r.headers.get("content-type") || t.m.mime || "application/octet-stream");
-        return new Response(r.body, { headers: { "content-type": /^(audio|image|video)\/|^application\/pdf/.test(type) ? type : "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": /^(audio|image|video)\//.test(type) ? "inline" : "attachment", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } });
-      }
-      const meta = await fetch(`${GRAPH}/${encodeURIComponent(t.m.id)}`, { headers: { authorization: "Bearer " + token } });
-      if (!meta.ok) throw new Error("media meta " + meta.status);
-      const mu = (await meta.json()).url; if (!/^https:\/\//.test(String(mu))) throw new Error("no url");
-      const r = await fetch(mu, { headers: { authorization: "Bearer " + token } });
-      if (!r.ok) throw new Error("media " + r.status);
-      const type = String(r.headers.get("content-type") || t.m.mime || "application/octet-stream");
-      return new Response(r.body, { headers: { "content-type": /^(audio|image|video)\/|^application\/pdf/.test(type) ? type : "application/octet-stream", "cache-control": "private, max-age=300", "content-disposition": /^(audio|image|video)\//.test(type) ? "inline" : "attachment", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } });
-    } catch (e) { console.log("media", String(e)); return jsonP({ error: "Файл недоступен: WhatsApp хранит его ограниченное время." }, 404); }
+    const r = await mediaFile(env, cid, ch, id, p, t, String(request.headers.get("range") || "").slice(0, 100));
+    if (r.ok) return r.res;
+    return jsonP({ error: r.why === "big" ? "Файл больше 100 МБ — откройте его в WhatsApp на телефоне." : r.why === "gone" ? "Файл недоступен: WhatsApp хранит файлы ограниченное время. Попросите клиента прислать его ещё раз." : "Файл сейчас не открылся — попробуйте ещё раз через минуту." }, r.why === "error" ? 502 : 404);
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
 
@@ -122,23 +123,28 @@ export async function inboxApi(request, env, url, s) {
       const gr = gaRoute(env, cid) || gaShared(env);
       if (!gr) return { ok: false, error: "Green-API не настроен." };
       const r = await sendGreen(env, id + "@c.us", text, gr, true);
-      return r.ok ? { ok: true } : { ok: false, error: `Green-API не принял сообщение: ${gaWhy(r, gr)}.` };
+      if (r.ok) return { ok: true, id: r.id || "" };
+      if (!r.status || r.status >= 500) return { ok: true, unknown: true, error: "" }; // ответа нет — сообщение могло уйти: статус «?», само не повторяется
+      return { ok: false, error: `Green-API не принял сообщение: ${gaWhy(r, gr)}.` };
     }
     const route = waRoute(env, cid, p);
     if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
     if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном — позвоните клиенту или дождитесь его сообщения." };
     let r; try { r = await sendWA(env, id, text, route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
-    return r && r.ok ? { ok: true } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
+    return r && r.ok ? { ok: true, id: String(r.id || "") } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
   };
   const msg = clean(String(b.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " "), 2000);
-  const who = s.role === "owner" ? "владелец" : "администратор";
+  const op = opName(b.op), who = opWho(s, op);
+  /** реплика сотрудника с номером сообщения у провайдера и статусом (галочки, ТЗ v2.0 §2.3) @param {string} text @param {any} r */
+  const adminTurn = (text, r) => ({ role: "model", text, t: now, by: "admin", ...(op ? { op } : {}), ...(r && r.id ? { mid: String(r.id).slice(0, 80), st: "sent" } : r && r.unknown ? { st: "unknown" } : {}) });
+  if (M === "POST") await chatTouchOp(env, cid, op, now);
   if (P === "/api/inbox/send") {
     if (!msg) return jsonP({ error: "Напишите сообщение." }, 400);
     const r = await sendTo(msg);
     if (!r.ok) return jsonP({ error: r.error }, 409);
     // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
     let warn = "";
-    try { h = await logTurns(env.KV, hk, [{ role: "model", text: msg, t: now, by: "admin" }], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; }); }
+    try { h = await logTurns(env.KV, hk, [adminTurn(msg, r)], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; if (op && !pr.as) pr.as = { n: op, at: now, by: op }; }); }
     catch (e) { console.log("inbox log", String(e)); warn = "Сообщение клиенту ушло, но не сохранилось в переписке (хранилище не ответило). Второй раз не отправляйте."; } // сообщение уже у клиента: ошибка здесь привела бы к повторной отправке
     applyForget(h, fgAt); // ответ пульту — тоже без того, что забыто (копию до очистки мог записать вебхук в другом месте сети)
     p = h.profile || {};
@@ -148,7 +154,8 @@ export async function inboxApi(request, env, url, s) {
     const act = String(b.act || "");
     if (act === "resolve") {
       if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке — тогда чат закроется сам." }, 409);
-      h = await logTurns(env.KV, hk, [], pr => { delete pr.need; });
+      if (p.need && !b.force) return jsonP({ confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" }, 409); // ТЗ v2.0 §2.5: закрытие с вопросом — только с подтверждением
+      h = await logTurns(env.KV, hk, [], pr => { delete pr.need; pr.done = now; chatAudit(pr, now, who, p.need ? "close-unanswered" : "close"); });
     }
     else if (act === "pause") h = await logTurns(env.KV, hk, [], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + 12 * 3600e3); });
     else if (act === "forget") { // бот забывает переписку, записи и просьбы этого чата (например, всё уже сделано в Altegio); окно WhatsApp и «стоп» остаются
@@ -163,6 +170,12 @@ export async function inboxApi(request, env, url, s) {
       try { const r = await eraseClient(env, cid, ch, id, ph, String(altLoc(env, c) || ""), now); return jsonP({ ok: true, erased: true, leads: r.leads }); }
       catch (e) { console.log("erase", String(e)); return jsonP({ error: "Хранилище не ответило — удалено не всё. Нажмите ещё раз через минуту." }, 503); }
     }
+    else if (act === "take" || act === "assign") { // кто ведёт чат: «Взять себе» — имя этого устройства, «Назначить» — имя из списка
+      const to = act === "take" ? op : opName(b.to);
+      if (act === "take" && !to) return jsonP({ error: "Укажите своё имя в настройках пульта — тогда чат можно взять себе." }, 400);
+      h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, to ? "assign" : "unassign", to); });
+    }
+    else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); });
     else if (act === "resume") {
       if (p.stop) return jsonP({ error: "Клиент сам попросил не писать ему автоматически. Бот вернётся, когда клиент напишет «старт»." }, 409);
       h = await logTurns(env.KV, hk, [], pr => { delete pr.pausedUntil; delete pr.fw; delete pr.need; });
@@ -171,9 +184,10 @@ export async function inboxApi(request, env, url, s) {
       const lid = String(b.lead || "");
       let lead = null; try { lead = (await loadLeads(env.KV, cid)).find(l => l.id === lid) || null; } catch (e) {}
       if (!lead || (lead.phone && lead.phone !== (normPhone("+" + id) || p.phone) && lead.phone !== p.phone)) return jsonP({ error: "Заявка не найдена." }, 404);
-      if (msg) { const r = await sendTo(msg); if (!r.ok) return jsonP({ error: r.error }, 409); }
+      let sent = null; if (msg) { sent = await sendTo(msg); if (!sent.ok) return jsonP({ error: sent.error }, 409); }
       await leadPatch(env, cid, lid, { status: "выполнена", note: clean((lead.note ? lead.note + " " : "") + `Выполнил ${who}${msg ? ", клиенту сообщено" : ""}.`, 600) });
-      h = await logTurns(env.KV, hk, msg ? [{ role: "model", text: msg, t: now, by: "admin" }] : [], pr => {
+      h = await logTurns(env.KV, hk, msg ? [adminTurn(msg, sent)] : [], pr => {
+        chatAudit(pr, now, who, "done", lead.kind || "lead");
         if (lead.kind === "cancel" || lead.kind === "change") {
           // запись в расписании изменил человек: бот больше не считает прежнюю запись действующей и знает, что сказал клиенту администратор
           const had = (pr.bookings || []).some((/** @type {any} */ x) => x.rq);
@@ -200,4 +214,20 @@ export async function inboxApi(request, env, url, s) {
     return jsonP({ ok: true, chat: await view() });
   }
   return jsonP({ error: "Не найдено." }, 404);
+}
+
+// реплика для пульта: кто (u — клиент, a — сотрудник, b — бот или автоматическое сообщение), имя сотрудника, файл, статус отправки,
+// вид автоматического сообщения (rm — напоминание или отзыв, bc — рассылка)
+/** @param {any} t */
+function turnView(t) {
+  return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0,
+    ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}) } } : {}),
+    ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),
+    ...(t.ed ? { ed: 1 } : {}), ...(t.del ? { del: 1 } : {}), ...(t.re ? { re: String(t.re).slice(0, 8) } : {}) };
+}
+// на что ответил клиент: текст нашего автоматического сообщения (коротко) и когда оно ушло
+/** @param {any[]} turns @param {any} src */
+function srcView(turns, src) {
+  const t = turns.find(x => x && x.role !== "user" && +x.t === +src.at);
+  return { k: src.k, at: src.at || 0, text: t ? snip(t.text, 140) : "" };
 }

@@ -135,7 +135,7 @@ export async function launchApi(request, env, url, s) {
     if (!gr) return jsonP({ error: `У этого клиента нет Green-API: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up}.` }, 409);
     if (gr.shared && !env.GA_HOOK) return jsonP({ error: "Для общего номера задайте в Cloudflare секрет GA_HOOK (любой пароль)." }, 409);
     const hookUrl = gr.shared ? `${url.origin}/ga?t=${encodeURIComponent(env.GA_HOOK)}` : `${url.origin}/ga/${cid}?t=${await gaHook(gr)}`;
-    const x = await gaCall(gr, "setSettings", { webhookUrl: hookUrl, webhookUrlToken: "", incomingWebhook: "yes", outgoingMessageWebhook: "yes", outgoingAPIMessageWebhook: "no", outgoingWebhook: "no", stateWebhook: "yes" });
+    const x = await gaCall(gr, "setSettings", { webhookUrl: hookUrl, webhookUrlToken: "", incomingWebhook: "yes", outgoingMessageWebhook: "yes", outgoingAPIMessageWebhook: "no", outgoingWebhook: "yes", stateWebhook: "yes", editedMessageWebhook: "yes", deletedMessageWebhook: "yes" });
     if (!x.ok || x.j.saveSettings === false) return jsonP({ error: `Green-API не принял настройки (${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 120) }, gr)}).` }, 502);
     return jsonP({ ok: true, text: `Готово: сообщения этого номера приходят на ${url.host}. Green-API перезапускает инстанс — это до 5 минут, потом нажмите «Проверить заново».` });
   }

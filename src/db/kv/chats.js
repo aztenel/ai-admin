@@ -20,7 +20,10 @@ export function histMeta(h) {
   if (last) { m.s = snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
   const nm = p.name || p.waName; if (nm) m.nm = snip(nm, 40);
   if (p.phone) m.ph = String(p.phone).slice(0, 20);
-  if (p.need && p.need.why) m.nd = String(p.need.why).slice(0, 12);
+  if (p.need && p.need.why) { m.nd = String(p.need.why).slice(0, 12); if (p.need.tp) m.tp = String(p.need.tp).slice(0, 8); if (p.need.src && p.need.src.k) m.rs = String(p.need.src.k).slice(0, 4); }
+  if (p.as && p.as.n) m.as = snip(p.as.n, 32); // кто ведёт чат (имя сотрудника с устройства, ТЗ v2.0 §2.5)
+  if (p.done) m.dn = 1;                         // «Готово»: сотрудник закрыл чат, клиент больше не писал
+  if (last && last.role !== "user" && last.st) m.ls = String(last.st).slice(0, 10); // статус нашего последнего сообщения — галочки в списке
   if (p.pausedUntil > now) m.pu = p.pausedUntil;
   if (p.stop) m.st = 1;
   const bk = (p.bookings || []).length + (p.pend || []).length; if (bk) m.bk = bk;

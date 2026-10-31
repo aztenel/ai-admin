@@ -6,6 +6,10 @@
 // unknown — ответа на отправку нет (обрыв, сбой сервера): могло уйти, само не повторяется.
 // Статус только растёт: вебхуки Green-API приходят в любом порядке, и поздний «sent» не опускает «read». Ошибка заменяет
 // queued/sent/unknown (провайдер поправил), но не «доставлено» и не «прочитано»: уже доставленное не становится недоставленным.
+/** @import { Env } from "../../lib/types.js" */
+import { readHist, putHist } from "../../db/kv/chats.js";
+import { kvRetry } from "../../db/kv/retry.js";
+
 /** @type {Record<string, number>} */
 export const RANK = { queued: 0, unknown: 1, sent: 2, delivered: 3, read: 4 };
 const FAIL = new Set(["failed", "noAccount", "notInGroup", "suspended", "yellowCard"]);
@@ -27,3 +31,35 @@ export function stNext(cur, next) {
 }
 /** Причина ошибки — коротко и без номеров. @param {string} status @param {string} [desc] */
 export const stErr = (status, desc) => String(status === "failed" ? desc || "failed" : status).replace(/\+?\d[\d\s()-]{6,}\d/g, "…").slice(0, 80);
+
+// ---- статус из вебхука провайдера → реплика в переписке (одна запись в KV только при смене статуса: повтор вебхука ничего не пишет)
+
+/** Найти реплику по номеру сообщения у провайдера и поменять её; запись — только если fn вернул true.
+ *  ours — только наши (сотрудник, бот, напоминание), иначе — только клиента. → «changed» | «same» | «nochat» | «nomsg».
+ *  @param {Env} env @param {string} hk @param {string} mid @param {boolean} ours @param {(t: any) => boolean} fn */
+export async function patchTurn(env, hk, mid, ours, fn) {
+  if (!mid) return "nomsg";
+  return kvRetry(async () => {
+    const h = await readHist(env, hk);
+    if (!h) return "nochat";
+    const turns = h.turns || [];
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i];
+      if (!t || t.mid !== mid || (t.role === "user") === ours) continue;
+      if (!fn(t)) return "same";
+      await putHist(env.KV, hk, h);
+      return "changed";
+    }
+    return "nomsg";
+  });
+}
+/** Статус нашего сообщения из вебхука. @param {Env} env @param {string} hk @param {string} mid @param {string} status @param {string} [desc] */
+export function applyStatus(env, hk, mid, status, desc) {
+  return patchTurn(env, hk, mid, true, t => {
+    const next = stNext(t.st, status);
+    if (!next) return false;
+    t.st = next;
+    if (next === "failed") t.se = stErr(status, desc); else delete t.se;
+    return true;
+  });
+}
