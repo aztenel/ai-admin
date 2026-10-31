@@ -47,7 +47,9 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     store.source.crmSegments(ws).then(
       (d) => {
         if (!live) return;
-        setSegs(d.segments.filter((s) => s.n > 0 || s.id === "all"));
+        // «Вся база» сервер не присылает отдельным сегментом — как на экране базы, собираем из числа «можно писать»
+        const all: CrmSegment = { id: "all", label: "Вся база", rule: "все, кому можно писать", n: d.ok };
+        setSegs([...d.segments.filter((s) => s.n > 0 && s.id !== "all"), ...(d.available ? [all] : [])]);
         setSegErr(d.available ? "" : d.why || "База клиентов не подключена.");
       },
       (e: unknown) => live && setSegErr(errorList(e)[0] || "Сегменты не загрузились"),
@@ -123,9 +125,10 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
       description={`Второй WhatsApp · шаг ${step + 1} из ${STEPS.length}: ${STEPS[step]}`}
       footer={
         <div className="flex gap-2 pb-1">
+          {/* на последнем шаге три кнопки не помещаются в 390 px — «Назад» там только значком (подпись для читалки) */}
           {step > 0 && (
-            <Button icon={ChevronLeft} disabled={!!busy} onClick={() => setStep(step - 1)}>
-              Назад
+            <Button icon={ChevronLeft} aria-label="Назад" title="Назад" className={cn(step === 4 && "shrink-0 px-3")} disabled={!!busy} onClick={() => setStep(step - 1)}>
+              {step < 4 && "Назад"}
             </Button>
           )}
           {step < 4 ? (
@@ -134,11 +137,11 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
             </Button>
           ) : (
             <>
-              <Button className="flex-1" busy={busy === "draft"} disabled={!!busy} onClick={() => void create(false)}>
+              <Button className="min-w-0 flex-1" busy={busy === "draft"} disabled={!!busy} onClick={() => void create(false)}>
                 Сохранить черновик
               </Button>
               {owner && (
-                <Button variant="primary" className="flex-1" busy={busy === "approve"} disabled={!!busy} onClick={() => void create(true)}>
+                <Button variant="primary" className="min-w-0 flex-1" busy={busy === "approve"} disabled={!!busy} onClick={() => void create(true)}>
                   Одобрить
                 </Button>
               )}
