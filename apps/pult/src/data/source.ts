@@ -4,16 +4,7 @@
 //   demo — вымышленные компании для показа и проверки вида, см. data/demo.ts.
 // Режим выбирается явно (сборка с VITE_PULT_DATA=demo или адрес /demo). Если сервер не ответил, пульт показывает ошибку —
 // подставлять демо вместо настоящих данных нельзя.
-import type {
-  ChannelReport,
-  ChatAction,
-  ConversationDetail,
-  ConversationRef,
-  InboxSnapshot,
-  Lead,
-  Session,
-  WorkspaceOption,
-} from "@/model/types";
+import type { BookingCard, ChannelReport, ChatAction, ConversationDetail, ConversationRef, InboxSnapshot, Lead, Session, WorkspaceOption, ChatActionExtra, ConversationSummary } from "@/model/types";
 import type {
   AutoInfo,
   AutoSettings,
@@ -128,7 +119,11 @@ export interface DataSource extends CampaignSource, ContactSource {
   channelReport(ws: string): Promise<ChannelReport>;
   conversation(ws: string, ref: ConversationRef): Promise<ConversationDetail>;
   send(ws: string, ref: ConversationRef, text: string): Promise<ConversationDetail>;
-  act(ws: string, ref: ConversationRef, act: ChatAction): Promise<ConversationDetail>;
+  act(ws: string, ref: ConversationRef, act: ChatAction, extra?: ChatActionExtra): Promise<ConversationDetail>;
+  /** Чаты, где писали только мы (клиент не отвечал): в общем списке их нет, показываются по кнопке. */
+  outboundOnly?(ws: string): Promise<ConversationSummary[]>;
+  /** Ближайшие записи клиента в Altegio (available: false — журнал не подключён). */
+  bookingCard?(ws: string, ref: ConversationRef): Promise<{ available: boolean; records: BookingCard[] }>;
   /** Просьба выполнена; text — сообщение клиенту (пусто — закрыть без сообщения). */
   complete(ws: string, ref: ConversationRef, leadId: string, text: string): Promise<ConversationDetail>;
   leads(ws: string): Promise<Lead[]>;

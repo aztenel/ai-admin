@@ -58,7 +58,7 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
         <p className="mx-auto flex max-w-[50rem] items-center gap-1 truncate pb-1 pl-[3.4375rem] pr-3 text-xs leading-4 text-fg-3 pointer-coarse:pl-[3.9375rem]">
           {from && (
             <span className="min-w-0 truncate">
-              С номера <span className="font-medium text-fg-2">{from}</span>
+              {/номер/i.test(from) ? <>Ответ уйдёт: <span className="font-medium text-fg-2">{from.toLowerCase()}</span></> : <>С номера <span className="font-medium text-fg-2">{from}</span></>}
             </span>
           )}
           {closesSoon ? (

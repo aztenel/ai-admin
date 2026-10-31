@@ -9,6 +9,7 @@ import { mergeChannels, validScope, type Scope } from "@/model/channels";
 import type {
   ChannelReport,
   ChatAction,
+  ChatActionExtra,
   ConversationDetail,
   ConversationRef,
   ConversationSummary,
@@ -19,7 +20,11 @@ import type {
   WorkspaceOption,
 } from "@/model/types";
 
-export type Filter = "all" | "waiting" | "operator" | "unread";
+// разделы чатов (ТЗ v2.0 §2.1): нужен ответ, записи и изменения, ответы на рассылки и напоминания, назначено мне, все, готово
+export type Filter = "waiting" | "booking" | "replies" | "mine" | "all" | "done";
+const FILTERS: Filter[] = ["waiting", "booking", "replies", "mine", "all", "done"];
+/** Итог действия в чате: ошибка, вопрос перед действием (например, «клиент ждёт ответа — закрыть?») или null — сделано. */
+export type ActResult = null | { error: string } | { confirm: string };
 export type DetailState = { data?: ConversationDetail; loading: boolean; error?: string; at?: number };
 
 export type State = {
@@ -33,6 +38,11 @@ export type State = {
   workspace: Workspace | null;
   conversations: ConversationSummary[];
   truncated: InboxSnapshot["truncated"];
+  /** Чаты только с нашими сообщениями: сколько и показаны ли. */
+  outOnly: number;
+  showOut: boolean;
+  /** Имена сотрудников для «Назначить». */
+  operators: string[];
   report: ChannelReport | null;
   reportError?: string;
   details: Record<string, DetailState>;
@@ -53,11 +63,14 @@ const initial: State = {
   workspace: null,
   conversations: [],
   truncated: null,
+  outOnly: 0,
+  showOut: false,
+  operators: [],
   report: null,
   details: {},
   outbox: {},
   scope: { kind: "all" },
-  filter: "all",
+  filter: "waiting",
   refreshing: false,
 };
 
@@ -150,7 +163,7 @@ class Store {
       navigate({ name: "inbox" }, { replace: true });
     }
     resetNotify();
-    this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, filter: v?.filter || "all", scope: v?.scope || { kind: "all" } });
+    this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, showOut: false, outOnly: 0, operators: [], filter: v && FILTERS.includes(v.filter) ? v.filter : "waiting", scope: v?.scope || { kind: "all" } });
     // адрес с ?c= — как у рабочего пульта (/inbox?c=…): ссылку можно открыть заново и переслать коллеге
     const u = new URL(location.href);
     if (u.searchParams.get("c") !== id) {
@@ -175,7 +188,9 @@ class Store {
   private applySnapshot(snap: InboxSnapshot) {
     const report = this.state.report;
     const workspace = { ...snap.workspace, channels: mergeChannels(snap.workspace.channels, report?.channels) };
-    this.set({ workspace, conversations: snap.conversations, truncated: snap.truncated, scope: validScope(workspace, this.state.scope) });
+    // показанные по кнопке чаты только с нашими сообщениями не пропадают при обновлении списка
+    const keep = this.state.showOut ? this.state.conversations.filter((c) => !c.inbound && !snap.conversations.some((x) => x.key === c.key)) : [];
+    this.set({ workspace, conversations: keep.length ? [...snap.conversations, ...keep] : snap.conversations, truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope) });
     if (this.state.mode === "live") notifyWaiting(snap.conversations, this.open, (key) => navigate({ name: "inbox", conv: key }));
   }
 
@@ -261,7 +276,9 @@ class Store {
     const last = data.messages.at(-1);
     this.set({
       conversations: this.state.conversations.map((c) =>
-        c.key === key ? { ...c, attention: data.attention, bot: data.bot, preview: last?.text ?? c.preview, previewFrom: last?.from ?? c.previewFrom, lastAt: Math.max(c.lastAt, last?.at || 0), unread: false, unreadCount: 0 } : c,
+        c.key === key
+          ? { ...c, attention: data.attention, bot: data.bot, assignee: data.assignee, done: data.done, lastStatus: last && last.from !== "contact" ? last.status : undefined, preview: last ? (last.media && /^\[[^\]]{1,60}\]$/.test(last.text.trim()) ? c.preview : last.text) : c.preview, previewFrom: last?.from ?? c.previewFrom, lastAt: Math.max(c.lastAt, last?.at || 0), unread: false, unreadCount: 0 }
+          : c,
       ),
     });
   }
@@ -290,14 +307,33 @@ class Store {
     this.set({ outbox: { ...this.state.outbox, [key]: (this.state.outbox[key] || []).filter((x) => x.id !== id) } });
   }
 
-  async act(key: string, act: ChatAction): Promise<string | null> {
+  async act(key: string, act: ChatAction, extra?: ChatActionExtra): Promise<ActResult> {
     const ws = this.state.wsId, ref = parseKey(key);
-    if (!this.src || !ws || !ref) return "Чат не найден.";
+    if (!this.src || !ws || !ref) return { error: "Чат не найден." };
     try {
-      this.applyDetail(key, await this.src.act(ws, ref, act));
+      this.applyDetail(key, await this.src.act(ws, ref, act, extra));
       return null;
     } catch (e) {
-      return errText(e);
+      if (e instanceof ApiError && e.confirm) return { confirm: e.confirm };
+      return { error: errText(e) };
+    }
+  }
+  /** Ближайшие записи клиента в Altegio — для карточки чата. */
+  async bookingCard(key: string) {
+    const ws = this.state.wsId, ref = parseKey(key);
+    if (!this.src?.bookingCard || !ws || !ref) return { available: false, records: [] };
+    return this.src.bookingCard(ws, ref);
+  }
+  /** Чаты только с нашими сообщениями — по кнопке под списком «Все». */
+  async loadOutbound() {
+    const ws = this.state.wsId;
+    if (!this.src?.outboundOnly || !ws) return;
+    try {
+      const extra = await this.src.outboundOnly(ws);
+      const have = new Set(this.state.conversations.map((c) => c.key));
+      this.set({ showOut: true, outOnly: 0, conversations: [...this.state.conversations, ...extra.filter((c) => !have.has(c.key))] });
+    } catch (e) {
+      this.set({ reportError: errText(e) });
     }
   }
 

@@ -2,7 +2,10 @@
 // кто это; через какой номер и кем ведётся переписка; записи из CRM (правда о записях); другие переписки этого клиента.
 // Если клиент писал и на другой номер компании, здесь есть переход в ту переписку: чаты разных номеров не сливаются.
 import { CalendarDays, ChevronRight, Eraser, Globe, MessageCircle, Phone, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getOperator } from "@/lib/operator";
+import type { BookingCard } from "@/model/types";
+import { Ticks } from "./Ticks";
 import { Confirm, toast } from "@/components/overlay";
 import { Avatar, buttonClass, Field, IconButton, InsetGroup } from "@/components/ui";
 import { dataMode } from "@/data/source";
@@ -47,7 +50,7 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
             <Field stacked label="Номер компании">
               <span className="flex items-center gap-1.5">
                 {ch?.kind === "web" ? <Globe aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} /> : <MessageCircle aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={1.75} />}
-                <span className="min-w-0 truncate">{channelTitle(ch)}</span>
+                <span className="min-w-0 truncate">{detail?.line?.label || channelTitle(ch)}</span>
               </span>
               {ch && ch.kind !== "web" && (ch.name || ch.phone) && <span className="tnum mt-0.5 block text-sm text-fg-3">{[ch.name && ch.phone ? formatPhone(ch.phone) : "", KIND_SHORT[ch.kind]].filter(Boolean).join(" · ")}</span>}
             </Field>
@@ -56,12 +59,16 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
             <dl>
               <Field stacked label="Кто ведёт">
                 {(() => {
+                  const as = detail?.assignee || summary?.assignee;
+                  if (as) return as === getOperator() ? `${as} (вы)` : as;
+                  if (bot.state === "off") return "Ни за кем не закреплён";
                   const t = handling(null, bot, now).text.replace(/^Ведёт /, "");
                   return t.charAt(0).toUpperCase() + t.slice(1);
                 })()}
               </Field>
             </dl>
           )}
+          <Origin detail={detail} now={now} />
           {reply && ch?.kind === "wa_cloud" && (
             <dl>
               <Field stacked label="Окно WhatsApp для ответа">
@@ -71,8 +78,10 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
           )}
         </InsetGroup>
 
-        {showBookings && (
-          <InsetGroup title="Записи в CRM">
+        {ch && ch.kind !== "web" && ws.capabilities.booking !== false && <NearestBookings convKey={convKey} />}
+
+        {showBookings && (detail!.bookings.length > 0 || detail!.pending.length > 0 || !!detail!.bookedNote) && (
+          <InsetGroup title="Записи, сделанные ботом">
             {detail!.bookings.length === 0 && detail!.pending.length === 0 && !detail!.bookedNote ? (
               <p className="py-3 text-ui text-fg-3">В журнале нет записей</p>
             ) : (
@@ -126,8 +135,8 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
         yes="Очистить"
         danger
         onYes={async () => {
-          const e = await store.act(convKey, "forget");
-          toast(e || "Память бота в этом чате очищена", e ? "critical" : "neutral");
+          const r = await store.act(convKey, "forget");
+          toast(r && "error" in r ? r.error : "Память бота в этом чате очищена", r ? "critical" : "neutral");
         }}
       />
     </div>
@@ -155,3 +164,97 @@ function CallAction({ phone }: { phone: string }) {
     </a>
   );
 }
+
+const ACT: Record<string, string> = { take: "взял(а) чат себе", assign: "передал(а) чат", unassign: "снял закрепление", close: "закрыл чат", "close-unanswered": "закрыл без ответа", reopen: "открыл снова", done: "выполнил просьбу" };
+
+/** Откуда диалог: ответ на напоминание или рассылку — с текстом нашего сообщения; иначе — последнее автоматическое сообщение
+ *  клиенту и его статус; ниже — кто что делал в чате. */
+function Origin({ detail, now }: { detail?: ConversationDetail; now: number }) {
+  if (!detail) return null;
+  const src = detail.attention?.source;
+  const lastAuto = [...detail.messages].reverse().find((m) => m.auto);
+  return (
+    <>
+      {src ? (
+        <dl>
+          <Field stacked label={src.kind === "rm" ? "Ответ на напоминание" : "Ответ на рассылку"}>
+            <span className="text-fg-2">«{src.text || "…"}»</span>
+            {src.at ? <span className="mt-0.5 block text-sm text-fg-3">отправлено {rowTime(src.at, now)}</span> : null}
+          </Field>
+        </dl>
+      ) : lastAuto ? (
+        <dl>
+          <Field stacked label={lastAuto.auto === "service" ? "Последнее напоминание" : "Последняя рассылка"}>
+            <span className="line-clamp-2 text-fg-2">«{lastAuto.text}»</span>
+            <span className="mt-0.5 flex items-center gap-1 text-sm text-fg-3">
+              {rowTime(lastAuto.at, now)} <Ticks status={lastAuto.status} error={lastAuto.statusError} />
+            </span>
+          </Field>
+        </dl>
+      ) : null}
+      {!!detail.audit?.length && (
+        <dl>
+          <Field stacked label="Действия в чате">
+            {detail.audit.slice(-4).reverse().map((x) => (
+              <span key={x.at + x.act} className="block text-sm text-fg-2">
+                {rowTime(x.at, now)} · {x.who} {ACT[x.act] || x.act}
+                {x.to ? `: ${x.to}` : ""}
+              </span>
+            ))}
+          </Field>
+        </dl>
+      )}
+    </>
+  );
+}
+
+/** Ближайшие записи клиента в Altegio (журнал только читается). */
+function NearestBookings({ convKey }: { convKey: string }) {
+  const [st, setSt] = useState<{ loading: boolean; error?: string; available?: boolean; records: BookingCard[] }>({ loading: true, records: [] });
+  useEffect(() => {
+    let live = true;
+    setSt({ loading: true, records: [] });
+    store.bookingCard(convKey).then(
+      (r) => live && setSt({ loading: false, available: r.available, records: r.records }),
+      (e: unknown) => live && setSt({ loading: false, error: e instanceof Error ? e.message : "Журнал не ответил", records: [] }),
+    );
+    return () => void (live = false);
+  }, [convKey]);
+  if (!st.loading && st.available === false) return null;
+  return (
+    <InsetGroup title="Записи в Altegio" note="Из журнала Altegio — это правда о записях. Изменить запись — в Altegio.">
+      {st.loading ? (
+        <p className="py-3 text-ui text-fg-3">Смотрю журнал…</p>
+      ) : st.error ? (
+        <p className="py-3 text-ui text-critical">{st.error}</p>
+      ) : st.records.length === 0 ? (
+        <p className="py-3 text-ui text-fg-3">Ближайших записей нет</p>
+      ) : (
+        st.records.map((r) => (
+          <p key={r.id} className="flex gap-2.5 py-2.5 text-ui">
+            <CalendarDays aria-hidden className="mt-0.5 size-4 shrink-0 text-fg-3" strokeWidth={1.75} />
+            <span className="min-w-0">
+              <span className="block font-medium">
+                {dayShort(r.date)}, {r.time} · {r.staff || "мастер не указан"}
+              </span>
+              <span className="block text-fg-2">
+                {r.services || "услуга не указана"}
+                {r.minutes ? ` · ${r.minutes} мин` : ""}
+              </span>
+              <span className="block text-sm text-fg-3">
+                {r.state} · {r.source} · № {r.id}
+              </span>
+            </span>
+          </p>
+        ))
+      )}
+    </InsetGroup>
+  );
+}
+const DAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"], MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+/** «пт, 1 ноя» — по дате записи (она уже по Астане). */
+const dayShort = (d: string) => {
+  const [y, m, dd] = d.split("-").map(Number);
+  if (!y || !m || !dd) return d;
+  return `${DAYS[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()]}, ${dd} ${MONTHS[m - 1]}`;
+};

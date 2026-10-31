@@ -20,7 +20,8 @@ export function isAck(text, lastOut) {
   const raw = String(text || "").trim();
   if (!raw) return false;
   if (ONLY_EMOJI.test(raw)) return true;
-  const t = norm(raw).replace(PUNCT, " ").trim();
+  // смайлики рядом со словами («Спасибо 👍») не мешают узнать благодарность
+  const t = norm(raw).replace(/[\p{Extended_Pictographic}\u200d\ufe0f\u{1F3FB}-\u{1F3FF}]/gu, " ").replace(PUNCT, " ").replace(/\s+/g, " ").trim();
   if (!t) return true;
   if (THANKS.test(t)) return true;
   return OKAY.test(t) && !/\?\s*\S{0,3}\s*$/.test(String(lastOut || ""));

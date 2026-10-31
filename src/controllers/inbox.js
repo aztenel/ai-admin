@@ -18,6 +18,7 @@ import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
 import { growthReport } from "../services/digest.js";
 import { mediaFile } from "../services/inbox/media.js";
+import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
@@ -105,6 +106,11 @@ export async function inboxApi(request, env, url, s, ctx) {
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
+  if (M === "GET" && P === "/api/inbox/booking") { // ближайшая запись в Altegio — отдельным запросом: журнал может отвечать несколько секунд
+    if (ch === "web") return jsonP({ records: [], available: false });
+    try { const r = await bookingCard(env, c, "+" + id, now); return jsonP({ records: r || [], available: r !== null }); }
+    catch (e) { console.log("booking card", String(e).slice(0, 120)); return jsonP({ error: "Журнал Altegio сейчас не ответил — попробуйте позже." }, 502); }
+  }
 
   if (M === "GET" && P === "/api/inbox/media") { // файл из чата: голосовое, фото, видео, документ. Только файл этой переписки (services/inbox/media.js)
     const mid = q.get("mid"), t = mid ? (h.turns || []).find((/** @type {any} */ x) => x.m && x.m.id === mid) : (h.turns || [])[+(/** @type {any} */ (q.get("n")))];
@@ -173,7 +179,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     else if (act === "take" || act === "assign") { // кто ведёт чат: «Взять себе» — имя этого устройства, «Назначить» — имя из списка
       const to = act === "take" ? op : opName(b.to);
       if (act === "take" && !to) return jsonP({ error: "Укажите своё имя в настройках пульта — тогда чат можно взять себе." }, 400);
-      h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, to ? "assign" : "unassign", to); });
+      h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, act === "take" ? "take" : to ? "assign" : "unassign", act === "take" ? "" : to); });
     }
     else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); });
     else if (act === "resume") {

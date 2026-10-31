@@ -50,7 +50,13 @@ export type BotState =
   | { state: "off" }; // бот выключен во всей компании
 
 /** Нужен человек: бот передал чат или клиент оставил просьбу. */
-export type Attention = { reason: string; label: string; since?: number } | null;
+/** Тема входящего — пометка по словам, не решение ИИ (сервер: services/inbox/queue.js). */
+export type Topic = "book" | "move" | "cancel" | "late" | "time";
+/** Клиент ответил на наше автоматическое сообщение: rm — напоминание или отзыв, bc — рассылка. */
+export type ReplySource = { kind: "rm" | "bc"; at: number; text: string };
+export type Attention = { reason: string; label: string; since?: number; topic?: Topic; source?: ReplySource } | null;
+/** Статус исходящего у провайдера: часы, одна, две серые, две синие галочки, ошибка, неизвестно (ТЗ v2.0 §2.3). */
+export type DeliveryStatus = "queued" | "sent" | "delivered" | "read" | "failed" | "unknown";
 
 export type Contact = {
   /** Ключ контакта — цифры телефона. По нему один и тот же клиент находится в чатах разных номеров. */
@@ -74,6 +80,14 @@ export type ConversationSummary = {
   attention: Attention;
   bot: BotState;
   hasBooking: boolean;
+  /** Клиент писал в этот чат (иначе — только наши сообщения: напоминание, ответ с телефона). */
+  inbound: boolean;
+  /** Кто ведёт чат — имя сотрудника. */
+  assignee?: string;
+  /** Чат закрыт кнопкой «Готово», клиент больше не писал. */
+  done?: boolean;
+  /** Статус нашего последнего сообщения (если оно последнее в чате). */
+  lastStatus?: DeliveryStatus;
   /** Число непрочитанных, если сервер его знает (после фазы 2 — chats.unread_count). */
   unreadCount?: number;
   /** Новое сообщение клиента после последнего просмотра на этом устройстве. */
@@ -88,7 +102,17 @@ export type Message = {
   at: number;
   /** Человек ответил прямо с телефона (приложение WhatsApp), а не из пульта. */
   via?: "phone";
-  media?: { kind: MediaKind; url?: string };
+  /** Имя сотрудника, который ответил из пульта. */
+  operator?: string;
+  /** Автоматическое сообщение: напоминание или отзыв (service) и рассылка (campaign). */
+  auto?: "service" | "campaign";
+  status?: DeliveryStatus;
+  statusError?: string;
+  edited?: boolean;
+  deleted?: boolean;
+  /** Реакция клиента на это сообщение. */
+  reaction?: string;
+  media?: { kind: MediaKind; url?: string; name?: string; mime?: string; size?: number };
   /** Только у сообщений, которые пульт ещё отправляет или не смог отправить. */
   delivery?: "sending" | "failed";
   error?: string;
@@ -120,6 +144,12 @@ export type ConversationDetail = {
   payment?: string;
   /** Недавняя рассылка: клиент мог ответить на неё. */
   campaign?: { at: number; name: string; text: string };
+  assignee?: string;
+  done?: boolean;
+  /** На какой номер компании написал клиент. */
+  line?: { label: string; phone?: string };
+  /** Кто что делал в чате (последние). */
+  audit?: { at: number; who: string; act: string; to?: string }[];
   /** Предупреждение сервера после действия (например, «ушло, но не сохранилось»). */
   warning?: string;
 };
@@ -168,7 +198,15 @@ export type InboxSnapshot = {
   conversations: ConversationSummary[];
   /** Сервер отдал не все чаты (показываются последние). */
   truncated: { shown: number; total: number } | null;
+  /** Сколько чатов только с нашими сообщениями (клиент не отвечал) — в списке не показываются. */
+  outOnly?: number;
+  /** Имена сотрудников для «Назначить». */
+  operators?: string[];
   now: number;
 };
 
-export type ChatAction = "pause" | "resume" | "resolve" | "forget";
+/** Запись клиента в Altegio для карточки чата (только чтение журнала). */
+export type BookingCard = { id: string; date: string; time: string; staff: string; services: string; minutes?: number; state: string; source: string };
+export type ChatAction = "pause" | "resume" | "resolve" | "forget" | "take" | "assign" | "reopen";
+/** Дополнительно к действию: кому назначить, закрыть несмотря на вопрос клиента. */
+export type ChatActionExtra = { to?: string; force?: boolean };

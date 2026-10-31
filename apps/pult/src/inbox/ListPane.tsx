@@ -11,15 +11,20 @@ import { href } from "@/lib/router";
 import { cn, useNow } from "@/lib/utils";
 import { store, useStore, type Filter } from "@/state/store";
 import { WorkspaceSwitcher } from "@/shell/WorkspaceSwitcher";
-import { counts, FILTER_TEST, inScope, search } from "./derive";
+import { counts, filterTest, inScope, search } from "./derive";
+import { Ticks } from "./Ticks";
+import { getOperator } from "@/lib/operator";
 import { handling } from "./handling";
 import { ScopePicker } from "./ScopePicker";
 
+// разделы (ТЗ v2.0 §2.1): по умолчанию — «Нужен ответ»; «Мои» — только если на устройстве указано имя сотрудника
 const FILTERS: { id: Filter; label: string }[] = [
+  { id: "waiting", label: "Нужен ответ" },
+  { id: "booking", label: "Записи" },
+  { id: "replies", label: "Ответы" },
+  { id: "mine", label: "Мои" },
   { id: "all", label: "Все" },
-  { id: "waiting", label: "Ждут ответа" },
-  { id: "operator", label: "Ведёте вы" },
-  { id: "unread", label: "Новые" },
+  { id: "done", label: "Готово" },
 ];
 
 export function ListPane({ openKey, onOpen, className, inert }: { openKey?: string; onOpen: (key: string) => void; className?: string; inert?: boolean }) {
@@ -36,8 +41,10 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
   const now = useNow();
 
   const scoped = useMemo(() => (ws ? inScope(ws, scope, all) : []), [ws, scope, all]);
-  const n = useMemo(() => counts(scoped), [scoped]);
-  const rows = useMemo(() => (q.trim() ? search(scoped, q) : scoped.filter(FILTER_TEST[filter])), [scoped, q, filter]);
+  const me = getOperator();
+  const outOnly = useStore((s) => s.outOnly);
+  const n = useMemo(() => counts(scoped, me), [scoped, me]);
+  const rows = useMemo(() => (q.trim() ? search(scoped, q) : scoped.filter(filterTest(me)[filter])), [scoped, q, filter, me]);
   const multi = !!ws && ws.channels.length > 1 && scope.kind !== "channel";
 
   return (
@@ -75,7 +82,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
         </div>
         {ws && !q && all.length > 0 ? (
           <div role="radiogroup" aria-label="Фильтр" className="no-scrollbar mt-1 flex gap-4 overflow-x-auto border-b border-line px-4 md:gap-3.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
-            {FILTERS.map((f) => (
+            {FILTERS.filter((f) => f.id !== "mine" || me).map((f) => (
               <button
                 key={f.id}
                 type="button"
@@ -88,7 +95,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
                 )}
               >
                 {f.label}
-                {f.id !== "all" && n[f.id] > 0 && <span className={cn("tnum text-sm", f.id === "waiting" ? "font-semibold text-critical" : "font-normal text-fg-3")}>{n[f.id]}</span>}
+                {f.id !== "all" && f.id !== "done" && n[f.id] > 0 && <span className={cn("tnum text-sm", f.id === "waiting" ? "font-semibold text-critical" : "font-normal text-fg-3")}>{n[f.id]}</span>}
               </button>
             ))}
           </div>
@@ -116,6 +123,15 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
             Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа — все.
           </p>
         )}
+        {/* чаты, где писали только мы (напоминание, ответ с телефона), — не переписки: в списке их нет, по кнопке — в «Все» */}
+        {phase === "ready" && !q && filter === "all" && !!outOnly && (
+          <p className="px-4 py-4 text-center text-xs text-fg-3">
+            Ещё {outOnly} — только наши сообщения, клиент не отвечал.{" "}
+            <button type="button" className="font-medium text-accent underline-offset-2 hover:underline" onClick={() => store.loadOutbound()}>
+              Показать
+            </button>
+          </p>
+        )}
       </div>
     </section>
   );
@@ -130,7 +146,9 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
   const h = handling(c.attention, c.bot, now);
   const badge = showChannel ? channelBadge(ch) : "";
   // одна фраза вместо двух обрезанных колонок: «Просит человека · ИИ-администратор», «Человек · Основной WhatsApp»
-  const state = c.attention ? c.attention.label : c.bot.state === "active" ? (badge ? "" : h.short) : c.bot.state === "paused" ? "Человек" : h.short;
+  // третья строка — одна фраза: что нужно, кто ведёт, на какой номер. «Бот выключен» в каждой строке не повторяем (ТЗ v2.0 §2.2)
+  const state = c.attention ? c.attention.label : c.assignee ? `Ведёт ${c.assignee}` : c.done ? "Готово" : c.bot.state === "paused" ? "Человек" : c.bot.state === "off" ? "" : c.bot.state === "active" ? (badge ? "" : h.short) : h.short;
+  const ours = c.previewFrom === "operator" || c.previewFrom === "bot";
   return (
     <li>
       <a
@@ -161,11 +179,14 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
             )}
           </span>
           <span className="mt-px flex items-center gap-2">
-            <span className={cn("line-clamp-1 min-w-0 flex-1 text-[0.9375rem] leading-5 md:text-ui", unread ? "text-fg" : "text-fg-2")}>{c.preview || "\u00a0"}</span>
+            <span className={cn("line-clamp-1 min-w-0 flex-1 text-[0.9375rem] leading-5 md:text-ui", unread ? "text-fg" : "text-fg-2")}>
+              {ours && c.lastStatus && <Ticks status={c.lastStatus} className="mr-1" />}
+              {c.preview || "\u00a0"}
+            </span>
             {c.unreadCount ? <CountBadge n={c.unreadCount} /> : unread ? <span aria-label="новое" className="mr-1 size-2.5 shrink-0 rounded-full bg-accent" /> : null}
           </span>
           <span className={cn("mt-0.5 flex min-w-0 items-center gap-1.5 text-sm md:text-xs", c.attention ? "text-critical" : "text-fg-3")} title={[h.text, badge].filter(Boolean).join(" · ")}>
-            {c.attention ? <span aria-hidden className="mx-[3px] size-2 shrink-0 rounded-full bg-critical" /> : h.icon ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
+            {c.attention ? <span aria-hidden className="mx-[3px] size-2 shrink-0 rounded-full bg-critical" /> : h.icon && c.bot.state !== "off" && !c.assignee ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
             <span className="min-w-0 truncate">
               {state && <span className={cn(c.attention && "font-medium")}>{state}</span>}
               {state && badge && <span className="text-fg-3"> · </span>}
@@ -182,10 +203,12 @@ function Empty({ filter, q, total }: { filter: Filter; q: string; total: number 
   if (q) return <EmptyState icon={SearchX} title="Ничего не нашли" text="Проверьте имя или номер — поиск идёт по всем чатам выбранных номеров." />;
   if (total === 0) return <EmptyState icon={Inbox} title="Чатов пока нет" text="Они появятся, когда клиенты напишут в WhatsApp или в чат на сайте." />;
   const t: Record<Filter, [string, string]> = {
+    waiting: ["Никто не ждёт ответа", "Здесь появятся чаты, где клиент написал, а ему ещё не ответили."],
+    booking: ["Просьб о записи нет", "Здесь — сообщения о записи, переносе, отмене, опоздании и «во сколько я записан»."],
+    replies: ["Ответов на рассылки и напоминания нет", "Здесь — клиенты, которые ответили на наше напоминание или рассылку и ждут ответа."],
+    mine: ["Ваших чатов нет", "Здесь — чаты, которые вы взяли себе или вам назначили."],
     all: ["Чатов нет", ""],
-    waiting: ["Никто не ждёт ответа", "Бот справляется сам. Чаты, где нужен человек, появятся здесь."],
-    operator: ["Бот работает во всех чатах", "Здесь будут чаты, где вы ответили клиенту или забрали чат у бота."],
-    unread: ["Новых сообщений нет", "Все сообщения клиентов просмотрены на этом устройстве."],
+    done: ["Закрытых чатов нет", "Сюда попадают чаты после кнопки «Готово», пока клиент не напишет снова."],
   };
   return (
     <EmptyState

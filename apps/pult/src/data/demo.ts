@@ -321,6 +321,7 @@ export function createDemoSource(): DataSource {
       attention: c.attention ?? null,
       bot: bot(f, c),
       hasBooking: !!c.bookings?.length,
+      inbound: !!lastIn,
       unreadCount: c.unread || 0,
       unread: !!c.unread,
     };
@@ -378,7 +379,7 @@ export function createDemoSource(): DataSource {
       delete c.attention;
       return detail(f, c);
     },
-    async act(ws, ref, act) {
+    async act(ws, ref, act, extra) {
       await wait(300);
       const f = find(ws), c = conv(ws, ref);
       if (act === "pause") c.bot = { state: "paused", until: Date.now() + 12 * HOUR };
@@ -388,6 +389,7 @@ export function createDemoSource(): DataSource {
         delete c.attention;
       } else if (act === "resolve") {
         if (c.requests?.length) throw new ApiError("В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке — тогда чат закроется сам.", 409);
+        if (c.attention && !extra?.force) throw new ApiError("Клиент ждёт ответа. Закрыть чат без ответа?", 409, false, { confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" });
         delete c.attention;
       } else if (act === "forget") {
         c.messages = [];

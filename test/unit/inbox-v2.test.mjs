@@ -88,7 +88,7 @@ test("«Готово» при неотвеченном вопросе — тол
   assert.equal(r.chat.assignee, "Айгерим");
   r = await (await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: from, act: "resolve", force: true, op: "Айгерим" })).json();
   assert.equal(r.chat.need, null); assert.ok(r.chat.done);
-  assert.deepEqual(r.chat.audit.map(x => x.a), ["assign", "assign", "close-unanswered"]);
+  assert.deepEqual(r.chat.audit.map(x => x.a), ["take", "assign", "close-unanswered"]);
   assert.equal(r.chat.audit.at(-1).w, "Айгерим");
   const L = await list(b);
   assert.equal(L.chats[0].dn, 1); assert.equal(L.chats[0].as, "Айгерим");
@@ -170,4 +170,30 @@ test("файл из чата: только этой переписки, нова
   assert.equal(r.status, 404);
   const anon = s.browser();
   assert.equal((await anon.go(`/api/inbox/media?c=winchester&ch=ga&id=${from}&mid=IN-V-1`)).status, 401);
+});
+
+test("карточка ближайшей записи Altegio: только чтение журнала, по номеру клиента, раз в 3 минуты на локацию", async () => {
+  net.reset();
+  const { bookingCardReset } = await import("../../src/services/inbox/booking-card.js");
+  bookingCardReset();
+  const s = mk({ ...ENV, ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok" }), b = await login(s), from = "77000000308";
+  const day = n => new Date(Date.now() + n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+  net.altJournal = [
+    { id: 501, datetime: `${day(1)}T15:00:00+05:00`, deleted: false, attendance: 0, confirmed: 1, online: true, seance_length: 3600, staff: { id: 1, name: "Тони" }, client: { id: 9, phone: "+" + from, name: "Клиент" }, services: [{ id: 1, title: "Мужская стрижка" }] },
+    { id: 502, datetime: `${day(3)}T12:00:00+05:00`, deleted: false, attendance: 0, comment: "Запись с сайта winchester.kz", staff: { id: 2, name: "Рауан" }, client: { id: 9, phone: "+" + from, name: "Клиент" }, services: [{ id: 2, title: "Борода" }] },
+    { id: 503, datetime: `${day(2)}T12:00:00+05:00`, deleted: true, staff: { id: 2, name: "Рауан" }, client: { id: 9, phone: "+" + from, name: "Клиент" }, services: [] },
+    { id: 504, datetime: `${day(1)}T11:00:00+05:00`, deleted: false, staff: { id: 2, name: "Рауан" }, client: { id: 10, phone: "+77000000999", name: "Другой" }, services: [] },
+  ];
+  await s.gaText("winchester", INST, from, "Во сколько я записан?");
+  const r = await (await b.go(`/api/inbox/booking?c=winchester&ch=ga&id=${from}`)).json();
+  assert.equal(r.available, true);
+  assert.deepEqual(r.records.map(x => [x.id, x.staff, x.state, x.source]), [["501", "Тони", "подтверждена", "онлайн-запись"], ["502", "Рауан", "ожидается", "сайт"]]);
+  assert.equal(r.records[0].time, "15:00"); assert.equal(r.records[0].minutes, 60);
+  const reads = net.alt.length;
+  await b.go(`/api/inbox/booking?c=winchester&ch=ga&id=${from}`);
+  assert.equal(net.alt.length, reads, "второй раз — из памяти");
+  assert.ok(net.alt.every(x => x.startsWith("GET ")), "только чтение Altegio");
+  const noKey = mk(ENV), b2 = await login(noKey);
+  await noKey.gaText("winchester", INST, from, "Привет");
+  assert.equal((await (await b2.go(`/api/inbox/booking?c=winchester&ch=ga&id=${from}`)).json()).available, false);
 });

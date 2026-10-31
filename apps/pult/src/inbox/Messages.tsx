@@ -3,18 +3,21 @@
 // отвечающий сменился. Время — мелко внутри пузыря.
 // Прокрутка: новое сообщение прокручивает вниз, только если вы и так внизу; иначе — кнопка «Новые сообщения».
 // Положение в каждом чате запоминается: вернулись в чат — та же точка ленты.
-import { ArrowDown, Bot, FileText, Image as ImageIcon, Megaphone, Mic, Phone, RotateCcw, Trash2, UserRound, Video } from "lucide-react";
+import { ArrowDown, BellRing, Bot, Megaphone, RotateCcw, Smartphone, Trash2, UserRound } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui";
 import type { ConversationDetail, Message } from "@/model/types";
 import { dayLabel, sameDay, timeHM } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MediaView } from "./MediaView";
+import { Ticks } from "./Ticks";
 
 const positions = new Map<string, { top: number; count: number }>();
 const GROUP_GAP = 6 * 60e3;
 
 type Item = { kind: "day"; at: number } | { kind: "campaign"; at: number; name: string; text: string } | { kind: "msg"; m: Message; first: boolean; last: boolean; label: boolean };
-const voice = (m: Message) => (m.from === "operator" ? `op:${m.via || ""}` : m.from);
+// кто говорит: сотрудник (по имени), ответ с телефона, бот, напоминание, рассылка — подпись над первым сообщением группы
+const voice = (m: Message) => (m.from === "operator" ? `op:${m.via || ""}:${m.operator || ""}` : m.auto ? `auto:${m.auto}` : m.from);
 
 function items(messages: Message[], campaign: ConversationDetail["campaign"]): Item[] {
   const out: Item[] = [];
@@ -29,7 +32,7 @@ function items(messages: Message[], campaign: ConversationDetail["campaign"]): I
       promo = undefined;
     }
     const next = messages[i + 1];
-    const same = (a: Message | null | undefined, b: Message | null | undefined) => !!a && !!b && a.from === b.from && a.via === b.via && Math.abs(b.at - a.at) < GROUP_GAP && sameDay(a.at, b.at);
+    const same = (a: Message | null | undefined, b: Message | null | undefined) => !!a && !!b && voice(a) === voice(b) && Math.abs(b.at - a.at) < GROUP_GAP && sameDay(a.at, b.at);
     const first = !same(prev, m);
     const v = m.from === "contact" ? "" : voice(m);
     out.push({ kind: "msg", m, first, last: !same(m, next), label: first && !!v && v !== lastVoice });
@@ -94,7 +97,9 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
     positions.set(convKey, { top: atEnd.current ? -1 : el.scrollTop, count });
   };
 
-  const list = items(detail.messages, detail.campaign);
+  // «последняя рассылка компании» раньше показывалась в каждом чате как «клиент мог ответить на неё» — без связи с этим клиентом.
+  // Теперь наши автоматические сообщения видны в самой ленте с подписью «Напоминание» / «Рассылка» (ТЗ v2.0 §2.1)
+  const list = items(detail.messages, undefined);
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={box} onScroll={onScroll} className="scroll-area h-full" role="log" aria-label="Переписка" aria-live="polite">
@@ -162,20 +167,27 @@ function SystemNote({ icon: Icon, children }: { icon: typeof Megaphone; children
   );
 }
 
-const MEDIA_ICON = { audio: Mic, image: ImageIcon, video: Video, document: FileText, sticker: ImageIcon, location: FileText, contact: Phone } as const;
-const MEDIA_NAME = { audio: "Голосовое", image: "Фото", video: "Видео", document: "Файл", sticker: "Стикер", location: "Геолокация", contact: "Контакт" } as const;
+function whoOf(m: Message) {
+  if (m.from === "operator") return { text: m.operator || (m.via === "phone" ? "С телефона" : "Сотрудник"), Icon: m.via === "phone" ? Smartphone : UserRound };
+  if (m.auto === "service") return { text: "Напоминание", Icon: BellRing };
+  if (m.auto === "campaign") return { text: "Рассылка", Icon: Megaphone };
+  if (m.from === "bot") return { text: "Бот", Icon: Bot };
+  return null;
+}
 
 function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: boolean; label: boolean }) {
   const out = m.from !== "contact";
-  const isPlaceholder = !!m.media && /^\[[^\]]{1,24}\]$/.test(m.text.trim());
+  // «[клиент прислал фото]» — служебная подпись сервера: у файла её не показываем (ТЗ v2.0 §2.2 — меньше технических строк)
+  const isPlaceholder = !!m.media && /^\[[^\]]{1,60}\]$/.test(m.text.trim());
   const text = isPlaceholder ? "" : m.text;
-  const who = m.from === "bot" ? "Бот" : m.from === "operator" ? (m.via === "phone" ? "Оператор, с телефона" : "Оператор") : "";
+  const who = label ? whoOf(m) : null;
+  const dark = m.from === "operator";
   return (
     <div className={cn("flex flex-col", out ? "items-end" : "items-start", first ? "mt-3" : "mt-[3px]", m.delivery === "sending" && "animate-msg-in")}>
-      {label && who && (
+      {who && (
         <span className="mb-1 mt-1.5 flex items-center gap-1 px-1 text-xs font-medium text-fg-3">
-          {m.from === "bot" ? <Bot aria-hidden className="size-3.5" strokeWidth={1.9} /> : <UserRound aria-hidden className="size-3.5" strokeWidth={1.9} />}
-          {who}
+          <who.Icon aria-hidden className="size-3.5" strokeWidth={1.9} />
+          {who.text}
         </span>
       )}
       <div
@@ -186,44 +198,25 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
           m.from === "operator" && "bg-bubble-op text-bubble-op-fg",
           last && (out ? "rounded-br-[0.375rem]" : "rounded-bl-[0.375rem]"),
           m.delivery === "sending" && "opacity-70",
-          m.delivery === "failed" && "ring-1 ring-critical",
+          (m.delivery === "failed" || m.status === "failed") && "ring-1 ring-critical",
+          m.reaction && "mb-3",
         )}
       >
-        {m.media && <Media m={m} />}
+        {m.media && <MediaView media={m.media} onDark={dark} />}
         {text && (
-          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+          <p className={cn("whitespace-pre-wrap break-words [overflow-wrap:anywhere]", m.deleted && "line-through opacity-60")}>
             {text}
-            <span aria-hidden className="inline-block w-11" />
+            <span aria-hidden className={cn("inline-block", out ? "w-16" : m.edited || m.deleted ? "w-24" : "w-11")} />
           </p>
         )}
-        <time className={cn("tnum text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 block text-right", m.from === "operator" ? "text-bubble-op-fg/80" : "text-fg-3")}>
-          {m.delivery === "sending" ? "…" : timeHM(m.at)}
-        </time>
+        <span className={cn("tnum flex items-center gap-1 text-[0.6875rem] leading-none", text ? "absolute bottom-[0.5625rem] right-3" : "mt-1 justify-end", dark ? "text-bubble-op-fg/80" : "text-fg-3")}>
+          {m.deleted ? <span>удалено</span> : m.edited ? <span>изменено</span> : null}
+          <time>{m.delivery === "sending" ? "…" : timeHM(m.at)}</time>
+          {out && !m.delivery && <Ticks status={m.status} error={m.statusError} onDark={dark} />}
+        </span>
+        {m.reaction && <span aria-label={`Реакция клиента: ${m.reaction}`} className={cn("absolute -bottom-3 rounded-full border border-line bg-surface px-1.5 text-sm leading-6 shadow-sm", out ? "left-2" : "right-2")}>{m.reaction}</span>}
       </div>
+      {out && m.status === "failed" && <span className="mt-1 max-w-[36ch] text-right text-xs text-critical">Не доставлено{m.statusError ? `: ${m.statusError}` : ""}</span>}
     </div>
-  );
-}
-
-function Media({ m }: { m: Message }) {
-  const media = m.media!;
-  const Icon = MEDIA_ICON[media.kind];
-  if (media.url && media.kind === "image")
-    return (
-      <a href={media.url} target="_blank" rel="noopener" className="-mx-1.5 -mt-0.5 mb-1 block overflow-hidden rounded-xl">
-        <img src={media.url} alt="Фото от клиента" loading="lazy" className="max-h-80 w-full min-w-40 bg-surface-2 object-cover" />
-      </a>
-    );
-  if (media.url && media.kind === "audio") return <audio controls preload="none" src={media.url} className="mb-1 h-10 w-64 max-w-full" />;
-  return (
-    <span className="mb-1 flex items-center gap-2 text-sm">
-      <Icon aria-hidden className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
-      {media.url ? (
-        <a href={media.url} target="_blank" rel="noopener" className="underline underline-offset-2">
-          {MEDIA_NAME[media.kind]} — открыть
-        </a>
-      ) : (
-        <span className="opacity-80">{MEDIA_NAME[media.kind]} — посмотреть в пульте нельзя</span>
-      )}
-    </span>
   );
 }
