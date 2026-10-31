@@ -22,6 +22,7 @@ import type {
   CrmPage,
   SegmentSpec,
   ServiceOverview,
+  ServiceDryRun,
 } from "@/model/campaigns";
 import type {
   ConsentInput,
@@ -78,6 +79,10 @@ export interface CampaignSource {
   clearMetaHold(ws: string): Promise<void>;
   /** Сервисные сообщения (вкладка «Сервисные · номер бота»): что бот шлёт сам, очередь (номера маской), сколько ушло за 3 дня. Только чтение. */
   serviceMessages(ws: string): Promise<ServiceOverview>;
+  /** Проверка по настоящему журналу Altegio без отправки и без записи (только владелец). */
+  serviceDryRun(ws: string): Promise<ServiceDryRun>;
+  /** Одобрить текст сценария (или снять одобрение) — только владелец; v — версия, которую он видел. */
+  serviceApprove(ws: string, id: string, v: number, on: boolean): Promise<void>;
 }
 
 /**

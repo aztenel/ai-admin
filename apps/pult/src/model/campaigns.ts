@@ -345,8 +345,9 @@ export type AutoInfo = {
   skip?: { at: number; why: string };
 };
 
-/** Сервисное сообщение, которое бот шлёт сам (не рассылка): d1 — накануне в 18:00, h2 — за 2 часа, rv — просьба об отзыве через 3 часа. */
-export type ServiceKind = "d1" | "h2" | "rv";
+/** Сервисное сообщение, которое уходит само (не рассылка): d1 — накануне в 18:00, h2 — за 2 часа, rv — просьба об отзыве через 3 часа;
+ *  по журналу Altegio со второго номера ещё s01 — подтверждение новой записи и s06 — сообщение о переносе (ТЗ v2.0 §4). */
+export type ServiceKind = "d1" | "h2" | "rv" | "s01" | "s06";
 
 /** Вид сервисного сообщения: включён ли у компании. */
 export type ServiceKindState = {
@@ -357,6 +358,10 @@ export type ServiceKindState = {
   on: boolean;
   /** Ссылка на отзывы (2ГИС, Google Карты) — у просьбы об отзыве. */
   link?: string;
+  /** Текст одобрен владельцем (журнал Altegio): без одобрения сообщение не уходит. undefined — сервер старше пульта. */
+  approved?: boolean;
+  /** Сценарий из каталога: «S03». */
+  scenario?: string;
 };
 
 /** Сообщение в очереди: кому, что и когда уйдёт. Номер — только маской с сервера. */
@@ -373,6 +378,80 @@ export type ServiceQueueItem = {
   /** Запись, о которой сообщение: день ГГГГ-ММ-ДД и время ЧЧ:ММ по Астане. */
   date: string;
   time: string;
+  /** Почему ещё не ушло: «текст не одобрен владельцем», «не ушло с 1-й попытки — пробуем ещё». */
+  why?: string;
+};
+
+/** Решение по очереди (журнал Altegio): ушло, отменено (запись перенесли или удалили), пропущено и почему, задача администратору,
+ *  неизвестно — Green-API не ответил (второй раз не шлём). */
+export type ServiceLogState = "sent" | "cancelled" | "skipped" | "task" | "unknown";
+export type ServiceLogItem = {
+  at: number;
+  /** Вид сообщения; noshow — «не пришёл» (только задача администратору). */
+  kind: ServiceKind | "noshow";
+  state: ServiceLogState;
+  why: string;
+  phone: string;
+  name: string;
+  date: string;
+  time: string;
+};
+/** Как сценарий работает: auto — уходит сам после одобрения текста; reply — ответ в переписке; task — задача администратору; off — не подключено. */
+export type ServiceScenarioMode = "auto" | "reply" | "task" | "off";
+/** Сценарий из каталога S01–S18 (src/services/reminders/templates.js): тексты RU/KZ — предпросмотр на вымышленной записи. */
+export type ServiceScenario = {
+  id: string;
+  title: string;
+  trigger: string;
+  mode: ServiceScenarioMode;
+  channel: string;
+  note: string;
+  /** Версия текста: одобряют текущую. */
+  v: number;
+  /** Вид в очереди, если сценарий уходит сам. */
+  kind: ServiceKind | "";
+  approved: boolean;
+  approvedAt: number;
+  vars: string[];
+  preview: { ru: string; kk: string };
+};
+/** Что ушло бы по настоящему журналу Altegio — проверка без отправки и без записи (только владелец). */
+export type ServiceDryItem = {
+  kind: ServiceKind;
+  scenario: string;
+  at: number;
+  /** now — уйдёт сейчас, later — по расписанию, wait — ждёт отметки «пришёл», skip — не уйдёт (why). */
+  status: "now" | "later" | "wait" | "skip";
+  why: string;
+  name: string;
+  phone: string;
+  date: string;
+  time: string;
+  staff: string;
+  service: string;
+  text: string;
+  lang: string;
+};
+export type ServiceDryRun = {
+  ok: boolean;
+  /** Почему проверить нельзя (нет ключа журнала и т. п.). */
+  why?: string;
+  at: number;
+  from: string;
+  to: string;
+  records: number;
+  /** Журнал прочитан не целиком. */
+  cut: boolean;
+  /** Отправка включена на сервере (REMIND_GA_<ID> = 1). */
+  enabled: boolean;
+  /** Номер Green-API подключён. */
+  ga: boolean;
+  quiet: boolean;
+  hold: { at: number; why: string } | null;
+  total: number;
+  items: ServiceDryItem[];
+  /** Записи без сообщений: почему и сколько. */
+  skipped: { why: string; n: number }[];
 };
 
 /** Сервисные сообщения компании (/api/bc/service): что бот шлёт сам, ближайшие в очереди, сколько ушло. Владелец и сотрудник видят одно и то же. */
@@ -395,4 +474,8 @@ export type ServiceOverview = {
   enabled?: boolean;
   /** Green-API отказал (номер заблокирован или ключ не подходит) — отправка на паузе (6 часов). */
   hold?: { at: number; why: string } | null;
+  /** Последние решения по очереди (журнал Altegio), новые сверху. */
+  log?: ServiceLogItem[];
+  /** Каталог сервисных сценариев S01–S18. */
+  catalog?: ServiceScenario[];
 };

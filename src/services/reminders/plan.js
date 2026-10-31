@@ -3,6 +3,7 @@
 /** @import { Env, Client } from "../../lib/types.js" */
 import { TZ, local } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
+import { svText } from "./templates.js";
 // ===== Напоминания о записи и просьба об отзыве =====
 // Только о записях, которые бот сам создал в Altegio (у записей, сделанных администратором напрямую в Altegio, бот не знает о клиенте).
 // Очередь клиента — ключ rmq:<клиент> (список { k, at, ch, id, rec, date, time }), список клиентов с очередью — rmidx.
@@ -42,16 +43,9 @@ export function remindLive(p, x) {
   const b = ((p && p.bookings) || []).find(/** @param {any} v */ v => String(v.record_id) === String(x.rec));
   return b && !b.rq && b.date === x.date && b.time === x.time && !p.stop ? b : null;
 }
-/** @param {Client} c @param {any} b @param {string} k @param {any} [lang] */
+/** Текст напоминания или просьбы об отзыве — из каталога сценариев (templates.js: S03, S04, S12), на языке чата.
+ *  @param {Client} c @param {any} b @param {string} k @param {any} [lang] */
 export function remindText(c, b, k, lang) {
-  const svc = [b.services, b.staffName].filter(Boolean).join(" · "), name = c.name, adr = c.address || "";
-  if (lang === "kk") return k === "d1" ? `Еске салу: «${name}» сізді ертең сағат ${b.time}-де күтеді${svc ? " — " + svc : ""}. Жоспарыңыз өзгерсе, осында жазыңыз.`
-    : k === "h2" ? `«${name}» сізді бүгін сағат ${b.time}-де күтеді${svc ? " (" + svc + ")" : ""}.${adr ? " Мекенжай: " + adr + "." : ""} Кешіксеңіз немесе келе алмасаңыз, осында жазыңыз.`
-    : `Бізге келгеніңізге рахмет! «${name}» туралы пікір қалдырсаңыз, қуанамыз: ${c.review}\nБірдеңе ұнамаса, осында жазыңыз — әкімшіге жеткіземіз.`;
-  if (lang === "en") return k === "d1" ? `Reminder: «${name}» is expecting you tomorrow at ${b.time}${svc ? " — " + svc : ""}. If your plans change, just write here.`
-    : k === "h2" ? `We're expecting you today at ${b.time} at «${name}»${svc ? " (" + svc + ")" : ""}.${adr ? " Address: " + adr + "." : ""} If you're running late or can't make it, write here.`
-    : `Thank you for visiting «${name}»! We'd be grateful for a review: ${c.review}\nIf something wasn't right, write here and we'll pass it to the administrator.`;
-  return k === "d1" ? `Напоминаем: завтра в ${b.time} вас ждут в «${name}»${svc ? " — " + svc : ""}. Если планы изменились, напишите сюда.`
-    : k === "h2" ? `Ждём вас сегодня в ${b.time} в «${name}»${svc ? " (" + svc + ")" : ""}.${adr ? " Адрес: " + adr + "." : ""} Если опаздываете или не сможете прийти — напишите сюда.`
-    : `Спасибо, что были у нас в «${name}»! Будем благодарны за отзыв: ${c.review}\nЕсли что-то не понравилось — напишите сюда, передадим администратору.`;
+  const t = svText(c, k === "d1" || k === "h2" ? k : "rv", b, lang);
+  return t ? t.text : "";
 }

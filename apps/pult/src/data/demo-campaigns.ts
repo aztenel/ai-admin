@@ -21,6 +21,7 @@ import type {
   ServiceKindState,
   ServiceOverview,
   ServiceQueueItem,
+  ServiceScenario,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
 import { ApiError } from "./errors";
@@ -229,11 +230,34 @@ function astanaAt(now: number, day: number, hm: string): number {
   const d = new Date(now + ASTANA), [h, m] = hm.split(":").map(Number);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + day, h, m) - ASTANA;
 }
-const SERVICE_LABEL: Record<ServiceKindState["kind"], string> = {
+const SERVICE_LABEL: Partial<Record<ServiceKindState["kind"], string>> = {
   d1: "Накануне в 18:00 — напоминание о записи",
   h2: "За 2 часа — напоминание о записи",
   rv: "Через 3 часа после визита — просьба оставить отзыв",
 };
+/** Каталог сервисных сценариев — как у сервера (src/services/reminders/templates.js), коротко; тексты — на вымышленной записи. */
+const DEMO_CATALOG: ServiceScenario[] = (
+  [
+    ["S01", "Новая запись — подтверждение", "auto", "s01", "Здравствуйте, Арман! Вы записаны в «Демо Барбер» на завтра в 15:00 — Мужская стрижка · Мастер. Если нужно перенести или отменить — напишите сюда."],
+    ["S02", "Запись с сайта без WhatsApp", "auto", "", ""],
+    ["S03", "Напоминание накануне", "auto", "d1", "Напоминаем: завтра в 15:00 вас ждут в «Демо Барбер» — Мужская стрижка · Мастер. Если планы изменились, напишите сюда."],
+    ["S04", "Напоминание за 2 часа", "auto", "h2", "Ждём вас сегодня в 15:00 в «Демо Барбер» (Мужская стрижка · Мастер). Если опаздываете или не сможете прийти — напишите сюда."],
+    ["S05", "«Напомните моё время»", "reply", "", "Вы записаны на завтра в 15:00 — Мужская стрижка · Мастер."],
+    ["S06", "Перенос подтверждён", "auto", "s06", "Ваша запись в «Демо Барбер» перенесена: завтра в 15:00 — Мужская стрижка · Мастер. Если что-то не так — напишите сюда."],
+    ["S07", "Отмена по просьбе клиента", "reply", "", "Вашу запись отменили. Если захотите записаться снова — напишите."],
+    ["S08", "Мастер не выйдет", "off", "", ""],
+    ["S09", "Клиент опаздывает", "task", "", "Спасибо, что предупредили! Передали мастеру."],
+    ["S10", "Клиент подтвердил, что придёт", "reply", "", "Отлично, ждём вас!"],
+    ["S11", "Клиент не пришёл", "task", "", ""],
+    ["S12", "Просьба об отзыве", "auto", "rv", "Спасибо, что были у нас в «Демо Барбер»! Будем благодарны за отзыв: https://2gis.kz/…\nЕсли что-то не понравилось — напишите сюда, передадим администратору."],
+    ["S13", "Благодарность после визита", "off", "", ""],
+    ["S14", "Записали двух человек", "auto", "", ""],
+    ["S15", "Перенос в последний час", "task", "", ""],
+    ["S16", "Ошибка или конфликт в Altegio", "task", "", ""],
+    ["S17", "Изменились часы работы", "off", "", ""],
+    ["S18", "Сообщение не ушло", "task", "", ""],
+  ] as const
+).map(([id, title, mode, kind, ru]) => ({ id, title, trigger: "", mode, channel: "", note: "", v: 1, kind, approved: kind === "d1" || kind === "h2" || kind === "rv", approvedAt: 0, vars: [], preview: { ru, kk: "" } }));
 /** Очередь «Демо Барбера»: четыре записи через бота — накануне в 18:00, за 2 часа, отзыв через 3 часа (вечером — утром в 11:00). */
 function barberQueue(now: number): ServiceQueueItem[] {
   // после 14:00 по Астане записи — с завтрашнего дня, чтобы вся очередь была впереди
@@ -255,11 +279,11 @@ function barberQueue(now: number): ServiceQueueItem[] {
   return out.filter((x) => x.at > now).sort((a, z) => a.at - z.at);
 }
 function demoService(ws: string, now: number): Omit<ServiceOverview, "owner"> {
-  const kinds = (on: Record<ServiceKindState["kind"], boolean>, link = ""): ServiceKindState[] =>
-    (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k], on: on[k], ...(k === "rv" && link ? { link } : {}) }));
+  const kinds = (on: Partial<Record<ServiceKindState["kind"], boolean>>, link = ""): ServiceKindState[] =>
+    (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k] || "", on: !!on[k], ...(k === "rv" && link ? { link } : {}) }));
   if (ws === "demo") {
     const queue = barberQueue(now);
-    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true };
+    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true, catalog: DEMO_CATALOG };
   }
   // «Демо Сервис» и новая компания — без записи через Altegio: напоминаний и отзывов бот не шлёт (как сервер: только по своим записям в Altegio)
   return { kinds: kinds({ d1: false, h2: false, rv: false }), queue: [], total: 0, sent3d: 0, botOff: false, altegio: false };
@@ -522,6 +546,18 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       await wait(350);
       find(ws);
       return { owner: owner(), ...demoService(ws, Date.now()) };
+    },
+    async serviceDryRun(ws) {
+      await wait(300);
+      find(ws);
+      ownerOnly("Проверку по журналу запускает владелец.");
+      throw new ApiError("В демо журнала Altegio нет — проверка работает в настоящем пульте.", 409);
+    },
+    async serviceApprove(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Одобрить текст может только владелец.");
+      throw new ApiError("В демо тексты не одобряются — это делает владелец в настоящем пульте.", 409);
     },
   };
 

@@ -22,6 +22,12 @@ import type {
   SegmentSpec,
   ServiceKind,
   ServiceOverview,
+  ServiceDryItem,
+  ServiceDryRun,
+  ServiceLogItem,
+  ServiceLogState,
+  ServiceScenario,
+  ServiceScenarioMode,
 } from "@/model/campaigns";
 import { ApiError } from "./errors";
 import { call, enc } from "./live";
@@ -47,10 +53,13 @@ type ListRaw = {
 type CheckRaw = Omit<CampaignCheck, "listFilter"> & { seg?: string; segOut?: number; noDate?: number };
 type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null };
 type ServiceRaw = {
-  owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string }[];
-  queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string }[];
+  owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string; sc?: string; approved?: boolean }[];
+  queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string; why?: string }[];
   total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean; journal?: boolean; enabled?: boolean; hold?: { at?: number; why?: string } | null;
+  log?: { t?: number; k?: string; st?: string; why?: string; phone?: string; name?: string; date?: string; time?: string }[];
+  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string } }[];
 };
+type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
 
@@ -126,18 +135,47 @@ function overview(d: ListRaw): CampaignsOverview {
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["d1", "h2", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "rv"];
+const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
+const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
+const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];
 const isKind = (k: string): k is ServiceKind => (KINDS as string[]).includes(k);
 
 /** Сервисные сообщения: незнакомые виды (сервер новее пульта) не показываем; номер — маска сервера как есть. */
 function service(d: ServiceRaw): ServiceOverview {
-  const kinds = (d.kinds || []).flatMap((x) => (isKind(x.k) ? [{ kind: x.k, label: x.label || "", on: !!x.on, ...(x.link ? { link: x.link } : {}) }] : []));
-  const queue = (d.queue || []).flatMap((x) =>
-    isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }] : [],
+  const kinds = (d.kinds || []).flatMap((x) =>
+    isKind(x.k) ? [{ kind: x.k, label: x.label || "", on: !!x.on, ...(x.link ? { link: x.link } : {}), ...(typeof x.approved === "boolean" ? { approved: x.approved } : {}), ...(x.sc ? { scenario: x.sc } : {}) }] : [],
   );
+  const queue = (d.queue || []).flatMap((x) =>
+    isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "", ...(x.why ? { why: x.why } : {}) }] : [],
+  );
+  const log: ServiceLogItem[] = (d.log || []).flatMap((x) =>
+    (isKind(x.k || "") || x.k === "noshow") && (LOG_STATES as string[]).includes(x.st || "")
+      ? [{ at: n(x.t), kind: x.k as ServiceLogItem["kind"], state: x.st as ServiceLogState, why: x.why || "", phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }]
+      : [],
+  );
+  const catalog: ServiceScenario[] = (d.catalog || []).map((x) => ({
+    id: x.id, title: x.title || x.id, trigger: x.trigger || "", mode: (MODES as string[]).includes(x.mode || "") ? (x.mode as ServiceScenarioMode) : "off", channel: x.channel || "",
+    note: x.note || "", v: n(x.v), kind: isKind(x.kind || "") ? (x.kind as ServiceKind) : "", approved: !!x.approved, approvedAt: n(x.approvedAt), vars: x.vars || [],
+    preview: { ru: (x.preview && x.preview.ru) || "", kk: (x.preview && x.preview.kk) || "" },
+  }));
   // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
   return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false,
-    ...(d.journal ? { journal: true, enabled: d.enabled !== false, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null } : {}) };
+    ...(d.journal ? { journal: true, enabled: d.enabled !== false, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null } : {}),
+    ...(d.log ? { log } : {}), ...(d.catalog ? { catalog } : {}) };
+}
+
+/** Проверка по журналу: незнакомые виды и состояния не показываем. */
+function dryRun(d: DryRaw): ServiceDryRun {
+  const items: ServiceDryItem[] = (d.items || []).flatMap((x) =>
+    isKind(x.k) && (DRY as string[]).includes(x.status || "")
+      ? [{ kind: x.k, scenario: x.sc || "", at: n(x.at), status: x.status as ServiceDryItem["status"], why: x.why || "", name: x.name || "", phone: x.phone || "", date: x.date || "",
+          time: x.time || "", staff: x.staff || "", service: x.svc || "", text: x.text || "", lang: x.lang || "ru" }]
+      : [],
+  );
+  return { ok: d.ok !== false, ...(d.why ? { why: d.why } : {}), at: n(d.at), from: d.from || "", to: d.to || "", records: n(d.records), cut: !!d.cut, enabled: !!d.enabled, ga: !!d.ga,
+    quiet: !!d.quiet, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null, total: Math.max(n(d.total), items.length), items,
+    skipped: (d.skipped || []).filter((x) => x && x.why).map((x) => ({ why: x.why, n: n(x.n) })) };
 }
 
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */
@@ -249,5 +287,11 @@ export const liveCampaigns: CampaignSource = {
   },
   async serviceMessages(ws) {
     return service(await call<ServiceRaw>(`/api/bc/service?c=${enc(ws)}`));
+  },
+  async serviceDryRun(ws) {
+    return dryRun(await call<DryRaw>("/api/bc/service/dry", { c: ws }));
+  },
+  async serviceApprove(ws, id, v, on) {
+    await call<{ ok: true }>("/api/bc/service/approve", { c: ws, id, v, on });
   },
 };

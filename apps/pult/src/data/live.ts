@@ -336,6 +336,8 @@ export function createLiveSource(): DataSource {
     autoSet: campaignsApi("autoSet"),
     clearMetaHold: campaignsApi("clearMetaHold"),
     serviceMessages: campaignsApi("serviceMessages"),
+    serviceDryRun: campaignsApi("serviceDryRun"),
+    serviceApprove: campaignsApi("serviceApprove"),
     contactsStatus: contactsApi("contactsStatus"),
     contactSegments: contactsApi("contactSegments"),
     contactList: contactsApi("contactList"),
