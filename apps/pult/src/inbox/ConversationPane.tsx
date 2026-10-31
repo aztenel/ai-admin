@@ -244,14 +244,16 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
   if (attention && d?.requests.length) return null;
   let body: ReactNode = null, mark: ReactNode = null, action: ReactNode = null;
   if (attention) {
-    mark = <span aria-hidden className="mx-1 size-2 shrink-0 rounded-full bg-critical" />;
+    // макет Figma «Переписка»: красноватая полоса во всю ширину, «Ждёт ответа 5 мин · просит перенести», справа главное действие
     const src = attention.source && attention.topic ? (attention.source.kind === "rm" ? " · ответ на напоминание" : " · ответ на рассылку") : "";
+    const w = attention.since ? waited(attention.since, now) : "";
+    const what = attention.label ? attention.label[0].toLowerCase() + attention.label.slice(1) : "";
     body = (
-      <>
-        <span className="font-semibold text-fg">{attention.label}</span>
+      <span className="font-medium text-critical">
+        {w ? (w === "только что" ? "Ждёт ответа" : `Ждёт ответа ${w}`) : attention.label}
+        {w && what ? ` · ${what}` : ""}
         {src}
-        {attention.since ? <span className="whitespace-nowrap text-critical"> · ждёт {waited(attention.since, now)}</span> : null}
-      </>
+      </span>
     );
     action =
       bot.state === "active" ? (
@@ -259,7 +261,7 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
           Взять чат
         </Button>
       ) : !assignee || (me && assignee !== me) ? (
-        <Button size="sm" variant="secondary" className="bg-surface dark:bg-surface-3 dark:hover:brightness-125" onClick={onTake}>
+        <Button size="sm" variant="primary" onClick={onTake}>
           Взять себе
         </Button>
       ) : (
@@ -284,6 +286,13 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
     body = <>Просил не писать автоматически. Ответить вручную можно.</>;
   }
   if (!body) return null;
+  if (attention)
+    return (
+      <div className="flex min-h-11 items-center gap-2.5 bg-critical-soft py-1.5 pl-4 pr-2 md:pl-5 md:pr-4">
+        <p className="min-w-0 flex-1 text-sm leading-[1.125rem] md:text-ui">{body}</p>
+        {action}
+      </div>
+    );
   return (
     <div className="px-2.5 pb-2.5 md:px-4">
       <div className={cn("flex min-h-11 items-center gap-2.5 rounded-xl py-1.5 pl-3 pr-1.5", attention ? "bg-critical-soft" : "bg-surface-2", !action && "pr-3")}>

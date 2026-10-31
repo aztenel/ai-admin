@@ -50,7 +50,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
 
   return (
     <section aria-label="Чаты" inert={inert} className={cn("flex min-h-0 flex-col bg-surface", className)}>
-      <header className="shrink-0 pt-safe">
+      <header className="shrink-0 pt-safe max-md:bg-canvas">
         {/* ТЗ v3.0 §2.1: заголовок раздела «Чаты», компания и метка режима («Тестовая версия», «Демо») — строкой ниже;
             крупный шрифт: капсула номера уходит строкой ниже, а не съедает заголовок */}
         <div className="pl-4 pr-3 pt-2 md:pr-2 md:pt-3">
@@ -73,7 +73,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Escape" && setQ("")}
-              placeholder="Поиск"
+              placeholder="Имя, номер или текст"
               aria-label="Поиск по имени, номеру или тексту"
               className="min-w-0 flex-1 bg-transparent text-md text-fg outline-none [&::-webkit-search-cancel-button]:hidden md:text-ui pointer-coarse:text-md"
             />
@@ -87,7 +87,8 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
           <IconButton icon={RefreshCw} label="Обновить" onClick={() => store.poll(true)} className={cn("max-md:hidden", refreshing && "[&>svg]:animate-spin")} />
         </div>
         {ws && !q && all.length > 0 ? (
-          <div role="radiogroup" aria-label="Фильтр" className="no-scrollbar mt-1 flex gap-4 overflow-x-auto border-b border-line px-4 md:gap-3.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
+          // ТЗ v3.0, макет Figma «Чаты»: фильтры — капсулы, выбранная залита, счётчик «Нужен ответ» — красная плашка
+          <div role="radiogroup" aria-label="Фильтр" className="no-scrollbar mt-2.5 flex gap-2 overflow-x-auto px-4 pb-3 md:mt-2 md:border-b md:border-line md:pb-2.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
             {FILTERS.filter((f) => f.id !== "mine" || me).map((f) => (
               <button
                 key={f.id}
@@ -96,19 +97,21 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
                 aria-checked={filter === f.id}
                 onClick={() => store.setFilter(f.id)}
                 className={cn(
-                  "relative inline-flex h-10 shrink-0 items-center gap-1 text-ui font-medium transition-colors pointer-coarse:h-11 md:text-sm lg:text-ui after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full md:h-9",
-                  filter === f.id ? "text-fg after:bg-accent" : "text-fg-3 hover:text-fg-2",
+                  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-ui font-medium transition-colors pointer-coarse:h-10 md:h-8 md:px-3 md:text-sm",
+                  filter === f.id ? "bg-selected text-selected-fg" : "bg-surface text-fg-2 hover:text-fg md:bg-surface-2",
                 )}
               >
                 {f.label}
-                {f.id !== "all" && f.id !== "done" && n[f.id] > 0 && <span className={cn("tnum text-sm", f.id === "waiting" ? "font-semibold text-critical" : "font-normal text-fg-3")}>{n[f.id]}</span>}
+                {f.id !== "all" && f.id !== "done" && n[f.id] > 0 && (
+                  <span className={cn("tnum min-w-5 rounded-full px-1.5 text-center text-xs font-semibold leading-5", f.id === "waiting" ? "bg-critical text-surface" : "bg-surface-3 text-fg-2")}>{n[f.id]}</span>
+                )}
               </button>
             ))}
           </div>
         ) : q ? (
-          <p className="mt-1 border-b border-line px-4 pb-2 pt-1.5 text-sm text-fg-3">{rows.length ? `Найдено: ${rows.length}` : "\u00a0"}</p>
+          <p className="mt-1 px-4 pb-2 pt-1.5 text-sm text-fg-3 md:border-b md:border-line">{rows.length ? `Найдено: ${rows.length}` : "\u00a0"}</p>
         ) : (
-          <div className="mt-2.5 border-b border-line" />
+          <div className="mt-2.5 md:border-b md:border-line" />
         )}
       </header>
 
@@ -192,7 +195,7 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
             {c.unreadCount ? <CountBadge n={c.unreadCount} /> : unread ? <span aria-label="новое" className="mr-1 size-2.5 shrink-0 rounded-full bg-accent" /> : null}
           </span>
           <span className={cn("mt-0.5 flex min-w-0 items-center gap-1.5 text-sm md:text-xs", c.attention ? "text-critical" : "text-fg-3")} title={[h.text, badge].filter(Boolean).join(" · ")}>
-            {c.attention ? <span aria-hidden className="mx-[3px] size-2 shrink-0 rounded-full bg-critical" /> : h.icon && c.bot.state !== "off" && !c.assignee ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
+            {c.attention ? null : h.icon && c.bot.state !== "off" && !c.assignee ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
             <span className="min-w-0 truncate">
               {state && <span className={cn(c.attention && "font-medium")}>{state}</span>}
               {state && badge && <span className="text-fg-3"> · </span>}

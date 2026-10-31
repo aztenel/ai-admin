@@ -1,7 +1,7 @@
 // Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем, мелко, по линии текста.
 // Кнопка «Отправить» — внутри поля и оживает, когда есть текст; слева — быстрые ответы и реквизиты.
 // Enter — отправить (на телефоне Enter — новая строка, отправка кнопкой). Черновик каждого чата сохраняется, пока открыт пульт.
-import { ArrowUp, Banknote, Phone, Zap } from "lucide-react";
+import { Banknote, Phone, SendHorizontal, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/components/overlay";
 import { dataMode } from "@/data/source";
@@ -94,10 +94,10 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
           ) : null}
         </p>
       )}
-      <div className="mx-auto flex max-w-[50rem] items-end gap-1">
+      <div className="mx-auto flex max-w-[50rem] items-end gap-2">
         <Menu onOpenChange={(v) => v && loadVisit()}>
           <MenuTrigger asChild>
-            <IconButton icon={Zap} label="Быстрые ответы и реквизиты" className="text-fg-3" />
+            <IconButton icon={Zap} label="Быстрые ответы и реквизиты" className="text-brand-gold" />
           </MenuTrigger>
           <MenuContent side="top" className="w-[min(22rem,calc(100vw-24px))]">
             {payment && (
@@ -144,7 +144,8 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             ))}
           </MenuContent>
         </Menu>
-        <label className="flex min-h-9 min-w-0 flex-1 items-end gap-1 rounded-[1.25rem] border border-line-strong bg-surface py-[3px] pl-3.5 pr-[3px] transition-colors focus-within:border-accent pointer-coarse:min-h-10 dark:bg-surface-2">
+        {/* макет Figma «Переписка»: поле — капсула без рамки, отправка — отдельная круглая кнопка справа */}
+        <label className="flex min-h-10 min-w-0 flex-1 items-end rounded-[1.25rem] bg-surface-2 px-3.5 py-[5px] outline-ring focus-within:outline-2">
           <span className="sr-only">Ответ клиенту</span>
           <textarea
             ref={ta}
@@ -162,16 +163,16 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             maxLength={2000}
             className="block max-h-40 min-h-0 w-full resize-none bg-transparent py-[3px] text-md leading-6 text-fg outline-none md:text-base md:leading-6 pointer-coarse:py-[5px] pointer-coarse:text-md"
           />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!text.trim()}
-            aria-label="Отправить"
-            className="relative grid size-[1.875rem] shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1.5 hover:brightness-95 disabled:bg-transparent disabled:text-fg-3 disabled:opacity-60 pointer-coarse:size-8"
-          >
-            <ArrowUp aria-hidden className="size-[1.125rem]" strokeWidth={2.4} />
-          </button>
         </label>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!text.trim()}
+          aria-label="Отправить"
+          className="relative grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1 hover:brightness-95 disabled:bg-surface-2 disabled:text-fg-3"
+        >
+          <SendHorizontal aria-hidden className="size-[1.125rem]" strokeWidth={2.2} />
+        </button>
       </div>
     </div>
   );

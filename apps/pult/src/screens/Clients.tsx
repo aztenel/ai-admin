@@ -354,11 +354,12 @@ function Chip({ on, onClick, label, n, title }: { on: boolean; onClick: () => vo
       onClick={onClick}
       className={cn(
         "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-ui font-medium transition-colors pointer-coarse:h-10",
-        on ? "bg-accent text-accent-fg" : "bg-surface text-fg hover:bg-surface-2",
+        // как чип фильтра в Figma: выбранный — светлая заливка «выбрано», а не главный цвет
+        on ? "bg-selected text-selected-fg" : "bg-surface text-fg-2 hover:text-fg",
       )}
     >
       {label}
-      <span className={cn("tnum text-sm", on ? "text-accent-fg/85" : "text-fg-3")}>{nf.format(n)}</span>
+      <span className={cn("tnum text-sm", on ? "text-selected-fg/80" : "text-fg-3")}>{nf.format(n)}</span>
     </button>
   );
 }

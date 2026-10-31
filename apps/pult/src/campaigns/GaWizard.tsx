@@ -136,30 +136,35 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
       title="Новая рассылка"
       description={`Второй WhatsApp · шаг ${step + 1} из ${STEPS.length}: ${STEPS[step]}`}
       footer={
-        <div className="flex gap-2 pb-1">
-          {/* на последнем шаге три кнопки не помещаются в 390 px — «Назад» там только значком (подпись для читалки) */}
-          {step > 0 && (
-            <Button icon={ChevronLeft} aria-label="Назад" title="Назад" className={cn(step === 4 && "shrink-0 px-3")} disabled={!!busy} onClick={() => setStep(step - 1)}>
-              {step < 4 && "Назад"}
-            </Button>
-          )}
-          {step < 4 ? (
+        step < 4 ? (
+          <div className="flex gap-2 pb-1">
+            {step > 0 && (
+              <Button icon={ChevronLeft} disabled={!!busy} onClick={() => setStep(step - 1)}>
+                Назад
+              </Button>
+            )}
             <Button variant="primary" className="flex-1" disabled={!canNext} onClick={() => setStep(step + 1)}>
               Далее
             </Button>
-          ) : (
-            <>
-              <Button className="min-w-0 flex-1" busy={busy === "draft"} disabled={!!busy} onClick={() => void create(false)}>
+          </div>
+        ) : (
+          // итог: три кнопки в 390 px не помещаются — главное действие отдельной строкой сверху (у сотрудника его нет)
+          <div className="space-y-2 pb-1">
+            {owner && (
+              <Button variant="primary" className="w-full" busy={busy === "approve"} disabled={!!busy} onClick={() => void create(true)}>
+                Одобрить
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button icon={ChevronLeft} disabled={!!busy} onClick={() => setStep(step - 1)}>
+                Назад
+              </Button>
+              <Button variant={owner ? "secondary" : "primary"} className="flex-1" busy={busy === "draft"} disabled={!!busy} onClick={() => void create(false)}>
                 Сохранить черновик
               </Button>
-              {owner && (
-                <Button variant="primary" className="min-w-0 flex-1" busy={busy === "approve"} disabled={!!busy} onClick={() => void create(true)}>
-                  Одобрить
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )
       }
     >
       <ol aria-label="Шаги" className="mb-3 flex gap-1 px-4">

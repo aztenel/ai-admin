@@ -106,7 +106,7 @@ function CalendarGroup({ d, now }: { d: CampaignCalendar; now: number }) {
               aria-label={`${+iso.slice(8)} ${MONTHS[m - 1].toLowerCase()}: сервисных ${svc}, рекламы ${mk}`}
               onClick={() => setSel(iso)}
               className={cn(
-                "flex aspect-square min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl text-ui transition-colors",
+                "flex h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-ui transition-colors", // клетка 44×48, как в макете Figma; квадрат растягивался на компьютере
                 on ? "bg-accent text-accent-fg" : today ? "ring-2 ring-brand-gold ring-inset" : "hover:bg-surface-2",
                 past && !on && "text-fg-3",
               )}

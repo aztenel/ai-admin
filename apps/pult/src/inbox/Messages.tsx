@@ -181,10 +181,12 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
   const isPlaceholder = !!m.media && /^\[[^\]]{1,60}\]$/.test(m.text.trim());
   const text = isPlaceholder ? "" : m.text;
   const who = label ? whoOf(m) : null;
+  // макет Figma «Переписка»: у напоминания и рассылки подпись внутри пузыря, латунью; у сотрудника и бота — над пузырём
+  const inside = !!who && (m.auto === "service" || m.auto === "campaign");
   const dark = m.from === "operator";
   return (
     <div className={cn("flex flex-col", out ? "items-end" : "items-start", first ? "mt-3" : "mt-[3px]", m.delivery === "sending" && "animate-msg-in")}>
-      {who && (
+      {who && !inside && (
         <span className="mb-1 mt-1.5 flex items-center gap-1 px-1 text-xs font-medium text-fg-3">
           <who.Icon aria-hidden className="size-3.5" strokeWidth={1.9} />
           {who.text}
@@ -202,6 +204,7 @@ function Bubble({ m, first, last, label }: { m: Message; first: boolean; last: b
           m.reaction && "mb-3",
         )}
       >
+        {inside && <span className="mb-0.5 mt-0.5 block text-xs font-medium text-brand-gold">{who.text}</span>}
         {m.media && <MediaView media={m.media} onDark={dark} />}
         {text && (
           <p className={cn("whitespace-pre-wrap break-words [overflow-wrap:anywhere]", m.deleted && "line-through opacity-60")}>

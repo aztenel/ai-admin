@@ -35,7 +35,8 @@ export function WorkspaceSwitcher({ className, compact }: { className?: string; 
       {can && <ChevronDown aria-hidden className={cn("shrink-0 text-fg-3", compact ? "size-4" : "mt-0.5 size-[1.125rem]")} strokeWidth={2.25} />}
     </>
   );
-  const nameCls = cn("relative -ml-1 flex max-w-full items-center gap-1 rounded-lg px-1 text-left text-fg after:absolute after:inset-x-0 after:-inset-y-2", can && "hover:bg-surface-2");
+  // компактная строка: без отрицательного отступа — он уменьшает расчётную ширину на 4 px, и название обрезалось («Winches…»)
+  const nameCls = cn("relative flex max-w-full items-center gap-1 rounded-lg text-left text-fg after:absolute after:inset-x-0 after:-inset-y-2", compact ? "" : "-ml-1 px-1", can && "hover:bg-surface-2");
   let nameEl: ReactNode = (
     <div className={nameCls} title={name}>
       {label}
