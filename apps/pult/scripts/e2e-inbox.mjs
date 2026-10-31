@@ -4,6 +4,9 @@
 //   ответ сотрудника с его именем и галочками по вебхукам статусов; «Готово» при неотвеченном вопросе — с подтверждением;
 //   голосовое (плеер, скорость), фото (просмотр на весь экран), документ (имя, скачать); карточка: номер компании, ответ на
 //   напоминание, ближайшая запись Altegio; нет «бот выключен» в каждом чате и «Оператор, с телефона».
+// «Полноценные чаты» (31.10.2026, сценарии ТЗ 1, 2, 3, 7): ответ цитатой (долгое нажатие на телефоне, «⋯» на компьютере), «Копировать»
+// (буфер обмена), видео на весь экран, документ Word скачивается, фото и PDF от сотрудника — по одному, у каждого «Отправлено», оба
+// открываются; Green-API ответил 500 — «не знаем, ушло ли», ровно один запрос; у основного номера (Meta) нет скрепки и «Ответить».
 // Снимки 390×844 (как iPhone 14/15, вырез и «полоска Домой» нарисованы) и 1280×800, светлая и тёмная тема.
 // Это Chromium в размере iPhone, а не Safari на iPhone: на настоящем телефоне не проверено.
 // Запуск: node scripts/e2e-inbox.mjs [папка для снимков]
@@ -43,18 +46,28 @@ function tone() {
   return b;
 }
 const WAV = tone();
+// видео WebM записывает сам Chromium (MediaRecorder с холста) перед проверкой: его он и воспроизводит
+let WEBM = Buffer.alloc(0);
+const DOCX = Buffer.from("PK\u0003\u0004 e2e-docx"); // начало zip, как у файла Word: скачивается, а не открывается
+const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+/** файл заглушки с поддержкой Range (Safari и Chromium так читают аудио и видео) */
+function served(buf, type, init) {
+  const m = /bytes=(\d+)-(\d*)/.exec(init?.headers?.range || "");
+  if (m) { const a = +m[1], e = m[2] ? Math.min(+m[2], buf.length - 1) : buf.length - 1; return new Response(buf.subarray(a, e + 1), { status: 206, headers: { "content-type": type, "content-range": `bytes ${a}-${e}/${buf.length}`, "content-length": String(e - a + 1) } }); }
+  return new Response(buf, { headers: { "content-type": type, "content-length": String(buf.length) } });
+}
 net.mediaReply = (url, init) => {
   if (!url.startsWith("https://media.green-api.test/")) return null;
-  if (url.endsWith(".wav")) {
-    const range = init?.headers?.range, m = /bytes=(\d+)-(\d*)/.exec(range || "");
-    if (m) { const a = +m[1], e = m[2] ? Math.min(+m[2], WAV.length - 1) : WAV.length - 1; return new Response(WAV.subarray(a, e + 1), { status: 206, headers: { "content-type": "audio/wav", "content-range": `bytes ${a}-${e}/${WAV.length}`, "content-length": String(e - a + 1) } }); }
-    return new Response(WAV, { headers: { "content-type": "audio/wav", "content-length": String(WAV.length) } });
-  }
+  if (url.endsWith(".wav")) return served(WAV, "audio/wav", init);
+  if (url.endsWith(".webm")) return served(WEBM, "video/webm", init);
+  if (url.endsWith(".docx")) return served(DOCX, DOCX_TYPE, init);
   if (url.endsWith(".png")) return new Response(pngFace(url), { headers: { "content-type": "image/png" } });
   if (url.endsWith(".pdf")) return new Response("%PDF-1.4\n%…\n", { headers: { "content-type": "application/pdf" } });
   return new Response("gone", { status: 403 });
 };
-const A = "77001112101", B = "77001112102", C = "77001112103", D = "77001112104", E = "77001112105", F = "77000002011";
+const uploads = () => net.ga.filter((x) => x.op === "sendFileByUpload");
+const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
+const A = "77001112101", B = "77001112102", C = "77001112103", D = "77001112104", E = "77001112105", F = "77000002011", G = "77001112106";
 // A: ответил на напоминание просьбой перенести
 await S.kv.api.put(`h:ga:winchester:${A}`, JSON.stringify({ n: 1, turns: [{ role: "model", text: "Напоминаем: завтра в 15:00 у мастера Тони. Ждём вас в Winchester!", t: Date.now() - 3 * 3600e3, rm: "d1", mid: "RM-A", st: "read" }], profile: { waName: "Арман" } }));
 await text(A, "Спасибо!");
@@ -62,8 +75,12 @@ await text(A, "А можно перенести на 17:00?");
 // B: голосовое и фото
 await inMsg(B, { typeMessage: "audioMessage", fileMessageData: { downloadUrl: "https://media.green-api.test/voice.wav", mimeType: "audio/wav" } }, "Данияр");
 await inMsg(B, { typeMessage: "imageMessage", fileMessageData: { downloadUrl: "https://media.green-api.test/photo.png", mimeType: "image/png", caption: "" } }, "Данияр");
-// C: документ
+await inMsg(B, { typeMessage: "videoMessage", fileMessageData: { downloadUrl: "https://media.green-api.test/clip.webm", mimeType: "video/webm", caption: "" } }, "Данияр");
+// C: документы — PDF (открывается) и Word (скачивается)
 await inMsg(C, { typeMessage: "documentMessage", fileMessageData: { downloadUrl: "https://media.green-api.test/price.pdf", mimeType: "application/pdf", fileName: "Прайс.pdf" } }, "Ерлан");
+await inMsg(C, { typeMessage: "documentMessage", fileMessageData: { downloadUrl: "https://media.green-api.test/form.docx", mimeType: DOCX_TYPE, fileName: "Анкета.docx" } }, "Ерлан");
+// G: новый клиент пишет на второй номер — сотрудник отвечает цитатой и отправляет файлы («Полноценные чаты», 31.10.2026)
+await S.gaText("winchester", GAW, G, "Здравствуйте! Есть время завтра после обеда?", { name: "Асель", idMessage: "E2E-G-1" });
 // D: ответили с телефона, клиент поблагодарил — отвечать нечего
 await text(D, "Есть время сегодня после 18?", "Тимур");
 await hook({ typeWebhook: "outgoingMessageReceived", idMessage: "PH-D", senderData: { chatId: D + "@c.us", sender: "77000000077@c.us" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: "Да, в 18:30 у Рауана" } } });
@@ -77,6 +94,35 @@ await S.settle?.();
 
 // ---------- браузер ----------
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" });
+{ // короткое видео WebM (VP8) с холста — настоящий файл, который Chromium воспроизводит
+  const p = await browser.newPage();
+  const b64 = await p.evaluate(async () => {
+    const c = document.createElement("canvas"); c.width = 160; c.height = 120;
+    const g = c.getContext("2d"), st = c.captureStream(15), rec = new MediaRecorder(st, { mimeType: "video/webm;codecs=vp8" }), parts = [];
+    rec.ondataavailable = (e) => parts.push(e.data);
+    let i = 0; const tick = setInterval(() => { g.fillStyle = `hsl(${(i++ * 37) % 360},70%,50%)`; g.fillRect(0, 0, 160, 120); }, 50);
+    rec.start(100); await new Promise((r) => setTimeout(r, 900)); rec.stop(); await new Promise((r) => (rec.onstop = r)); clearInterval(tick);
+    const u = new Uint8Array(await new Blob(parts, { type: "video/webm" }).arrayBuffer());
+    let s = ""; for (let k = 0; k < u.length; k++) s += String.fromCharCode(u[k]);
+    return btoa(s);
+  });
+  WEBM = Buffer.from(b64, "base64");
+  await p.close();
+}
+// долгое нажатие пальцем: pointerdown (touch) → 600 мс → pointerup, как на телефоне
+async function longPress(page, loc) {
+  const b = await loc.boundingBox();
+  const at = { pointerType: "touch", isPrimary: true, pointerId: 7, clientX: b.x + b.width / 2, clientY: b.y + Math.min(b.height / 2, 20), bubbles: true };
+  await loc.dispatchEvent("pointerdown", at);
+  await page.waitForTimeout(600);
+  await loc.dispatchEvent("pointerup", at);
+}
+// «⋯» у сообщения на компьютере: навести на сообщение, нажать «Действия с сообщением»
+async function msgMenu(page, bubble) {
+  await bubble.hover();
+  await bubble.locator("xpath=..").getByRole("button", { name: "Действия с сообщением" }).click();
+}
+const ticks = (page, name) => page.locator("[role=log]").getByRole("img", { name });
 function shiftClock(shift) {
   if (!shift) return;
   const Real = Date, now = () => Real.now() + shift;
@@ -88,6 +134,7 @@ function iphoneSafeArea() {
 async function session(vp, scheme, tag, op = "") {
   const phone = vp.width < 500;
   const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone, locale: "ru-RU", timezoneId: "Asia/Almaty" });
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(dl.app).origin }); // «Копировать» — проверка буфера обмена
   await ctx.addInitScript(shiftClock, SHIFT);
   if (phone) await ctx.addInitScript(iphoneSafeArea);
   if (op) await ctx.addInitScript((o) => localStorage.setItem("pult.op", o), op);
@@ -190,8 +237,101 @@ async function phoneRun(scheme) {
   await page.waitForSelector("section[aria-label='Чаты']");
   await tab(page, "Готово").click();
   ok(`${tag}: закрытый чат — в «Готово»`, (await row(page, "Канат").count()) === 1);
+  await filesPhone(t);
   ok(`${tag}: ошибок в консоли нет`, !t.errs.length, t.errs.join(" | "));
   await t.ctx.close();
+}
+
+// «Полноценные чаты» (31.10.2026), телефон: (1) новый клиент второго номера — в «Нужен ответ», сотрудник отвечает цитатой (долгое
+// нажатие → «Ответить»); (3) фото и PDF — по одному, у каждого «Отправлено», оба открываются; (7) Green-API ответил 500 — пузырь
+// «не знаем, ушло ли», к Green-API — ровно один запрос
+async function filesPhone(t) {
+  const { page, tag } = t;
+  const sheetOf = (name) => page.getByRole("dialog", { name });
+  await tab(page, "Нужен ответ").click();
+  ok(`${tag}: (1) новый клиент второго номера — в «Нужен ответ»`, (await row(page, "Асель").count()) === 1);
+  await row(page, "Асель").first().click();
+  await page.waitForSelector("[role=log]");
+  const pane = page.locator("section[aria-label^='Переписка']");
+  ok(`${tag}: второй номер — без «написать можно ещё…» (у Green-API нет окна 24 часа)`, !/написать можно/i.test(await pane.innerText()));
+  ok(`${tag}: у второго номера — скрепка`, (await page.getByRole("button", { name: "Прикрепить фото, видео или файл" }).count()) === 1);
+  // ответ цитатой: долгое нажатие на сообщение клиента
+  const orig = page.locator("[role=log] [data-mid='E2E-G-1']");
+  await longPress(page, orig);
+  const replyItem = page.getByRole("menuitem", { name: "Ответить" });
+  ok(`${tag}: долгое нажатие — меню «Ответить», «Копировать»`, (await replyItem.count()) === 1 && (await page.getByRole("menuitem", { name: "Копировать" }).count()) === 1);
+  await t.shot("8-msg-menu");
+  await replyItem.click();
+  const strip = page.locator("[aria-label='Ответ на сообщение']");
+  ok(`${tag}: над полем — цитата с ✕`, (await strip.count()) === 1 && /Есть время завтра/.test(await strip.innerText()) && (await page.getByRole("button", { name: "Не отвечать на это сообщение" }).count()) === 1);
+  await page.getByLabel("Ответ клиенту").fill("Да, завтра в 15:00 у Тони свободно. Записать вас?");
+  await t.shot("9-reply-strip");
+  const sm0 = net.ga.filter((x) => x.op === "sendMessage").length;
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await page.waitForTimeout(800);
+  const sm = net.ga.filter((x) => x.op === "sendMessage");
+  ok(`${tag}: (1) ответ ушёл одним сообщением, цитатой на сообщение клиента`, sm.length === sm0 + 1 && sm.at(-1).body.quotedMessageId === "E2E-G-1", JSON.stringify(sm.at(-1)?.body || {}));
+  ok(`${tag}: полоса цитаты убрана после отправки`, (await strip.count()) === 0);
+  const qb = page.locator("[role=log]").getByRole("button", { name: /^Ответ на сообщение: Асель/ });
+  ok(`${tag}: в отправленном — цитата`, (await qb.count()) === 1);
+  await qb.click();
+  await page.waitForTimeout(120);
+  ok(`${tag}: нажатие на цитату — к исходному сообщению (подсветка)`, await orig.evaluate((el) => el.classList.contains("msg-flash")));
+
+  // (3) фото и PDF
+  const up0 = uploads().length, sent0 = await ticks(page, "Отправлено").count();
+  await pane.locator("input[type=file]").setInputFiles([
+    { name: "Работа мастера.png", mimeType: "image/png", buffer: Buffer.from(pngFace("e2e-work")) },
+    { name: "Прайс-лист.pdf", mimeType: "application/pdf", buffer: PDF },
+  ]);
+  const sheet = sheetOf(/Выбрано 2 файла/);
+  await sheet.waitFor();
+  ok(`${tag}: (3) перед отправкой — оба файла, у фото миниатюра`, (await sheet.locator("ul[aria-label='Файлы к отправке'] li").count()) === 2 && (await sheet.locator("li img").count()) === 1);
+  await page.waitForTimeout(300);
+  await t.shot("10-files-sheet");
+  await sheet.getByRole("button", { name: "Отправить 2" }).click();
+  await page.waitForTimeout(60);
+  const during = await page.locator("[role=log]").innerText();
+  await page.waitForFunction(() => !/отправляется/.test(document.querySelector("[role=log]")?.textContent || ""), null, { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const up = uploads().slice(up0);
+  ok(`${tag}: (3) по одному запросу на файл, по очереди: фото, потом PDF`, up.length === 2 && up[0].form.fileName === "Работа мастера.png" && up[1].form.fileName === "Прайс-лист.pdf" && up.every((x) => x.host === "media.green-api.com"), JSON.stringify(up.map((x) => x.form?.fileName)));
+  ok(`${tag}: (3) оба пузыря в ленте сразу (пока уходят — «отправляется»)`, /отправляется/.test(during) || up.length === 2, during.slice(-200));
+  ok(`${tag}: (3) у обоих файлов — «Отправлено»`, (await ticks(page, "Отправлено").count()) === sent0 + 2);
+  await t.shot("11-files-sent");
+  await page.locator("[role=log]").getByRole("button", { name: "Открыть фото" }).last().click();
+  const photo = page.getByRole("dialog", { name: "Фото" });
+  await photo.locator("img").evaluate((i) => (i.complete ? null : new Promise((r) => (i.onload = i.onerror = r))));
+  ok(`${tag}: (3) отправленное фото открывается на весь экран`, (await photo.count()) === 1 && (await photo.locator("img").evaluate((i) => i.naturalWidth > 0)));
+  await page.getByRole("button", { name: "Закрыть" }).click();
+  const pdfLink = page.locator("[role=log]").getByRole("link", { name: "Скачать Прайс-лист.pdf" });
+  const pr = (await pdfLink.count()) ? await page.request.get(new URL(await pdfLink.getAttribute("href"), page.url()).href) : null;
+  ok(`${tag}: (3) отправленный PDF открывается (200, application/pdf)`, pr && pr.status() === 200 && /application\/pdf/.test(pr.headers()["content-type"] || ""), pr ? `${pr.status()} ${pr.headers()["content-type"]}` : "нет ссылки");
+
+  // (7) Green-API ответил 500: «не знаем, ушло ли», без повтора
+  const prev = net.gaReply, up1 = uploads().length;
+  net.gaReply = (rec) => (rec.op === "sendFileByUpload" ? new Response(JSON.stringify({ message: "Internal Server Error" }), { status: 500, headers: { "content-type": "application/json" } }) : prev ? prev(rec) : null);
+  try {
+    await pane.locator("input[type=file]").setInputFiles([{ name: "Схема проезда.png", mimeType: "image/png", buffer: Buffer.from(pngFace("e2e-map")) }]);
+    const one = sheetOf("Отправить файл");
+    await one.waitFor();
+    await one.getByRole("button", { name: "Отправить", exact: true }).click();
+    await page.waitForFunction(() => /Не знаем, ушло ли сообщение/.test(document.querySelector("[role=log]")?.textContent || ""), null, { timeout: 15000 });
+    ok(`${tag}: (7) 500 от Green-API — пузырь «Не знаем, ушло ли сообщение…»`, /Не знаем, ушло ли сообщение\. Проверьте в WhatsApp/.test(await page.locator("[role=log]").innerText()));
+    await page.waitForTimeout(1500);
+    ok(`${tag}: (7) к Green-API — ровно один запрос, без повтора`, uploads().length === up1 + 1, String(uploads().length - up1));
+    ok(`${tag}: (7) статус «?» вместо галочки`, (await ticks(page, /^Статус пока неизвестен/).count()) >= 1);
+    const toastAlert = page.getByRole("alert").filter({ hasText: "Не знаем, ушло ли" });
+    ok(`${tag}: (7) и предупреждение сотруднику`, (await toastAlert.count()) === 1);
+    await toastAlert.getByRole("button", { name: "Закрыть" }).click().catch(() => {});
+    await page.waitForTimeout(200);
+    await t.shot("12-unknown");
+  } finally {
+    net.gaReply = prev;
+  }
+  await page.getByRole("button", { name: /Назад к чатам/ }).click();
+  await page.waitForSelector("section[aria-label='Чаты']");
+  ok(`${tag}: (1) после ответа — не в «Нужен ответ»`, (await row(page, "Асель").count()) === 0);
 }
 
 async function deskRun(scheme) {
@@ -206,8 +346,59 @@ async function deskRun(scheme) {
   await page.waitForTimeout(500);
   ok(`${t.tag}: «Взять себе» — ведёт Ержан`, /ведёт вы/.test(await page.locator("section[aria-label^='Переписка'] header").innerText()));
   await t.shot("1-doc-take");
+  // (2) документ Word — скачивание: 200 и «attachment»
+  const docx = page.locator("[role=log]").getByRole("link", { name: "Скачать Анкета.docx" });
+  const dr = (await docx.count()) ? await page.request.get(new URL(await docx.getAttribute("href"), page.url()).href) : null;
+  ok(`${t.tag}: (2) документ Word скачивается (200, attachment)`, dr && dr.status() === 200 && /^attachment/.test(dr.headers()["content-disposition"] || ""), dr ? `${dr.status()} ${dr.headers()["content-disposition"]}` : "нет ссылки");
+  await filesDesk(t);
   ok(`${t.tag}: ошибок в консоли нет`, !t.errs.length, t.errs.join(" | "));
   await t.ctx.close();
+}
+
+// «Полноценные чаты», компьютер: (2) видео — на весь экран; меню сообщения «⋯» при наведении: «Открыть» фото, «Копировать» текст
+// (буфер обмена), «Ответить»; у основного номера (Meta) — ни скрепки, ни «Ответить»
+async function filesDesk(t) {
+  const { page, tag } = t;
+  await tab(page, "Все").click(); // на телефоне этим клиентам уже ответили — в «Нужен ответ» их нет
+  await row(page, "Данияр").first().click();
+  await page.waitForSelector("[role=log] video");
+  const vid = page.locator("[role=log] video");
+  await vid.first().evaluate((v) => (v.readyState >= 1 ? null : new Promise((r) => { v.onloadedmetadata = v.onerror = r; setTimeout(r, 4000); })));
+  ok(`${tag}: (2) видео клиента — плеер в ленте, файл читается`, (await vid.count()) === 1 && (await vid.first().evaluate((v) => v.readyState >= 1 && !v.error)));
+  await page.getByRole("button", { name: "Видео на весь экран" }).click();
+  const vdlg = page.getByRole("dialog", { name: "Видео" });
+  ok(`${tag}: (2) видео — на весь экран`, (await vdlg.count()) === 1 && (await vdlg.locator("video").count()) === 1);
+  await page.waitForTimeout(400);
+  await t.shot("2-video-full");
+  await page.keyboard.press("Escape");
+  const photoMsg = page.locator("[role=log] [data-mid]").filter({ has: page.getByRole("button", { name: "Открыть фото" }) }).first();
+  await msgMenu(page, photoMsg);
+  ok(`${tag}: у фото клиента в меню — «Ответить» и «Открыть», без «Копировать»`, (await page.getByRole("menuitem", { name: "Ответить" }).count()) === 1 && (await page.getByRole("menuitem", { name: "Открыть" }).count()) === 1 && !(await page.getByRole("menuitem", { name: "Копировать" }).count()));
+  await t.shot("3-msg-menu");
+  await page.getByRole("menuitem", { name: "Открыть" }).click();
+  ok(`${tag}: «Открыть» — фото на весь экран`, (await page.getByRole("dialog", { name: "Фото" }).count()) === 1);
+  await page.keyboard.press("Escape");
+
+  // «Копировать» — текст сообщения клиента в буфере обмена
+  await page.locator("a[href*='77001112106']").first().click();
+  await page.waitForSelector("[role=log] [data-mid='E2E-G-1']");
+  await msgMenu(page, page.locator("[role=log] [data-mid='E2E-G-1']"));
+  await page.getByRole("menuitem", { name: "Копировать" }).click();
+  await page.waitForTimeout(200);
+  const clip = await page.evaluate(() => navigator.clipboard.readText()).catch((e) => "ошибка: " + e);
+  ok(`${tag}: «Копировать» — текст в буфере обмена`, clip === "Здравствуйте! Есть время завтра после обеда?", clip);
+  ok(`${tag}: отправленные файлы и цитата видны и на компьютере`, (await page.locator("[role=log]").getByRole("button", { name: /^Ответ на сообщение: Асель/ }).count()) === 1 && (await page.locator("[role=log]").getByRole("link", { name: "Скачать Прайс-лист.pdf" }).count()) === 1);
+  await t.shot("4-files-quote");
+
+  // основной номер (Meta): файлов из пульта нет, ответить цитатой нельзя
+  await page.locator("a[href*='77001112001']").first().click();
+  await page.waitForSelector("[role=log]");
+  await page.waitForTimeout(300);
+  ok(`${tag}: основной номер — без скрепки`, (await page.getByRole("button", { name: "Прикрепить фото, видео или файл" }).count()) === 0 && (await page.getByLabel("Ответ клиенту").count()) === 1);
+  const waMsg = page.locator("[role=log] p").filter({ hasText: "Есть свободное время сегодня вечером" }).first().locator("xpath=..");
+  await msgMenu(page, waMsg);
+  ok(`${tag}: основной номер — в меню «Копировать», без «Ответить»`, (await page.getByRole("menuitem", { name: "Копировать" }).count()) === 1 && !(await page.getByRole("menuitem", { name: "Ответить" }).count()));
+  await page.keyboard.press("Escape");
 }
 
 // тёмная тема — только вид (состояние чатов уже изменено светлым прогоном)
@@ -221,6 +412,11 @@ async function darkShots(vp, tag) {
   await page.waitForSelector("[role=log]");
   await page.waitForTimeout(400);
   await t.shot("2-chat");
+  if (vp.width < 500) await page.getByRole("button", { name: /Назад к чатам/ }).click();
+  await row(page, "Асель").first().click();
+  await page.waitForSelector("[role=log] [data-mid='E2E-G-1']");
+  await page.waitForTimeout(500);
+  await t.shot("3-files-quote");
   ok(`${tag}: ошибок в консоли нет`, !t.errs.length, t.errs.join(" | "));
   await t.ctx.close();
 }

@@ -48,6 +48,9 @@ import { createLiveSource } from "./live";
 
 export { ApiError } from "./errors";
 
+/** Отправка из пульта: rid — защита от двойной отправки, quote — номер сообщения, на которое ответ. */
+export type SendOpts = { rid?: string; quote?: string };
+
 /**
  * Раздел «Рассылки»: номера, рассылки, база клиентов из Altegio, автосценарий (model/campaigns.ts). ws — id компании (c=).
  * Ошибки — ApiError: message — текст сервера; errors — список ошибок формы (create, autoSet); роль проверяет сервер
@@ -142,7 +145,11 @@ export interface DataSource extends CampaignSource, ContactSource {
   /** Сведения о номерах и рассылках. Медленнее списка (сервер спрашивает Meta и Green-API) — грузится вторым. */
   channelReport(ws: string): Promise<ChannelReport>;
   conversation(ws: string, ref: ConversationRef): Promise<ConversationDetail>;
-  send(ws: string, ref: ConversationRef, text: string): Promise<ConversationDetail>;
+  /** Ответ клиенту. opts.rid — свой номер у каждого сообщения: повтор того же запроса сервер второй раз не отправит;
+   *  opts.quote — номер сообщения, на которое это ответ (только второй номер). */
+  send(ws: string, ref: ConversationRef, text: string, opts?: SendOpts): Promise<ConversationDetail>;
+  /** Файл клиенту (только второй номер, detail.canFiles). Ответа на отправку нет — сообщение со статусом unknown и warning. */
+  sendFile?(ws: string, ref: ConversationRef, file: File, opts: SendOpts & { caption?: string }): Promise<ConversationDetail>;
   act(ws: string, ref: ConversationRef, act: ChatAction, extra?: ChatActionExtra): Promise<ConversationDetail>;
   /** Чаты, где писали только мы (клиент не отвечал): в общем списке их нет, показываются по кнопке. */
   outboundOnly?(ws: string): Promise<ConversationSummary[]>;

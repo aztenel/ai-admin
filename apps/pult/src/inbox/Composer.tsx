@@ -1,16 +1,20 @@
 // Поле ответа. Ответ уходит с того номера, на который написал клиент, — это написано прямо над полем, мелко, по линии текста.
 // Кнопка «Отправить» — внутри поля и оживает, когда есть текст; слева — быстрые ответы и реквизиты.
 // Enter — отправить (на телефоне Enter — новая строка, отправка кнопкой). Черновик каждого чата сохраняется, пока открыт пульт.
-import { Banknote, Phone, SendHorizontal, Zap } from "lucide-react";
+// Скрепка (только второй номер, Green-API) — фото, видео, документы; ответ на сообщение — полоса цитаты над полем, с ✕.
+import { Banknote, Paperclip, Phone, Reply, SendHorizontal, X, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, toast } from "@/components/overlay";
 import { dataMode } from "@/data/source";
 import { buttonClass, IconButton } from "@/components/ui";
 import { channelTitle } from "@/model/channels";
-import type { Channel, ReplyState } from "@/model/types";
+import type { Channel, Quote, ReplyState } from "@/model/types";
 import { until } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { isTouch } from "@/lib/viewport";
 import { store } from "@/state/store";
+import { ACCEPT, FILES_AT_ONCE, FileSheet } from "./FileSheet";
+import { quoteWho } from "./Messages";
 
 const drafts = new Map<string, string>();
 const FROM: Record<string, string> = { "Основной WhatsApp": "с основного номера", "Второй WhatsApp": "со второго номера" };
@@ -28,7 +32,18 @@ const dayText = (d: string) => {
   return m ? `${+m[3]} ${MON_GEN[+m[2] - 1]}` : d;
 };
 
-export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend, onTimes, address }: { convKey: string; channel?: Channel; reply: ReplyState; payment?: string; botActive: boolean; multiChannel: boolean; phone?: string; now: number; onSend: (text: string) => void; onTimes?: () => void; address?: string }) {
+type ComposerProps = {
+  convKey: string; channel?: Channel; reply: ReplyState; payment?: string; botActive: boolean; multiChannel: boolean; phone?: string; now: number;
+  onSend: (text: string) => void; onTimes?: () => void; address?: string;
+  /** Скрепка: только у второго номера (detail.canFiles). */
+  onFiles?: (files: File[], caption: string) => void;
+  /** Ответ на это сообщение (цитата) и как его убрать. */
+  quote?: Quote | null; onClearQuote?: () => void; contactName?: string;
+};
+export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend, onTimes, address, onFiles, quote, onClearQuote, contactName }: ComposerProps) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [picked, setPicked] = useState<File[]>([]);
+  useEffect(() => setPicked([]), [convKey]);
   // ближайшая запись клиента из журнала Altegio — для ответа «Когда моя запись?»; грузится при открытии меню
   const [visit, setVisit] = useState<{ key: string; text: string | null } | null>(null);
   const loadVisit = () => {
@@ -48,6 +63,10 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
   useEffect(() => {
     setText(drafts.get(convKey) || "");
   }, [convKey]);
+  // выбрали «Ответить» — сразу в поле ответа
+  useEffect(() => {
+    if (quote) ta.current?.focus();
+  }, [quote]);
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
@@ -93,6 +112,16 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             <span className="shrink-0 @max-[24rem]:hidden">{from ? "· " : ""}бот замолчит на 2 ч</span>
           ) : null}
         </p>
+      )}
+      {quote && (
+        <div className="mx-auto mb-1.5 flex max-w-[50rem] items-center gap-2 rounded-xl bg-surface-2 py-1 pl-3 pr-1" aria-label="Ответ на сообщение">
+          <Reply aria-hidden className="size-4 shrink-0 text-accent" strokeWidth={1.9} />
+          <span className="min-w-0 flex-1 border-l-[3px] border-accent pl-2">
+            <span className="block truncate text-xs font-semibold leading-4 text-accent-ink">Ответ: {quoteWho(quote.from, contactName)}</span>
+            <span className="block truncate text-sm leading-[1.125rem] text-fg-2">{quote.text || "Сообщение"}</span>
+          </span>
+          <IconButton icon={X} label="Не отвечать на это сообщение" onClick={onClearQuote} />
+        </div>
       )}
       <div className="mx-auto flex max-w-[50rem] items-end gap-2">
         <Menu onOpenChange={(v) => v && loadVisit()}>
@@ -144,13 +173,13 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             ))}
           </MenuContent>
         </Menu>
-        {/* макет Figma «Переписка»: поле — капсула без рамки, отправка — отдельная круглая кнопка справа */}
-        <label className="flex min-h-10 min-w-0 flex-1 items-end rounded-[1.25rem] bg-surface-2 px-3.5 py-[5px] outline-ring focus-within:outline-2">
-          <span className="sr-only">Ответ клиенту</span>
+        {/* макет Figma «Переписка»: поле — капсула без рамки, отправка — отдельная круглая кнопка справа; скрепка — внутри поля, как в WhatsApp */}
+        <div className={cn("flex min-h-10 min-w-0 flex-1 items-end rounded-[1.25rem] bg-surface-2 py-[5px] pl-3.5 outline-ring focus-within:outline-2", onFiles ? "pr-1" : "pr-3.5")}>
           <textarea
             ref={ta}
             rows={1}
             value={text}
+            aria-label="Ответ клиенту"
             onChange={(e) => change(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isTouch()) {
@@ -163,7 +192,35 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             maxLength={2000}
             className="block max-h-40 min-h-0 w-full resize-none bg-transparent py-[3px] text-md leading-6 text-fg outline-none md:text-base md:leading-6 pointer-coarse:py-[5px] pointer-coarse:text-md"
           />
-        </label>
+          {onFiles && (
+            <>
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                aria-label="Прикрепить фото, видео или файл"
+                title="Прикрепить фото, видео или файл"
+                className="relative grid size-[1.875rem] shrink-0 place-items-center rounded-full text-fg-3 transition-colors after:absolute after:-inset-1.5 hover:bg-surface-3 hover:text-fg pointer-coarse:size-[2.125rem]"
+              >
+                <Paperclip aria-hidden className="size-5 -rotate-45" strokeWidth={1.75} />
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                accept={ACCEPT}
+                tabIndex={-1}
+                aria-hidden
+                className="hidden"
+                onChange={(e) => {
+                  const list = [...(e.target.files || [])];
+                  e.target.value = ""; // тот же файл можно выбрать снова
+                  if (list.length > FILES_AT_ONCE) toast(`За раз — не больше ${FILES_AT_ONCE} файлов. Остальные выберите ещё раз.`);
+                  if (list.length) setPicked(list.slice(0, FILES_AT_ONCE));
+                }}
+              />
+            </>
+          )}
+        </div>
         <button
           type="button"
           onClick={submit}
@@ -174,6 +231,19 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
           <SendHorizontal aria-hidden className="size-[1.125rem]" strokeWidth={2.2} />
         </button>
       </div>
+      {onFiles && (
+        <FileSheet
+          files={picked}
+          quote={quote}
+          quoteWho={quote ? (quote.from === "contact" ? "клиенту" : "на сообщение") : undefined}
+          onRemove={(f) => setPicked((p) => p.filter((x) => x !== f))}
+          onClose={() => setPicked([])}
+          onSend={(files, caption) => {
+            setPicked([]);
+            onFiles(files, caption);
+          }}
+        />
+      )}
     </div>
   );
 }
