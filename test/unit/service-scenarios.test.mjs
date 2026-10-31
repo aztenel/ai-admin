@@ -174,8 +174,10 @@ test("S01 подтверждение новой записи: выключено
     assert.deepEqual(items.filter(x => x.k === "s01").map(x => x.rec), ["3071"]);
     net.reset();
     const bot = rec(ph(373), TOM, "17:00", { id: 3073, made: `${TODAY}T11:55:00+05:00` });
-    net.altJournal = [fresh, old, bot];
+    net.altJournal = [old];
     const s = mk(ENV); await approve(s);
+    await jrRun(s.env, now - 20 * 60e3); // отправка уже работала до этих записей (первое чтение после включения задним числом не шлёт)
+    net.altJournal = [fresh, old, bot];
     await s.kv.api.put(`h:ga:winchester:${dg(373)}`, JSON.stringify({ n: 1, turns: [], profile: { bookings: [{ record_id: 3073, date: TOM, time: "17:00" }] } }));
     await jrRun(s.env, now); await jrRun(s.env, now + 6 * 60e3); await jrRun(s.env, now + 7 * 60e3);
     const s01 = sent().filter(x => /Вы записаны/.test(x.text));

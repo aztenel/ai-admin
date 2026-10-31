@@ -96,6 +96,16 @@ test("задним числом не шлём: одобрили позже, че
   await jrRun(s.env, at(TODAY, "18:30"));
   assert.deepEqual(sent(), [], "сообщение 18:00 после одобрения в 18:20 не уходит");
   assert.ok((s.kv.json("jrl:winchester") || []).some(x => x.rec === "4411" && /одобрен позже/.test(x.why)), JSON.stringify(s.kv.json("jrl:winchester")));
+  // отправку только что включили (первое чтение журнала): напоминание, время которого уже прошло, не уходит; будущее — уходит
+  net.reset();
+  net.altJournal = [rec(ph(414), TOM, "15:00", { id: 4414 }), rec(ph(415), TODAY, "21:00", { id: 4415 })];
+  const s1 = mk(ENV);
+  await s1.kv.api.put("svtpl:winchester", JSON.stringify({ S03: { v: S03.v, at: 1 }, S04: { v: SCENARIOS.find(x => x.id === "S04").v, at: 1 } }));
+  await jrRun(s1.env, at(TODAY, "18:10")); // накануне в 18:00 по записи 4414 — уже прошло
+  assert.ok(!sent().some(x => x.to === dg(414)), JSON.stringify(sent()));
+  assert.ok((s1.kv.json("jrl:winchester") || []).some(x => x.rec === "4414" && /задним числом/.test(x.why)), JSON.stringify(s1.kv.json("jrl:winchester")));
+  await jrRun(s1.env, at(TODAY, "19:00")); await jrRun(s1.env, at(TODAY, "19:01"));
+  assert.ok(sent().some(x => x.to === dg(415) && /^Ждём вас сегодня в 21:00/.test(x.text)), "за 2 часа (19:00) — после включения, уходит: " + JSON.stringify(sent()));
   // свой вариант без KZ: клиенту, который пишет по-казахски, — по-русски
   net.reset();
   net.altJournal = [rec(ph(413), TOM, "15:00", { id: 4413 })];

@@ -148,11 +148,15 @@ async function jrClient(env, c, now) {
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const o = opts(c), logs = /** @type {any[]} */ ([]);
   let q = await jrqLoad(env, c.id), dirty = false;
-  if (now - (await jrSyncAt(env, c.id)) >= SYNC_MS) {
+  const last = await jrSyncAt(env, c.id);
+  if (now - last >= SYNC_MS) {
     try { await jrSyncMark(env, c.id, now); } catch (e) { console.log("jr sync mark", String(e)); } // не записалась — прочитаем журнал ещё раз через минуту
     try {
       const { list } = await altRecordsRange(env, user, loc, isoDay(now - 86400e3), isoDay(now + 86400e3), PAGES);
       q = await jrMerge(env, c, o, q, list, now, logs);
+      // первое чтение журнала после включения (или после перерыва больше суток, jrs: живёт сутки): то, что должно было уйти
+      // раньше, задним числом не шлём (ТЗ v3.0: включили сценарий — старые записи не получают сообщений разом)
+      if (!last) q = q.filter(x => { if (x.at >= now - 60e3) return true; logs.push(entry(x, "skipped", "отправку только что включили: задним числом не шлём", now)); return false; });
       dirty = true;
     } catch (/** @type {any} */ e) { console.log("jr journal", c.id, String((e && e.message) || e).slice(0, 160)); }
   }
