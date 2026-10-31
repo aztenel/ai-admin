@@ -11,7 +11,7 @@ export const STATUS_TEXT: Record<DeliveryStatus, string> = {
   delivered: "Доставлено",
   read: "Прочитано",
   failed: "Не доставлено",
-  unknown: "Неизвестно, ушло ли: ответа от WhatsApp не было. Не отправляйте второй раз — проверьте в телефоне",
+  unknown: "Статус пока неизвестен. Повторная отправка отключена: проверьте в телефоне, дошло ли сообщение",
 };
 
 export function Ticks({ status, error, className, onDark }: { status?: DeliveryStatus; error?: string; className?: string; onDark?: boolean }) {

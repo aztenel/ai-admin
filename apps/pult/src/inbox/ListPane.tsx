@@ -11,6 +11,7 @@ import { href } from "@/lib/router";
 import { cn, useNow } from "@/lib/utils";
 import { store, useStore, type Filter } from "@/state/store";
 import { WorkspaceSwitcher } from "@/shell/WorkspaceSwitcher";
+import { ModeBadge } from "@/components/ui";
 import { counts, filterTest, inScope, search } from "./derive";
 import { Ticks } from "./Ticks";
 import { getOperator } from "@/lib/operator";
@@ -50,11 +51,16 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
   return (
     <section aria-label="Чаты" inert={inert} className={cn("flex min-h-0 flex-col bg-surface", className)}>
       <header className="shrink-0 pt-safe">
-        {/* демо — строкой над названием, а не меткой рядом: название компании не обрезается на узком iPhone */}
-        {mode === "demo" && <p className="-mb-1.5 px-4 pt-2 text-2xs font-semibold uppercase tracking-[0.06em] text-fg-3">Демо · данные вымышленные</p>}
-        {/* крупный шрифт: капсула номера уходит строкой ниже, а не съедает название компании */}
-        <div className="flex min-h-[3.25rem] flex-wrap items-center gap-x-2 gap-y-1 pl-4 pr-3 pt-1.5 md:min-h-14 md:pr-2 md:pt-2">
-          <WorkspaceSwitcher className="min-w-0 flex-[1_1_10rem]" />
+        {/* ТЗ v3.0 §2.1: заголовок раздела «Чаты», компания и метка режима («Тестовая версия», «Демо») — строкой ниже;
+            крупный шрифт: капсула номера уходит строкой ниже, а не съедает заголовок */}
+        <div className="flex flex-wrap items-end gap-x-2 gap-y-1 pl-4 pr-3 pt-2 md:pr-2 md:pt-3">
+          <div className="min-w-0 flex-[1_1_10rem]">
+            <h1 className="title-display text-[1.75rem] font-bold leading-9 tracking-[-0.022em] md:text-2xl md:font-semibold md:leading-8">Чаты</h1>
+            <div className="flex min-w-0 items-center gap-2">
+              <WorkspaceSwitcher compact className="min-w-0" />
+              <ModeBadge />
+            </div>
+          </div>
           {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
         </div>
         <div className="mx-4 mt-1.5 flex items-center gap-1 md:mr-2 md:mt-2">
@@ -120,13 +126,13 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
         )}
         {truncated && phase === "ready" && !q && (
           <p className="px-4 py-4 text-center text-xs text-fg-3">
-            Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа — все.
+            Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа показаны все.
           </p>
         )}
         {/* чаты, где писали только мы (напоминание, ответ с телефона), — не переписки: в списке их нет, по кнопке — в «Все» */}
         {phase === "ready" && !q && filter === "all" && !!outOnly && (
           <p className="px-4 py-4 text-center text-xs text-fg-3">
-            Ещё {outOnly} — только наши сообщения, клиент не отвечал.{" "}
+            Ещё {outOnly}: писали только мы, клиент не отвечал.{" "}
             <button type="button" className="font-medium text-accent underline-offset-2 hover:underline" onClick={() => store.loadOutbound()}>
               Показать
             </button>
@@ -171,7 +177,7 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
           <span className="flex items-baseline gap-2">
             <span className="min-w-0 flex-1 truncate text-md font-semibold tracking-[-0.01em] md:text-base">{title}</span>
             {c.attention?.since ? (
-              <span className="tnum shrink-0 text-sm font-semibold text-critical md:text-xs" title={`Ждёт ответа ${waited(c.attention.since, now)}, последнее сообщение — ${rowTime(c.lastAt, now)}`}>
+              <span className="tnum shrink-0 text-sm font-semibold text-critical md:text-xs" title={`Ждёт ответа ${waited(c.attention.since, now)}, последнее сообщение ${rowTime(c.lastAt, now)}`}>
                 {waited(c.attention.since, now)}
               </span>
             ) : (
@@ -200,15 +206,15 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
 });
 
 function Empty({ filter, q, total }: { filter: Filter; q: string; total: number }) {
-  if (q) return <EmptyState icon={SearchX} title="Ничего не нашли" text="Проверьте имя или номер — поиск идёт по всем чатам выбранных номеров." />;
+  if (q) return <EmptyState icon={SearchX} title="Ничего не нашли" text="Проверьте имя или номер." />;
   if (total === 0) return <EmptyState icon={Inbox} title="Чатов пока нет" text="Они появятся, когда клиенты напишут в WhatsApp или в чат на сайте." />;
   const t: Record<Filter, [string, string]> = {
     waiting: ["Никто не ждёт ответа", "Здесь появятся чаты, где клиент написал, а ему ещё не ответили."],
-    booking: ["Просьб о записи нет", "Здесь — сообщения о записи, переносе, отмене, опоздании и «во сколько я записан»."],
-    replies: ["Ответов на рассылки и напоминания нет", "Здесь — клиенты, которые ответили на наше напоминание или рассылку и ждут ответа."],
-    mine: ["Ваших чатов нет", "Здесь — чаты, которые вы взяли себе или вам назначили."],
+    booking: ["Просьб о записи нет", "Здесь появятся просьбы записать, перенести или отменить запись и вопросы о времени."],
+    replies: ["Ответов на рассылки и напоминания нет", "Здесь появятся ответы клиентов на напоминания и рассылки."],
+    mine: ["Ваших чатов нет", "Здесь появятся чаты, которые вы взяли себе или вам назначили."],
     all: ["Чатов нет", ""],
-    done: ["Закрытых чатов нет", "Сюда попадают чаты после кнопки «Готово», пока клиент не напишет снова."],
+    done: ["Закрытых чатов нет", "Здесь будут закрытые чаты, пока клиент не напишет снова."],
   };
   return (
     <EmptyState

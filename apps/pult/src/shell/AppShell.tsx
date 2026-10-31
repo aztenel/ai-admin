@@ -86,7 +86,7 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
       {offline && (
         <div role="status" className="pointer-events-none fixed left-1/2 top-[calc(var(--safe-t)+0.5rem)] z-50 inline-flex -translate-x-1/2 animate-pop-in items-center gap-2 rounded-full bg-fg px-3.5 py-1.5 text-sm text-surface shadow-pop">
           <WifiOff aria-hidden className="size-4" strokeWidth={2} />
-          Нет связи — показаны последние данные
+          Нет связи. Показаны последние данные
         </div>
       )}
     </div>

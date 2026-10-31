@@ -47,6 +47,9 @@
   --scrim: rgb(15 20 28 / 0.32);
   --shadow-pop: 0 1px 2px rgb(15 20 28 / 0.06), 0 8px 24px rgb(15 20 28 / 0.12);
   --shadow-card: 0 1px 2px rgb(15 20 28 / 0.05), 0 2px 8px rgb(15 20 28 / 0.06);
+  --brand-gold: #1d5fd0;
+  --chat-bg: #f2f4f7;
+  --font-display: var(--font-sans);
 }
 
 [data-theme="dark"] {
@@ -77,7 +80,92 @@
   --scrim: rgb(0 0 0 / 0.55);
   --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.5);
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px rgb(0 0 0 / 0.25);
+  --brand-gold: #8db6ff;
+  --chat-bg: #0f1114;
 }
+
+/* Оформление Winchester (ТЗ v3.0, 31.10.2026): цвета сайта winchester.kz — кремовое полотно, бордовый для главного действия и
+   сообщений сотрудника, латунь для отметок. Красный остаётся только для ошибок и «ждёт ответа» (он ярче бордового).
+   Включается атрибутом data-brand="winchester" (lib/theme.ts); светлая и тёмная — как у нейтрального.
+   Контраст проверен расчётом: fg на surface 17:1, fg-2 7.4:1, fg-3 5.2:1 на surface и 4.6:1 на surface-2;
+   кремовый текст на бордовом 11:1, тёмный текст на латуни (тёмная тема) 8:1. */
+[data-brand="winchester"] {
+  --canvas: #efe6d6;
+  --surface: #fbf7f0;
+  --surface-2: #f3ebdd;
+  --surface-3: #e7dac4;
+  --selected: #f1e3cb;
+  --selected-fg: #5a1e1e;
+  --line: #e5d8c3;
+  --line-strong: #d2c1a6;
+  --fg: #210f0f;
+  --fg-2: #5f5448;
+  --fg-3: #6b5e50;
+  --accent: #5a1e1e;
+  --accent-fg: #fbf7f0;
+  --accent-ink: #6e2424;
+  --accent-soft: #f2e5d3;
+  --brand-gold: #a37d42;
+  --critical: #b3261e;
+  --critical-soft: #fbe7e3;
+  --positive: #2e6b3e;
+  --positive-soft: #e3efe2;
+  --bubble-in: #ffffff;
+  --bubble-bot: #f1e3cb;
+  --bubble-op: #5a1e1e;
+  --bubble-op-fg: #fbf7f0;
+  --ring: #a37d42;
+  --scrim: rgb(33 15 15 / 0.38);
+  --shadow-pop: 0 1px 2px rgb(33 15 15 / 0.08), 0 8px 24px rgb(33 15 15 / 0.14);
+  --shadow-card: 0 1px 2px rgb(33 15 15 / 0.06), 0 2px 8px rgb(33 15 15 / 0.07);
+  --chat-bg: #f4ecdf;
+  --font-display: "Oswald", var(--font-sans);
+}
+[data-brand="winchester"][data-theme="dark"] {
+  --canvas: #170a0a;
+  --surface: #210f0f;
+  --surface-2: #2c1515;
+  --surface-3: #3a1c1c;
+  --selected: #3b211c;
+  --selected-fg: #e6c891;
+  --line: #3a2220;
+  --line-strong: #4d2e2a;
+  --fg: #f3ebdd;
+  --fg-2: #cdbfaa;
+  --fg-3: #a8998a;
+  --accent: #c9a66b;
+  --accent-fg: #210f0f;
+  --accent-ink: #e2c48d;
+  --accent-soft: #33221a;
+  --brand-gold: #c9a66b;
+  --critical: #f08a7e;
+  --critical-soft: #3d1e1a;
+  --positive: #7cc79a;
+  --positive-soft: #1b2a1f;
+  --bubble-in: #2c1515;
+  --bubble-bot: #33221a;
+  --bubble-op: #6b2a24;
+  --bubble-op-fg: #f3ebdd;
+  --ring: #c9a66b;
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px rgb(0 0 0 / 0.5);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px rgb(0 0 0 / 0.3);
+  --chat-bg: #1b0c0c;
+}
+
+/* фон переписки (Настройки → Оформление): однотонный, едва заметный узор из точек, «кожа» — тёплый градиент.
+   .chat-bg — фон переписки по выбору (атрибут data-chatbg у корня); .chat-bg-* — образец в настройках (после — сильнее). */
+.chat-bg { background-color: var(--chat-bg); }
+[data-chatbg="pattern"] .chat-bg, .chat-bg.chat-bg-pattern {
+  background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--brand-gold) 24%, transparent) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+}
+[data-chatbg="leather"] .chat-bg, .chat-bg.chat-bg-leather {
+  background-image: radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--brand-gold) 12%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, var(--chat-bg)), var(--chat-bg));
+  background-size: auto;
+}
+.chat-bg.chat-bg-plain { background-image: none; }
 
 /* без скрипта темы (например, страница открыта из кэша) — как в системе */
 @media (prefers-color-scheme: dark) {
@@ -91,6 +179,11 @@
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px rgb(0 0 0 / 0.25);
   }
 }
+
+/* фирменный шрифт заголовков Winchester — Oswald 600 с сайта winchester.kz (тот же файл, кириллица и латиница) */
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 600; font-display: swap; src: url("./assets/fonts/oswald-cyrillic-ext-600-normal.woff2") format("woff2"); unicode-range: U+0460-052F, U+1C80-1C88, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 600; font-display: swap; src: url("./assets/fonts/oswald-cyrillic-600-normal.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 600; font-display: swap; src: url("./assets/fonts/oswald-latin-600-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
 @theme {
   --color-*: initial;
@@ -156,6 +249,8 @@
   --color-bubble-op-fg: var(--bubble-op-fg);
   --color-ring: var(--ring);
   --color-scrim: var(--scrim);
+  --color-brand-gold: var(--brand-gold);
+  --color-chat: var(--chat-bg);
 }
 
 @keyframes fade-in { from { opacity: 0; } }
@@ -208,6 +303,9 @@
   .pl-safe { padding-left: var(--safe-l); }
   .pr-safe { padding-right: var(--safe-r); }
   .tnum { font-variant-numeric: tabular-nums; }
+  /* заголовок экрана: у Winchester — Oswald с лёгкой разрядкой, у остальных — системный */
+  .title-display { font-family: var(--font-display); }
+  [data-brand="winchester"] .title-display { font-weight: 600; letter-spacing: 0.005em; }
 }
 
 /* Корень приложения во весь экран. На iPhone при открытой клавиатуре высоту и сдвиг задаёт lib/viewport.ts

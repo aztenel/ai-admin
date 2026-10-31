@@ -67,7 +67,7 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
           ) : (
             <>
               {s.dryOnly && (
-                <Notice tone="muted">Черновик: настоящий Altegio читается только проверкой без записи — данные клиентов в черновик не попадают. Для экрана — тестовые клиенты.</Notice>
+                <Notice tone="muted">Это тестовая версия: настоящий Altegio здесь только проверяется, данные клиентов сюда не загружаются. Для показа экрана есть тестовые клиенты.</Notice>
               )}
               {!s.dryOnly && (
                 <div className="py-3">
@@ -186,19 +186,19 @@ export function SyncPanel({ ws, status, onChanged }: { ws: string; status: Conta
           )}
         </InsetGroup>
 
-        <InsetGroup title="«Стоп» по журналу Green-API" note="Бот сам читает журнал входящих Green-API и находит «стоп», даже если сообщение не дошло до бота.">
+        <InsetGroup title="«Стоп» во втором номере" note="Сверяем входящие второго номера и находим «стоп», даже если сообщение до нас не дошло.">
           {d.stops.channel ? (
             <dl>
               <Field label="Последняя сверка">{d.stops.lastOkAt ? whenText(d.stops.lastOkAt, now) : "ещё не было"}</Field>
               <Field label="Нашла новых «стоп»">{nf.format(d.stops.found)}</Field>
             </dl>
           ) : (
-            <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Номера Green-API у компании нет — сверять нечего.</p>
+            <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Второго номера у компании нет, сверять нечего.</p>
           )}
           {d.stops.lastError && <Notice tone="critical">Ошибка сверки: {d.stops.lastError}</Notice>}
           <div className="flex flex-wrap gap-2 py-3">
             <Button variant="tinted" icon={ShieldAlert} busy={busy === "sweep"} disabled={!!busy || !d.stops.channel} onClick={() => void stops("sweep", "Сверка «стопов»")}>
-              Сверить «стопы» по Green-API
+              Сверить «стопы»
             </Button>
           </div>
         </InsetGroup>
@@ -275,7 +275,7 @@ function Directory({ s, now }: { s: ContactsStatus["sync"]; now: number }) {
         <p className="tnum text-sm text-fg-2">{d.total ? `${nf.format(Math.round((d.total * (d.done ? 100 : d.pct)) / 100))} из ${nf.format(d.total)}` : d.done ? "готово" : `${d.pct}%`}</p>
       </div>
       <p className={cn("text-sm", d.lastError ? "text-critical" : "text-fg-3")}>
-        {d.lastError ? `Ошибка: ${d.lastError}` : d.lastOkAt ? `${d.done ? "прочитан" : "читается"} · ${whenText(d.lastOkAt, now)}` : s.dryOnly ? "на черновике — только проверкой без записи" : "ещё не читался"}
+        {d.lastError ? `Ошибка: ${d.lastError}` : d.lastOkAt ? `${d.done ? "прочитан" : "читается"} · ${whenText(d.lastOkAt, now)}` : s.dryOnly ? "в тестовой версии только проверка" : "ещё не читался"}
       </p>
     </div>
   );

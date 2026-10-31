@@ -12,8 +12,9 @@ import { until } from "@/lib/format";
 import { isTouch } from "@/lib/viewport";
 
 const drafts = new Map<string, string>();
+const FROM: Record<string, string> = { "Основной WhatsApp": "с основного номера", "Второй WhatsApp": "со второго номера" };
 // Общие фразы — не про конкретный бизнес (те же, что у рабочего пульта, pult/app.js QUICK)
-const QUICK = ["Здравствуйте! Чем могу помочь?", "Подскажите, пожалуйста, ваше имя и телефон.", "Ждём вас! Если планы изменятся — напишите заранее.", "Спасибо за обращение! Перезвоню вам в течение 10 минут."];
+const QUICK = ["Здравствуйте! Чем могу помочь?", "Подскажите, пожалуйста, ваше имя и телефон.", "Ждём вас! Если планы изменятся, напишите заранее.", "Спасибо за обращение! Перезвоню вам в течение 10 минут."];
 
 export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend }: { convKey: string; channel?: Channel; reply: ReplyState; payment?: string; botActive: boolean; multiChannel: boolean; phone?: string; now: number; onSend: (text: string) => void }) {
   const [text, setText] = useState(() => drafts.get(convKey) || "");
@@ -58,11 +59,11 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
         <p className="mx-auto flex max-w-[50rem] items-center gap-1 truncate pb-1 pl-[3.4375rem] pr-3 text-xs leading-4 text-fg-3 pointer-coarse:pl-[3.9375rem]">
           {from && (
             <span className="min-w-0 truncate">
-              {/номер/i.test(from) ? <>Ответ уйдёт: <span className="font-medium text-fg-2">{from.toLowerCase()}</span></> : <>С номера <span className="font-medium text-fg-2">{from}</span></>}
+              {FROM[from] ? <>Ответ уйдёт <span className="font-medium text-fg-2">{FROM[from]}</span></> : <>Ответ уйдёт с номера <span className="font-medium text-fg-2">{from}</span></>}
             </span>
           )}
           {closesSoon ? (
-            <span className="shrink-0 font-medium text-critical">{from ? "· " : ""}окно WhatsApp {until(reply.closesAt!, now)}</span>
+            <span className="shrink-0 font-medium text-critical">{from ? "· " : ""}написать можно {until(reply.closesAt!, now)}</span>
           ) : botActive ? (
             <span className="shrink-0 @max-[24rem]:hidden">{from ? "· " : ""}бот замолчит на 2 ч</span>
           ) : null}

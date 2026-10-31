@@ -129,40 +129,54 @@ export function Confirm({ open, onOpenChange, title, text, yes, danger, onYes }:
 }
 
 // ---------- короткие уведомления ----------
+// ТЗ v3.0 §8: на экране один тост. Новый заменяет прежний (стопка из трёх чёрных плашек закрывала карточки — скриншот
+// библиотеки 31.10.2026). Ошибка висит дольше и закрывается кнопкой; обычный — 3 секунды.
 type Toast = { id: number; text: string; tone: "neutral" | "critical" };
-let toasts: Toast[] = [];
+let current: Toast | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 const subs = new Set<() => void>();
+const emit = () => subs.forEach((f) => f());
+function hide(id?: number) {
+  if (id !== undefined && current?.id !== id) return;
+  current = null;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  emit();
+}
 export function toast(text: string, tone: Toast["tone"] = "neutral") {
   const t = { id: Date.now() + Math.random(), text, tone };
-  toasts = [...toasts.slice(-2), t];
-  subs.forEach((f) => f());
-  setTimeout(() => {
-    toasts = toasts.filter((x) => x.id !== t.id);
-    subs.forEach((f) => f());
-  }, tone === "critical" ? 6000 : 3200);
+  current = t;
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => hide(t.id), tone === "critical" ? 8000 : 3000);
+  emit();
 }
 export function Toasts() {
-  const list = useSyncExternalStore(
+  const t = useSyncExternalStore(
     (f) => {
       subs.add(f);
       return () => subs.delete(f);
     },
-    () => toasts,
+    () => current,
   );
   return (
-    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--safe-b)+5rem)] z-[60] flex flex-col items-center gap-2 px-4 md:bottom-6">
-      {list.map((t) => (
+    <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--safe-b)+5rem)] z-[60] flex justify-center px-4 md:bottom-6">
+      {t && (
         <div
           key={t.id}
           role={t.tone === "critical" ? "alert" : "status"}
           className={cn(
-            "max-w-md animate-pop-in rounded-xl px-4 py-2.5 text-ui shadow-pop",
-            t.tone === "critical" ? "bg-critical text-white dark:text-[#1b0d0b]" : "bg-fg text-surface",
+            "pointer-events-auto flex max-w-md animate-pop-in items-center gap-3 rounded-xl py-2.5 pl-4 text-ui shadow-pop",
+            t.tone === "critical" ? "bg-critical pr-1.5 text-white dark:text-[#1b0d0b]" : "bg-fg pr-4 text-surface",
           )}
         >
-          {t.text}
+          <span className="min-w-0">{t.text}</span>
+          {t.tone === "critical" && (
+            <button type="button" onClick={() => hide(t.id)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm font-semibold underline-offset-2 hover:underline">
+              Закрыть
+            </button>
+          )}
         </div>
-      ))}
+      )}
     </div>
   );
 }

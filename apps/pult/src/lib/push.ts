@@ -121,12 +121,12 @@ export async function pushEnable(ws: string, prefs: PushPrefs): Promise<PushStat
 }
 export async function pushSave(ws: string, prefs: PushPrefs): Promise<SubAnswer> {
   const sub = await currentSub();
-  if (!sub) throw new Error("Уведомления на этом устройстве выключены — включите их заново.");
+  if (!sub) throw new Error("Уведомления на этом устройстве выключены. Включите их заново.");
   return call<SubAnswer>("/api/push/prefs", { c: ws, endpoint: sub.endpoint, prefs, op: getOperator() });
 }
 export async function pushTest(ws: string): Promise<void> {
   const sub = await currentSub();
-  if (!sub) throw new Error("Уведомления на этом устройстве выключены — включите их заново.");
+  if (!sub) throw new Error("Уведомления на этом устройстве выключены. Включите их заново.");
   await call("/api/push/test", { c: ws, endpoint: sub.endpoint });
 }
 /** Выключить для этой компании; других компаний на устройстве не осталось — отписать браузер совсем. */

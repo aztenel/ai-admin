@@ -8,7 +8,7 @@ import { Button, EmptyState, Spinner } from "@/components/ui";
 import { InboxScreen } from "@/inbox/InboxScreen";
 import { pushBoot, pushListen } from "@/lib/push";
 import { useRoute } from "@/lib/router";
-import { useThemeBoot } from "@/lib/theme";
+import { setCompanyBrand, useThemeBoot } from "@/lib/theme";
 import { AppShell } from "@/shell/AppShell";
 import { Monogram } from "@/shell/WorkspaceSwitcher";
 import { store, useStore } from "@/state/store";
@@ -29,9 +29,16 @@ export default function App() {
   const wsId = useStore((s) => s.wsId);
   const mode = useStore((s) => s.mode);
 
+  const session = useStore((s) => s.session);
+
   useEffect(() => {
     store.boot();
   }, []);
+  // оформление компании (ТЗ v3.0): у Winchester — фирменное; сервер говорит, у кого оно есть
+  useEffect(() => {
+    if (!wsId || !session) return;
+    setCompanyBrand(session.brands?.[wsId] ?? (wsId === "winchester" ? "winchester" : null));
+  }, [wsId, session]);
   // push-уведомления (ТЗ v2.0 §3): Service Worker, переход к чату по нажатию на уведомление, обновить подписку этой компании
   useEffect(() => {
     if (mode !== "live") return;
@@ -42,7 +49,7 @@ export default function App() {
   // заголовок вкладки и окна программы для Windows: сколько ждут ответа и какая компания
   const waiting = all.filter((c) => c.attention).length;
   useEffect(() => {
-    document.title = `${waiting ? `(${waiting}) ` : ""}Чаты${ws ? ` — ${ws.name}` : ""}`;
+    document.title = `${waiting ? `(${waiting}) ` : ""}Чаты${ws ? ` · ${ws.name}` : ""}`;
   }, [waiting, ws]);
 
   if (phase === "pick") return <PickWorkspace />;
@@ -86,7 +93,7 @@ function PickWorkspace() {
     <div className="app-root scroll-area bg-surface pt-safe">
       <div className="mx-auto max-w-md px-4 py-10">
         <h1 className="text-2xl font-semibold tracking-[-0.01em]">Выберите компанию</h1>
-        <p className="mt-1 text-sm text-fg-2">Пульт открывает чаты одной компании. Сменить её можно в любой момент — нажмите на название над списком чатов.</p>
+        <p className="mt-1 text-sm text-fg-2">Пульт открывает чаты одной компании. Сменить компанию можно в любой момент: нажмите на её название над списком чатов.</p>
         <ul className="mt-6 divide-y divide-line border-y border-line">
           {list.map((w) => (
             <li key={w.id}>
@@ -99,7 +106,7 @@ function PickWorkspace() {
               </button>
             </li>
           ))}
-          {list.length === 0 && <li className="py-6 text-sm text-fg-3">Компаний нет — создайте бота в «Моих ботах».</li>}
+          {list.length === 0 && <li className="py-6 text-sm text-fg-3">Компаний пока нет.</li>}
         </ul>
       </div>
     </div>

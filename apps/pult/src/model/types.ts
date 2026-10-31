@@ -190,7 +190,16 @@ export type ChannelReport = {
 };
 
 export type Role = "owner" | "staff";
-export type Session = { role: Role; workspaceId: string | null };
+export type Session = {
+  role: Role;
+  workspaceId: string | null;
+  /** Где открыт пульт: тестовая версия (черновик dev), рабочая или демо. Показывается меткой в шапке. */
+  stage?: "preview" | "production" | "demo";
+  /** Фирменное оформление компаний: { winchester: "winchester" }. */
+  brands?: Record<string, string>;
+  /** Запись с сайта: выключена, проверка без записи (заявки администратору) или настоящая запись. */
+  site?: Record<string, "off" | "dry" | "live">;
+};
 export type WorkspaceOption = { id: string; name: string; kind?: string };
 
 export type InboxSnapshot = {

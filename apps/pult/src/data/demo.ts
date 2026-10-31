@@ -346,7 +346,8 @@ export function createDemoSource(): DataSource {
     async session() {
       await wait(80);
       const q = new URLSearchParams(location.search).get("c");
-      return { role: role(), workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo" };
+      // демо — с пометкой «Демо» в шапке; первый демо-барбершоп показывает фирменное оформление
+      return { role: role(), workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo", stage: "demo" as const, brands: { demo: "winchester" } };
     },
     async workspaces() {
       return fx.map((f) => ({ id: f.ws.id, name: f.ws.name, kind: f.ws.id === "demo" ? "Барбершоп" : f.ws.id === "demo-service" ? "Ремонт и продажа телефонов" : "Без чатов" }));

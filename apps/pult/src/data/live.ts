@@ -57,12 +57,15 @@ type BcRaw = {
 // ---------- запросы ----------
 export const enc = encodeURIComponent;
 /** Запрос к API бота. Ошибка — ApiError с текстом сервера; список ошибок формы (`errors`) и вопрос (`confirm`) — в её полях. */
+// подписи номеров (ТЗ v3.0 §2.2): «Основной WhatsApp» и «Второй WhatsApp» — так их называет администратор
+export const lineName = (l: string) => (l === "Основной номер" ? "Основной WhatsApp" : l === "Второй номер" ? "Второй WhatsApp" : l);
+
 export async function call<T>(path: string, body?: Record<string, unknown>): Promise<T> {
   let r: Response;
   try {
     r = await fetch(path, body ? { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { credentials: "same-origin" });
   } catch {
-    throw new ApiError("Нет связи с сервером. Проверьте интернет — действие не выполнено.", 0, true);
+    throw new ApiError("Нет связи с сервером, действие не выполнено. Проверьте интернет.", 0, true);
   }
   if (r.status === 401) {
     // вход истёк: на страницу входа, затем обратно сюда (сервер принимает только свои адреса)
@@ -184,9 +187,9 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     return m;
   });
   let reply: ReplyState;
-  if (d.ch === "web") reply = { allowed: false, reason: "web", text: "Это чат с сайта — ответить в него нельзя. Позвоните клиенту, если он оставил номер." };
-  else if (!d.canSend) reply = { allowed: false, reason: "not_connected", text: "Отправка с этого номера не настроена. Владелец подключает номер в «Проверке запуска»." };
-  else if (!d.open) reply = { allowed: false, reason: "window", text: "Клиент писал больше 24 часов назад — WhatsApp не даёт написать первым. Позвоните ему или дождитесь сообщения." };
+  if (d.ch === "web") reply = { allowed: false, reason: "web", text: "Это чат с сайта, ответить в него нельзя. Позвоните клиенту, если он оставил номер." };
+  else if (!d.canSend) reply = { allowed: false, reason: "not_connected", text: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." };
+  else if (!d.open) reply = { allowed: false, reason: "window", text: "Клиент писал больше суток назад, а с основного номера WhatsApp первым написать нельзя. Позвоните клиенту или дождитесь его сообщения." };
   else reply = { allowed: true, closesAt: d.ch === "wa" && d.li ? d.li + 24 * 3600e3 : undefined };
   return {
     key: keyOf(d.ch, d.id),
@@ -196,7 +199,7 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     attention: d.need ? { reason: d.need.why, label: needLabel(d.need.why, d.need.tp, d.need.src?.k, d.need.text), since: d.need.at || undefined, topic: topic(d.need.tp), ...(d.need.src ? { source: { kind: d.need.src.k, at: d.need.src.at, text: d.need.src.text } } : {}) } : null,
     assignee: d.assignee || undefined,
     done: !!d.done,
-    line: d.line ? { label: d.line.label } : undefined,
+    line: d.line ? { label: lineName(d.line.label) } : undefined,
     audit: (d.audit || []).map((x) => ({ at: x.t, who: x.w, act: x.a, to: x.to })),
     bot: botState(d.off, d.stop, d.paused, d.now),
     bookings: d.bookings || [],
@@ -216,7 +219,7 @@ const leadChannel = (source: string) => (/WhatsApp API$/.test(source) ? "wa" : /
 
 const fmtGaState: Record<string, string> = {
   authorized: "подключён",
-  notAuthorized: "не привязан — отсканируйте QR-код",
+  notAuthorized: "не привязан: отсканируйте QR-код",
   blocked: "заблокирован WhatsApp",
   starting: "запускается",
   yellowCard: "ограничен WhatsApp",
@@ -235,9 +238,11 @@ export function createLiveSource(): DataSource {
   return {
     mode: "live",
     async session(): Promise<Session> {
-      const me = await call<{ owner: boolean; c: string }>("/api/inbox/me");
+      const me = await call<{ owner: boolean; c: string; stage?: string; brand?: string | null; brands?: Record<string, string>; site?: Record<string, "off" | "dry" | "live"> }>("/api/inbox/me");
       const q = new URLSearchParams(location.search).get("c");
-      return { role: me.owner ? "owner" : "staff", workspaceId: me.owner ? q || null : me.c || q || null };
+      const ws = me.owner ? q || null : me.c || q || null;
+      const brands = { ...(me.brands || {}), ...(me.brand && ws ? { [ws]: me.brand } : {}) };
+      return { role: me.owner ? "owner" : "staff", workspaceId: ws, stage: me.stage === "preview" ? "preview" : "production", brands, site: me.site || {} };
     },
     async workspaces(): Promise<WorkspaceOption[]> {
       const d = await call<{ clients: StudioClientRaw[] }>("/api/studio/list");
@@ -253,7 +258,7 @@ export function createLiveSource(): DataSource {
       const isRead = marks.forWorkspace(ws);
       const conversations = rows.map((r) => summary(r, wa.client.off, now, isRead)).sort((a, b) => b.lastAt - a.lastAt);
       const kinds = new Set(rows.map((r) => r.ch));
-      const channels: Channel[] = (["wa", "ga", "web"] as const).filter((c) => kinds.has(c) || (c !== "web" && wa.lines?.[c])).map((c) => ({ id: c, kind: channelKind(c), name: wa.lines?.[c]?.label || "", ...(wa.lines?.[c]?.phone ? { phone: wa.lines[c].phone } : {}) }));
+      const channels: Channel[] = (["wa", "ga", "web"] as const).filter((c) => kinds.has(c) || (c !== "web" && wa.lines?.[c])).map((c) => ({ id: c, kind: channelKind(c), name: lineName(wa.lines?.[c]?.label || ""), ...(wa.lines?.[c]?.phone ? { phone: wa.lines[c].phone } : {}) }));
       const sc = studio.get(ws);
       const workspace: Workspace = {
         id: wa.client.id,

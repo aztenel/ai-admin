@@ -16,14 +16,21 @@
       // Тема до первой отрисовки, иначе тёмная тема мигает белым. Ключ и значения те же, что у прежнего пульта (pult/app.js):
       // на одном сайте выбор переносится между ними. auto — как в системе.
       (function () {
-        var p = "auto";
-        try { p = localStorage.getItem("pult.theme") || "auto"; } catch (e) {}
+        var p = "auto", b = null, bg = null;
+        try {
+          p = localStorage.getItem("pult.theme") || "auto";
+          b = localStorage.getItem("pult.brand");
+          if (b !== "winchester" && b !== "neutral") b = localStorage.getItem("pult.brand.co");
+          bg = localStorage.getItem("pult.chatbg");
+        } catch (e) {}
         var dark = p === "dark" || (p !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
         var r = document.documentElement;
         r.setAttribute("data-theme", dark ? "dark" : "light");
+        if (b === "winchester") r.setAttribute("data-brand", "winchester");
+        r.setAttribute("data-chatbg", bg === "pattern" || bg === "leather" ? bg : "plain");
         r.style.colorScheme = dark ? "dark" : "light";
         var m = document.querySelector('meta[name="theme-color"]');
-        if (m) m.setAttribute("content", dark ? "#16191e" : "#ffffff");
+        if (m) m.setAttribute("content", b === "winchester" ? (dark ? "#210f0f" : "#fbf7f0") : (dark ? "#16191e" : "#ffffff"));
       })();
     </script>
   </head>

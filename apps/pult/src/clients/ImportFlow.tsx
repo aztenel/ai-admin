@@ -34,7 +34,7 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
   const check = async () => {
     setErr("");
     if (!file && !text.trim()) return setErr("Выберите файл или вставьте список.");
-    if (file && file.size > MAX_BYTES) return setErr("Файл больше 5 МБ — разделите его на части.");
+    if (file && file.size > MAX_BYTES) return setErr("Файл больше 5 МБ. Разделите его на части.");
     setBusy("check");
     try {
       setPv(await store.source!.importPreview(ws, file ? { file } : { text }));
@@ -91,12 +91,12 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
           <ul aria-label="Согласия из файла" className="mb-6 space-y-2 px-1 text-ui text-fg-2 pointer-coarse:text-base">
             {done.consentsUnconfirmed > 0 && (
               <li>
-                Согласий «да» из файла: <b className="tnum text-fg">{done.consentsUnconfirmed}</b> — не подтверждены. Реклама им не уйдёт, пока не подтвердите согласие в карточке клиента.
+                Согласий «да» из файла: <b className="tnum text-fg">{done.consentsUnconfirmed}</b>, они не подтверждены. Реклама им не уйдёт, пока вы не подтвердите согласие в карточке клиента.
               </li>
             )}
             {done.consentsSkipped > 0 && (
               <li>
-                Пропущено: <b className="tnum text-fg">{done.consentsSkipped}</b> — клиент сам отказывался от рассылок, «да» из файла этого не отменяет.
+                Пропущено: <b className="tnum text-fg">{done.consentsSkipped}</b>: клиент сам отказывался от рассылок, отметка «да» в файле этого не отменяет.
               </li>
             )}
           </ul>
@@ -113,8 +113,8 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
         <div className="scroll-area min-h-0 flex-1">
           <div className="px-4 pb-6 pt-2 md:px-6 md:pt-5">
             <p className="mb-5 px-4 text-ui text-fg-2 pointer-coarse:text-base">
-              Нужна колонка с номером телефона; имя и согласие — по желанию. Первая строка может быть заголовком («Телефон», «Имя», «Согласие»). Сначала бот покажет,
-              что изменится, — в базе ничего не меняется, пока вы не нажмёте «Загрузить».
+              Нужна колонка с номером телефона, имя и согласие по желанию. Первая строка может быть заголовком («Телефон», «Имя», «Согласие»). Сначала покажем,
+              что изменится. В базе ничего не меняется, пока вы не нажмёте «Загрузить».
             </p>
             <InsetGroup title="Файл">
               <div className="py-3">
@@ -197,14 +197,14 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
           {consentRows && (
             <InsetGroup title="Согласие из файла" note="Например: «анкета в салоне, 2025» или «согласие при записи на сайте».">
               <TextField label="Основание согласия" maxLength={120} value={basis} onChange={(e) => setBasis(e.target.value)} />
-              {!basis.trim() && <Notice>Без основания согласия из файла не ставятся — клиенты загрузятся без согласия на рекламу.</Notice>}
+              {!basis.trim() && <Notice>Без основания согласия из файла не ставятся, клиенты загрузятся без согласия на рекламу.</Notice>}
               <Notice tone="muted">
                 {pv.consentNote ||
                   "Даже с основанием «да» из файла будет не подтверждено: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится."}
               </Notice>
             </InsetGroup>
           )}
-          {problems > 0 && <Notice tone="muted">Дубли и неверные номера не загружаются — исправьте их в файле, если нужно.</Notice>}
+          {problems > 0 && <Notice tone="muted">Дубли и неверные номера не загружаются. Исправьте их в файле, если нужно.</Notice>}
           <InsetGroup title={pv.rows.length < pv.total ? `Строки (первые ${pv.rows.length})` : "Строки"}>
             <ul aria-label="Строки файла">
               {pv.rows.map((r) => (

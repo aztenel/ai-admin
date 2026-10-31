@@ -101,16 +101,16 @@ export function Messages({ convKey, detail, outbox, now, onRetry, onDrop }: { co
   // Теперь наши автоматические сообщения видны в самой ленте с подписью «Напоминание» / «Рассылка» (ТЗ v2.0 §2.1)
   const list = items(detail.messages, undefined);
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="chat-bg relative min-h-0 flex-1">
       <div ref={box} onScroll={onScroll} className="scroll-area h-full" role="log" aria-label="Переписка" aria-live="polite">
         <div className="mx-auto flex max-w-[50rem] flex-col px-2.5 pb-4 pt-1 md:px-6">
-          {list.length === 0 && outbox.length === 0 && <p className="py-16 text-center text-sm text-fg-3">Сообщений пока нет. Бот мог забыть эту переписку по просьбе администратора.</p>}
+          {list.length === 0 && outbox.length === 0 && <p className="py-16 text-center text-sm text-fg-3">Сообщений пока нет.</p>}
           {list.map((it, i) =>
             it.kind === "day" ? (
               <DayMark key={`d${it.at}`} at={it.at} now={now} />
             ) : it.kind === "campaign" ? (
               <SystemNote key={`c${i}`} icon={Megaphone}>
-                Рассылка «{it.name || "без названия"}», {timeHM(it.at)}. Клиент мог ответить на неё: «{it.text.length > 140 ? it.text.slice(0, 140) + "…" : it.text}»
+                Рассылка {it.name ? `«${it.name}»` : ""} в {timeHM(it.at)}. Клиент мог ответить на неё.
               </SystemNote>
             ) : (
               <Bubble key={it.m.id} m={it.m} first={it.first} last={it.last} label={it.label} />

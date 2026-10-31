@@ -35,10 +35,10 @@ export function TimesSheet({ open, onOpenChange }: { open: boolean; onOpenChange
     setBusy(false);
   };
   const name = (id: string) => cat?.staff?.find((m) => m.id === id)?.name || "";
-  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("Скопировано — вставьте в ответ"), () => toast(t));
+  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => toast("Время скопировано"), () => toast(t));
   const field = "h-11 w-full rounded-lg border border-line bg-surface px-3 text-md outline-none focus:border-accent md:h-10 md:text-ui";
   return (
-    <Sheet open={open} onOpenChange={onOpenChange} title="Свободное время" description="Из Altegio, только посмотреть. Записать — в Altegio.">
+    <Sheet open={open} onOpenChange={onOpenChange} title="Свободное время" description="Свободное время из Altegio. Записать клиента можно в Altegio.">
       <div className="space-y-3 px-4 pb-4">
         {!cat ? (
           <p className="text-ui text-fg-3">Загружаю мастеров и услуги…</p>
@@ -90,11 +90,11 @@ export function TimesSheet({ open, onOpenChange }: { open: boolean; onOpenChange
                   ))}
                 </div>
                 <p className="mt-2 flex items-center gap-1 text-xs text-fg-3">
-                  <Copy aria-hidden className="size-3.5" /> Нажмите на время — скопируется для ответа клиенту
+                  <Copy aria-hidden className="size-3.5" /> Нажмите на время, чтобы скопировать его в ответ
                 </p>
               </>
             ) : (
-              <p className="text-ui text-fg-2">Свободного времени в этот день нет{res.next ? ` — ближайший день: ${res.next.split("-").reverse().join(".")}` : ""}.</p>
+              <p className="text-ui text-fg-2">В этот день свободного времени нет.{res.next ? ` Ближайший свободный день: ${res.next.split("-").reverse().join(".")}.` : ""}</p>
             )}
           </div>
         )}

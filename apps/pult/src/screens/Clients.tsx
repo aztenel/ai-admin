@@ -4,7 +4,7 @@
 // в карточке одного клиента. Карточка — своя запись истории (#/clients/<id>): жест «назад» закрывает её. «Добавить клиента» —
 // лист; импорт и панель синхронизации — слой во весь экран (телефон) или панель справа (компьютер).
 // База не подключена (нет D1 — боевой сайт до решения владельца) — спокойный экран с причиной, без запросов, которые ответят 503.
-import { Activity, CalendarDays, CircleAlert, CircleCheck, Contact, Database, RefreshCw, Search, Upload, UserPlus, X } from "lucide-react";
+import { Activity, CalendarDays, CircleAlert, CircleCheck, Contact, Database, Ellipsis, RefreshCw, Search, Upload, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Layer, useBackLayer, whenText, nf } from "@/campaigns/base/shared";
 import { useLoad } from "@/campaigns/useLoad";
@@ -13,6 +13,7 @@ import { ClientCard } from "@/clients/ClientCard";
 import { agoText, dayText, errMsg, useFetch } from "@/clients/common";
 import { ImportFlow } from "@/clients/ImportFlow";
 import { SyncPanel } from "@/clients/SyncPanel";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/overlay";
 import { Avatar, Button, EmptyState, IconButton, Skeleton, Spinner } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { back, navigate, type Route } from "@/lib/router";
@@ -142,7 +143,7 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
   if (!d.ready)
     return (
       <Page title="Клиенты" sub={name}>
-        <EmptyState icon={Database} title="База клиентов ещё не подключена" text={d.why || "Нужна база D1 — её подключает владелец сервиса."} />
+        <EmptyState icon={Database} title="База клиентов ещё не подключена" text={d.why || "Клиенты появятся здесь, когда база будет подключена."} />
       </Page>
     );
 
@@ -160,24 +161,30 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
       actions={
         <>
           <IconButton icon={RefreshCw} label="Обновить" onClick={refresh} className={cn((st.refreshing || listLoading) && "[&>svg]:animate-spin")} />
-          <IconButton icon={Upload} label="Импорт из файла" onClick={() => setLayer("import")} className="md:hidden" />
-          {owner && <IconButton icon={Activity} label="Синхронизация и проверки" onClick={() => setLayer("sync")} className="md:hidden" />}
+          {/* ТЗ v3.0 §2.1: одно главное действие наверху; импорт и проверки — в меню «⋯» */}
+          <Menu>
+            <MenuTrigger asChild>
+              <IconButton icon={Ellipsis} label="Ещё действия" />
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem onSelect={() => setLayer("import")}>
+                <Upload aria-hidden className="size-4" /> Импорт из файла
+              </MenuItem>
+              {owner && (
+                <MenuItem onSelect={() => navigate({ name: "settings", section: "diagnostics" })}>
+                  <Activity aria-hidden className="size-4" /> Проверка базы и Altegio
+                </MenuItem>
+              )}
+            </MenuContent>
+          </Menu>
           <IconButton icon={UserPlus} label="Добавить клиента" onClick={() => setAdding(true)} className="md:hidden" />
-          {owner && (
-            <Button variant="outline" icon={Activity} className="max-md:hidden" onClick={() => setLayer("sync")}>
-              Синхронизация
-            </Button>
-          )}
-          <Button variant="outline" icon={Upload} className="max-md:hidden" onClick={() => setLayer("import")}>
-            Импорт
-          </Button>
           <Button variant="primary" icon={UserPlus} className="max-md:hidden" onClick={() => setAdding(true)}>
             Добавить
           </Button>
         </>
       }
     >
-      <SyncLine d={d} now={now} owner={owner} onOpen={() => setLayer("sync")} />
+      <SyncLine d={d} now={now} owner={owner} />
       {st.error && <p role="alert" className="mb-3 px-1 text-sm text-critical">Не обновилось: {st.error}</p>}
 
       <label className="relative mb-3 block">
@@ -232,17 +239,15 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
         <ListSkeleton />
       ) : empty ? (
         filtered ? (
-          <EmptyState icon={Search} title="Никого не нашли" text="Проверьте имя или номер, или выберите сегмент «Все»." />
+          <EmptyState icon={Search} title="Никого не нашли" text="Проверьте имя или номер или выберите «Все»." />
         ) : (
           <EmptyState
             icon={Contact}
             title="Клиентов пока нет"
             text={
-              d.sync.dryOnly && owner
-                ? "Это черновик: настоящий Altegio здесь не записывается. Для проверки экрана — «Тестовые клиенты» в «Синхронизации», или добавьте клиента вручную."
-                : d.sync.available
-                  ? "База заполнится после синхронизации с Altegio. Можно добавить клиента вручную или загрузить файл."
-                  : "Добавьте клиента вручную или загрузите список из файла (CSV или Excel)."
+              d.sync.available
+                ? "Здесь пока нет клиентов. После подключения Altegio они появятся в списке. Можно добавить клиента вручную или загрузить файл."
+                : "Добавьте клиента вручную или загрузите список из файла (CSV или Excel)."
             }
             action={
               <div className="flex flex-wrap justify-center gap-2">
@@ -315,46 +320,24 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
   );
 }
 
-/** Строка состояния синхронизации: владельцу — кнопка в панель, сотруднику — просто текст. */
-function SyncLine({ d, now, owner, onOpen }: { d: ContactsStatus; now: number; owner: boolean; onOpen: () => void }) {
+/** Строка о базе (ТЗ v3.0 §2.2): когда обновлялась и ошибка, если есть. Подробности и проверки — Настройки → Диагностика. */
+function SyncLine({ d, now, owner }: { d: ContactsStatus; now: number; owner: boolean }) {
   const s = d.sync;
-  const bad = d.checks.filter((c) => c.level === "bad" && c.count > 0).length;
-  const unknown = d.checks.filter((c) => c.level === "unknown").length;
-  let tone: "ok" | "critical" | "muted" = "muted";
-  let text: string;
-  if (!s.available) text = s.why || "Altegio не подключён — база из импорта и ручного добавления.";
-  else if (s.lastError && (!s.lastOkAt || (s.lastErrorAt || 0) > s.lastOkAt)) {
-    tone = "critical";
-    text = `Altegio: ошибка${s.lastErrorAt ? ` (${whenText(s.lastErrorAt, now)})` : ""} — ${s.lastError}`;
-  } else if (s.running) text = `Altegio: идёт загрузка${s.initial.done ? "" : ` — ${s.initial.pct}%`}…`;
-  else if (!s.initial.done && !s.dryOnly) text = `Altegio: первичная загрузка — ${s.initial.pct}%`;
-  else if (s.lastOkAt) {
-    tone = "ok";
-    text = `Altegio: обновлено ${ago(s.lastOkAt, now)}`;
-  } else text = "Altegio: ещё не синхронизировали";
-  const extra = [s.dryOnly ? "черновик — настоящий Altegio только проверкой без записи" : "", bad ? `проверки: замечаний ${bad}` : "", unknown ? `ещё не проверено: ${unknown}` : ""]
-    .filter(Boolean)
-    .join(" · ");
-  const Icon = tone === "critical" ? CircleAlert : tone === "ok" ? CircleCheck : Database;
-  const body = (
-    <>
-      <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", tone === "critical" ? "text-critical" : tone === "ok" ? "text-positive" : "text-fg-3")} strokeWidth={2} />
-      <span className="min-w-0 flex-1">
-        <span className={cn("block", tone === "critical" ? "text-critical" : "text-fg")}>{text}</span>
-        {extra && <span className="mt-0.5 block text-sm text-fg-3">{extra}</span>}
+  const failed = !!s.lastError && (!s.lastOkAt || (s.lastErrorAt || 0) > s.lastOkAt);
+  if (!s.available || (!failed && !s.lastOkAt && !s.running)) return null;
+  const text = failed ? "Базу из Altegio не удалось обновить." : s.running ? "Обновляем базу из Altegio…" : `Обновлено ${ago(s.lastOkAt!, now)}`;
+  return (
+    <p role={failed ? "alert" : "status"} className={cn("mb-3 flex items-center gap-2 px-1 text-sm", failed ? "text-critical" : "text-fg-3")}>
+      {failed ? <CircleAlert aria-hidden className="size-4 shrink-0" strokeWidth={2} /> : <CircleCheck aria-hidden className="size-4 shrink-0 text-positive" strokeWidth={2} />}
+      <span className="min-w-0">
+        {text}
+        {failed && owner && (
+          <button type="button" onClick={() => navigate({ name: "settings", section: "diagnostics" })} className="ml-1.5 font-medium text-accent-ink underline-offset-2 hover:underline">
+            Подробнее
+          </button>
+        )}
       </span>
-    </>
-  );
-  const cls = "mb-3 flex w-full items-start gap-2.5 rounded-[0.875rem] bg-surface px-4 py-3 text-left text-ui pointer-coarse:text-base";
-  return owner ? (
-    <button type="button" onClick={onOpen} aria-label={`${text}. Открыть синхронизацию и проверки`} className={cn(cls, "hover:bg-surface-2/60 active:bg-surface-2")}>
-      {body}
-      <span className="mt-0.5 shrink-0 text-sm text-accent-ink">Подробнее</span>
-    </button>
-  ) : (
-    <div role="status" className={cls}>
-      {body}
-    </div>
+    </p>
   );
 }
 const ago = (t: number, now: number) => {

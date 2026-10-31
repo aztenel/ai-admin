@@ -62,7 +62,7 @@ export function ConversationPane({
     toast(r ? r.error : ok, r ? "critical" : "neutral");
   };
   const take = () => (me ? act("take", "Чат у вас") : setAssignOpen(true));
-  const close = () => act("resolve", "Готово — чат в разделе «Готово»");
+  const close = () => act("resolve", "Чат закрыт");
   const send = async (text: string, retryId?: string) => {
     const r = await store.send(convKey, text, retryId);
     if (r?.ok && r.warning) toast(r.warning, "critical");
@@ -125,7 +125,7 @@ export function ConversationPane({
                   <CalendarClock aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                   Свободное время…
                 </MenuItem>
-                <MenuItem onSelect={() => { const t = prompt("Что нужно сделать? Задача будет в «Нужен ответ», пока её не закроют «Готово»."); if (t && t.trim()) void act("task", "Задача добавлена", { text: t.trim() } as ChatActionExtra); }}>
+                <MenuItem onSelect={() => { const t = prompt("Что нужно сделать? Задача останется в списке «Нужен ответ», пока чат не закроют."); if (t && t.trim()) void act("task", "Задача добавлена", { text: t.trim() } as ChatActionExtra); }}>
                   <ListTodo aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
                   Создать задачу…
                 </MenuItem>
@@ -137,7 +137,7 @@ export function ConversationPane({
                 {bot.state === "active" && (
                   <MenuItem onSelect={() => act("pause", "Чат у вас: бот молчит 12 часов")}>
                     <Hand aria-hidden className="size-4 text-fg-3" strokeWidth={1.75} />
-                    Взять чат — бот замолчит на 12 часов
+                    Взять чат: бот замолчит на 12 часов
                   </MenuItem>
                 )}
                 {bot.state === "paused" && (
@@ -216,7 +216,7 @@ export function ConversationPane({
         open={confirmForget}
         onOpenChange={setConfirmForget}
         title="Очистить память бота?"
-        text="Бот забудет эту переписку, записи и просьбы клиента — например, если всё уже сделано в CRM. Окно WhatsApp и отказ от рассылок останутся."
+        text="Бот забудет эту переписку, записи и просьбы клиента. Например, если всё уже сделано в Altegio. Отказ клиента от рассылок останется."
         yes="Очистить"
         danger
         onYes={() => act("forget", "Память бота в этом чате очищена")}

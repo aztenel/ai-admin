@@ -131,7 +131,7 @@ export function ContactPanel({ convKey, ws, detail, summary, all, onOpenOther, o
         open={forget}
         onOpenChange={setForget}
         title="Очистить память бота?"
-        text="Бот забудет эту переписку, записи и просьбы клиента — например, если всё уже сделано в CRM. Окно WhatsApp и отказ от рассылок останутся."
+        text="Бот забудет эту переписку, записи и просьбы клиента. Например, если всё уже сделано в Altegio. Отказ клиента от рассылок останется."
         yes="Очистить"
         danger
         onYes={async () => {
@@ -222,7 +222,7 @@ function NearestBookings({ convKey }: { convKey: string }) {
   }, [convKey]);
   if (!st.loading && st.available === false) return null;
   return (
-    <InsetGroup title="Записи в Altegio" note="Из журнала Altegio — это правда о записях. Изменить запись — в Altegio.">
+    <InsetGroup title="Записи в Altegio" note="Записи из Altegio. Изменить запись можно в Altegio.">
       {st.loading ? (
         <p className="py-3 text-ui text-fg-3">Смотрю журнал…</p>
       ) : st.error ? (
@@ -248,8 +248,8 @@ function NearestBookings({ convKey }: { convKey: string }) {
                 type="button"
                 className="mt-1 text-sm font-medium text-accent"
                 onClick={() => {
-                  const t = `Вы записаны: ${dayShort(r.date)}, ${r.time}, мастер ${r.staff || "—"}${r.services ? `, ${r.services}` : ""}. Ждём вас!`;
-                  void navigator.clipboard?.writeText(t).then(() => toast("Подтверждение скопировано — вставьте в ответ"), () => toast(t));
+                  const t = `Вы записаны: ${dayShort(r.date)}, ${r.time}${r.staff ? `, мастер ${r.staff}` : ""}${r.services ? `, ${r.services}` : ""}. Ждём вас!`;
+                  void navigator.clipboard?.writeText(t).then(() => toast("Подтверждение скопировано"), () => toast(t));
                 }}
               >
                 Скопировать подтверждение

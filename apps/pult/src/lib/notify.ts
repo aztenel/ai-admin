@@ -48,7 +48,7 @@ export function notifyWaiting(list: ConversationSummary[], openKey: string | nul
   if (!fresh.length) return;
   const who = (c: ConversationSummary) => c.contact.name || c.contact.phone || "Гость сайта";
   const title = fresh.length > 1 ? `Ждут ответа: ${fresh.length}` : "Клиент ждёт ответа";
-  const body = fresh.length > 1 ? fresh.slice(0, 4).map(who).join(", ") : `${who(fresh[0])} — ${fresh[0].attention!.label}`;
+  const body = fresh.length > 1 ? fresh.slice(0, 4).map(who).join(", ") : `${who(fresh[0])}: ${fresh[0].attention!.label}`;
   const t = tauri();
   if (t?.notification) {
     try {

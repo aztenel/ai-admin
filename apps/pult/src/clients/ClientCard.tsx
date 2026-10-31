@@ -69,7 +69,7 @@ export function ClientCard({ ws, id, owner, dup, onTitle, onChanged }: Props) {
           )}
         </div>
         {dup && (
-          <Notice role="status">Этот номер уже есть в базе — открыта его карточка, второй клиент не создан.</Notice>
+          <Notice role="status">Этот номер уже есть в базе. Открыли его карточку, второй клиент не создан.</Notice>
         )}
         {card.error && <p role="alert" className="mb-3 text-sm text-critical">Не обновилось: {card.error}</p>}
 
@@ -174,7 +174,7 @@ function Market({ d }: { d: ContactCard }) {
       <div className="min-w-0">
         <p className="font-medium">{ok ? "Рекламу писать можно" : "Рекламу писать нельзя"}</p>
         {!ok && d.canMarket.reasons.length > 0 && <p className="mt-0.5 text-fg-2">{d.canMarket.reasons.join(" · ")}</p>}
-        {ok && <p className="mt-0.5 text-sm">Есть согласие, запретов нет. Сервисные напоминания — по своим правилам.</p>}
+        {ok && <p className="mt-0.5 text-sm">Есть согласие, запретов нет.</p>}
       </div>
     </div>
   );
@@ -228,7 +228,7 @@ function consentLine(r: ConsentRecord | null, now: number) {
     <span>
       <span className={cn("font-medium", r.state === "granted" ? (r.confirmed ? "text-positive" : "text-fg") : r.state === "denied" ? "text-critical" : "text-fg")}>
         {t.head}
-        {t.tail && <span className="font-normal text-fg-2"> — {t.tail}</span>}
+        {t.tail && <span className="font-normal text-fg-2">. {t.tail}</span>}
       </span>
       <span className="block text-sm text-fg-3">{[r.basis, r.actor, `записано ${dateTime(r.at, now)}`].filter(Boolean).join(" · ")}</span>
     </span>
@@ -299,7 +299,7 @@ function ConsentBlock({
     if (state === "granted") {
       if (!evidence) return setErr({ field: "evidence", text: "Выберите, чем подтверждено согласие." });
       if (evidence === "chat" && !rules.chatAvailable) return setErr({ field: "evidence", text: "В переписке нет сообщения клиента после отказа." });
-      if (evidence === "oral" && !rules.oralAllowed) return setErr({ field: "evidence", text: "Клиент сам отказывался — устного согласия мало." });
+      if (evidence === "oral" && !rules.oralAllowed) return setErr({ field: "evidence", text: "Клиент сам отказывался, устного согласия мало." });
       if (evidence === "document") {
         if (!ref.trim()) return setErr({ field: "evidenceRef", text: "Укажите номер анкеты или где хранится документ." });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(given)) return setErr({ field: "givenAt", text: "Укажите дату, когда клиент подписал согласие." });
@@ -356,14 +356,14 @@ function ConsentBlock({
                 onSelect={() => (setEvidence("chat"), setErr(null))}
                 disabled={!rules.chatAvailable}
                 title="Клиент сам написал в WhatsApp"
-                sub={rules.chatAvailable ? (rules.chatText ? `клиент написал: «${rules.chatText}»` : "сервер найдёт его сообщение") : "в переписке нет сообщения клиента с согласием («да», «присылайте»)"}
+                sub={rules.chatAvailable ? (rules.chatText ? `клиент написал: «${rules.chatText}»` : "найдём его сообщение в переписке") : "в переписке нет сообщения клиента с согласием («да», «присылайте»)"}
               />
               <RadioRow
                 name="evidence"
                 checked={evidence === "document"}
                 onSelect={() => (setEvidence("document"), setErr(null), given || setGiven(astanaToday(now)))}
                 title="Письменное согласие"
-                sub="анкета, договор — номер и дата"
+                sub="анкета или договор: номер и дата"
               />
               <RadioRow
                 name="evidence"
@@ -371,7 +371,7 @@ function ConsentBlock({
                 onSelect={() => (setEvidence("oral"), setErr(null))}
                 disabled={!rules.oralAllowed}
                 title="Устно в салоне"
-                sub={rules.oralAllowed ? "администратор записывает со слов клиента" : "клиент сам отказывался — устного согласия мало"}
+                sub={rules.oralAllowed ? "администратор записывает со слов клиента" : "клиент сам отказывался, устного согласия мало"}
               />
               {fieldErr("evidence") && (
                 <p role="alert" className="flex gap-1.5 pt-1 text-sm text-critical">
@@ -436,7 +436,7 @@ function ConsentBlock({
                 <span className="font-medium">
                   {PURPOSE[h.purpose]}: {t.head.toLowerCase()}
                 </span>
-                {t.tail && <span className="text-fg-2"> — {t.tail}</span>}
+                {t.tail && <span className="text-fg-2">. {t.tail}</span>}
                 <span className="block text-sm text-fg-3">{[h.basis, sourceText(h.source), h.actor, dateTime(h.at, now)].filter(Boolean).join(" · ")}</span>
               </li>
             );
@@ -514,7 +514,7 @@ function RestrictionsBlock({
   return (
     <InsetGroup
       title="Запреты"
-      note="«Стоп» от клиента ставит бот; снять его можно только после нового подтверждённого согласия самого клиента. Остальные запреты снимает владелец — с причиной, она останется в истории."
+      note="«Стоп» от клиента ставит бот; снять его можно только после нового подтверждённого согласия самого клиента. Остальные запреты снимает владелец с указанием причины, она останется в истории."
     >
       {active.length === 0 && !adding && <p className="flex items-center gap-2 py-3 text-ui text-fg-2 pointer-coarse:text-base"><CircleCheck aria-hidden className="size-4 text-positive" strokeWidth={2} />Действующих запретов нет.</p>}
       {active.map((r) => (
@@ -559,13 +559,13 @@ function RestrictionsBlock({
                 Снять запрет
               </Button>
               {!r.canLift && (
-                <p className="mt-1.5 text-sm text-fg-2">{r.liftHint || "Клиент сам отказался — снять можно только после его нового подтверждённого согласия."}</p>
+                <p className="mt-1.5 text-sm text-fg-2">{r.liftHint || "Клиент сам отказался. Снять запрет можно только после его нового подтверждённого согласия."}</p>
               )}
             </div>
           )}
           {!r.review && r.byClient && !r.canLift && pend?.rid !== r.id && (
             <div className={cn("pl-6.5", owner ? "mt-2" : "mt-2.5")}>
-              {!owner && <p className="mb-1.5 text-sm text-fg-2">Клиент сам отказался. Когда он снова согласится — запишите его согласие, потом владелец снимет запрет.</p>}
+              {!owner && <p className="mb-1.5 text-sm text-fg-2">Клиент сам отказался. Когда он снова согласится, запишите согласие, затем владелец снимет запрет.</p>}
               <Button size="sm" variant="tinted" icon={ShieldCheck} onClick={onNewConsent}>
                 Записать новое согласие
               </Button>
@@ -636,7 +636,7 @@ function RestrictionsBlock({
         <ul aria-label="Снятые запреты">
           {lifted.map((r) => (
             <li key={r.id} className="py-2.5 text-ui text-fg-2 pointer-coarse:text-base">
-              <span className="font-medium text-fg">{KIND_LABEL[r.kind]}</span> — {r.reason}
+              <span className="font-medium text-fg">{KIND_LABEL[r.kind]}</span>: {r.reason}
               <span className="block text-sm text-fg-3">
                 {[sourceText(r.source), r.actor, dateTime(r.at, now)].filter(Boolean).join(" · ")}
               </span>

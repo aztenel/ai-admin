@@ -45,7 +45,7 @@ export function PushSettings({ ws }: { ws: string }) {
 
   if (st.support === "ios-tab")
     return (
-      <Group note="Нужен iOS 16.4 или новее. Во вкладке Safari уведомления на закрытый телефон не приходят — так устроен iPhone.">
+      <Group note="Нужен iOS 16.4 или новее. Во вкладке Safari уведомления не приходят, так устроен iPhone.">
         <div className="py-3 text-sm text-fg-2">
           <p className="mb-2 text-ui font-medium text-fg pointer-coarse:text-base">На iPhone уведомления работают, только если пульт добавлен на экран «Домой»</p>
           <ol className="list-decimal space-y-1 pl-5">
@@ -65,7 +65,7 @@ export function PushSettings({ ws }: { ws: string }) {
   if (st.support === "unsupported")
     return (
       <Group>
-        <p className="py-3 text-sm text-fg-2">Этот браузер не умеет уведомления на закрытый пульт. Работают Chrome и Edge на компьютере и Android, Safari на iPhone — с экрана «Домой».</p>
+        <p className="py-3 text-sm text-fg-2">Этот браузер не умеет уведомления на закрытый пульт. Работают Chrome и Edge на компьютере и Android, Safari на iPhone с экрана «Домой».</p>
       </Group>
     );
   if (st.permission === "denied")
@@ -110,7 +110,7 @@ export function PushSettings({ ws }: { ws: string }) {
   if (!st.on)
     return (
       <>
-        <Group note="Уведомление приходит, даже когда пульт закрыт. Доставляют Apple и Google — обычно за секунды, но время доставки они не обещают.">
+        <Group note="Уведомление приходит, даже когда пульт закрыт. Доставляют Apple и Google, обычно за секунды, но время доставки они не обещают.">
           <div className="space-y-1 py-2">
             <TextField label="Ваше имя в пульте" hint="По нему пульт понимает, что чат назначен вам, и присылает уведомление именно вам." value={name} maxLength={32} autoComplete="name" onChange={(e) => setName(e.target.value)} />
             {st.error && <p className="text-sm text-critical">{st.error}</p>}
@@ -158,7 +158,7 @@ export function PushSettings({ ws }: { ws: string }) {
           </div>
         )}
       </Group>
-      <Group title="Экран блокировки" note={prefs.text ? "Имя и текст увидит любой, кто возьмёт телефон в руки." : "Сейчас видно только «Новое сообщение · второй номер» — без имени и текста."}>
+      <Group title="Экран блокировки" note={prefs.text ? "Имя и текст увидит любой, кто возьмёт телефон в руки." : "Сейчас видно только «Новое сообщение» и номер, без имени и текста."}>
         <Checkbox checked={prefs.text} onChange={(v) => save({ ...prefs, text: v })}>
           Показывать имя клиента и текст сообщения
         </Checkbox>
@@ -175,7 +175,7 @@ export function PushSettings({ ws }: { ws: string }) {
                 setBusy("test");
                 try {
                   await pushTest(ws);
-                  toast("Проверка отправлена — уведомление придёт через несколько секунд");
+                  toast("Проверка отправлена. Уведомление придёт через несколько секунд");
                 } catch (e) {
                   toast(errText(e), "critical");
                 } finally {
@@ -208,7 +208,7 @@ export function PushSettings({ ws }: { ws: string }) {
           </div>
         </div>
       </Group>
-      <p className="-mt-3 mb-4 px-4 text-sm text-fg-3">Уведомление приходит, даже когда пульт закрыт. Доставляют Apple и Google — обычно за секунды, но время доставки они не обещают.</p>
+      <p className="-mt-3 mb-4 px-4 text-sm text-fg-3">Уведомление приходит, даже когда пульт закрыт. Доставляют Apple и Google, обычно за секунды, но время доставки они не обещают.</p>
     </>
   );
 }

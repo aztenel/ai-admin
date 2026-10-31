@@ -39,7 +39,7 @@ export function AddClient({ ws, open, onOpenChange, onDone }: { ws: string; open
       open={open}
       onOpenChange={onOpenChange}
       title="Новый клиент"
-      description="Номер — обязательно, имя — по желанию. Согласие на рекламу и запреты — в карточке клиента."
+      description="Номер обязательно, имя по желанию. Согласие на рекламу и запреты задаются в карточке клиента."
       footer={
         <Button variant="primary" size="lg" className="mb-1 w-full" busy={busy} onClick={() => void submit()}>
           Добавить

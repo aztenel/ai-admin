@@ -20,7 +20,7 @@ async function why(url: string) {
     const j = (await r.json().catch(() => null)) as { error?: string } | null;
     return j?.error || "Файл недоступен.";
   } catch {
-    return "Нет связи — файл не загрузился.";
+    return "Файл не загрузился. Проверьте интернет.";
   }
 }
 
@@ -29,7 +29,7 @@ export function MediaView({ media, onDark }: { media: Media; onDark: boolean }) 
   if (media.kind === "image" || media.kind === "sticker") return <ImageView url={media.url} />;
   if (media.kind === "audio") return <VoicePlayer url={media.url} onDark={onDark} />;
   if (media.kind === "video") return <VideoView url={media.url} />;
-  if (media.kind === "location" || media.kind === "contact") return <Unavailable kind={media.kind} text={media.kind === "location" ? "Геолокация — откройте в WhatsApp" : "Контакт — откройте в WhatsApp"} />;
+  if (media.kind === "location" || media.kind === "contact") return <Unavailable kind={media.kind} text={media.kind === "location" ? "Геолокация. Откройте в WhatsApp" : "Контакт. Откройте в WhatsApp"} />;
   return <DocView media={media} />;
 }
 
@@ -82,7 +82,7 @@ function VideoView({ url }: { url: string }) {
   const [err, setErr] = useState("");
   if (err) return <Unavailable kind="video" text={err} />;
   return (
-    <video controls playsInline preload="metadata" src={url} onError={() => why(url).then((t) => setErr(t || "Видео не воспроизводится в браузере — скачайте файл."))} className="-mx-1.5 -mt-0.5 mb-1 block max-h-80 w-full min-w-48 rounded-xl bg-black" />
+    <video controls playsInline preload="metadata" src={url} onError={() => why(url).then((t) => setErr(t || "Видео не открывается в браузере. Скачайте файл."))} className="-mx-1.5 -mt-0.5 mb-1 block max-h-80 w-full min-w-48 rounded-xl bg-black" />
   );
 }
 
