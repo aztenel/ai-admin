@@ -1,0 +1,25 @@
+name: botflow-site
+
+on:
+  push:
+    paths: ["apps/botflow-site/**", ".github/workflows/botflow-site.yml"]
+  pull_request:
+    paths: ["apps/botflow-site/**"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/botflow-site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: apps/botflow-site/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm run check:meta

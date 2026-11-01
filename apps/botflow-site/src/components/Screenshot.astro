@@ -1,0 +1,46 @@
+---
+/**
+ * Настоящий скриншот: WebP нескольких ширин + JPEG для старых браузеров.
+ * Файлы — public/images/<dir>/<name>-<ширина>.webp|.jpg (готовит scripts/images.py).
+ * frame — соотношение сторон рамки (обрезка), anchor — какую часть кадра держать.
+ */
+interface Props {
+  name: string;
+  dir?: string;
+  widths: number[];
+  ratio: string;
+  alt: string;
+  sizes?: string;
+  frame?: string;
+  anchor?: string;
+  phone?: boolean;
+  eager?: boolean;
+  class?: string;
+  /** Классы пропорций рамки по экранам (aspect-[…]); заменяют frame. */
+  frameClass?: string;
+  /** Без своей рамки и тени — когда скриншот уже внутри окна браузера. */
+  bare?: boolean;
+}
+const { name, dir = "winchester", widths, ratio, alt, sizes = "100vw", frame, anchor = "top left", phone = false, eager = false, class: cls = "", frameClass, bare = false } = Astro.props;
+const base = `/images/${dir}/${name}`;
+const sorted = [...widths].sort((a, b) => a - b);
+const big = sorted[sorted.length - 1];
+const srcset = sorted.map((w) => `${base}-${w}.webp ${w}w`).join(", ");
+const [rw, rh] = ratio.split("/").map((n) => Number(n.trim()));
+const height = Math.round((big * rh) / rw);
+---
+<div class:list={[bare ? "overflow-hidden bg-shot [&_img]:block [&_img]:size-full [&_img]:object-cover" : "shot", phone && "shot--phone", frameClass, cls]} style={frameClass ? undefined : `aspect-ratio: ${frame ?? ratio}`}>
+  <picture>
+    <source type="image/webp" srcset={srcset} sizes={sizes} />
+    <img
+      src={`${base}-${big}.jpg`}
+      width={big}
+      height={height}
+      alt={alt}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      fetchpriority={eager ? "high" : "auto"}
+      style={`object-position: ${anchor}`}
+    />
+  </picture>
+</div>

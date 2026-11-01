@@ -1,0 +1,14 @@
+---
+import Base from "../layouts/Base.astro";
+import Button from "../components/Button.astro";
+---
+<Base title="Страница не найдена" noindex>
+  <section class="wrap pt-16 pb-8 md:pt-24" aria-labelledby="page-title">
+    <h1 id="page-title" class="t-h1 max-w-[720px]">Такой страницы нет</h1>
+    <p class="t-lead mt-5 max-w-[560px]">Возможно, ссылка устарела или в адресе опечатка. Начните с главной или посмотрите услуги.</p>
+    <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+      <Button href="/">На главную</Button>
+      <Button href="/services/" variant="secondary">Услуги</Button>
+    </div>
+  </section>
+</Base>

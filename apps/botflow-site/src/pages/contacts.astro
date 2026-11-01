@@ -1,0 +1,62 @@
+---
+import Base from "../layouts/Base.astro";
+import ContactForm from "../components/ContactForm.astro";
+import { BRAND, legal, legalRows, contactChannels, contactForm, contacts } from "../config/site";
+const channels = contactChannels();
+const nothing = channels.length === 0 && !contactForm.enabled;
+---
+<Base title="Контакты" description={`Как связаться со студией ${BRAND} (${legal.name}): обсудить сайт, систему учёта, интеграцию или автоматизацию.`}>
+  <section class="wrap pt-10 md:pt-16 lg:pt-20" aria-labelledby="page-title">
+    <div class="grid gap-6 lg:grid-cols-12 lg:items-end">
+      <h1 id="page-title" class="t-h1 lg:col-span-7">Контакты</h1>
+      <p class="t-lead max-w-[560px] lg:col-span-5 lg:pb-1">Опишите задачу: что нужно сделать, для кого и к какому сроку. Ответим и предложим следующий шаг.</p>
+    </div>
+  </section>
+
+  <section class="wrap section pt-10! md:pt-14!" aria-label="Способы связи">
+    <div class="grid gap-10 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-5">
+        {channels.length > 0 && (
+          <ul>
+            {channels.map((c) => (
+              <li class="border-t border-border last:border-b">
+                <a href={c.href} class="group flex items-baseline justify-between gap-4 py-5" {...(c.kind === "whatsapp" || c.kind === "telegram" ? { target: "_blank", rel: "noopener" } : {})}>
+                  <span>
+                    <span class="t-cap block">{c.label}</span>
+                    <span class="t-h3 font-display font-semibold text-heading transition-colors group-hover:text-accent">{c.value}</span>
+                  </span>
+                  <span aria-hidden="true" class="text-[#9aa4b1] transition-[transform,color] group-hover:translate-x-1 group-hover:text-accent">→</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+        {nothing && (
+          <p class="max-w-[480px]">Способы связи публикуются после сверки с регистрационными документами {legal.name}.</p>
+        )}
+        {contacts.city && <p class="t-small mt-6">Город: <span class="text-heading">{contacts.city}</span></p>}
+
+        <div class="mt-10 rounded-2xl bg-surface p-5 md:p-6">
+          <h2 class="t-h3">Сведения о компании</h2>
+          <p class="t-small mt-2">{BRAND} — коммерческое обозначение {legal.name}.</p>
+          <dl class="mt-4">
+            {legalRows().map((r) => (
+              <div class="grid gap-1 border-t border-border py-2.5 sm:grid-cols-[180px_1fr] sm:gap-4">
+                <dt class="t-small">{r.label}</dt>
+                <dd class="t-small text-heading">{r.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </div>
+
+      {contactForm.enabled && (
+        <div class="lg:col-span-6 lg:col-start-7">
+          <h2 class="t-h2">Написать нам</h2>
+          <p class="t-small mt-3 mb-8">Сообщение придёт сразу команде. Поля без пометки обязательны.</p>
+          <ContactForm />
+        </div>
+      )}
+    </div>
+  </section>
+</Base>

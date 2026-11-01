@@ -1,0 +1,106 @@
+@import "tailwindcss";
+@import "@fontsource-variable/manrope";
+@import "@fontsource/golos-text/400.css";
+@import "@fontsource/golos-text/500.css";
+@import "@fontsource/golos-text/600.css";
+
+/* Токены — из утверждённого макета B (Figma, коллекция «B2 Contemporary Software» и «Layout»). */
+@theme {
+  --color-bg: #ffffff;
+  --color-heading: #161a22;
+  --color-body: #525d6b;
+  --color-surface: #f2f4f7;
+  --color-border: #dde2e8;
+  --color-accent: #2457a6;
+  --color-accent-hover: #1c4789;
+  --color-on-accent: #ffffff;
+  --color-shot: #1e1214;
+
+  --font-display: "Manrope Variable", "Manrope", system-ui, sans-serif;
+  --font-sans: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --breakpoint-md: 48rem;   /* 768 */
+  --breakpoint-lg: 64rem;   /* 1024 */
+  --breakpoint-xl: 90rem;   /* 1440 */
+}
+
+@layer base {
+  :root {
+    /* поля: 20 (телефон) → 32 (планшет) → 48 → 96 (1440, контейнер 1248) */
+    --margin: 20px;
+    --gutter: 12px;
+    --section: 64px;
+    --header: 64px;
+    color-scheme: light;
+  }
+  @media (min-width: 48rem) { :root { --margin: 32px; --gutter: 24px; --section: 80px; --header: 76px; } }
+  @media (min-width: 64rem) { :root { --margin: 48px; --section: 96px; } }
+  @media (min-width: 90rem) { :root { --margin: 96px; } }
+
+  html {
+    background: var(--color-bg);
+    color: var(--color-body);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    scroll-padding-top: calc(var(--header) + 16px);
+  }
+  body { font-size: 16px; line-height: 25px; overflow-x: clip; }
+  @media (min-width: 48rem) { body { font-size: 17px; line-height: 27px; } }
+
+  h1, h2, h3 { font-family: var(--font-display); color: var(--color-heading); font-weight: 600; text-wrap: balance; }
+  p { text-wrap: pretty; }
+  ::selection { background: #d6e2f5; color: var(--color-heading); }
+
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+}
+
+@layer components {
+  .wrap { width: 100%; max-width: calc(1248px + 2 * var(--margin)); margin-inline: auto; padding-inline: var(--margin); }
+
+  /* Типографическая шкала из макета: H1 64/68 (телефон 38/43), H2 42/48 (30/36), H3 20/28 */
+  .t-h1 { font-size: 38px; line-height: 43px; letter-spacing: -0.025em; }
+  .t-h2 { font-size: 30px; line-height: 36px; letter-spacing: -0.015em; }
+  .t-h3 { font-size: 20px; line-height: 28px; letter-spacing: -0.005em; }
+  @media (min-width: 48rem) {
+    .t-h1 { font-size: 52px; line-height: 57px; }
+    .t-h2 { font-size: 36px; line-height: 42px; }
+  }
+  @media (min-width: 64rem) {
+    .t-h1 { font-size: 64px; line-height: 68px; }
+    .t-h2 { font-size: 42px; line-height: 48px; }
+  }
+  /* длинные слова в заголовке («конфиденциальности») на телефоне не помещаются в 38px */
+  .t-h1--long { font-size: 32px; line-height: 38px; }
+  @media (min-width: 48rem) { .t-h1--long { font-size: 52px; line-height: 57px; } }
+  @media (min-width: 64rem) { .t-h1--long { font-size: 64px; line-height: 68px; } }
+  .t-lead { font-size: 17px; line-height: 27px; }
+  .t-small { font-size: 15px; line-height: 24px; }
+  .t-cap { font-size: 13px; line-height: 20px; }
+
+  .section { padding-block-start: var(--section); }
+
+  /* Скриншоты: тонкая рамка и мягкая тень, чтобы тёмные экраны не «проваливались» в фон */
+  .shot {
+    display: block; overflow: hidden; background: var(--color-shot);
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px rgb(22 26 34 / 0.10), 0 1px 2px rgb(22 26 34 / 0.06), 0 16px 32px -20px rgb(22 26 34 / 0.35);
+  }
+  .shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .shot--phone { border-radius: 18px; }
+
+  /* Ссылки в тексте */
+  .link { color: var(--color-accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: rgb(36 87 166 / 0.35); transition: text-decoration-color .15s, color .15s; }
+  .link:hover { text-decoration-color: currentColor; color: var(--color-accent-hover); }
+
+  .prose-legal h2 { font-size: 22px; line-height: 30px; margin-top: 40px; margin-bottom: 12px; letter-spacing: -0.005em; }
+  .prose-legal p, .prose-legal li { font-size: 16px; line-height: 26px; }
+  .prose-legal p + p { margin-top: 12px; }
+  .prose-legal ul { margin-top: 10px; padding-left: 1.2em; list-style: disc; }
+  .prose-legal li + li { margin-top: 6px; }
+  .prose-legal li::marker { color: #9aa4b1; }
+}

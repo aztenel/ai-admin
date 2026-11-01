@@ -1,0 +1,144 @@
+---
+import { getEntry } from "astro:content";
+import Base from "../layouts/Base.astro";
+import Button from "../components/Button.astro";
+import Screenshot from "../components/Screenshot.astro";
+import BrowserFrame from "../components/BrowserFrame.astro";
+import { services, approach } from "../lib/content";
+import { site } from "../config/site";
+
+const wc = await getEntry("cases", "winchester");
+if (!wc) throw new Error("Нет кейса winchester");
+const c = wc.data;
+---
+<Base description={site.description}>
+  <!-- Первый экран: заголовок слева, пояснение и действия справа по нижнему краю -->
+  <section class="wrap pt-10 md:pt-16 lg:pt-20" aria-labelledby="hero-title">
+    <p class="t-small mb-4 md:mb-5">Студия разработки программного обеспечения в Казахстане</p>
+    <div class="grid gap-6 lg:grid-cols-12 lg:items-end lg:gap-6">
+      <h1 id="hero-title" class="t-h1 max-w-[720px] lg:col-span-7">Сайты и системы под процессы вашей компании</h1>
+      <div class="max-w-[520px] lg:col-span-4 lg:col-start-9 lg:max-w-none lg:pb-1">
+        <p class="t-lead">Проектируем и разрабатываем сайты и <span class="whitespace-nowrap">веб-приложения</span>, CRM и ERP, интеграции и <span class="whitespace-nowrap">AI-автоматизацию</span>. Начинаем с разбора процесса, который нужно поддержать.</p>
+        <div class="mt-6 flex flex-col gap-3 sm:flex-row">
+          <Button href="/contacts/">Обсудить проект</Button>
+          <Button href="#work" variant="secondary">Посмотреть работу</Button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Полоса настоящих экранов: путь клиента Winchester при записи -->
+  <section class="wrap mt-10 md:mt-12 lg:mt-14" aria-labelledby="band-title">
+    <div class="rounded-2xl bg-surface p-3 sm:p-4 md:p-6 lg:p-8">
+      <div class="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-1 md:mb-5 md:px-0">
+        <h2 id="band-title" class="font-sans text-[13px] leading-5 font-medium text-heading">
+          {c.client} · онлайн-запись на <a class="link" href={c.url} target="_blank" rel="noopener">winchester.kz</a>
+        </h2>
+        <p class="t-cap">{c.status}. Заявки подтверждает администратор</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-[526fr_416fr_194fr] lg:gap-6">
+        <figure class="col-span-2 lg:col-span-1">
+          <Screenshot name="booking-time" widths={[1200, 760]} ratio="1880 / 1800" frame="526 / 420" sizes="(min-width: 1024px) 42vw, 92vw" eager alt="Форма записи на winchester.kz: календарь и свободное время мастера" />
+          <figcaption class="t-cap mt-3">Дата и время: только свободные окна мастера</figcaption>
+        </figure>
+        <figure>
+          <Screenshot name="booking-services" widths={[1200, 760]} ratio="1880 / 1800" frameClass="aspect-[194/420] md:aspect-[416/420]" sizes="(min-width: 1024px) 34vw, 46vw" eager alt="Форма записи: услуги и цены выбранного мастера" />
+          <figcaption class="t-cap mt-3">Услуги и цены выбранного мастера</figcaption>
+        </figure>
+        <figure>
+          <Screenshot name="booking-mobile" widths={[780, 400]} ratio="780 / 1688" frameClass="aspect-[194/420] md:aspect-[416/420] lg:aspect-[194/420]" anchor="top center" phone sizes="(min-width: 1024px) 16vw, 46vw" eager alt="Форма записи на телефоне: выбор мастера" />
+          <figcaption class="t-cap mt-3">Версия для телефона</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- Направления -->
+  <section id="services" class="wrap section" aria-labelledby="services-title">
+    <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-4">
+        <h2 id="services-title" class="t-h2">Что мы разрабатываем</h2>
+        <p class="t-small mt-4 max-w-[400px]">Четыре направления. Их можно заказать по отдельности или собрать из них одну систему.</p>
+        <Button href="/services/" variant="link" class="mt-5">Подробнее об услугах <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5">→</span></Button>
+      </div>
+      <ul class="grid md:grid-cols-2 md:gap-x-6 lg:col-span-8">
+        {services.map((s) => (
+          <li class="border-t border-border">
+            <a href={`/services/#${s.slug}`} class="group flex h-full flex-col pt-5 pb-7">
+              <h3 class="t-h3 flex items-baseline justify-between gap-4 transition-colors group-hover:text-accent">
+                {s.title}
+                <span aria-hidden="true" class="text-[17px] text-[#9aa4b1] transition-[transform,color] group-hover:translate-x-1 group-hover:text-accent">→</span>
+              </h3>
+              <p class="t-small mt-2 max-w-[400px]">{s.short}</p>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <!-- Работа -->
+  <section id="work" class="wrap section" aria-labelledby="work-title">
+    <div class="grid gap-6 lg:grid-cols-12">
+      <div class="lg:col-span-4">
+        <p class="t-small">Работа</p>
+        <h2 id="work-title" class="t-h2 mt-1">{c.client}</h2>
+      </div>
+      <div class="lg:col-span-8">
+        <p class="t-lead max-w-[718px]">{c.summary}</p>
+        <dl class="mt-8 grid gap-x-6 sm:grid-cols-2">
+          {c.facts.map((f) => (
+            <div class="border-t border-border pt-4 pb-6">
+              <dt class="t-cap font-medium text-heading">{f.term}</dt>
+              <dd class="t-small mt-1">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <Button href="/cases/winchester/" variant="link">Подробнее о проекте <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5">→</span></Button>
+      </div>
+    </div>
+    <div class="mt-10 grid gap-6 md:grid-cols-12 md:items-end lg:mt-12">
+      <figure class="md:col-span-9">
+        <BrowserFrame url="winchester.kz">
+          <Screenshot name="site-desktop" widths={[1440, 960]} ratio="2880 / 1800" frame="2880 / 1756" bare sizes="(min-width: 768px) 70vw, 92vw" alt="Главная страница winchester.kz на компьютере" />
+        </BrowserFrame>
+        <figcaption class="t-cap mt-3">Главная страница на компьютере</figcaption>
+      </figure>
+      <figure class="hidden md:col-span-3 md:block">
+        <Screenshot name="site-mobile" widths={[780, 400]} ratio="780 / 1688" frame="390 / 760" phone sizes="22vw" alt="Главная страница winchester.kz на телефоне" />
+        <figcaption class="t-cap mt-3">И на телефоне</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- Порядок работы -->
+  <section class="wrap section" aria-labelledby="approach-title">
+    <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-4">
+        <h2 id="approach-title" class="t-h2">Как мы работаем</h2>
+        <p class="t-small mt-4 max-w-[400px]">Один порядок и для сайта, и для внутренней системы. Вы говорите напрямую с теми, кто пишет код.</p>
+      </div>
+      <ol class="lg:col-span-8">
+        {approach.map((a) => (
+          <li class="grid gap-1 border-t border-border pt-5 pb-6 md:grid-cols-[minmax(0,294fr)_minmax(0,506fr)] md:gap-6">
+            <h3 class="t-h3">{a.title}</h3>
+            <p>{a.text}</p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <!-- Призыв к разговору -->
+  <section class="wrap section" aria-labelledby="cta-title">
+    <div class="grid gap-6 rounded-2xl bg-surface px-5 py-8 md:px-10 md:py-12 lg:grid-cols-12 lg:items-end lg:px-12">
+      <div class="lg:col-span-7">
+        <h2 id="cta-title" class="t-h2">Расскажите, что нужно сделать</h2>
+        <p class="mt-4 max-w-[560px]">Опишите задачу в нескольких предложениях: что должно работать, для кого и с какими системами. Ответим, возьмёмся ли, и предложим первый шаг.</p>
+      </div>
+      <div class="lg:col-span-4 lg:col-start-9 lg:justify-self-end">
+        <Button href="/contacts/">Обсудить проект</Button>
+      </div>
+    </div>
+  </section>
+</Base>

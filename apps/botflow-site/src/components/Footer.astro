@@ -1,0 +1,34 @@
+---
+import { BRAND, legal, legalRows, contactChannels } from "../config/site";
+import { nav, t } from "../i18n/ui";
+const year = new Date().getFullYear();
+const channels = contactChannels();
+---
+<footer class="mt-[var(--section)] border-t border-border bg-surface">
+  <div class="wrap grid gap-10 py-12 md:grid-cols-12 md:gap-6 lg:py-16">
+    <div class="md:col-span-5 lg:col-span-4">
+      <a href="/" class="font-display text-[17px] leading-6 font-semibold tracking-[0.03em] text-heading">{BRAND}</a>
+      <p class="t-small mt-3 max-w-[340px]">Студия разработки программного обеспечения в Казахстане. Сайты и <span class="whitespace-nowrap">веб-приложения</span>, CRM и ERP, интеграции, <span class="whitespace-nowrap">AI-автоматизация</span>.</p>
+    </div>
+    <nav aria-label="Разделы сайта" class="md:col-span-3 lg:col-span-2 lg:col-start-6">
+      <ul class="t-small space-y-2">
+        <li><a href="/" class="text-body transition-colors hover:text-heading">Главная</a></li>
+        {nav().map((i) => <li><a href={i.href} class="text-body transition-colors hover:text-heading">{i.label}</a></li>)}
+      </ul>
+    </nav>
+    <div class="md:col-span-4 lg:col-span-4 lg:col-start-9">
+      <dl class="t-small space-y-2">
+        {legalRows().map((r) => (
+          <div class="flex flex-wrap gap-x-2"><dt class="text-body">{r.label}:</dt><dd class="text-heading">{r.value}</dd></div>
+        ))}
+        {channels.map((c) => (
+          <div class="flex flex-wrap gap-x-2"><dt class="text-body">{c.label}:</dt><dd><a class="link" href={c.href}>{c.value}</a></dd></div>
+        ))}
+      </dl>
+    </div>
+  </div>
+  <div class="wrap flex flex-col gap-2 border-t border-border py-6 t-cap md:flex-row md:items-center md:justify-between">
+    <p>© {year} {BRAND}. {t("footer.owner")} {legal.name}, {legal.country}.</p>
+    <a href="/privacy/" class="text-body underline decoration-[#b8c1cc] underline-offset-[3px] transition-colors hover:text-heading">{t("footer.privacy")}</a>
+  </div>
+</footer>

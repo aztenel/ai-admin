@@ -1,0 +1,27 @@
+---
+/** Кнопка или ссылка-кнопка. Варианты из макета B: primary (заливка акцентом), secondary (контур), link (текст). */
+interface Props {
+  href?: string;
+  variant?: "primary" | "secondary" | "link";
+  type?: "button" | "submit";
+  class?: string;
+  full?: boolean;
+  external?: boolean;
+  [key: string]: unknown;
+}
+const { href, variant = "primary", type = "button", class: cls = "", full = false, external = false, ...rest } = Astro.props;
+const base = "inline-flex items-center justify-center gap-2 font-sans text-[15px] leading-[22px] font-semibold transition-colors duration-150 select-none";
+const box = "min-h-12 px-[22px] rounded-lg";
+const v = {
+  primary: `${box} bg-accent text-on-accent hover:bg-accent-hover active:bg-[#173b72]`,
+  secondary: `${box} text-heading ring-1 ring-inset ring-[#c4ccd6] hover:ring-heading hover:bg-surface`,
+  link: "text-accent hover:text-accent-hover group",
+}[variant];
+const classes = [base, v, full ? "w-full" : "", cls].join(" ");
+const ext = external ? { target: "_blank", rel: "noopener" } : {};
+---
+{href ? (
+  <a href={href} class={classes} {...ext} {...rest}><slot /></a>
+) : (
+  <button type={type} class={classes} {...rest}><slot /></button>
+)}

@@ -1,0 +1,69 @@
+---
+import Button from "./Button.astro";
+import { contactForm } from "../config/site";
+const field = "mt-2 block w-full rounded-lg bg-white px-4 py-3 text-[16px] leading-6 text-heading ring-1 ring-inset ring-[#c4ccd6] placeholder:text-[#8a94a1] transition-shadow hover:ring-[#9aa4b1] focus:outline-none focus:ring-2 focus:ring-accent";
+---
+<form class="grid gap-5" action={contactForm.endpoint} method="post" novalidate data-contact-form>
+  <div class="grid gap-5 md:grid-cols-2">
+    <label class="block">
+      <span class="t-small font-medium text-heading">Как к вам обращаться</span>
+      <input class={field} name="name" autocomplete="name" required maxlength="120" />
+    </label>
+    <label class="block">
+      <span class="t-small font-medium text-heading">Почта или телефон</span>
+      <input class={field} name="contact" autocomplete="email" required maxlength="160" />
+    </label>
+  </div>
+  <label class="block">
+    <span class="t-small font-medium text-heading">Компания <span class="font-normal text-body">(необязательно)</span></span>
+    <input class={field} name="company" autocomplete="organization" maxlength="160" />
+  </label>
+  <label class="block">
+    <span class="t-small font-medium text-heading">Задача</span>
+    <textarea class={`${field} min-h-36 resize-y`} name="message" required maxlength="4000" placeholder="Что нужно сделать, для кого и с какими системами связать"></textarea>
+  </label>
+  <!-- ловушка для ботов: люди это поле не видят -->
+  <div class="hidden" aria-hidden="true"><label>Сайт <input name="website" tabindex="-1" autocomplete="off" /></label></div>
+  <input type="hidden" name="t" value="" />
+  <label class="flex items-start gap-3">
+    <input type="checkbox" name="consent" required class="mt-1 size-5 shrink-0 accent-[#2457a6]" />
+    <span class="t-small">Согласен на обработку персональных данных по <a class="link" href="/privacy/">политике конфиденциальности</a></span>
+  </label>
+  <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+    <Button type="submit" data-submit>Отправить</Button>
+    <p class="t-small" role="status" aria-live="polite" data-status></p>
+  </div>
+</form>
+
+<script>
+  const form = document.querySelector<HTMLFormElement>("[data-contact-form]");
+  if (form) {
+    const status = form.querySelector<HTMLElement>("[data-status]")!;
+    const submit = form.querySelector<HTMLButtonElement>("[data-submit]")!;
+    const t = form.querySelector<HTMLInputElement>('input[name="t"]')!;
+    t.value = String(Date.now());
+    const say = (text: string, ok = false) => { status.textContent = text; status.style.color = ok ? "#1f6b3a" : "#b42318"; };
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!form.checkValidity()) {
+        const bad = form.querySelector<HTMLElement>(":invalid");
+        say(bad?.getAttribute("type") === "checkbox" ? "Нужно согласие на обработку данных." : "Заполните обязательные поля.");
+        bad?.focus();
+        return;
+      }
+      submit.disabled = true;
+      say("Отправляем…", true);
+      try {
+        const body = Object.fromEntries(new FormData(form).entries());
+        const r = await fetch(form.action, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, consent: body.consent === "on" }) });
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        if (r.ok) { form.reset(); t.value = String(Date.now()); say("Спасибо, сообщение отправлено. Ответим по указанным контактам.", true); }
+        else say(j.error || "Не получилось отправить. Попробуйте ещё раз чуть позже.");
+      } catch {
+        say("Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.");
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+</script>

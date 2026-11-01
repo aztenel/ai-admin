@@ -1,0 +1,79 @@
+---
+import { BRAND } from "../config/site";
+import { nav, t } from "../i18n/ui";
+import Button from "./Button.astro";
+const path = Astro.url.pathname;
+const items = nav();
+const isCurrent = (href: string, match?: string) => path === href || (match ? path.startsWith(match) : false);
+---
+<header class="sticky top-0 z-40 border-b border-border bg-white/95 backdrop-blur-[2px] supports-[backdrop-filter]:bg-white/90">
+  <div class="wrap flex h-[var(--header)] items-center justify-between gap-6">
+    <div class="flex items-center gap-12">
+      <a href="/" class="font-display text-[17px] leading-6 font-semibold tracking-[0.03em] whitespace-nowrap text-heading" aria-label={`${BRAND}, на главную`}>{BRAND}</a>
+      <nav aria-label={t("nav.main")} class="hidden lg:block">
+        <ul class="flex items-center gap-7">
+          {items.map((i) => (
+            <li>
+              <a
+                href={i.href}
+                aria-current={isCurrent(i.href, i.match) ? "page" : undefined}
+                class="relative py-2 text-[15px] leading-[22px] font-medium text-body transition-colors hover:text-heading aria-[current=page]:text-heading after:absolute after:inset-x-0 after:-bottom-[1px] after:h-[2px] after:rounded-full after:bg-accent after:opacity-0 aria-[current=page]:after:opacity-100"
+              >{i.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="hidden md:block"><Button href="/contacts/">{t("cta.discuss")}</Button></div>
+      <button
+        type="button"
+        class="-mr-2 inline-flex h-11 items-center gap-2 rounded-lg px-2 text-[15px] font-medium text-heading lg:hidden"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+        data-menu-toggle
+      >
+        <span data-menu-label>{t("nav.menu")}</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" class="shrink-0">
+          <path data-icon-open d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          <path data-icon-close d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" class="hidden" />
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div id="mobile-menu" class="hidden border-t border-border bg-white lg:hidden" data-menu>
+    <nav aria-label={t("nav.main")} class="wrap py-4">
+      <ul>
+        {items.map((i) => (
+          <li class="border-b border-border last:border-0">
+            <a href={i.href} aria-current={isCurrent(i.href, i.match) ? "page" : undefined} class="flex min-h-14 items-center justify-between font-display text-[20px] font-semibold text-heading aria-[current=page]:text-accent">
+              {i.label}
+              <span aria-hidden="true" class="text-body">→</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+      <Button href="/contacts/" full class="mt-4 md:hidden">{t("cta.discuss")}</Button>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const toggle = document.querySelector<HTMLButtonElement>("[data-menu-toggle]");
+  const menu = document.querySelector<HTMLElement>("[data-menu]");
+  if (toggle && menu) {
+    const label = toggle.querySelector("[data-menu-label]");
+    const set = (open: boolean) => {
+      toggle.setAttribute("aria-expanded", String(open));
+      menu.classList.toggle("hidden", !open);
+      toggle.querySelector("[data-icon-open]")?.classList.toggle("hidden", open);
+      toggle.querySelector("[data-icon-close]")?.classList.toggle("hidden", !open);
+      if (label) label.textContent = open ? "Закрыть" : "Меню";
+    };
+    toggle.addEventListener("click", () => set(toggle.getAttribute("aria-expanded") !== "true"));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") { set(false); toggle.focus(); }
+    });
+    matchMedia("(min-width: 64rem)").addEventListener("change", (e) => { if (e.matches) set(false); });
+  }
+</script>
