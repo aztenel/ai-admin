@@ -293,3 +293,23 @@ test("D1: человек ответил с телефона, пока бот д�
   const p = JSON.parse(d.raw.prepare("select profile from chat_threads where ws = 'barber' and chat = ?").get(from).profile);
   assert.ok(p.pausedUntil > Date.now(), "пауза осталась");
 });
+
+test("«Удалить данные клиента» убирает и его события из журнала: после восстановления базы удалённое не возвращается", { skip }, async () => {
+  // находка автоматической проверки безопасности 01.11.2026: событие, ждущее записи (сбой D1), лежит в KV ibq: с номером и текстом до 3 дней —
+  // удаление данных клиента его не трогало, а проигрыш вернул бы удалённое сообщение в D1
+  const { d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P), other = "77000008804";
+  await inbound(W, "Здравствуйте");
+  d.ctl.fail = sql => /chat_(threads|messages)/.test(sql) && !/sqlite_master/.test(sql);
+  await inbound(W, "Мой номер карты 4400 …", "IN-ERASE-1");
+  await inbound(W, "Чужой чат, тоже ждёт", "IN-ERASE-2", other);
+  assert.equal(await walPending(W.env, "winchester"), 2);
+  d.ctl.fail = null;
+  const er = await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" });
+  assert.equal(er.status, 200, await er.clone().text());
+  assert.equal(await walPending(W.env, "winchester"), 1, "событие удалённого клиента убрано из журнала, чужое — осталось");
+  const r = await walKick(chatEnv(W.env), "winchester", { force: true });
+  assert.equal(r.done, 1);
+  assert.equal(rows(d).length, 0, "удалённое не вернулось");
+  assert.equal(rows(d, other).length, 1, "чужое записалось");
+});

@@ -8,6 +8,7 @@ import { kvRetry } from "../../db/kv/retry.js";
 import { allLeads, loadLeads, saveLeads, leadKey } from "../../db/kv/leads.js";
 import { logTurns, forgetKey } from "../../db/kv/chats.js";
 import { isoDay } from "../../lib/time.js";
+import { walForget } from "../chatstore/wal.js";
 
 /** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер чата WhatsApp в виде +7…; у веб-чата пусто: номер там набран посетителем, он мог быть чужим @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
 export async function eraseClient(env, cid, ch, id, phone, loc, now) {
@@ -24,6 +25,7 @@ export async function eraseClient(env, cid, ch, id, phone, loc, now) {
   }
   if (digits) for (const k of [`consent:wa:${cid}:${digits}`, `consent:ga:${cid}:${digits}`, ...(loc ? [`bk:${loc}:${phone}:${isoDay(now)}`] : [])]) await env.KV.delete(k);
   await env.KV.delete(forgetKey(hk)); // отметка «Очистить память бота» (в имени ключа — номер чата)
+  if (ch !== "web") await walForget(env, cid, id); // события этого чата, ждущие записи в D1 (журнал ibq:, переписки в D1), — тоже
   await kvRetry(async () => {
     const q = JSON.parse((await env.KV.get("rmq:" + cid)) || "[]"), keep = q.filter((/** @type {any} */ x) => !(x.ch === ch && x.id === id));
     if (keep.length !== q.length) await env.KV.put("rmq:" + cid, JSON.stringify(keep));

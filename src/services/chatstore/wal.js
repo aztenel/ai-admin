@@ -60,6 +60,20 @@ export async function walReplay(env, cid, handle, o = {}) {
   }
   return out;
 }
+/** «Удалить данные клиента» (services/inbox/erase.js): события этого чата, ждущие записи, — тоже. В записи журнала — номер и текст
+ *  сообщения; без этого после восстановления базы проигрыш вернул бы удалённое (находка проверки безопасности 01.11.2026).
+ *  → сколько удалено. @param {Env} env @param {string} cid @param {string} digits номер чата цифрами */
+export async function walForget(env, cid, digits) {
+  if (!digits) return 0;
+  const kv = raw(env);
+  let r, n = 0; try { r = await kv.list({ prefix: `ibq:${cid}:`, limit: 1000 }); } catch (e) { console.log("wal forget", String(e).slice(0, 120)); return 0; }
+  for (const x of (r && r.keys) || []) {
+    let v; try { v = JSON.parse((await kv.get(x.name)) || "null"); } catch (e) { v = null; }
+    const b = (v && v.body) || {}, chat = String((b.senderData && b.senderData.chatId) || b.chatId || "").replace(/\D/g, "");
+    if (!v || chat === digits) { try { await kv.delete(x.name); n++; } catch (e) { console.log("wal forget", String(e).slice(0, 120)); } }
+  }
+  return n;
+}
 /** Сколько событий ждёт записи (для «Хранилищ»). @param {Env} env @param {string} cid */
 export async function walPending(env, cid) {
   try { const r = await raw(env).list({ prefix: `ibq:${cid}:`, limit: 1000 }); return ((r && r.keys) || []).length; } catch (e) { return -1; }
