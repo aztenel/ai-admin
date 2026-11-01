@@ -43,7 +43,7 @@ export async function greenHook(body, env, ctx, origin, r) {
   return true;
 }
 // проигрыш журнала (фоновая задача, пульт стенда): то же событие тем же кодом, мимо отметки «уже видели»
-walHandle((body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
+walHandle("ga", (body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
 
 /** @param {any} body @param {Env} env @param {any} origin @param {any} r @param {{ replay?: boolean }} [opts] replay — из журнала: отметку «уже видели» не проверять */
 export async function handleGreen(body, env, origin, r, opts = {}) {
@@ -113,7 +113,8 @@ export async function handleGreen(body, env, origin, r, opts = {}) {
       qt = h ? quoteOf(h.turns || [], String(qm.stanzaId).slice(0, 80)) : null;
     } catch (e) { console.log("ga quote", String(e)); }
   }
-  const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}) };
+  // replay — из журнала: клиенту не пишем (ни ответа бота, ни «спасибо за сообщение» на каждую неудачную попытку), только записываем (meta.js)
+  const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}), ...(opts.replay ? { replay: true } : {}) };
   const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
   const niche0 = r.shared ? "" : r.client; // компания номера: по ней — push сотрудникам (общий демо-номер — без push)
