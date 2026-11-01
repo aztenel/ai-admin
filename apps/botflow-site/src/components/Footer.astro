@@ -18,7 +18,7 @@ const channels = contactChannels();
     </nav>
     <div class="md:col-span-4 lg:col-span-4 lg:col-start-9">
       <dl class="t-small space-y-2">
-        {legalRows().map((r) => (
+        {legalRows(false).map((r) => (
           <div class="flex flex-wrap gap-x-2"><dt class="text-body">{r.label}:</dt><dd class="text-heading">{r.value}</dd></div>
         ))}
         {channels.map((c) => (

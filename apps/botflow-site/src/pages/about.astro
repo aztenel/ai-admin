@@ -48,12 +48,20 @@ const principles = [
         <p class="max-w-[718px]">{ownerLine()}</p>
         <dl class="mt-6 max-w-[718px]">
           {legalRows().map((r) => (
-            <div class="grid gap-1 border-t border-border py-3 sm:grid-cols-[220px_1fr] sm:gap-6">
+            <div class="grid gap-1 border-t border-border py-3 sm:grid-cols-[260px_1fr] sm:gap-6">
               <dt class="t-small">{r.label}</dt>
               <dd class="t-small text-heading">{r.value}</dd>
             </div>
           ))}
         </dl>
+        {legal.activities.length > 0 && (
+          <div class="mt-8 max-w-[718px]">
+            <h3 class="t-cap font-medium text-heading">Виды деятельности по ОКЭД</h3>
+            <ul class="mt-2">
+              {legal.activities.map((x) => <li class="t-small border-t border-border py-2.5 first:border-0">{x}</li>)}
+            </ul>
+          </div>
+        )}
         <p class="t-small mt-6">{canContact() && <><a class="link" href="/contacts/">Контакты</a> · </>}<a class="link" href="/privacy/">Политика конфиденциальности</a></p>
       </div>
     </div>
