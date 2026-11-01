@@ -164,7 +164,9 @@ test("A11 Green-API отказал (400, ничего не ушло): «Повт
 
 test("A12 разные rid — разные сообщения; тот же rid в другом чате — своё сообщение", { skip }, async () => {
   const { a, ba, from } = await twoWorkers();
-  const other = "77000000999";
+  // вне диапазона случайного номера twoWorkers (77000000910–77000000999): с «…999» в 1 случае из 90 это был тот же чат и тот же rid —
+  // одна отправка вместо двух (CI 01.11.2026, Node 22)
+  const other = "77000000888";
   await a.gaText("winchester", INST, other, "Привет");
   await sendText(ba, from, "Раз", "rid-A12-001");
   await sendText(ba, from, "Два", "rid-A12-002");
