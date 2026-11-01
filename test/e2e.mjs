@@ -173,14 +173,20 @@ try {
   await st.click("#list .card >> text=Запустить"); await st.waitForTimeout(400);
   ok("«Запустить»: перед стартом вопрос, при отказе рассылка не идёт", asked.length === 1 && /Запустить рассылку «Октябрь: скидка»/.test(asked[0]) && /3 человек/.test(asked[0]) && /готова к запуску/.test(await st.locator("#list .card").first().innerText()), JSON.stringify(asked));
   st.on("dialog", d => d.accept(d.type() === "prompt" ? "acme" : undefined));
+  // запуск — только владелец (31.10.2026, ТЗ Winchester v2.0 §5, коммит 778fd35): сотрудник готовит и проверяет, владелец запускает.
+  // До 01.11.2026 проверка ждала «идёт» после нажатия сотрудника и падала здесь, а около 170 следующих проверок не выполнялись
   await st.click("#list .card >> text=Запустить");
-  await st.waitForFunction(() => /идёт/.test(document.querySelector("#list .card").textContent));
-  await shot(st, "15-broadcast-running");
+  await st.waitForSelector("#list .card .msg.e");
+  ok("сотрудник: «Запустить» — объяснение «только владелец», рассылка не идёт", /только владелец/.test(await st.locator("#list .card").first().innerText()) && /готова к запуску/.test(await st.locator("#list .card").first().innerText()), await st.locator("#list .card").first().innerText());
+  await p.goto(url + "/broadcast?c=acme");
+  await p.click("#list .card >> text=Запустить");
+  await p.waitForFunction(() => /идёт/.test(document.querySelector("#list .card").textContent));
+  await shot(p, "15-broadcast-running");
   await fetch(url + "/_cron", { method: "POST" });
-  await st.waitForFunction(() => /завершена/.test(document.querySelector("#list .card").textContent), null, { timeout: 15000 });
-  const doneText = await st.locator("#list .card").first().innerText();
+  await p.waitForFunction(() => /завершена/.test(document.querySelector("#list .card").textContent), null, { timeout: 15000 });
+  const doneText = await p.locator("#list .card").first().innerText();
   ok("фоновая отправка: все получили шаблон, страница сама показала итог", /отправлено 3 из 3/.test(doneText) && ["77051110001", "77051110002", "77051110003"].every(x => S.sentTo(x).includes("[шаблон promo_october]")), doneText);
-  await shot(st, "16-broadcast-done");
+  await shot(p, "16-broadcast-done");
   await st.route("**/api/bc/list*", r => r.abort());
   await st.evaluate(() => load());
   await st.waitForFunction(() => /Нет связи/.test(document.getElementById("info").textContent), null, { timeout: 5000 }).catch(() => {});
@@ -293,17 +299,21 @@ try {
   const gcard = st.locator("#list .card", { hasText: "Green: октябрь" });
   ok("рассылка через Green-API создана", /Green-API · готова к запуску/.test(await gcard.innerText()), await gcard.innerText());
   await gcard.locator("text=Запустить").click();
-  await st.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /идёт/.test(c.textContent)));
-  ok("идёт: на карточке — «по одному сообщению раз в 1–3 минуты»", /по одному сообщению раз в 1–3 минуты/.test(await gcard.innerText()), await gcard.innerText());
+  await gcard.locator(".msg.e").waitFor(); // сотруднику — отказ «только владелец»; запускает владелец
+  await p.goto(url + "/broadcast?c=acme");
+  const gcardO = p.locator("#list .card", { hasText: "Green: октябрь" });
+  await gcardO.locator("text=Запустить").click();
+  await p.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /идёт/.test(c.textContent)));
+  ok("идёт: на карточке — «по одному сообщению раз в 1–3 минуты»", /по одному сообщению раз в 1–3 минуты/.test(await gcardO.innerText()), await gcardO.innerText());
   net.ga.length = 0;
   await fetch(url + "/_cron", { method: "POST" });
   const gk = [...S.kv.mem.keys()].find(k => k.startsWith("bc:acme:") && (S.kv.json(k) || {}).name === "Green: октябрь");
   { const b = S.kv.json(gk); b.nextAt = Date.now() - 1; S.kv.mem.set(gk, JSON.stringify(b)); } // «прошло две минуты»
   await fetch(url + "/_cron", { method: "POST" });
-  await st.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /завершена/.test(c.textContent)), null, { timeout: 15000 });
+  await p.waitForFunction(() => [...document.querySelectorAll("#list .card")].some(c => /Green: октябрь/.test(c.textContent) && /завершена/.test(c.textContent)), null, { timeout: 15000 });
   const gaSent = net.ga.filter(x => x.op === "sendMessage").map(x => [x.body.chatId, x.body.message]);
-  ok("отправлено 2 из 2: обычным текстом с номера Green-API, каждому — со своим обращением", /отправлено 2 из 2/.test(await gcard.innerText()) && gaSent.length === 2 && gaSent[0][0] === "77052220001@c.us" && /^Здравствуйте, Данияр!/.test(gaSent[0][1]) && /^Здравствуйте, уважаемый клиент!/.test(gaSent[1][1]), JSON.stringify(gaSent));
-  await shot(st, "16c-broadcast-ga-done");
+  ok("отправлено 2 из 2: обычным текстом с номера Green-API, каждому — со своим обращением", /отправлено 2 из 2/.test(await gcardO.innerText()) && gaSent.length === 2 && gaSent[0][0] === "77052220001@c.us" && /^Здравствуйте, Данияр!/.test(gaSent[0][1]) && /^Здравствуйте, уважаемый клиент!/.test(gaSent[1][1]), JSON.stringify(gaSent));
+  await shot(p, "16c-broadcast-ga-done");
   delete S.env.GA_ID_ACME; delete S.env.GA_TOKEN_ACME;
 
   // ---- /demo: открывается без входа и без единого обращения к серверу, данные вымышленные
@@ -840,6 +850,25 @@ try {
     for (let i = 0; i < 40 && prof("77051118803").need; i++) await new Promise(r => setTimeout(r, 100));
     ok("живой пульт: ушли со страницы в окне «Отменить» — «Готово» отправлено сразу", !prof("77051118803").need);
     await lv.context().close();
+  }
+
+  // ---- живой пульт: «Готово» из меню чата, когда клиент ждёт ответа — сервер спрашивает подтверждение (ТЗ v2.0 §2.5). До 01.11.2026
+  // старый пульт (и программа для Windows) вместо вопроса показывал ложное «Нет связи», а чат оставался в «Ждут ответа»
+  {
+    const id = "77051118804", prof = () => (S.kv.json("h:wa:acme:" + id) || {}).profile || {};
+    await wa({ c: "acme", from: id, name: "Меню Готово", text: "Позовите администратора" });
+    ok("меню «Готово» (подготовка): клиент ждёт ответа", !!prof().need);
+    const mv = await newPage({ width: 390, height: 844 });
+    await mv.goto(url + "/inbox?c=acme&key=" + OWNER + "#wa:" + id); await mv.waitForSelector("#msgs .m");
+    await mv.click("#menu");
+    await mv.locator("button.opt", { hasText: "Готово — убрать из «Ждут ответа»" }).click();
+    await mv.waitForFunction(() => /Клиент ждёт ответа/.test(document.body.textContent), null, { timeout: 5000 });
+    ok("меню «Готово»: пульт показывает вопрос сервера, а не «Нет связи»; пока не ответили — чат ждёт", !/Нет связи/.test(await mv.locator("body").innerText()) && !!prof().need, await mv.locator("body").innerText());
+    await mv.locator("button.btn.pri", { hasText: "Закрыть" }).click();
+    for (let i = 0; i < 30 && prof().need; i++) await new Promise(r => setTimeout(r, 100));
+    ok("меню «Готово» → «Закрыть»: чат ушёл из «Ждут ответа» на сервере, без «Нет связи»", !prof().need && !/Нет связи/.test(await mv.locator("body").innerText()));
+    await shot(mv, "menu-resolve-confirm");
+    await mv.context().close();
   }
 
   // ---- живой пульт: открытый чат обновляется каждые 3 с (список — раз в 15 с), пока вкладка видна
