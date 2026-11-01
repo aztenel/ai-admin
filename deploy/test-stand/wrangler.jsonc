@@ -1,0 +1,29 @@
+// Тестовый стенд «ai-admin-test» (01.11.2026, docs/runbooks/winchester-go-live.md §6): живая проверка второго номера Winchester на
+// запасном номере владельца, пока нет телефона Кайрата. Отдельный Worker с тем же кодом и своими KV и D1 — данных боевого сайта и
+// черновиков он не видит. Без cron: ни напоминаний, ни рассылок, ни синхронизации, ни сводок. Переменные задаются в панели
+// Cloudflare (не здесь): только Green-API тестового инстанса и свой LEADS_KEY — Altegio, Telegram, ИИ и Meta на стенде нет.
+// Собирает Cloudflare Workers Builds: отдельный Worker «ai-admin-test», корень сборки — эта папка (имя Worker в панели должно
+// совпасть с name, иначе сборка падает). Боевой wrangler.jsonc в корне репозитория стенд не трогает.
+// Нули в id — пока KV и D1 стенда не созданы (слово владельца «делай стенд»): с ними выкладка не пройдёт, а не возьмёт чужую базу.
+// Проверка — test/unit/test-stand.test.mjs.
+{
+  "name": "ai-admin-test",
+  "main": "../../worker.js",
+  "compatibility_date": "2026-09-28",
+  "keep_vars": true,
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "triggers": { "crons": [] },
+  "kv_namespaces": [
+    { "binding": "KV", "id": "00000000000000000000000000000000" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-admin-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../migrations"
+    }
+  ]
+}

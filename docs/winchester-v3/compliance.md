@@ -32,7 +32,7 @@ Figma: https://www.figma.com/design/Yxg9LPwnDXjygoYAzpTdI5 (ссылки на к
 | SRV-01 | Категории S01–S18, несколько текстов на сценарий | `services/reminders/templates.js`, `ServiceMessages.tsx` (категории, варианты) | Сервисные `18-329` | `service-variants.test.mjs`, e2e: 18 сценариев по категориям | TEST |
 | SRV-02 | Перенос записи отменяет старое напоминание и готовит новое | `services/reminders/journal.js` (версия записи) | — | `journal-remind.test.mjs` (без отправки) | TEST; на настоящем журнале — BLOCKED |
 | DATA-01 | DEMO / DEV / PROD различимы, демо-цифры не выдаются за Winchester | метка «Тестовая версия» / «Демо» (`ModeBadge`, `stage` из `/api/inbox/me`) во всех 5 разделах | Метка режима `9-122` | `inbox-me.test.mjs`, снимки всех разделов | TEST |
-| DATA-02 | Режим `SITE_BOOKING_WINCHESTER` отражён в интерфейсе | `/api/inbox/me` → `site`; Настройки → Номера и каналы: «Запись с сайта» | Настройки `18-421` | `inbox-me.test.mjs` | TEST; какое значение стоит в Cloudflare на боевом сайте — не проверял (панель Cloudflare недоступна из сессии) |
+| DATA-02 | Режим `SITE_BOOKING_WINCHESTER` отражён в интерфейсе | `/api/inbox/me` → `site`; Настройки → Номера и каналы: «Запись с сайта» | Настройки `18-421` | `inbox-me.test.mjs` | TEST; на боевом сайте — `live`: `SITE_BOOKING_WINCHESTER=1` с 29.10, каталог 01.11 отвечает `mode: live` |
 | PERF-01 | Плавность, «уменьшить движение», нет подвисаний | анимации только сдвиг и прозрачность, `prefers-reduced-motion` в `index.css` | Основа `4-2` (раздел «Движение») | e2e без ошибок; замеров скорости нового пульта нет | MOCK/частично; настоящие телефоны — BLOCKED |
 | QA-01 | По каждому пункту: Figma, код, тест, снимок, статус | эта таблица | — | — | готово, с оговорками ниже |
 
