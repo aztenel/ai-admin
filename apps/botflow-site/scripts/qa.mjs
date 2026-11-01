@@ -5,7 +5,7 @@
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { extname, join, resolve, dirname } from "node:path";
+import { extname, join, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,13 +28,18 @@ const headersFor = (p) => Object.assign({}, ...rules.filter((r) => r.path === "/
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".jpg": "image/jpeg", ".webp": "image/webp", ".woff2": "font/woff2", ".woff": "font/woff", ".xml": "application/xml", ".txt": "text/plain; charset=utf-8" };
 const server = createServer((rq, rs) => {
   const url = new URL(rq.url, "http://x");
-  let p = decodeURIComponent(url.pathname), f = join(dist, p), status = 200;
+  let p, f, status = 200;
+  try { p = decodeURIComponent(url.pathname); } catch { rs.writeHead(400); return rs.end(); }
+  f = resolve(dist, "." + p);
+  // только файлы внутри dist: «/../» в адресе не выводит за папку сборки
+  if (f !== dist && !f.startsWith(dist + sep)) { rs.writeHead(404); return rs.end(); }
   if (existsSync(f) && statSync(f).isDirectory()) f = join(f, "index.html");
   if (!existsSync(f) && !p.endsWith("/") && !extname(p) && existsSync(join(dist, p, "index.html"))) { rs.writeHead(308, { location: p + "/" }); return rs.end(); }
   if (!existsSync(f)) { f = join(dist, "404.html"); status = 404; }
   rs.writeHead(status, { "content-type": TYPES[extname(f)] || "application/octet-stream", ...headersFor(p) });
   rs.end(readFileSync(f));
-}).listen(0);
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const base = `http://127.0.0.1:${server.address().port}`;
 
 const ROUTES = ["/", "/services/", "/about/", "/contacts/", "/cases/", "/cases/winchester/", "/privacy/", "/net-takoy-stranicy/"];
