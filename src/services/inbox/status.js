@@ -9,6 +9,8 @@
 /** @import { Env } from "../../lib/types.js" */
 import { readHist, putHist } from "../../db/kv/chats.js";
 import { kvRetry } from "../../db/kv/retry.js";
+import { d1Ready } from "../../db/d1/status.js";
+import { msgEventKeys } from "../../db/d1/stats.js";
 
 /** @type {Record<string, number>} */
 export const RANK = { queued: 0, unknown: 1, sent: 2, delivered: 3, read: 4 };
@@ -64,4 +66,28 @@ export function applyStatus(env, hk, mid, status, desc, seen) {
     if (next === "failed") t.se = stErr(status, desc); else delete t.se;
     return true;
   });
+}
+
+/** Галочки открытого чата ещё и из D1 (живая проверка стенда ai-admin-test, 01.11.2026). Отчёты Green-API о доставке принимает одна
+ *  точка сети Cloudflare, пульт читает другая: копия переписки в KV там ещё до 30 с без них, а D1 согласована сразу — события msg_*
+ *  пишет statStatus при каждом отчёте. Только повышаем статус наших последних сообщений до «доставлено» и «прочитано» (как stNext),
+ *  ничего не записываем; без D1 или при сбое — статусы как в копии. → номер сообщения у провайдера → статус.
+ *  @param {Env} env @param {string} cid @param {string} ch @param {any[]} turns @param {number} now @returns {Promise<Map<string, string>>} */
+export async function stFresh(env, cid, ch, turns, now) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  const mine = (turns || []).slice(-40).filter(t => t && t.role !== "user" && t.mid && t.st !== "read").slice(-10);
+  if (!mine.length || ch === "web") return out;
+  try {
+    const db = await d1Ready(env, now);
+    if (!db) return out;
+    const key = (/** @type {any} */ t, /** @type {string} */ s) => `msg:${cid}:${ch}:${t.mid}:${s}`.slice(0, 200); // как в statStatus → msgEventAdd
+    const got = await msgEventKeys(db, cid, mine.flatMap(t => [key(t, "delivered"), key(t, "read")]));
+    for (const t of mine) {
+      const s = got.has(key(t, "read")) ? "read" : got.has(key(t, "delivered")) ? "delivered" : "";
+      const next = s ? stNext(t.st, s) : null;
+      if (next) out.set(String(t.mid), next);
+    }
+  } catch (e) { console.log("st fresh", String(e).slice(0, 120)); }
+  return out;
 }

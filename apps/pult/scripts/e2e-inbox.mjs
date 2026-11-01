@@ -30,6 +30,20 @@ const { net, gaPass, pngFace } = await import(new URL("../../../test/harness.mjs
 const S = dl.bot.S;
 const GAW = { id: "1101000002", token: "ga-token-winch" };
 const SHIFT = Date.now() - (performance.timeOrigin + performance.now());
+// точка сети пульта (живая проверка стенда 01.11.2026): вебхуки Green-API пишет одна точка сети Cloudflare, пульт читает другая —
+// список ключей KV там отстаёт до 60 с, чтение переписки — до 30 с. edge.view — снимок переписок второго номера до события (take):
+// пока он задан, список отдаёт снимок, а с edge.getOld — и чтение переписки. Вебхук при этом пишет по-настоящему
+const EDGE_PRE = "h:ga:winchester:", kvGet = S.kv.api.get, kvList = S.kv.api.list, edge = { view: null, getOld: false };
+const take = () => ({ mem: new Map([...S.kv.mem].filter(([k]) => k.startsWith(EDGE_PRE))), meta: new Map([...S.kv.meta].filter(([k]) => k.startsWith(EDGE_PRE))) });
+S.kv.api.get = async (k, ...rest) => (edge.view && edge.getOld && k.startsWith(EDGE_PRE) ? edge.view.mem.get(k) ?? null : kvGet(k, ...rest));
+S.kv.api.list = async (o = {}, ...rest) => {
+  const p = String(o.prefix || ""), v = edge.view;
+  if (!v || !p.startsWith(EDGE_PRE)) return kvList(o, ...rest);
+  const all = [...v.mem.keys()].filter((k) => k.startsWith(p)).sort();
+  return { keys: all.map((name) => (v.meta.has(name) ? { name, metadata: v.meta.get(name) } : { name })), list_complete: true };
+};
+const listPoll = async (page) => { await page.evaluate(() => window.dispatchEvent(new Event("online"))); await page.waitForTimeout(900); }; // опрос списка — как по таймеру
+const chatTick = (page) => page.waitForTimeout(6000); // таймер открытого чата — 5 с
 
 // ---------- переписки второго номера (вымышленные номера +7 700 111 2x xx) ----------
 let n = 0;
@@ -196,25 +210,44 @@ async function phoneRun(scheme) {
   ok(`${tag}: ответ подписан именем сотрудника`, /Айгерим/.test(await log.innerText()));
   ok(`${tag}: одна галочка — «Отправлено»`, (await log.getByRole("img", { name: "Отправлено" }).count()) >= 1);
   const h = S.hist("ga", "winchester", B), mine = h.turns.filter((x) => x.by === "admin").at(-1);
-  // живая проверка на стенде 01.11.2026: отчёты Green-API «доставлено» и «прочитано» пришли, строка списка показала синие
-  // галочки, а открытый чат — одну серую. Отчёты пишет одна точка сети Cloudflare, пульт читает другая: чтение ключа KV там до 60 с
-  // отдаёт прежнюю копию, а список ключей с метаданными уже новый. Опрос видел новое время в списке, перезагружал чат — и получал
-  // старую копию; следующие опросы ничего нового в списке не видели и чат больше не трогали. Здесь — то же: пока stale, чтение
-  // переписки отдаёт копию до отчёта. Опрос по таймеру — тот же store.poll(), что и по событию «online» (без «Обновить»)
-  const hkey = `h:ga:winchester:${B}`, realGet = S.kv.api.get, pre = S.kv.mem.get(hkey);
-  let stale = false;
-  S.kv.api.get = async (k, ...rest) => (stale && k === hkey ? pre : realGet(k, ...rest));
-  const autoPoll = async () => { await page.evaluate(() => window.dispatchEvent(new Event("online"))); await page.waitForTimeout(900); };
+  // живая проверка на стенде 01.11.2026: входящие и галочки приходили в пульт через минуту-две, часто только после обновления
+  // страницы, а в WhatsApp — сразу (точка сети пульта — edge, выше). Ничего не нажимаем: «Обновить» и перезагрузка страницы не нужны —
+  // открытый чат пульт перечитывает сам раз в 5 с
+  // (1) «доставлено»: список ещё старый, переписка уже новая — список ничего не меняет, чат догоняет сам. Сначала опрос списка после
+  // отправки: первый опрос после ответа и так перечитывает чат (время строки сменилось) — здесь проверяем то, что после него
+  await listPoll(page);
+  let snap = take();
   await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine.mid, status: "delivered", sendByApi: true });
-  stale = true;
-  await autoPoll(); // список уже «доставлено», чат перезагружен — из старой копии
-  stale = false;
-  await autoPoll(); // в списке нового нет — открытый чат должен догнать статус сам
-  ok(`${tag}: открытый чат догоняет статус после устаревшего чтения — «Доставлено» (без «Обновить»)`, (await log.getByRole("img", { name: "Доставлено" }).count()) >= 1);
-  await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine.mid, status: "read", sendByApi: true });
-  await autoPoll();
-  S.kv.api.get = realGet;
-  ok(`${tag}: открытый чат сам — «Прочитано» (две синие, без «Обновить»)`, (await log.getByRole("img", { name: "Прочитано" }).count()) >= 1);
+  edge.view = snap; edge.getOld = false;
+  await listPoll(page);
+  await chatTick(page);
+  ok(`${tag}: список ещё старый — открытый чат сам «Доставлено» (без «Обновить»)`, (await log.getByRole("img", { name: "Доставлено" }).count()) >= 1);
+  edge.view = null;
+  // (2) клиент ответил, пока чат открыт: сначала и список, и переписка старые, потом переписка обновилась, список — ещё нет
+  snap = take();
+  await text(B, "Отлично, приду к 15:00");
+  edge.view = snap; edge.getOld = true;
+  await listPoll(page);
+  await chatTick(page);
+  ok(`${tag}: (проверка заглушки) пока у пульта старая копия — нового сообщения нет`, !/приду к 15:00/.test(await log.innerText()));
+  edge.getOld = false;
+  await chatTick(page);
+  ok(`${tag}: входящее появилось в открытом чате само, хотя список ещё старый`, /приду к 15:00/.test(await log.innerText()));
+  edge.view = null;
+  await listPoll(page);
+  // (3) «прочитано»: и список, и переписка у пульта старые — галочки из D1 (она согласована сразу)
+  await page.getByLabel("Ответ клиенту").fill("Ждём вас!");
+  await page.getByRole("button", { name: /Отправить/ }).click();
+  await page.waitForTimeout(700);
+  const mine2 = S.hist("ga", "winchester", B).turns.filter((x) => x.by === "admin").at(-1);
+  await listPoll(page);
+  snap = take();
+  await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine2.mid, status: "read", sendByApi: true });
+  edge.view = snap; edge.getOld = true;
+  await listPoll(page);
+  await chatTick(page);
+  ok(`${tag}: и список, и переписка у пульта старые — «Прочитано» (две синие) из D1`, (await log.getByRole("img", { name: "Прочитано" }).count()) >= 1);
+  edge.view = null; edge.getOld = false;
   const head = await page.locator("section[aria-label^='Переписка'] header").innerText();
   ok(`${tag}: в шапке — второй номер и кто ведёт`, /Второй WhatsApp/.test(head) && /ведёт вы/.test(head), head);
   ok(`${tag}: нет «Бот в этой компании выключен» и «Оператор, с телефона»`, !/Бот в этой компании выключен|Оператор, с телефона/.test(await page.content()));
@@ -360,6 +393,21 @@ async function deskRun(scheme) {
   await page.waitForTimeout(500);
   ok(`${t.tag}: «Взять себе» — ведёт Ержан`, /ведёт вы/.test(await page.locator("section[aria-label^='Переписка'] header").innerText()));
   await t.shot("1-doc-take");
+  // список рядом с чатом: точка сети пульта видит отчёт «прочитано» только через D1 — строка списка тоже две синие, не меньше, чем в чате
+  await page.getByLabel("Ответ клиенту").fill("Получили, спасибо!");
+  await page.getByRole("button", { name: /Отправить/ }).click();
+  await page.waitForTimeout(700);
+  await tab(page, "Все").click();
+  await listPoll(page);
+  const midC = S.hist("ga", "winchester", C).turns.filter((x) => x.by === "admin").at(-1).mid, snapC = take();
+  await hook({ typeWebhook: "outgoingMessageStatus", chatId: C + "@c.us", idMessage: midC, status: "read", sendByApi: true });
+  edge.view = snapC; edge.getOld = true;
+  await listPoll(page);
+  await chatTick(page);
+  const rowC = row(page, "Получили, спасибо");
+  ok(`${t.tag}: и в чате, и в строке списка — «Прочитано», хотя список у пульта старый`, (await page.locator("[role=log]").getByRole("img", { name: "Прочитано" }).count()) >= 1 && (await rowC.getByRole("img", { name: "Прочитано" }).count()) >= 1, await rowC.first().innerText().catch(() => "нет строки"));
+  edge.view = null; edge.getOld = false;
+  await tab(page, "Нужен ответ").click();
   // (2) документ Word — скачивание: 200 и «attachment»
   const docx = page.locator("[role=log]").getByRole("link", { name: "Скачать Анкета.docx" });
   const dr = (await docx.count()) ? await page.request.get(new URL(await docx.getAttribute("href"), page.url()).href) : null;

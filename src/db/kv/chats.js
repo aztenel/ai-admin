@@ -29,13 +29,24 @@ export function histMeta(h) {
   const bk = (p.bookings || []).length + (p.pend || []).length; if (bk) m.bk = bk;
   return m;
 }
+// Чтение переписки. KV отдаёт копию, прочитанную в этой точке сети раньше, до cacheTtl секунд (по умолчанию 60), а запись из другой
+// точки видна не сразу. Вебхуки Green-API принимает одна точка, пульт администратора читает другая: на стенде ai-admin-test 01.11.2026
+// входящие и галочки появлялись в пульте через минуту-две, в WhatsApp — сразу. 30 с — наименьший срок, который принимает Cloudflare
+// (с 30.01.2026); он же вдвое сокращает окно, в котором запись по старой копии затирает соседнюю. Чтение со сроком не удалось (среда его
+// не приняла или сбой) — ещё раз без него: из-за срока чат не должен перестать открываться; вторая ошибка уходит наверх, как раньше
+export const HIST_CACHE_TTL = 30;
+/** @param {any} store @param {string} key @returns {Promise<string | null>} */
+export async function histGet(store, key) {
+  try { return await store.get(key, { cacheTtl: HIST_CACHE_TTL }); }
+  catch (e) { return store.get(key); }
+}
 /** @param {any} store @param {string} key @param {Hist | Record<string, any>} h */
 export async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
 // дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
 /** @param {any} store @param {string} key @param {any[] | undefined} add @param {((profile: Profile, h: Hist) => void) | undefined} [patch] @returns {Promise<Hist>} */
 export async function logTurns(store, key, add, patch) {
   return kvRetry(async () => {
-    const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
+    const h = JSON.parse((await histGet(store, key)) || "null") || { n: 0, turns: [], profile: {} };
     h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
     if (patch) patch(h.profile, h);
     await putHist(store, key, h);
@@ -60,7 +71,7 @@ export function mergeProfile(cur, mine, base, added, removed, droppedPend) {
   return out;
 }
 /** @param {Env} env @param {string} hk */
-export async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
+export async function readHist(env, hk) { return JSON.parse((await histGet(env.KV, hk)) || "null"); }
 
 // ---- «Очистить память бота» (пульт). Cloudflare KV согласован не сразу: там, где принят вебхук (Green-API — в другом месте сети, чем пульт),
 // до ~60 с читается копия чата до очистки — бот отвечал по ней и записывал её обратно, очистка пропадала навсегда (живая проверка владельца

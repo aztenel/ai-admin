@@ -9,6 +9,14 @@ export async function msgEventAdd(db, ws, key, kind, details, at) {
     .bind(ws, key.slice(0, 200), kind, JSON.stringify(details), at).run();
 }
 
+/** Какие из этих событий уже записаны: галочки открытого чата (services/inbox/status.js → stFresh). Поиск по уникальному ключу и своей компании.
+ *  @param {any} db @param {string} ws @param {string[]} keys @returns {Promise<Set<string>>} */
+export async function msgEventKeys(db, ws, keys) {
+  if (!keys.length) return new Set();
+  const r = await db.prepare(`select event_key from events where ws = ? and event_key in (${keys.map(() => "?").join(", ")})`).bind(ws, ...keys).all();
+  return new Set((r.results || []).map((/** @type {any} */ x) => String(x.event_key)));
+}
+
 /** Числа за период: вид события × источник сообщения. @param {any} db @param {string} ws @param {number} from @param {number} to */
 export async function msgEventCounts(db, ws, from, to) {
   const r = await db.prepare("select kind, json_extract(details, '$.src') src, count(*) n from events where ws = ? and at >= ? and at < ? and kind like 'msg\\_%' escape '\\' group by kind, src")

@@ -111,6 +111,8 @@ export function parseKey(key: string): ConversationRef | null {
   return i > 0 ? { channelId: key.slice(0, i), externalId: key.slice(i + 1) } : null;
 }
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Что-то пошло не так. Обновите страницу.");
+const CHAT_POLL_MS = 5e3; // открытый чат — чаще списка (15 с): store.tickChat
+const RANK: Record<string, number> = { queued: 0, unknown: 1, sent: 2, delivered: 3, read: 4 }; // как на сервере (services/inbox/status.js)
 
 class Store {
   state: State = initial;
@@ -119,7 +121,8 @@ class Store {
   private timer = 0;
   private open: string | null = null;
   private gen = 0; // смена компании отменяет ответы, пришедшие для прежней
-  private lag = { sig: "", n: 0 }; // сколько раз подряд перезагружали открытый чат, отставший от списка по статусу (statusBehind)
+  private chatTimer = 0;
+  private chatBusy = ""; // открытый чат, который сейчас перечитывает таймер (запросы не наслаиваются)
 
   subscribe = (f: () => void) => {
     this.subs.add(f);
@@ -159,7 +162,9 @@ class Store {
       this.set({ phase: "error", error: errText(e), offline: e instanceof ApiError && e.offline });
     }
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) this.poll();
+      if (document.hidden) return;
+      this.poll();
+      this.tickChat();
     });
     window.addEventListener("online", () => this.poll());
     window.addEventListener("offline", () => this.set({ offline: true }));
@@ -203,7 +208,7 @@ class Store {
     const workspace = { ...snap.workspace, channels: mergeChannels(snap.workspace.channels, report?.channels) };
     // показанные по кнопке чаты только с нашими сообщениями не пропадают при обновлении списка
     const keep = this.state.showOut ? this.state.conversations.filter((c) => !c.inbound && !snap.conversations.some((x) => x.key === c.key)) : [];
-    this.set({ workspace, conversations: keep.length ? [...snap.conversations, ...keep] : snap.conversations, truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope) });
+    this.set({ workspace, conversations: this.rowStatus(keep.length ? [...snap.conversations, ...keep] : snap.conversations), truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope) });
     if (this.state.mode === "live") notifyWaiting(snap.conversations, this.open, (key) => navigate({ name: "inbox", conv: key }));
   }
 
@@ -244,7 +249,7 @@ class Store {
       this.applySnapshot(snap);
       this.set({ offline: false, phase: "ready" });
       const row = this.open ? snap.conversations.find((c) => c.key === this.open) : undefined;
-      if (this.open && (manual || row?.lastAt !== before || this.statusBehind(this.open, row))) this.loadConversation(this.open, true);
+      if (this.open && (manual || row?.lastAt !== before)) this.loadConversation(this.open, true);
       if (manual) this.loadReport(g);
     } catch (e) {
       if (g !== this.gen) return;
@@ -256,16 +261,41 @@ class Store {
     }
   }
 
-  /** Открытый чат отстал от списка: в строке списка у нашего последнего сообщения уже другой статус. Живая проверка на стенде
-   *  01.11.2026: отчёты Green-API пишет одна точка сети Cloudflare, пульт читает другая — чтение переписки там до 60 с отдаёт прежнюю
-   *  копию, а список ключей уже новый; опрос перезагружал чат по новому времени, получал старую копию, и галочка так и оставалась
-   *  одна. Перезагружаем, пока не догонит, но не больше 5 раз подряд на одно состояние строки: кэш живёт до 60 с, опрос — раз в 15 с. */
-  private statusBehind(key: string, row?: ConversationSummary) {
-    const last = this.state.details[key]?.data?.messages.at(-1);
-    if (!row?.lastStatus || !last || last.from === "contact" || last.status === row.lastStatus) return false;
-    const sig = `${key}|${row.lastAt}|${row.lastStatus}`;
-    if (this.lag.sig !== sig) this.lag = { sig, n: 0 };
-    return ++this.lag.n <= 5;
+  /** Открытый чат перечитываем сами каждые 5 с, не дожидаясь, пока изменится список (как рабочий пульт /inbox — раз в 3 с). Живая
+   *  проверка на стенде 01.11.2026: входящие и галочки появлялись в пульте через минуту-две, часто только после обновления страницы,
+   *  а в WhatsApp — сразу. Вебхуки Green-API пишет одна точка сети Cloudflare, пульт читает другая: список ключей KV там отстаёт до 60 с,
+   *  чтение переписки — до 30 с (сервер читает её с наименьшим сроком). Опрос перезагружал чат, только когда в списке менялось время,
+   *  а получив старую копию, больше его не трогал. Свёрнутая вкладка чат не перечитывает. */
+  private scheduleChat() {
+    clearTimeout(this.chatTimer);
+    if (this.open) this.chatTimer = window.setTimeout(() => this.tickChat(), CHAT_POLL_MS);
+  }
+  private async tickChat() {
+    clearTimeout(this.chatTimer);
+    const key = this.open;
+    if (key && !document.hidden && this.state.phase === "ready" && this.chatBusy !== key) {
+      this.chatBusy = key;
+      try {
+        await this.loadConversation(key, true);
+      } finally {
+        if (this.chatBusy === key) this.chatBusy = "";
+      }
+    }
+    this.scheduleChat();
+  }
+
+  /** Галочки в строке открытого чата — не меньше, чем у последнего сообщения в самой переписке: список отстаёт сильнее (до 60 с). */
+  private rowStatus(rows: ConversationSummary[]) {
+    const key = this.open, last = key ? this.state.details[key]?.data?.messages.at(-1) : undefined;
+    const st = last && last.from !== "contact" ? last.status : undefined;
+    if (!key || !st) return rows;
+    let changed = false;
+    const out = rows.map((c) => {
+      if (c.key !== key || c.previewFrom === "contact" || (RANK[st] ?? -1) <= (RANK[c.lastStatus ?? ""] ?? -1)) return c;
+      changed = true;
+      return { ...c, lastStatus: st };
+    });
+    return changed ? out : rows;
   }
 
   setOpen(key: string | null) {
@@ -277,6 +307,7 @@ class Store {
       const c = this.state.conversations.find((x) => x.key === key);
       if (c && (c.unread || c.unreadCount)) this.set({ conversations: this.state.conversations.map((x) => (x.key === key ? { ...x, unread: false, unreadCount: 0 } : x)) });
     }
+    this.scheduleChat();
   }
 
   async loadConversation(key: string, quiet = false) {
@@ -288,6 +319,8 @@ class Store {
       const data = await this.src.conversation(ws, ref);
       if (g !== this.gen) return;
       this.setDetail(key, { data, loading: false, error: undefined, at: Date.now() });
+      const rows = this.rowStatus(this.state.conversations);
+      if (rows !== this.state.conversations) this.set({ conversations: rows });
     } catch (e) {
       if (g !== this.gen) return;
       if (e instanceof ApiError && e.offline) this.set({ offline: true });

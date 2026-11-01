@@ -10,7 +10,8 @@ import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
 import { eraseClient } from "../services/inbox/erase.js";
-import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
+import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, histGet, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
+import { stFresh } from "../services/inbox/status.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { waRoute, waBotOff, botOff } from "../services/channels/index.js";
@@ -115,7 +116,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   if (!/** @type {any} */ (CHAT_ID)[ch] || !/** @type {any} */ (CHAT_ID)[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
   /** @type {any} */
-  let h; try { h = JSON.parse((await env.KV.get(hk)) || "null"); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте ещё раз." }, 503); }
+  let h; try { h = JSON.parse((await histGet(env.KV, hk)) || "null"); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте ещё раз." }, 503); }
   if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
   // чат очищали, а бот в другом месте сети успел записать копию до очистки: пульт показывает то, что бот будет помнить (19.10.2026)
   const fgAt = await readForgot(env.KV, hk);
@@ -128,6 +129,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn ? await sendDbOff(env, now) : "";
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id, sendOff = await sendOffOf();
+    const fresh = await stFresh(env, cid, ch, h.turns || [], now); // галочки из D1, если копия переписки здесь ещё старая (01.11.2026)
     /** @type {any[]} */
     let reqs = [];
     if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
@@ -136,7 +138,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (ch !== "web") { try { const bl = JSON.parse((await env.KV.get("bclast:" + cid)) || "null"); if (bl && bl.text) promo = { at: bl.at, name: bl.name || "", text: bl.text }; } catch (e) {} }
     return {
       promo,
-      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t, h.turns || [])),
+      ch, id, phone, name: p.name || "", waName: p.waName || "", turns: (h.turns || []).map((/** @type {any} */ t) => turnView(t && t.mid && fresh.has(String(t.mid)) ? { ...t, st: fresh.get(String(t.mid)), se: undefined } : t, h.turns || [])),
       bookings: (p.bookings || []).map((/** @type {any} */ x) => altLabel(x, "ru", now, true)), pend: (p.pend || []).map((/** @type {any} */ x) => [x.service, x.raw || [x.date, x.time].filter(Boolean).join(" ")].filter(Boolean).join(", ")), booked: !p.bookings && !p.pend ? p.booked || "" : "",
       late: p.late && now - p.late.at < 6 * 3600e3 ? p.late : null,
       need: p.need ? { why: p.need.why, text: p.need.why === "task" ? String(p.need.text || "задача") : /** @type {any} */ (NEED_TEXT)[p.need.why] || "", at: p.need.at || 0, ...(p.need.tp ? { tp: p.need.tp } : {}), ...(p.need.src ? { src: srcView(h.turns || [], p.need.src) } : {}) } : null,
