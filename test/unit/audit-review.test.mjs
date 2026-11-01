@@ -13,7 +13,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { net, mk, gaPass } from "../harness.mjs";
 import { sqliteOk, d1With, openD1, migrate, MIGRATIONS } from "../d1.mjs";
-import { gaInfo } from "../../src/services/integrations/greenapi/client.js";
+import { gaInfo, gaCode, gaKind, gaUnsure } from "../../src/services/integrations/greenapi/client.js";
+import { jrRun } from "../../src/services/reminders/journal.js";
+import { atLocal } from "../../src/services/reminders/plan.js";
+import { SCENARIOS } from "../../src/services/reminders/templates.js";
 import { gaRoute } from "../../src/services/integrations/greenapi/webhook.js";
 
 const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
@@ -201,3 +204,35 @@ test("F7 отметка могла записаться, а база так и �
   assert.doesNotMatch(j1.error, /не отправлено/i);
   assert.equal(sends().length, 0);
 });
+
+// F3 на уровне клиента Green-API (добавлена после исправления: классификацию разделяют рассылки и напоминания по журналу).
+// Раньше 408 значил «стоп»: напоминание возвращалось в очередь и через 6 часов уходило ещё раз, а клиент мог его уже получить.
+// 5xx в пульте — тоже «неизвестно» (gaUnsure); напоминания по журналу на 5xx пробуют ещё раз через минуту, как раньше (CLAUDE.md §2.2) —
+// это вне ревью PR №2 и остаётся решением на потом
+test("F3 Green-API: 408, 499, нет ответа — «неизвестно, второй раз не шлём» везде; 5xx — «неизвестно» в пульте; 400, 401, 403, 429 — подтверждённый отказ", () => {
+  for (const status of [0, 408, 499, 500, 502]) {
+    assert.equal(gaKind(gaCode({ status })), status >= 500 ? "temp" : "net", "код " + status);
+    assert.equal(gaUnsure({ ok: false, status }), true, "код " + status);
+  }
+  for (const status of [400, 401, 403, 429, 466]) assert.equal(gaUnsure({ ok: false, status }), false, "код " + status);
+  assert.equal(gaUnsure({ ok: false, status: 0, preview: true }), false, "черновик ничего не отправлял");
+});
+
+test("F3 напоминание по журналу: Green-API ответил 408 — второй раз не шлём, номер не ставим на паузу, в переписке «неизвестно»", async () => {
+  net.reset();
+  const W = { ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", REMIND_GA_WINCHESTER: "1", ...GA_W };
+  net.altJournal = [{ id: 9408, datetime: "2026-10-20T15:00:00+05:00", deleted: false, attendance: 0, create_date: "2026-10-18T12:00:00+05:00",
+    staff: { id: 1, name: "Тони" }, client: { id: 1, phone: "+77000009408", name: "Клиент" }, services: [{ id: 1, title: "Мужская стрижка" }] }];
+  const s = mk(W);
+  await s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }]))));
+  await jrRun(s.env, atLocal("2026-10-19", "17:00"));
+  net.gaReply = r => r.op === "sendMessage" ? new Response(JSON.stringify({ message: "Request Timeout" }), { status: 408 }) : null;
+  await jrRun(s.env, atLocal("2026-10-19", "18:00"));
+  net.gaReply = null;
+  for (const t of ["18:01", "18:30", "20:00"]) await jrRun(s.env, atLocal("2026-10-19", t));
+  assert.equal(sends().length, 1, "напоминание «накануне» — одна попытка");
+  assert.equal(await s.kv.api.get("jrhold:winchester"), null, "номер не на паузе: 408 — не отказ номера");
+  const h = s.hist("ga", "winchester", "77000009408");
+  assert.ok(h && h.turns.some(t => t.st === "unknown"), JSON.stringify(h && h.turns));
+});
+

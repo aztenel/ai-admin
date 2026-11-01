@@ -28,6 +28,11 @@ import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy,
 const BUSY = "Сервер сейчас не отвечает. Попробуйте через минуту.";
 // вебхук не настроен — рассылку через Green-API не запускаем: бот не увидит, кто ответил «стоп»
 const GA_HOOK_WARN = "Номер не настроен до конца: ответы клиентов не приходят в пульт, и тем, кто ответит «стоп», рассылка будет приходить дальше. Владелец настраивает это одной кнопкой: «Проверка запуска», затем «Настроить Green-API».";
+// вебхук настроен, но на другой адрес (например, на тестовую версию): «стоп» и ответы клиентов уходят туда (ревью PR №2, F2)
+/** @param {string} host */
+const gaHookElsewhere = host => `Ответы клиентов этого номера и их «стоп» приходят на другой адрес (${host}), а не сюда. Владелец исправляет это на этом сайте: «Проверка запуска», затем «Настроить Green-API».`;
+/** @param {any} g */
+const gaHookWarn = g => g.other ? gaHookElsewhere(g.other) : GA_HOOK_WARN;
 /** @param {any} q @param {number} now */
 const bcUsed = (q, now) => { const slot = Math.floor(now / BC_SLOT); return Object.keys(q || {}).filter(k => +k > slot - BC_DAY).reduce((a, k) => a + (+q[k] || 0), 0); };
 /** @param {Request} request @param {Env} env @param {URL} url @param {any} s */
@@ -58,11 +63,11 @@ export async function bcApi(request, env, url, s) {
     let ga = null; // номер Green-API клиента: привязан ли, настроен ли вебхук, сколько отправлено за сутки
     if (gr) {
       try { usedGa = bcUsed(JSON.parse((await env.KV.get("bcq:" + cid + ":ga")) || "{}"), now); } catch (e) {}
-      const g = await gaInfo(env, gr);
+      const g = await gaInfo(env, gr, url.origin);
       // bcOff — рассылки с номера бота выключены кодом (gaNoBroadcast, Winchester): пульт сразу пишет почему и не даёт выбрать этот номер,
       // а не узнаёт об этом только при «Запустить» (19.10.2026)
       ga = { ready: !g.error && g.state === "authorized", state: g.state || "", phone: g.phone || "", hook: !!g.hook, why: g.error || (g.state === "authorized" ? "" : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
-        warn: g.error || g.hook ? "" : GA_HOOK_WARN, used: usedGa, cap: GA_CAP, hold: holdGa, bcOff: bcGaOff(cid) ? GA_OFF : "" };
+        warn: g.error || g.hook ? "" : gaHookWarn(g), used: usedGa, cap: GA_CAP, hold: holdGa, bcOff: bcGaOff(cid) ? GA_OFF : "" };
     }
     return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, ga, list: rows.slice(0, 60), now });
   }
@@ -186,10 +191,10 @@ export async function bcApi(request, env, url, s) {
       const stale = past ? "" : await bcCrmStale(env, c, cur, now);
       if (stale) return jsonP({ error: stale }, 409);
       if (cur.ch === "ga") { // номер на связи и вебхук ведёт в этот бот — иначе «стоп» клиентов до бота не дойдёт
-        const g = await gaInfo(env, rt.ga);
+        const g = await gaInfo(env, rt.ga, url.origin);
         if (g.error) return jsonP({ error: g.error }, 409);
         if (g.state !== "authorized") return jsonP({ error: `${GA_STATE_TEXT[g.state] || `Green-API: номер в состоянии «${clean(g.state, 30)}»`}. ${GA_STATE_BAD[g.state] ? "Пока ограничение не снято, рассылку запускать нельзя." : "Запустите рассылку, когда номер будет на связи."}` }, 409);
-        if (!g.hook) return jsonP({ error: GA_HOOK_WARN }, 409);
+        if (!g.hook) return jsonP({ error: gaHookWarn(g) }, 409);
       }
       const holds = await bcHold(env, cid), hold = bcHoldFor(holds, cur);
       if (past && !hold) return jsonP({ error: PAST }, 409);

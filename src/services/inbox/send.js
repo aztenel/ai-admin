@@ -8,10 +8,10 @@
 import { clean, snip } from "../../lib/text.js";
 import { logSafe } from "../../lib/phone.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
-import { gaUpload, gaCode, gaWhy } from "../integrations/greenapi/client.js";
+import { gaUpload, gaCode, gaWhy, gaUnsure } from "../integrations/greenapi/client.js";
 import { sendMarkGet, sendMarkPut, sendMarkDrop } from "../../db/kv/inbox.js";
-import { d1Ready } from "../../db/d1/status.js";
-import { claimSend, finishSend } from "../../db/d1/sends.js";
+import { d1Ready, d1Status } from "../../db/d1/status.js";
+import { claimSend, finishSend, releaseSend, sendTableReady } from "../../db/d1/sends.js";
 import { RISKY, fileName } from "./media.js";
 
 export const FILE_MAX = 25 * 1024 * 1024;
@@ -22,6 +22,11 @@ export const QUOTE_GONE = "Сообщение, на которое вы отве
 export const BUSY = "Это сообщение уже отправляется. Обновите переписку через минуту.";
 export const NO_RID = "Обновите страницу пульта: у сообщения нет номера отправки, поэтому оно не отправлено.";
 export const NO_DB = "Отправка со второго номера сейчас недоступна: не отвечает база, которая защищает от двойной отправки. Сообщение не отправлено, попробуйте через минуту.";
+// база есть, но без таблицы отметок (миграция 0005) или к адресу не подключена — это настройка сайта, а не сбой связи (ревью PR №2, F1)
+export const NO_SETUP = "Отправка со второго номера не настроена: у сайта нет базы, которая защищает от двойной отправки. Сообщение не отправлено. Сообщите тому, кто настраивает сайт.";
+// отметка попытки могла записаться, а ответ базы потерялся и освободить её не удалось (ревью PR №2, F7): до Green-API запрос не дошёл,
+// но повтор с тем же номером может пару минут отвечать «уже отправляется»
+export const CLAIM_UNKNOWN = "Результат неизвестен: база не ответила, и попытка отправки могла сохраниться. Обновите переписку через минуту и проверьте, прежде чем отправлять снова.";
 
 /** @type {Record<string, string>} */
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/3gpp": "3gp", "video/webm": "webm",
@@ -113,7 +118,7 @@ export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   const x = await gaUpload(gr, "sendFileByUpload", form);
   const mid = String((x.j && x.j.idMessage) || ""), url = String((x.j && x.j.urlFile) || "");
   if (x.ok && mid) return { ok: true, id: mid.slice(0, 80), ...(/^https:\/\//.test(url) ? { url: url.slice(0, 500) } : {}) };
-  if (x.ok || !x.status || x.status >= 500) return { ok: true, unknown: true }; // ответа нет или сбой у них: файл мог уйти — сам не повторяется
+  if (x.ok || gaUnsure(x)) return { ok: true, unknown: true }; // ответа нет, обрыв, срок или сбой у них: файл мог уйти — сам не повторяется
   console.log("GA file", x.status, logSafe(x.text.slice(0, 300)));
   return { ok: false, error: `Green-API не принял файл: ${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 160) }, gr)}.` };
 }
@@ -137,9 +142,34 @@ export async function sendOnce(env, cid, ch, chat, rid, fn) {
   return ch === "ga" ? sendOnceD1(env, cid, ch, chat, rid, fn) : sendOnceKV(env, cid, ch, chat, rid, fn);
 }
 
-/** Есть ли у адреса база для отметок отправки (своя D1, миграции применены). @param {Env} env @param {number} now */
-export async function sendDbReady(env, now) {
-  try { return !!(await d1Ready(env, now, true)); } catch (e) { return false; }
+/** @type {WeakMap<object, number>} */
+const tableSeen = new WeakMap(); // база, где таблица отметок уже нашлась (время проверки): не спрашиваем её о каждом сообщении
+/**
+ * Готова ли база отметок: ok — да; nosetup — к адресу не подключена своя D1, у неё не та отметка окружения или нет таблицы
+ * send_claims (миграция 0005); nodb — база не ответила. → { state, db? }
+ * @param {Env} env @param {number} now @returns {Promise<{ state: "ok", db: any } | { state: "nodb" | "nosetup" }>}
+ */
+export async function sendDb(env, now) {
+  if (!env.DB || typeof env.DB.prepare !== "function") return { state: "nosetup" };
+  /** @type {any} */ let db = null;
+  try { db = await d1Ready(env, now, true); } catch (e) { db = null; }
+  if (!db) {
+    /** @type {any} */ let st = null;
+    try { st = await d1Status(env); } catch (e) { st = null; }
+    return { state: !st || st.error ? "nodb" : "nosetup" }; // ответила, но не та база или без миграций — настройка
+  }
+  const seen = tableSeen.get(db);
+  if (seen && now - seen < 60e3) return { state: "ok", db };
+  try {
+    if (!(await sendTableReady(db))) return { state: "nosetup" };
+    tableSeen.set(db, now);
+    return { state: "ok", db };
+  } catch (e) { return { state: "nodb" }; }
+}
+/** Почему со второго номера сейчас не отправить: "" — можно; иначе текст для пульта. @param {Env} env @param {number} now */
+export async function sendDbOff(env, now) {
+  const x = await sendDb(env, now);
+  return x.state === "ok" ? "" : x.state === "nosetup" ? NO_SETUP : NO_DB;
 }
 
 /**
@@ -149,23 +179,29 @@ export async function sendDbReady(env, now) {
  */
 async function sendOnceD1(env, cid, ch, chat, rid, fn) {
   if (!RID.test(rid || "")) return { blocked: { status: 400, code: "rid", error: NO_RID } };
-  const now = Date.now(), k = { ws: cid, ch, chat, rid };
-  /** @type {any} */ let db = null;
-  try { db = await d1Ready(env, now, true); } catch (e) { db = null; }
-  if (!db) return { blocked: { status: 503, code: "nodb", error: NO_DB } };
+  const now = Date.now(), k = { ws: cid, ch, chat, rid }, owner = crypto.randomUUID();
+  const base = await sendDb(env, now);
+  if (base.state !== "ok") return { blocked: base.state === "nosetup" ? { status: 503, code: "nosetup", error: NO_SETUP } : { status: 503, code: "nodb", error: NO_DB } };
+  const db = base.db;
+  /** @param {any} row */
+  const dupOf = row => !row || (row.state === "pending" && now - row.updated_at < OLD_PENDING_MS) ? /** @type {const} */ ({ dup: "busy", ok: true })
+    : { dup: /** @type {const} */ ("done"), ok: /** @type {const} */ (true), ...(row.state === "sent" && row.mid ? { id: row.mid } : {}), ...(row.state === "sent" ? {} : { unknown: true }) };
   /** @type {any} */ let c;
-  try { c = await claimSend(db, k, now); }
-  catch (e) { console.log("send claim", String(e).slice(0, 160)); return { blocked: { status: 503, code: "nodb", error: NO_DB } }; }
-  if (!c.own) {
-    const row = c.row;
-    if (!row || (row.state === "pending" && now - row.updated_at < OLD_PENDING_MS)) return { dup: "busy", ok: true };
-    return { dup: "done", ok: true, ...(row.state === "sent" && row.mid ? { id: row.mid } : {}), ...(row.state === "sent" ? {} : { unknown: true }) };
+  try { c = await claimSend(db, k, now, owner); }
+  catch (e) {
+    // вставка могла пройти, а ответ потеряться. Green-API ещё не вызывали: освобождаем свою строку, и «Повторить» отправит (F7)
+    console.log("send claim", String(e).slice(0, 160));
+    try {
+      const rel = await releaseSend(db, k, owner, Date.now());
+      return rel.mine ? { blocked: { status: 503, code: "nodb", error: NO_DB } } : dupOf(rel.row);
+    } catch (e2) { return { blocked: { status: 503, code: "claim_unknown", error: CLAIM_UNKNOWN } }; }
   }
+  if (!c.own) return dupOf(c.row);
   /** @type {any} */ let r;
   try { r = await fn(); }
   catch (e) { console.log("send", String(e).slice(0, 160)); r = { ok: true, unknown: true }; } // непредвиденный сбой после начала отправки: могло уйти
   const state = r && r.ok ? (r.unknown ? "unknown" : "sent") : "refused";
-  try { await finishSend(db, k, state, r && r.id ? String(r.id).slice(0, 80) : "", Date.now()); }
+  try { await finishSend(db, k, state, r && r.id ? String(r.id).slice(0, 80) : "", Date.now(), owner); }
   catch (e) { console.log("send claim finish", String(e).slice(0, 160)); } // строка осталась pending: повтор этого rid ничего не отправит
   return r;
 }

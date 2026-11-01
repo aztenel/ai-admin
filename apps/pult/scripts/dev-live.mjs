@@ -59,8 +59,6 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   });
   const { S } = bot;
 
-  // вебхуки Green-API ведут в этого бота: без этого рассылку с номера бота не запустить (бот не увидел бы «стоп»)
-  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${bot.url}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   // сведения о номерах Meta: у Winchester качество высокое и предел 1000, у «Дента» — среднее и 250 (видно оба вида плашки)
   net.graphReply = (url, init) => {
     if ((init.method && init.method !== "GET") || !url.includes("fields=")) return null;
@@ -174,12 +172,17 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
       port,
       strictPort: !!port,
       // /_cron — «прошла минута» (фоновая отправка рассылок), чтобы проверке хватало одного адреса
-      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/_cron"].map((p) => [p, { target: bot.url }])),
+      // /ga — вебхук Green-API: на сайте он и пульт — один адрес Worker, здесь — адрес Vite (заголовок Host прокси сохраняет)
+      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/ga", "/_cron"].map((p) => [p, { target: bot.url }])),
     },
   });
   await vite.listen();
   const addr = vite.httpServer?.address();
   const app = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : port}/app/`;
+  // вебхуки Green-API ведут в этого бота, и по тому адресу, который видит сервер из пульта: сервер сверяет адрес вебхука со своим
+  // (ревью PR №2, F2: вебхук на другом адресе — номер не настроен). Без этого рассылку с номера бота не запустить.
+  const site = new URL(app).origin;
+  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${site}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   const close = async () => {
     await vite.close();
     await new Promise((r) => bot.server.close(() => r(undefined)));

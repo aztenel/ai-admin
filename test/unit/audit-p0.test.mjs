@@ -99,6 +99,7 @@ test("A5 второй номер без rid: отказ до обращения 
   assert.equal(sends().length, 0);
 });
 
+// Нет базы у адреса — это настройка, а не сбой связи: код nosetup (ревью PR №2, F1, 01.11.2026; раньше — nodb)
 test("A6 нет базы D1 у адреса: отправка со второго номера отклоняется до Green-API (503, понятная причина)", async () => {
   net.reset();
   const s = mk({ ...GA_W }), b = await login(s), from = "77000000961";
@@ -106,7 +107,7 @@ test("A6 нет базы D1 у адреса: отправка со второг�
   const r = await sendText(b, from, "Ответ", "rid-A6-0001");
   assert.equal(r.status, 503);
   const j = await r.json();
-  assert.equal(j.code, "nodb"); assert.match(j.error, /не отправлено/i);
+  assert.equal(j.code, "nosetup"); assert.match(j.error, /не отправлено/i); assert.match(j.error, /не настроен/i);
   assert.equal(sends().length, 0);
   const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${from}`)).json();
   assert.equal(c.canSend, false, "пульт знает заранее, что отправить нельзя");

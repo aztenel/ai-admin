@@ -1099,7 +1099,7 @@ section("рассылки через Green-API");
     net.gaReply = null;
   } else {
     const r0 = await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?", rid: "rid-acme-001" }); d = await J(r0);
-    ok("без базы D1 ответ со второго номера не уходит: 503 с понятной причиной, Green-API не вызывается", r0.status === 503 && d.code === "nodb" && sends().length === 0, JSON.stringify(d));
+    ok("без базы D1 ответ со второго номера не уходит: 503 с понятной причиной, Green-API не вызывается", r0.status === 503 && d.code === "nosetup" && sends().length === 0, JSON.stringify(d));
   }
 
   // --- создание рассылки

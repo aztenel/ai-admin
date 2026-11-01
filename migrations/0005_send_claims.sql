@@ -5,6 +5,8 @@
 -- state: pending — отправляем (или результат не записался: повторно не отправляем никогда);
 --        sent — Green-API принял (mid — номер сообщения); unknown — ответа нет, сообщение могло уйти: повторно не отправляем;
 --        refused — Green-API отказал, ничего не ушло: «Повторить» с тем же rid может отправить снова.
+-- owner — случайный номер запроса, который занял строку: итог пишет только он, и только он может освободить свою строку, если база
+--         записала её, а ответ до Worker не дошёл (ревью PR №2, F7, 01.11.2026; миграция ещё нигде не применялась).
 CREATE TABLE send_claims (
   ws         TEXT NOT NULL,
   ch         TEXT NOT NULL,
@@ -12,6 +14,7 @@ CREATE TABLE send_claims (
   rid        TEXT NOT NULL,
   state      TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'unknown', 'refused')),
   mid        TEXT,
+  owner      TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (ws, ch, chat, rid)

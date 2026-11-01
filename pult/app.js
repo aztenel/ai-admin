@@ -128,7 +128,8 @@ function ask(title, text, yes, fn) {
   b1.onclick = function () { closeSheet(); fn(); }; b2.onclick = closeSheet;
   sheet(title, h("div", "note", text), h("div", "", [b2, b1], { style: "display:flex;gap:10px;padding:8px 16px 0" }));
 }
-function oops(e) { S.busy = false; if (e === 0) return; netErr(true); notice("Нет связи", "Действие не выполнено, ничего не отправлено. Проверьте интернет и повторите."); }
+// связь оборвалась: запрос мог дойти до сервера — «ничего не отправлено» здесь было бы неправдой (ревью PR №2, F4, 01.11.2026)
+function oops(e) { S.busy = false; if (e === 0) return; netErr(true); notice("Нет связи", "Связь оборвалась, и неизвестно, выполнилось ли действие. Обновите чат и проверьте, прежде чем повторять."); }
 function telHref(p) { return DEMO ? "#demo-call" : "tel:" + p; } // в демо номера вымышленные: звонок не набираем, чтобы не позвонить чужому человеку
 document.addEventListener("click", function (e) { var l = e.target && e.target.closest && e.target.closest('a[href="#demo-call"]'); if (l) { e.preventDefault(); toast("В демо звонок не набирается"); } });
 function netErr(on) { $("net").hidden = !on; }
@@ -662,10 +663,16 @@ function sendMsg() {
   var pend = h("div", "m adm pend new", [h("span", "tx", t), h("span", "ts", hm(Date.now()))]); M.appendChild(pend); M.scrollTop = M.scrollHeight;
   ta.value = ""; fit();
   API.send(tgt.ch, tgt.id, t, rid).then(function (d) {
-    S.ridLost = null;
-    if (d.error) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
-    delete S.drafts[keyOf(tgt)]; done(d, tgt);
-  }).catch(function (e) { S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } oops(e); });
+    // не ушло наверняка или неизвестно («уже отправляется», база не ответила) — номер отправки остаётся за этим текстом в этом чате:
+    // следующее нажатие уйдёт с тем же rid, и сервер решит (отказ Green-API — отправит снова, «уже отправляется» или ушло — второй раз
+    // не отправит). Раньше ответ «уже отправляется» сбрасывал номер, и третье нажатие уходило вторым сообщением (ревью PR №2, F4)
+    if (d.error) { S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
+    S.ridLost = null; delete S.drafts[keyOf(tgt)]; done(d, tgt);
+  }).catch(function (e) {
+    S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); }
+    S.busy = false; if (e === 0) return; netErr(true);
+    notice("Нет связи", "Связь оборвалась: сообщение могло уйти. Проверьте переписку. Если нажмёте «Отправить» с тем же текстом, второй раз оно не уйдёт.");
+  });
 }
 function fit() {
   var t = $("txt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px";

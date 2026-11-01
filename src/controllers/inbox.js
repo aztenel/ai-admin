@@ -5,7 +5,7 @@ import { clean, snip } from "../lib/text.js";
 import { normPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
 import { CLIENTS, hasClient } from "../config/builtin-clients.js";
-import { PAUSE_MS } from "../config/constants.js";
+import { PAUSE_MS, HIST_KEEP } from "../config/constants.js";
 import { canSee } from "../services/auth/access.js";
 import { CHAT_ID, NEED_TEXT } from "../services/inbox/chat.js";
 import { leadPatch } from "../services/inbox/leads.js";
@@ -25,7 +25,7 @@ import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
-import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, NO_DB, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbReady } from "../services/inbox/send.js";
+import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbOff } from "../services/inbox/send.js";
 import { isPreview, PREVIEW_SEND } from "../lib/stage.js";
 /** @import { Env } from "../lib/types.js" */
 
@@ -125,7 +125,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   const gaOn = ch === "ga" && !!gaRoute(env, cid);
   // почему из пульта сейчас нельзя отправить — пульт показывает это заранее, а не после нажатия: черновик клиентам не пишет;
   // второму номеру нужна база для защиты от двойной отправки (без неё Green-API не вызывается)
-  const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn && !(await sendDbReady(env, now)) ? NO_DB : "";
+  const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn ? await sendDbOff(env, now) : "";
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id, sendOff = await sendOffOf();
     /** @type {any[]} */
@@ -185,7 +185,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       if (!gr) return { ok: false, error: "Второй номер этой компании не подключён к пульту." };
       const r = await sendGreen(env, id + "@c.us", text, gr, true, quote);
       if (r.ok) return { ok: true, id: r.id || "" };
-      if (!r.status || r.status >= 500) return { ok: true, unknown: true, error: "" }; // ответа нет — сообщение могло уйти: статус «?», само не повторяется
+      if (r.code === "ga:net" || r.status >= 500) return { ok: true, unknown: true, error: "" }; // ответа нет, обрыв (499), срок (408), 5xx — сообщение могло уйти: статус «?», само не повторяется
       return { ok: false, error: `Green-API не принял сообщение: ${gaWhy(r, gr)}.` };
     }
     const route = waRoute(env, cid, p);
@@ -245,6 +245,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   }
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
+    let actWarn = ""; // «не знаем, ушло ли» у сообщения клиенту при «Отправить клиенту и закрыть»
     if (act === "resolve") {
       if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке, тогда чат закроется сам." }, 409);
       if (p.need && !b.force) return jsonP({ confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" }, 409); // ТЗ v2.0 §2.5: закрытие с вопросом — только с подтверждением
@@ -288,17 +289,25 @@ export async function inboxApi(request, env, url, s, ctx) {
       if (!lead || (lead.phone && lead.phone !== (normPhone("+" + id) || p.phone) && lead.phone !== p.phone)) return jsonP({ error: "Заявка не найдена." }, 404);
       // сообщение клиенту при закрытии просьбы — та же защита, что у ответа (аудит 31.10.2026): черновик не отправляет, второй номер —
       // только с rid и отметкой в D1, двойное нажатие «Отправить клиенту и закрыть» второй раз не отправляет
-      /** @type {any} */ let sent = null;
+      /** @type {any} */ let sent = null, again = false;
       if (msg) {
         if (isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
         const r = await sendOnce(env, cid, ch, id, rid, () => sendTo(msg));
         if ("blocked" in r) return blockedAnswer(r.blocked);
-        if ("dup" in r) return dupAnswer(r);
-        if (!r.ok) return jsonP({ error: r.error }, 409);
-        sent = r;
+        if ("dup" in r) {
+          // этот rid уже отправлен (ревью PR №2, F5): клиенту второй раз не пишем, но закрытие заявки и запись в историю доделываем —
+          // первый запрос мог упасть после отправки. Уже доделано (реплика с этим rid в истории) — ничего не меняем
+          if (r.dup === "busy") return dupAnswer(r);
+          sent = { ok: true, ...(r.id ? { id: r.id } : {}), ...(r.unknown ? { unknown: true } : {}) }; again = true;
+        } else if (!r.ok) return jsonP({ error: r.error }, 409);
+        else sent = r;
       }
-      await leadPatch(env, cid, lid, { status: "выполнена", note: clean((lead.note ? lead.note + " " : "") + `Выполнил ${who}${msg ? ", клиенту сообщено" : ""}.`, 600) });
-      h = await logTurns(env.KV, hk, msg ? [adminTurn(msg, sent)] : [], pr => {
+      if (sent && sent.unknown) actWarn = UNKNOWN_SENT;
+      const turnRid = msg && /^[A-Za-z0-9_-]{6,64}$/.test(rid) ? rid : "";
+      if (!(again && lead.status === "выполнена")) await leadPatch(env, cid, lid, { status: "выполнена", note: clean((lead.note ? lead.note + " " : "") + `Выполнил ${who}${msg ? ", клиенту сообщено" : ""}.`, 600) });
+      h = await logTurns(env.KV, hk, [], (pr, hh) => {
+        if (turnRid && (hh.turns || []).some((/** @type {any} */ t) => t.rid === turnRid)) return; // этот rid уже записан — повтор ничего не дублирует
+        if (msg) hh.turns = (hh.turns || []).concat([{ ...adminTurn(msg, sent), ...(turnRid ? { rid: turnRid } : {}) }]).slice(-HIST_KEEP);
         chatAudit(pr, now, who, "done", lead.kind || "lead");
         if (lead.kind === "cancel" || lead.kind === "change") {
           // запись в расписании изменил человек: бот больше не считает прежнюю запись действующей и знает, что сказал клиенту администратор
@@ -323,7 +332,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     } else return jsonP({ error: "Неизвестное действие." }, 400);
     applyForget(h, fgAt);
     p = h.profile || {};
-    return jsonP({ ok: true, chat: await view() });
+    return jsonP({ ok: true, chat: await view(), ...(actWarn ? { warn: actWarn } : {}) });
   }
   return jsonP({ error: "Не найдено." }, 404);
 }

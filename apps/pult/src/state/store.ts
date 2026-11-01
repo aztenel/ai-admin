@@ -301,7 +301,10 @@ class Store {
     const ws = this.state.wsId, ref = parseKey(key);
     if (!this.src || !ws || !ref) return;
     // id — он же rid: время и случайная часть (два сотрудника в одну миллисекунду не должны получить один номер отправки)
-    const id = retryId || `out-${Math.floor(Date.now()).toString(36)}-${Math.random().toString(36).slice(2, 8)}`; // только буквы, цифры и «-»: такой rid принимает сервер
+    // тот же текст в этом чате после неудачи (обрыв, «уже отправляется», база не ответила) — тот же номер отправки, даже если его набрали
+    // заново, а не нажали «Повторить»: сервер второй раз клиенту не отправит (ревью PR №2, F4, 01.11.2026)
+    const prev = retryId ? undefined : (this.state.outbox[key] || []).find((x) => x.delivery === "failed" && !x.hasFile && x.text === text);
+    const id = retryId || prev?.id || `out-${Math.floor(Date.now()).toString(36)}-${Math.random().toString(36).slice(2, 8)}`; // только буквы, цифры и «-»: такой rid принимает сервер
     const was = (this.state.outbox[key] || []).find((x) => x.id === id);
     const q = quote || was?.quote;
     const m: Message = { id, from: "operator", text, at: Date.now(), delivery: "sending", ...(q ? { quote: q } : {}) };

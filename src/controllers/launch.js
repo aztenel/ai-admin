@@ -94,10 +94,10 @@ export async function launchApi(request, env, url, s) {
     } else add("Запись", (c.services || []).length || BUILTIN.has(cid) ? true : null, c.booking === "none" ? "бот не записывает — берёт телефон для звонка" : "бот собирает заявку, администратор подтверждает её в пульте чатов", "");
     const tok = !!env["WA_TOKEN_" + up], sec = !!env["APP_SECRET_" + up], gr = /** @type {any} */ (gaRoute(env, cid));
     if (gr) { // WhatsApp через Green-API: номер привязан, вебхук ведёт в этот бот
-      const g = await gaInfo(env, gr), name = gr.shared ? "общий номер воркера (GA_ID)" : `GA_ID_${up}`;
+      const g = await gaInfo(env, gr, url.origin), name = gr.shared ? "общий номер воркера (GA_ID)" : `GA_ID_${up}`;
       add("WhatsApp (Green-API)", g.error ? false : g.state === "authorized", g.error || (g.state === "authorized" ? `номер ${g.phone || "?"} привязан (${name})` : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
         g.error ? `Проверьте ${gaSecret(gr, "GA_ID")}, секрет ${gaSecret(gr, "GA_TOKEN")} и ${gaSecret(gr, "GA_URL")} (apiUrl из кабинета Green-API) в Cloudflare.` : "Кабинет Green-API → инстанс → QR-код: отсканируйте его в WhatsApp на телефоне с этим номером (Связанные устройства).");
-      if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
+      if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : g.other ? `ведёт на другой адрес (${g.other}): сообщения клиентов и их «стоп» приходят туда, а не сюда — рассылки через Green-API отсюда не запустятся` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
         gr.shared && !env.GA_HOOK ? "Задайте в Cloudflare секрет GA_HOOK (любой пароль), потом нажмите «Настроить Green-API»." : "Нажмите «Настроить Green-API» — бот сам впишет адрес вебхука и включит нужные уведомления. Green-API перезапустит инстанс, это до 5 минут.");
     }
     if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: те же имена секретов, другой смысл

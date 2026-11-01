@@ -243,6 +243,12 @@ const campaignsApi = <K extends keyof CampaignSource>(k: K): CampaignSource[K] =
 const contactsApi = <K extends keyof ContactSource>(k: K): ContactSource[K] =>
   ((...a: unknown[]) => import("./live-contacts").then((m) => (m.liveContacts[k] as (...x: unknown[]) => unknown)(...a))) as ContactSource[K];
 
+/** Обрыв связи при отправке клиенту: запрос мог дойти — «действие не выполнено» было бы неправдой (ревью PR №2, F4). */
+function lostSend(e: unknown): never {
+  if (e instanceof ApiError && e.offline) throw new ApiError("Связь оборвалась: сообщение могло уйти. Нажмите «Повторить» — второй раз оно не уйдёт.", 0, true);
+  throw e;
+}
+
 /** rid для «Отправить клиенту и закрыть»: одна заявка и один текст — одно сообщение, сколько бы раз ни нажали. */
 function doneRid(leadId: string, text: string): string {
   let h = 5381;
@@ -329,7 +335,7 @@ export function createLiveSource(): DataSource {
       return detail(ws, d);
     },
     async send(ws, ref, text, opts) {
-      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) });
+      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) }).catch(lostSend);
       marks.mark(ws, keyOf(ref.channelId, ref.externalId));
       return detail(ws, d.chat, d.warn);
     },
@@ -364,7 +370,7 @@ export function createLiveSource(): DataSource {
     async complete(ws, ref, leadId, text) {
       // номер отправки — от заявки и текста: повтор после обрыва связи не отправит клиенту второй раз (аудит 31.10.2026)
       const rid = text ? doneRid(leadId, text) : undefined;
-      const d = await call<{ ok: true; chat: ChatRaw }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act: "done", lead: leadId, text, op: getOperator(), ...(rid ? { rid } : {}) });
+      const d = await call<{ ok: true; chat: ChatRaw }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act: "done", lead: leadId, text, op: getOperator(), ...(rid ? { rid } : {}) }).catch(text ? lostSend : (e) => Promise.reject(e));
       return detail(ws, d.chat);
     },
     async leads(ws): Promise<Lead[]> {
