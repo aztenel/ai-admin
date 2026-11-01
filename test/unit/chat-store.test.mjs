@@ -343,7 +343,8 @@ test("проигрыш журнала не возвращает события, 
   assert.equal(r.done, 0, JSON.stringify(r));
   assert.equal(rows(d).length, 0, "событие до удаления не записано");
   assert.equal(await walPending(W.env, "winchester"), 0, "и убрано из журнала");
-  // новое сообщение после удаления — настоящее: записывается
+  // новое сообщение после удаления — настоящее: записывается (в ту же миллисекунду, что и отметка, — нет: не различить)
+  await new Promise(r => setTimeout(r, 5));
   await inbound(W, "Здравствуйте ещё раз", "NEW-AFTER-1");
   assert.equal(rows(d).length, 1);
 });
@@ -369,4 +370,137 @@ test("журнал: срок события — от его прихода (по
   d.ctl.fail = null; central.api.put = put0;
   assert.equal(r.failed, 1);
   assert.deepEqual(puts, [{ expiration: Math.floor((at + 3 * 86400e3) / 1000) }], JSON.stringify(puts));
+});
+
+// ---- проверка владельца 01.11.2026 (перед переключением стенда): гонка удаления данных клиента с записью в другом Worker, устаревшие
+// копии KV, сбой журнала KV. Перехват пачки D1: перед записью нужного сообщения в базу «в другом Worker» удаляют данные клиента
+function onCommitOf(d, mkey, before) {
+  const real = d.db.batch;
+  let fired = false;
+  d.db.batch = async st => {
+    if (!fired && st.some(x => /insert or ignore into chat_messages/.test(x.sql) && (x.args || []).includes(mkey))) { fired = true; await before(); }
+    return real(st);
+  };
+  return () => { d.db.batch = real; return fired; };
+}
+
+test("удаление данных клиента во время проигрыша журнала в другом Worker: запоздавшая запись не восстанавливает удалённое", { skip }, async () => {
+  const { d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P);
+  await inbound(W, "Здравствуйте");
+  d.ctl.fail = sql => /chat_(threads|messages)/.test(sql) && !/sqlite_master/.test(sql);
+  await inbound(W, "Записалось с опозданием", "LATE-1");
+  d.ctl.fail = null;
+  assert.equal(await walPending(W.env, "winchester"), 1);
+  // проигрыш в Worker W уже прошёл проверку отметки и пишет в D1 — в этот миг в Worker P владелец удаляет данные клиента
+  const done = onCommitOf(d, "m:LATE-1:u", async () => {
+    const er = await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" });
+    assert.equal(er.status, 200, await er.clone().text());
+  });
+  await walKick(chatEnv(W.env), "winchester", { force: true });
+  assert.ok(done(), "перехват сработал");
+  assert.equal(rows(d).length, 0, "запоздавшая запись не вернула удалённое");
+  assert.equal(d.raw.prepare("select count(*) n from chat_threads where ws = 'winchester' and chat = ?").get(B).n, 0, "и строки чата нет");
+  assert.equal(await walPending(W.env, "winchester"), 0);
+});
+
+test("удаление данных клиента во время обработки вебхука: сообщение, пришедшее до удаления, не записывается после него", { skip }, async () => {
+  const { d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P);
+  await inbound(W, "Здравствуйте");
+  const done = onCommitOf(d, "m:RACE-1:u", async () => {
+    assert.equal((await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" })).status, 200);
+  });
+  await inbound(W, "Пришло, пока удаляли", "RACE-1");
+  assert.ok(done());
+  assert.equal(rows(d).length, 0);
+  // клиент пишет снова уже после удаления — это новое сообщение, оно записывается (в ту же миллисекунду, что и удаление, — нет: не различить)
+  await new Promise(r => setTimeout(r, 5));
+  await inbound(W, "Здравствуйте ещё раз", "RACE-2");
+  assert.deepEqual(rows(d).map(r => JSON.parse(r.data).text), ["Здравствуйте ещё раз"]);
+});
+
+test("устаревшая копия KV после удаления данных клиента (тень, другая точка сети) переносом в D1 не возвращается", { skip }, async () => {
+  const { central, d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P);
+  await inbound(W, "Здравствуйте");
+  await inbound(W, "Мой адрес …");
+  const stale = central.mem.get(HK), staleMeta = central.meta.get(HK);
+  assert.equal((await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" })).status, 200);
+  // запоздавшая запись тени (или копия другой точки сети) вернула старый чат в KV
+  await central.api.put(HK, stale, { metadata: staleMeta });
+  const c = await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${B}`);
+  assert.equal(c.status, 404, "чат не вернулся при чтении");
+  const rep = await importAll(chatEnv(W.env), "winchester");
+  assert.equal(rep.imported + rep.merged, 0, "и при переносе: " + JSON.stringify(rep));
+  assert.equal(rows(d).length, 0);
+  const list = await (await b.go("/api/inbox/list?c=winchester&v=2")).json();
+  assert.ok(!list.chats.some(x => x.id === B), "и в списке его нет");
+});
+
+test("журнал KV не записался: «OK» Green-API — только после записи в D1; D1 тоже лежит — 503, повтор Green-API записывает один раз", { skip }, async () => {
+  const { central, d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P);
+  await inbound(W, "Здравствуйте");
+  const put0 = central.api.put;
+  central.api.put = async (k, v, o) => { if (k.startsWith("ibq:")) throw new Error("KV PUT failed: 500"); return put0(k, v, o); };
+  // журнал не пишется, D1 работает: обработка сразу, «OK» после записи
+  let r = await inbound(W, "Журнал не записался, база есть", "KVF-1");
+  assert.equal(r.status, 200);
+  assert.equal(rows(d).length, 2);
+  // журнал не пишется и D1 не отвечает: не подтверждаем — Green-API повторит через минуту
+  d.ctl.fail = sql => /chat_(threads|messages)/.test(sql) && !/sqlite_master/.test(sql);
+  r = await inbound(W, "Ни журнала, ни базы", "KVF-2");
+  assert.ok(r.status >= 500, "не 200: " + r.status);
+  d.ctl.fail = null;
+  central.api.put = put0;
+  r = await inbound(W, "Ни журнала, ни базы", "KVF-2");   // повтор Green-API того же уведомления
+  assert.equal(r.status, 200);
+  r = await inbound(W, "Ни журнала, ни базы", "KVF-2");   // и ещё раз — дубля нет
+  assert.deepEqual(rows(d).map(x => JSON.parse(x.data).text), ["Здравствуйте", "Журнал не записался, база есть", "Ни журнала, ни базы"]);
+  assert.deepEqual(texts(await chatOf(b)), ["Здравствуйте", "Журнал не записался, база есть", "Ни журнала, ни базы"]);
+});
+
+test("после удаления данных клиента из запоздавшей копии KV переносятся только сообщения новее отметки — без имени и прежней переписки", { skip }, async () => {
+  const { central, d, P } = twoPlaces(D1MODE);
+  const b = await login(P);
+  await inbound(P, "Здравствуйте");
+  await inbound(P, "Меня зовут Арман");
+  const stale = JSON.parse(central.mem.get(HK)), staleMeta = central.meta.get(HK);
+  assert.equal((await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" })).status, 200);
+  const mark = () => +d.raw.prepare("select v from meta where k = ?").get(`erased:winchester:ga:${B}`).v;
+  const m0 = mark();
+  await chatErased(chatEnv(P.env), "winchester", "ga", B, m0 - 60_000); // запоздавшая отметка более раннего удаления не сдвигает её назад
+  assert.equal(mark(), m0);
+  await new Promise(r => setTimeout(r, 5));
+  // тень записи, сделанной за миг до удаления, легла в KV уже после него: прежняя переписка, имя и одно сообщение новее отметки
+  const t = Date.now();
+  stale.turns.push({ role: "user", text: "Новое после удаления", t, mid: "NEW-AFTER-1" });
+  stale.profile = { ...(stale.profile || {}), name: "Арман", phone: "+7 700 000 88 01" };
+  await central.api.put(HK, JSON.stringify(stale), { metadata: { ...(staleMeta || {}), t } });
+  assert.deepEqual(texts(await chatOf(b)), ["Новое после удаления"]);
+  const pr = JSON.parse(d.raw.prepare("select profile from chat_threads where ws = 'winchester' and chat = ?").get(B).profile);
+  assert.equal(pr.name, undefined, "имя не вернулось");
+  assert.equal(pr.phone, undefined);
+  assert.deepEqual(rows(d).map(r => JSON.parse(r.data).text), ["Новое после удаления"]);
+  const rep = await chatCheck(chatEnv(P.env), "winchester");
+  assert.equal(rep.missingTurns, 0, JSON.stringify(rep));
+  assert.equal(rep.erased, 1);
+});
+
+test("удаление данных клиента в чате, ещё не перенесённом из KV: «стоп» и пауза остаются, переписки и имени нет", { skip }, async () => {
+  net.reset();
+  const kv = mkKV(), d = d1With("production"), now = Date.now(), until = now + 86400e3;
+  // чат записан ещё в KV-режиме: клиент просил не писать (бот был включён — «стоп» в самом чате)
+  await kv.api.put(HK, JSON.stringify({ n: 2, turns: [{ role: "user", text: "Здравствуйте", t: now - 5000 }, { role: "user", text: "стоп", t: now - 4000 }],
+    profile: { stop: now - 4000, pausedUntil: until, name: "Арман" } }), { metadata: { t: now - 4000 } });
+  const s = mk({ ...GA, ...D1MODE, KV: kv.api, DB: d.db }), b = await login(s);
+  const er = await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" });
+  assert.equal(er.status, 200, await er.clone().text());
+  assert.equal(rows(d).length, 0, "переписки нет");
+  const pr = JSON.parse(d.raw.prepare("select profile from chat_threads where ws = 'winchester' and chat = ?").get(B).profile);
+  assert.ok(pr.stop, "«стоп» остался");
+  assert.equal(pr.pausedUntil, until, "и пауза");
+  assert.equal(pr.name, undefined, "имени нет");
+  assert.ok(!/Здравствуйте|Арман/.test(kv.mem.get(HK) || ""), "и в KV");
 });

@@ -15,7 +15,7 @@
 import { HIST_KEEP } from "../../config/constants.js";
 import { histMeta, histTtl } from "../../db/kv/chats.js";
 import { d1Ready } from "../../db/d1/status.js";
-import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaGet, metaSet, metaPurgeOld, chatCounts, mkeysIn, threadKeys } from "../../db/d1/chats.js";
+import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaSet, metaGet, metaPurgeOld, chatCounts, mkeysIn, threadKeys, erasedSet, erasedMark } from "../../db/d1/chats.js";
 import { planPut, mkeyOf, bare } from "./merge.js";
 
 const HK = /^h:(wa|ga|web):([a-z][a-z0-9]{1,15}):([A-Za-z0-9_-]{1,80})$/;
@@ -71,14 +71,17 @@ const byTime = (a, b) => (+a.t || 0) - (+b.t || 0) || (+a._i || Infinity) - (+b.
 /**
  * Обёртка env.KV для запроса (или одной фоновой задачи): переписки компаний в режиме d1 — в D1, остальное — в KV. Копии чатов,
  * прочитанные в этом запросе, запоминаются (seen): по ним запись понимает, что именно поменял пишущий.
- * @param {Env} env
+ * since — с какого времени данные этого запроса (начало запроса; у проигрыша журнала — приход события): запись в чат, данные которого
+ * удалили позже, не проходит — проверка в том же запросе к D1, что и запись (threadCommit).
+ * @param {Env} env @param {{ since?: number }} [o]
  */
-export function chatEnv(env) {
+export function chatEnv(env, o = {}) {
   if (!env || !env.KV || !anyD1(env) || /** @type {any} */ (env.KV).__chat) return env;
   const kv = /** @type {any} */ (env.KV);
+  let since = +(o.since || 0) || Date.now();
   /** @type {Map<string, Snap[]>} */
   const seen = new Map();
-  const stats = { reads: 0, writes: 0, retries: 0, fails: 0, imported: 0 };
+  const stats = { reads: 0, writes: 0, retries: 0, fails: 0, imported: 0, erased: 0 };
   const isD1 = (/** @type {{ ws: string } | null} */ k) => !!k && chatMode(env, k.ws) === "d1";
   const need = async (/** @type {number} */ now) => { const db = await chatDb(env, now); if (!db) { stats.fails++; throw new Error(NOT_READY); } return db; };
   const remember = (/** @type {string} */ key, /** @type {Snap} */ s) => { const a = seen.get(key) || []; a.push(s); if (a.length > 6) a.splice(1, a.length - 6); seen.set(key, a); };
@@ -143,8 +146,10 @@ export function chatEnv(env) {
           ws: k.ws, ch: k.ch, chat: k.chat, baseRev: c.absent ? 0 : c.rev, now, n: plan.n, profile: plan.profile, meta, expiresAt: exp,
           inserts: plan.inserts.map((t, j) => ({ mkey: mkeyOf(t, c.turns.length + j), role: t.role === "user" ? "user" : "model", t: +t.t || now, mid: t.mid ? String(t.mid).slice(0, 80) : null,
             rid: t.rid ? String(t.rid).slice(0, 80) : null, st: t.st ? String(t.st).slice(0, 12) : null, data: JSON.stringify(t) })),
-          updates: plan.updates, deletes: plan.deletes
+          updates: plan.updates, deletes: plan.deletes, since
         }));
+        // данные клиента удалили после начала этого запроса (или после прихода события журнала): записанное до удаления не возвращаем
+        if (res.erased) { stats.erased++; seen.delete(key); console.log("chat write after erase skipped", k.ws, k.ch); return; }
         if (!res.ok) { stats.retries++; cur = null; await jitter(i); continue; } // кто-то записал раньше — перечитать и наложить заново
         fresh.forEach((t, j) => { if (res.ids[j]) t._i = res.ids[j]; });
         const after = { rev: res.rev, n: plan.n, profile: plan.profile, turns: last.filter(t => t._i !== undefined) };
@@ -196,7 +201,8 @@ export function chatEnv(env) {
   const wrapped = {
     get, put, delete: del, list,
     getWithMetadata: (/** @type {string} */ key, /** @type {any} */ opts) => kv.getWithMetadata(key, opts),
-    __chat: { stats, raw: kv }
+    // «Удалить данные клиента» (chatErased): дальше в этом запросе пишет само удаление — его записи отметка не останавливает
+    __chat: { stats, raw: kv, after: (/** @type {number} */ t) => { since = Math.max(since, Math.floor(t) + 1); } }
   };
   return /** @type {Env} */ ({ ...env, KV: /** @type {any} */ (wrapped) });
 }
@@ -206,15 +212,36 @@ const rawKv = env => { const w = /** @type {any} */ (env.KV); return (w && w.__c
 export const chatStats = env => { const w = /** @type {any} */ (env && env.KV); return (w && w.__chat && w.__chat.stats) || null; };
 
 // ---- перенос из KV
+/** Состояние чата из копии KV после удаления данных клиента: «стоп» и пауза (их оставляет само удаление) и время последнего входящего
+ *  по перенесённым сообщениям. @param {Record<string, any>} pr @param {Record<string, any>[]} turns */
+function erasedProfile(pr, turns) {
+  /** @type {Record<string, any>} */
+  const out = {};
+  if (pr.stop) out.stop = pr.stop;
+  if (pr.pausedUntil) out.pausedUntil = pr.pausedUntil;
+  const li = Math.max(0, ...turns.filter(t => t.role === "user").map(t => +t.t || 0));
+  if (li) out.li = li;
+  return out;
+}
 /** Перенести один чат из KV в D1: строку чата и все его реплики (повторный перенос добавляет только недостающие реплики).
  *  meta — метаданные ключа KV (время для списка), expires — срок ключа KV (секунды). → перенесено ли что-нибудь.
  *  @param {any} db @param {{ ws: string, ch: string, chat: string }} k @param {string} raw @param {{ meta?: any, expires?: number } | null} info @param {number} now */
 async function importBlob(db, k, raw, info, now) {
   let h; try { h = JSON.parse(raw); } catch (e) { return false; }
   if (!h || typeof h !== "object") return false;
-  const turns = (Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object").map(bare);
-  const profile = h.profile && typeof h.profile === "object" ? h.profile : {};
-  const meta = (info && info.meta && typeof info.meta === "object") ? info.meta : histMeta({ n: h.n || 0, turns, profile });
+  let turns = (Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object").map(bare);
+  let profile = h.profile && typeof h.profile === "object" ? h.profile : {}, n = +h.n || 0;
+  // данные этого клиента удаляли: копия KV может быть записана до удаления (запоздавшая тень, копия другой точки сети) — из неё
+  // переносятся только сообщения новее отметки, а из состояния чата — только «стоп» и пауза, как оставляет само удаление
+  const at = Date.now(), er = await d1Try(() => erasedMark(db, k.ws, k.ch, k.chat)); // удаление позже этого чтения — перенос не проходит (since)
+  if (er) {
+    turns = turns.filter((/** @type {any} */ t) => (+t.t || 0) > er);
+    if (!turns.length) return false;
+    profile = erasedProfile(profile, turns);
+    n = turns.length;
+    info = { ...(info || {}), meta: null };
+  }
+  const meta = (info && info.meta && typeof info.meta === "object") ? info.meta : histMeta({ n, turns, profile });
   const updatedAt = +meta.t || now;
   const expiresAt = info && info.expires ? info.expires * 1000 : updatedAt + histTtl(profile) * 1000;
   if (expiresAt <= now) return false;
@@ -222,7 +249,7 @@ async function importBlob(db, k, raw, info, now) {
     rid: t.rid ? String(t.rid).slice(0, 80) : null, st: t.st ? String(t.st).slice(0, 12) : null, data: JSON.stringify(t) }));
   const cur = await d1Try(() => threadLoad(db, k.ws, k.ch, k.chat, 1));
   if (!cur) {
-    const res = await d1Try(() => threadCommit(db, { ...k, baseRev: 0, now: updatedAt, n: +h.n || 0, profile, meta, expiresAt, inserts: ins, updates: [], deletes: [], src: "kv" }));
+    const res = await d1Try(() => threadCommit(db, { ...k, baseRev: 0, now: updatedAt, n, profile, meta, expiresAt, inserts: ins, updates: [], deletes: [], src: "kv", since: at }));
     return res.ok; // не прошло — чат одновременно перенёс другой запрос
   }
   // чат уже в D1: добавить реплики, которых там нет (их записал код, ещё не знавший про D1, — например, во время переключения)
@@ -234,8 +261,9 @@ async function importBlob(db, k, raw, info, now) {
     if (!th) return false;
     const all = th.turns.concat(missing.map((/** @type {any} */ x) => JSON.parse(x.data))).sort(byTime).slice(-HIST_KEEP);
     const res = await d1Try(() => threadCommit(db, { ...k, baseRev: th.rev, now, n: th.n, profile: th.profile, meta: histMeta({ n: th.n, turns: all.map(bare), profile: th.profile }),
-      expiresAt: Math.max(th.expiresAt, expiresAt), inserts: missing, updates: [], deletes: [] }));
+      expiresAt: Math.max(th.expiresAt, expiresAt), inserts: missing, updates: [], deletes: [], since: at }));
     if (res.ok) return true;
+    if (res.erased) return false;
     await jitter(i);
   }
   return false;
@@ -281,7 +309,8 @@ export async function importAll(env, ws, o = {}) {
 export async function chatCheck(env, ws) {
   const now = Date.now(), db = await chatDb(env, now), kv = rawKv(env);
   if (!db) throw new Error(NOT_READY);
-  const rep = { kvChats: 0, kvTurns: 0, inD1: 0, missingChats: 0, missingTurns: 0, bad: 0, d1: await d1Try(() => chatCounts(db, ws)), mode: chatMode(env, ws), imported: await d1Try(() => metaGet(db, "chat_import:" + ws)) };
+  /** @type {Record<string, any>} */
+  const rep = { kvChats: 0, kvTurns: 0, inD1: 0, missingChats: 0, missingTurns: 0, erased: 0, bad: 0, d1: await d1Try(() => chatCounts(db, ws)), mode: chatMode(env, ws), imported: await d1Try(() => metaGet(db, "chat_import:" + ws)) };
   for (const ch of CHANS) {
     const prefix = `h:${ch}:${ws}:`;
     for (let cursor, page = 0; page < 20; page++) {
@@ -291,7 +320,14 @@ export async function chatCheck(env, ws) {
         if (!k || !raw) continue;
         let h; try { h = JSON.parse(raw); } catch (e) { rep.bad++; continue; }
         rep.kvChats++;
-        const turns = (Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object");
+        let turns = (Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object");
+        const er = await d1Try(() => erasedMark(db, k.ws, k.ch, k.chat));
+        if (er) { // данные удаляли: старая копия в KV — не пропуск; сверяются только сообщения новее отметки
+          const after = turns.filter((/** @type {any} */ t) => (+t.t || 0) > er);
+          if (after.length < turns.length) rep.erased++;
+          turns = after;
+          if (!turns.length) continue;
+        }
         rep.kvTurns += turns.length;
         if (!(await d1Try(() => threadRev(db, k.ws, k.ch, k.chat)))) { rep.missingChats++; rep.missingTurns += turns.length; continue; }
         rep.inD1++;
@@ -352,30 +388,33 @@ async function purgeSometimes(db, now) {
   purgedAt = now;
   try { const n = await threadsPurge(db, now, 200); if (n) console.log("chat purge", n); } catch (e) { console.log("chat purge", String(e).slice(0, 120)); }
 }
-/** Фоновая задача: удалить чаты с истёкшим сроком и старые отметки «данные удалены» (журнал живёт 3 дня). @param {Env} env @param {number} now */
+/** Фоновая задача: удалить чаты с истёкшим сроком и старые отметки «данные удалены». @param {Env} env @param {number} now */
 export async function chatPurgeRun(env, now) {
   if (!anyD1(env)) return 0;
   const db = await chatDb(env, now);
   if (!db) return 0;
-  try { await metaPurgeOld(db, "erased:", now - 4 * 86400e3); } catch (e) { console.log("chat erased purge", String(e).slice(0, 120)); }
+  // отметка «данные удалены» живёт дольше любой копии чата в KV (тень — до 31 дня со «стопом») и журнала (3 дня): 32 дня
+  try { await metaPurgeOld(db, "erased:", now - 32 * 86400e3); } catch (e) { console.log("chat erased purge", String(e).slice(0, 120)); }
   return threadsPurge(db, now, 500);
 }
 
-// ---- «Удалить данные клиента» и журнал вебхуков: отметка в D1 (видна всем точкам сети сразу, в отличие от KV) — события журнала,
-// пришедшие до неё, в переписку не проигрываются (повторная проверка безопасности 01.11.2026)
+// ---- «Удалить данные клиента»: отметка в D1 (видна всем точкам сети сразу, в отличие от KV). Запись, начатая до неё (вебхук, проигрыш
+// журнала, бот), не проходит — проверка в той же пачке D1, что и запись (threadCommit); копия KV старше отметки не переносится (importBlob)
 /** @param {Env} env @param {string} ws @param {string} ch @param {string} chat @param {number} now */
 export async function chatErased(env, ws, ch, chat, now) {
   if (chatMode(env, ws) !== "d1") return;
   const db = await chatDb(env, now);
   if (!db) throw new Error(NOT_READY); // отметка не записалась — удаление не считаем законченным
-  await d1Try(() => metaSet(db, `erased:${ws}:${ch}:${chat}`, String(now)));
+  await d1Try(() => erasedSet(db, ws, ch, chat, now));
+  const w = /** @type {any} */ (env.KV);
+  if (w && w.__chat && w.__chat.after) w.__chat.after(now); // запись самого удаления («стоп»: пустая переписка) — уже после отметки
 }
 /** Когда удаляли данные этого чата (0 — не удаляли или переписки в KV). @param {Env} env @param {string} ws @param {string} ch @param {string} chat */
 export async function erasedAt(env, ws, ch, chat) {
   if (chatMode(env, ws) !== "d1") return 0;
   const db = await chatDb(env, Date.now());
   if (!db) return 0;
-  return +((await d1Try(() => metaGet(db, `erased:${ws}:${ch}:${chat}`))) || 0) || 0;
+  return d1Try(() => erasedMark(db, ws, ch, chat));
 }
 /** Состояние для «Хранилищ» и владельца: режим, таблицы, перенос, числа. @param {Env} env @param {string} ws */
 export async function chatStoreInfo(env, ws) {

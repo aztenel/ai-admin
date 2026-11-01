@@ -199,7 +199,7 @@ export async function route(request, env, ctx, pult) {
     if (M === "POST" && P === "/ga") { // Green-API, общий номер воркера
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) await greenHook(body, env, ctx, url.origin, gaShared(env));
+      if (body && !(await greenHook(body, env, ctx, url.origin, gaShared(env)))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Green-API повторит
       return new Response("OK");
     }
     const gam = M === "POST" && /^\/ga\/([a-z][a-z0-9]{1,15})$/.exec(P);
@@ -207,7 +207,7 @@ export async function route(request, env, ctx, pult) {
       const r = /** @type {any} */ (gaRoute(env, gam[1]));
       if (!r || r.shared || !eqSafe(url.searchParams.get("t") || "", await gaHook(r))) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) await greenHook(body, env, ctx, url.origin, r);
+      if (body && !(await greenHook(body, env, ctx, url.origin, r))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Green-API повторит
       return new Response("OK");
     }
     if (M === "POST" && (P === "/" || P === "/webhook")) { // WhatsApp Cloud API (Meta), общий номер воркера. Вебхуки клиентов со своим номером — /wa/<id>

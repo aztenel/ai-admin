@@ -14,10 +14,13 @@ import { chatErased } from "../chatstore/index.js";
 /** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер чата WhatsApp в виде +7…; у веб-чата пусто: номер там набран посетителем, он мог быть чужим @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
 export async function eraseClient(env, cid, ch, id, phone, loc, now) {
   const hk = `h:${ch}:${cid}:${id}`, digits = phone.replace(/\D/g, ""), chatDigits = String(id).replace(/\D/g, "");
-  // переписки в D1: сначала отметка «данные удалены» (её видят все точки сети сразу) и журнал вебхуков этого чата — иначе событие,
-  // ждущее записи, могло проиграться между удалением переписки и очисткой журнала (повторная проверка безопасности 01.11.2026)
-  if (ch !== "web") { await chatErased(env, cid, ch, chatDigits, now); await walForget(env, cid, chatDigits); }
+  // чат читается до отметки: ещё не перенесённый из KV переносится в D1 целиком — «стоп» в нём не теряется (после отметки из KV
+  // переносится только новее неё)
   const h = JSON.parse((await env.KV.get(hk)) || "null");
+  // переписки в D1: отметка «данные удалены» (её видят все точки сети сразу) и журнал вебхуков этого чата — иначе событие,
+  // ждущее записи, могло проиграться между удалением переписки и очисткой журнала (повторная проверка безопасности 01.11.2026);
+  // запись, начатая до отметки (вебхук, проигрыш журнала, бот), после неё не проходит (threadCommit, проверка владельца 01.11.2026)
+  if (ch !== "web") { await chatErased(env, cid, ch, chatDigits, now); await walForget(env, cid, chatDigits); }
   if (h && h.profile && h.profile.stop) await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (k !== "stop" && k !== "pausedUntil") delete pr[k]; }); // бот молчит, пока стоит пауза «стопа»
   else await env.KV.delete(hk);
   let n = 0;

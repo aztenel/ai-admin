@@ -49,6 +49,15 @@ export async function seenBefore(env, id) {
   return false;
 }
 
+/** Забыть «уже видели»: вебхук не записался, а провайдеру ответили ошибкой — его повтор должен пройти (журнал Green-API, 01.11.2026).
+ *  @param {Env} env @param {string} id */
+export async function seenForget(env, id) {
+  if (!id) return;
+  const mem = recent.get(kvKey(env.KV));
+  if (mem) mem.delete(id);
+  try { await env.KV.delete("seen:" + id); } catch (e) { console.log("seen forget", String(e).slice(0, 120)); }
+}
+
 // Режим «сосуществование» (Meta): человек отвечает клиенту с телефона, а бот и пульт это видят.
 /** @param {any} m @returns {string} */
 export const coexText = m => { const t = String((m && m.type) || "text"), b = (m && m[t]) || {}; const x = t === "text" ? b.body : (b.caption || ""); return clean(String(x || ""), 1000) || `[${t === "text" ? "сообщение" : t}]`; };

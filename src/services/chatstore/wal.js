@@ -9,7 +9,7 @@ import { CLIENTS } from "../../config/builtin-clients.js";
 import { chatMode, chatStats, chatEnv, erasedAt } from "./index.js";
 
 const TYPES = new Set(["incomingMessageReceived", "outgoingMessageReceived", "outgoingMessageStatus"]);
-const KEEP = 3 * 86400;     // сколько живёт запись журнала — от прихода события; повторы срок не продлевают (отметка «данные удалены» живёт дольше — 4 дня)
+const KEEP = 3 * 86400;     // сколько живёт запись журнала — от прихода события; повторы срок не продлевают (отметка «данные удалены» живёт дольше — 32 дня)
 const WAIT = 45_000;        // моложе — ещё обрабатывается, не трогаем
 const MAX_TRIES = 30;       // потом — сигнал владельцу, запись остаётся до срока
 /** @param {Env} env */
@@ -29,15 +29,17 @@ async function walKeys(kv, cid) {
 /** номер чата события цифрами @param {any} b */
 const chatOf = b => String((b && b.senderData && b.senderData.chatId) || (b && b.chatId) || "").replace(/\D/g, "");
 
-/** Записать событие в журнал до обработки. → ключ записи или null (журнал не нужен). @param {Env} env @param {string} cid @param {any} body */
+/** Записать событие в журнал до обработки. → ключ записи или null (журнал не нужен). Журнал нужен, а KV не записал — ошибка: тогда вебхук
+ *  обрабатывается сразу и отвечает Green-API только после записи в базу (controllers/webhooks/greenapi.js; проверка владельца 01.11.2026).
+ *  @param {Env} env @param {string} cid @param {any} body */
 export async function walOpen(env, cid, body) {
   if (!cid || chatMode(env, cid) !== "d1" || !body || !TYPES.has(body.typeWebhook)) return null;
   const id = String(body.idMessage || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
   if (!id) return null;
   const kind = body.typeWebhook === "outgoingMessageStatus" ? "s" + String(body.status || "").slice(0, 12) : body.typeWebhook === "incomingMessageReceived" ? "in" : "out";
   const key = `ibq:${cid}:${id}:${kind}`;
-  try { await raw(env).put(key, JSON.stringify({ at: Date.now(), n: 0, body }), { expirationTtl: KEEP }); return key; }
-  catch (e) { console.log("wal open", String(e).slice(0, 120)); return null; }
+  await raw(env).put(key, JSON.stringify({ at: Date.now(), n: 0, body }), { expirationTtl: KEEP });
+  return key;
 }
 /** Обработка закончилась: без сбоев записи переписки — убрать из журнала. @param {Env} env @param {string | null} key @param {number} failsBefore @param {boolean} threw */
 export async function walClose(env, key, failsBefore, threw) {
@@ -71,7 +73,9 @@ export async function walReplay(env, cid, handle, o = {}) {
     if (er && er >= (+v.at || 0)) { try { await kv.delete(x.name); } catch (e) {} continue; }
     out.pending++;
     if (!o.force && now - (+v.at || 0) < WAIT) continue;
-    const e2 = chatEnv(/** @type {Env} */ ({ ...env, KV: kv })), st = chatStats(e2), before = st ? st.fails : 0;
+    // данные этого события — с его прихода: удалили данные клиента позже (в том числе прямо во время проигрыша, в другом Worker) —
+    // запись не пройдёт, проверка в той же пачке D1, что и запись (threadCommit, проверка владельца 01.11.2026)
+    const e2 = chatEnv(/** @type {Env} */ ({ ...env, KV: kv }), { since: +v.at || now }), st = chatStats(e2), before = st ? st.fails : 0;
     let threw = false; try { await handle(v.body, e2); } catch (e) { threw = true; console.log("wal replay", String(e).slice(0, 120)); }
     if (!threw && !(st && st.fails > before)) { try { await kv.delete(x.name); out.done++; } catch (e) {} continue; }
     out.failed++;

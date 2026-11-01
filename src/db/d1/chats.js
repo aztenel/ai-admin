@@ -6,6 +6,11 @@
 
 const KEYS = "ws = ? and ch = ? and chat = ?";
 const GUARD = `exists (select 1 from chat_threads where ${KEYS} and rev = ?)`;
+// «Удалить данные клиента» (отметка erased:<ws>:<ch>:<chat> в meta): запись, начатая раньше отметки, — в том же запросе к базе, что и сама
+// запись, а не отдельной проверкой перед ней (проверка владельца 01.11.2026: проигрыш журнала в другом Worker проходил проверку за миг до удаления)
+const ERASED = "not exists (select 1 from meta where k = ? and cast(v as integer) >= ?)";
+/** @param {string} ws @param {string} ch @param {string} chat */
+export const erasedKey = (ws, ch, chat) => `erased:${ws}:${ch}:${chat}`;
 /** @param {any[]} a @param {number} n */
 const chunks = (a, n) => { const out = []; for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n)); return out; };
 /** @param {string} s */
@@ -34,6 +39,15 @@ export async function messagesById(db, ws, ch, chat, ids) {
   }
   return out;
 }
+/** Отметка «данные удалены» — только вперёд (два удаления подряд: более раннее не затирает позднее). @param {any} db @param {string} ws @param {string} ch @param {string} chat @param {number} at */
+export async function erasedSet(db, ws, ch, chat, at) {
+  await db.prepare("insert into meta (k, v) values (?, ?) on conflict (k) do update set v = excluded.v where cast(excluded.v as integer) > cast(meta.v as integer)")
+    .bind(erasedKey(ws, ch, chat), String(Math.floor(at))).run();
+}
+/** Когда удаляли данные этого чата (0 — не удаляли). @param {any} db @param {string} ws @param {string} ch @param {string} chat */
+export async function erasedMark(db, ws, ch, chat) {
+  return +((await db.prepare("select v from meta where k = ?").bind(erasedKey(ws, ch, chat)).first("v")) || 0) || 0;
+}
 /** Ревизия чата — для «изменилось ли что-нибудь» у опроса пульта. 0 — чата нет. @param {any} db @param {string} ws @param {string} ch @param {string} chat */
 export async function threadRev(db, ws, ch, chat) {
   return +((await db.prepare(`select rev from chat_threads where ${KEYS}`).bind(ws, ch, chat).first("rev")) || 0);
@@ -41,25 +55,30 @@ export async function threadRev(db, ws, ch, chat) {
 
 /** @typedef {{ mkey: string, role: string, t: number, mid: string | null, rid: string | null, st: string | null, data: string }} NewMsg */
 /** @typedef {{ ws: string, ch: string, chat: string, baseRev: number, now: number, n: number, profile: Record<string, any>, meta: Record<string, any>,
- *   expiresAt: number, inserts: NewMsg[], updates: { id: number, data: Record<string, any> }[], deletes: number[], src?: string }} Commit */
-/** Записать изменения чата, если его ревизия всё ещё baseRev (0 — чата не было). → ok и номера строк новых сообщений (null — такое уже было).
- *  @param {any} db @param {Commit} p @returns {Promise<{ ok: boolean, rev: number, ids: (number | null)[] }>} */
+ *   expiresAt: number, inserts: NewMsg[], updates: { id: number, data: Record<string, any> }[], deletes: number[], src?: string, since?: number }} Commit */
+/** Записать изменения чата, если его ревизия всё ещё baseRev (0 — чата не было) и данные клиента не удаляли после since (начало запроса или
+ *  приход события журнала). → ok и номера строк новых сообщений (null — такое уже было); erased — запись не прошла из-за удаления данных.
+ *  @param {any} db @param {Commit} p @returns {Promise<{ ok: boolean, rev: number, ids: (number | null)[], erased?: boolean }>} */
 export async function threadCommit(db, p) {
-  const k = [p.ws, p.ch, p.chat], g = [...k, p.baseRev], st = [];
-  if (p.baseRev === 0) st.push(db.prepare("insert into chat_threads (ws, ch, chat, rev, n, profile, meta, updated_at, expires_at, created_at, src) values (?, ?, ?, 0, 0, '{}', '{}', ?, ?, ?, ?) on conflict do nothing")
-    .bind(...k, p.now, p.expiresAt, p.now, p.src || "d1"));
-  for (const part of chunks(p.deletes, 90)) st.push(db.prepare(`delete from chat_messages where ${KEYS} and id in (${part.map(() => "?").join(", ")}) and ${GUARD}`).bind(...k, ...part, ...g));
-  for (const u of p.updates) st.push(db.prepare(`update chat_messages set data = ?, st = ?, ver = ver + 1 where id = ? and ${KEYS} and ${GUARD}`)
+  const k = [p.ws, p.ch, p.chat], since = Math.floor(+(p.since || 0)), ek = erasedKey(p.ws, p.ch, p.chat), st = [];
+  const guard = since ? `${GUARD} and ${ERASED}` : GUARD, g = since ? [...k, p.baseRev, ek, since] : [...k, p.baseRev];
+  if (p.baseRev === 0) st.push(since
+    ? db.prepare(`insert into chat_threads (ws, ch, chat, rev, n, profile, meta, updated_at, expires_at, created_at, src) select ?, ?, ?, 0, 0, '{}', '{}', ?, ?, ?, ? where ${ERASED} on conflict do nothing`)
+      .bind(...k, p.now, p.expiresAt, p.now, p.src || "d1", ek, since)
+    : db.prepare("insert into chat_threads (ws, ch, chat, rev, n, profile, meta, updated_at, expires_at, created_at, src) values (?, ?, ?, 0, 0, '{}', '{}', ?, ?, ?, ?) on conflict do nothing")
+      .bind(...k, p.now, p.expiresAt, p.now, p.src || "d1"));
+  for (const part of chunks(p.deletes, 90)) st.push(db.prepare(`delete from chat_messages where ${KEYS} and id in (${part.map(() => "?").join(", ")}) and ${guard}`).bind(...k, ...part, ...g));
+  for (const u of p.updates) st.push(db.prepare(`update chat_messages set data = ?, st = ?, ver = ver + 1 where id = ? and ${KEYS} and ${guard}`)
     .bind(JSON.stringify(u.data), u.data.st == null ? null : String(u.data.st).slice(0, 12), u.id, ...k, ...g));
   const first = st.length;
-  for (const m of p.inserts) st.push(db.prepare(`insert or ignore into chat_messages (ws, ch, chat, mkey, role, t, mid, rid, st, data) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ? where ${GUARD}`)
+  for (const m of p.inserts) st.push(db.prepare(`insert or ignore into chat_messages (ws, ch, chat, mkey, role, t, mid, rid, st, data) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ? where ${guard}`)
     .bind(...k, m.mkey, m.role, m.t, m.mid, m.rid, m.st, m.data, ...g));
   const pr = p.profile || {};
-  st.push(db.prepare(`update chat_threads set rev = rev + 1, n = ?, profile = ?, meta = ?, updated_at = ?, last_in = ?, need = ?, assignee = ?, done = ?, stop = ?, expires_at = ? where ${KEYS} and rev = ?`)
+  st.push(db.prepare(`update chat_threads set rev = rev + 1, n = ?, profile = ?, meta = ?, updated_at = ?, last_in = ?, need = ?, assignee = ?, done = ?, stop = ?, expires_at = ? where ${KEYS} and rev = ?${since ? " and " + ERASED : ""}`)
     .bind(p.n, JSON.stringify(pr), JSON.stringify(p.meta || {}), p.now, +pr.li || null, (pr.need && pr.need.why ? String(pr.need.why).slice(0, 12) : null),
       (pr.as && pr.as.n ? String(pr.as.n).slice(0, 32) : null), +pr.done || null, pr.stop ? 1 : null, p.expiresAt, ...g));
   const res = await db.batch(st);
-  if (!(+(res[res.length - 1].meta || {}).changes > 0)) return { ok: false, rev: 0, ids: [] };
+  if (!(+(res[res.length - 1].meta || {}).changes > 0)) return { ok: false, rev: 0, ids: [], ...(since && (await erasedMark(db, p.ws, p.ch, p.chat)) >= since ? { erased: true } : {}) };
   const ids = p.inserts.map((_, i) => { const r = res[first + i].meta || {}; return +r.changes > 0 ? +r.last_row_id : null; });
   return { ok: true, rev: p.baseRev + 1, ids };
 }

@@ -3,7 +3,7 @@
 import { hasClient } from "../../config/builtin-clients.js";
 import { PAUSE_MS, HIST_KEEP } from "../../config/constants.js";
 import { clean } from "../../lib/text.js";
-import { nicheOf, seenBefore } from "../../services/channels/index.js";
+import { nicheOf, seenBefore, seenForget } from "../../services/channels/index.js";
 import { sendGreen } from "../../services/channels/greenapi.js";
 import { gaStateSignal, GA_STATE_BAD, waFailed } from "../../services/broadcast/holds.js";
 import { readHist, putHist, kvRetry } from "../../services/channels/deps.js";
@@ -21,14 +21,26 @@ import { gaRoute } from "../../services/inbox/deps.js";
 export const gaText = md => { md = md || {}; const t = md.textMessageData?.textMessage || md.extendedTextMessageData?.text || md.fileMessageData?.caption || ""; return clean(t, 1000) || `[${(/** @type {Record<string, string>} */ ({ imageMessage: "фото", videoMessage: "видео", audioMessage: "голосовое", documentMessage: "файл", locationMessage: "геолокация", contactMessage: "контакт" }))[md.typeMessage] || "сообщение"}]`; };
 /** Вебхук Green-API: ответ «OK» сразу, обработка — после ответа (ctx.waitUntil). У компании с переписками в D1 событие сначала
  *  ложится в журнал (services/chatstore/wal.js) и убирается только после удачной записи — сбой D1 не теряет сообщение.
- *  @param {any} body @param {Env} env @param {any} ctx @param {string} origin @param {any} r */
+ *  Журнал не записался (сбой KV) — событие обрабатывается сразу, а «OK» уходит только после записи в базу; не записалось и там —
+ *  false: Green-API получает ошибку и повторит уведомление (через минуту, до суток) — подтверждения без записи нет (проверка владельца 01.11.2026).
+ *  @param {any} body @param {Env} env @param {any} ctx @param {string} origin @param {any} r @returns {Promise<boolean>} можно ли отвечать «OK» */
 export async function greenHook(body, env, ctx, origin, r) {
-  const cid = r && !r.shared ? String(r.client || "") : "";
-  const wk = cid ? await walOpen(env, cid, body) : null, st = chatStats(env), before = st ? st.fails : 0;
+  const cid = r && !r.shared ? String(r.client || "") : "", st = chatStats(env), before = st ? st.fails : 0;
+  /** @type {string | null} */ let wk = null;
+  try { wk = cid ? await walOpen(env, cid, body) : null; }
+  catch (e) {
+    console.log("ga wal open", String(e).slice(0, 120));
+    let threw = false;
+    try { await handleGreen(body, env, origin, r); } catch (err) { threw = true; console.log("ga error", String(err)); }
+    if (!threw && !(st && st.fails > before)) return true;
+    await seenForget(env, String(body.idMessage || "")); // повтор Green-API должен пройти, а не уйти «уже видели»
+    return false;
+  }
   ctx.waitUntil(handleGreen(body, env, origin, r)
     .then(() => walClose(env, wk, before, false), err => { console.log("ga error", String(err)); return walClose(env, wk, before, true); })
     .then(() => (cid && wk ? walKick(env, cid) : null)) // пока здесь: то, что не записалось раньше (не чаще раза в минуту)
     .catch(err => console.log("ga wal", String(err))));
+  return true;
 }
 // проигрыш журнала (фоновая задача, пульт стенда): то же событие тем же кодом, мимо отметки «уже видели»
 walHandle((body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
