@@ -84,6 +84,23 @@ test("свой вариант: проверки текста; встроенны
   assert.equal((await own.post("/api/bc/service/variant", { c: "barber", id: "S03", ru: "x" })).status, 404, "у компании без напоминаний по журналу");
 });
 
+test("пять своих вариантов в одну миллисекунду — пять разных: номер варианта не совпадает с имеющимся", async () => {
+  // CI 01.11.2026 (Node 22): номер своего варианта — время в мс и два случайных знака; два варианта в одну миллисекунду совпадали
+  // (1 случай из ~1300) — второй затирал первый, и шестой вариант проходил предел «не больше пяти». Здесь совпадение — всегда
+  net.reset();
+  const s = mk(ENV), own = await login(s, "owner-key-123456");
+  const T = Date.now(), now0 = Date.now, rnd0 = Math.random;
+  Date.now = () => T; Math.random = () => 0.123456789;
+  try {
+    for (let i = 0; i < 5; i++) assert.equal((await own.post("/api/bc/service/variant", { c: "winchester", id: "S03", ru: `Вариант ${i}: ждём в {время}` })).status, 200, "вариант " + i);
+    const r = await own.post("/api/bc/service/variant", { c: "winchester", id: "S03", ru: "Шестой" });
+    assert.equal(r.status, 400, "шестой — сверх предела");
+  } finally { Date.now = now0; Math.random = rnd0; }
+  const mine = (await (await own.go("/api/bc/service?c=winchester")).json()).catalog.find(x => x.id === "S03").variants.filter(x => !x.builtin);
+  assert.equal(new Set(mine.map(x => x.id)).size, 5, JSON.stringify(mine.map(x => x.id)));
+  assert.deepEqual(mine.map(x => x.ru).sort(), [0, 1, 2, 3, 4].map(i => `Вариант ${i}: ждём в {время}`));
+});
+
 test("задним числом не шлём: одобрили позже, чем сообщение должно было уйти, — оно не уходит, причина в журнале; KZ нет — по-русски", async () => {
   net.reset();
   net.altJournal = [rec(ph(411), TOM, "15:00", { id: 4411 }), rec(ph(412), TOM, "16:00", { id: 4412 })];

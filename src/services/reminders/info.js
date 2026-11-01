@@ -75,6 +75,15 @@ function svCheck(t) {
 /** варианты для пульта @param {any} sc @param {Record<string, any>} own @param {Record<string, any>} ap */
 const variantsPub = (sc, own, ap) => { const act = activeOf(sc, own); return variantsOf(sc, own).map(y => ({ id: y.id, ru: y.ru, kk: y.kk, active: !!act && y.id === act.id, approved: !!sc.auto && approvalFits(ap[sc.id], y), v: y.v, builtin: y.builtin })); };
 
+/** Номер нового своего варианта: время и 6 случайных знаков, не совпадает с имеющимися. Было — время и 2 знака: два варианта в одну
+ *  миллисекунду совпадали (1 случай из ~1300), второй затирал первый (CI 01.11.2026, service-variants.test.mjs).
+ *  @param {number} now @param {Set<string>} taken */
+function newVariantId(now, taken) {
+  for (;;) {
+    const id = "u" + now.toString(36) + crypto.randomUUID().replace(/-/g, "").slice(0, 6);
+    if (!taken.has(id)) return id;
+  }
+}
 /**
  * Свой вариант текста сценария (только владелец — проверяет контроллер): без variant — новый (ru обязателен, kk — нет); variant
  * своего варианта и ru — правка (версия +1, одобрение к новой версии не подходит); active: true — сделать действующим (и встроенный).
@@ -95,7 +104,7 @@ export async function serviceVariant(env, c, b, who, now) {
   if (cur && cur.builtin && edit) return { error: "Встроенный текст не меняется. Добавьте свой вариант.", status: 400 };
   if (!vid && !edit) return { error: "Нужен текст на русском.", status: 400 };
   if (!vid && all.filter(x => !x.builtin).length >= 5) return { error: "Своих вариантов не больше пяти. Измените один из них.", status: 400 };
-  const id = vid || "u" + now.toString(36) + Math.random().toString(36).slice(2, 4), by = String(who || "").slice(0, 32);
+  const id = vid || newVariantId(now, new Set(all.map(x => x.id))), by = String(who || "").slice(0, 32);
   const own = await svVariantsEdit(env, c.id, o => {
     const e = o[sc.id] && typeof o[sc.id] === "object" ? o[sc.id] : {};
     const list = Array.isArray(e.list) ? e.list : [];
