@@ -237,6 +237,8 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
             {c.attention ? null : h.icon && c.bot.state !== "off" && !c.assignee ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
             <span className="min-w-0 truncate">
               {state && <span className={cn(c.attention && "font-medium")}>{state}</span>}
+              {/* ждёт ответа и уже взят сотрудником — видно оба состояния (02.11.2026) */}
+              {c.attention && c.assignee && <span className="text-fg-3"> · ведёт {c.assignee}</span>}
               {state && badge && <span className="text-fg-3"> · </span>}
               {badge && <span className="text-fg-3">{badge}</span>}
             </span>
