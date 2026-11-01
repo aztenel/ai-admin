@@ -9,10 +9,14 @@ import { allLeads, loadLeads, saveLeads, leadKey } from "../../db/kv/leads.js";
 import { logTurns, forgetKey } from "../../db/kv/chats.js";
 import { isoDay } from "../../lib/time.js";
 import { walForget } from "../chatstore/wal.js";
+import { chatErased } from "../chatstore/index.js";
 
 /** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер чата WhatsApp в виде +7…; у веб-чата пусто: номер там набран посетителем, он мог быть чужим @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
 export async function eraseClient(env, cid, ch, id, phone, loc, now) {
-  const hk = `h:${ch}:${cid}:${id}`, digits = phone.replace(/\D/g, "");
+  const hk = `h:${ch}:${cid}:${id}`, digits = phone.replace(/\D/g, ""), chatDigits = String(id).replace(/\D/g, "");
+  // переписки в D1: сначала отметка «данные удалены» (её видят все точки сети сразу) и журнал вебхуков этого чата — иначе событие,
+  // ждущее записи, могло проиграться между удалением переписки и очисткой журнала (повторная проверка безопасности 01.11.2026)
+  if (ch !== "web") { await chatErased(env, cid, ch, chatDigits, now); await walForget(env, cid, chatDigits); }
   const h = JSON.parse((await env.KV.get(hk)) || "null");
   if (h && h.profile && h.profile.stop) await logTurns(env.KV, hk, [], (pr, all) => { all.turns = []; for (const k of Object.keys(pr)) if (k !== "stop" && k !== "pausedUntil") delete pr[k]; }); // бот молчит, пока стоит пауза «стопа»
   else await env.KV.delete(hk);
@@ -25,7 +29,7 @@ export async function eraseClient(env, cid, ch, id, phone, loc, now) {
   }
   if (digits) for (const k of [`consent:wa:${cid}:${digits}`, `consent:ga:${cid}:${digits}`, ...(loc ? [`bk:${loc}:${phone}:${isoDay(now)}`] : [])]) await env.KV.delete(k);
   await env.KV.delete(forgetKey(hk)); // отметка «Очистить память бота» (в имени ключа — номер чата)
-  if (ch !== "web") await walForget(env, cid, id); // события этого чата, ждущие записи в D1 (журнал ibq:, переписки в D1), — тоже
+  if (ch !== "web") await walForget(env, cid, chatDigits); // и то, что легло в журнал, пока шло удаление
   await kvRetry(async () => {
     const q = JSON.parse((await env.KV.get("rmq:" + cid)) || "[]"), keep = q.filter((/** @type {any} */ x) => !(x.ch === ch && x.id === id));
     if (keep.length !== q.length) await env.KV.put("rmq:" + cid, JSON.stringify(keep));

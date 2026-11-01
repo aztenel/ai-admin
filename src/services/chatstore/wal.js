@@ -6,7 +6,7 @@
 // пульта и следующих вебхуках. Второй раз то же сообщение не появится: у него в D1 устойчивый ключ (номер сообщения у Green-API).
 /** @import { Env } from "../../lib/types.js" */
 import { CLIENTS } from "../../config/builtin-clients.js";
-import { chatMode, chatStats, chatEnv } from "./index.js";
+import { chatMode, chatStats, chatEnv, erasedAt } from "./index.js";
 
 const TYPES = new Set(["incomingMessageReceived", "outgoingMessageReceived", "outgoingMessageStatus"]);
 const KEEP = 3 * 86400;     // сколько живёт запись журнала
@@ -14,6 +14,20 @@ const WAIT = 45_000;        // моложе — ещё обрабатывает�
 const MAX_TRIES = 30;       // потом — сигнал владельцу, запись остаётся до срока
 /** @param {Env} env */
 const raw = env => { const w = /** @type {any} */ (env.KV); return (w && w.__chat && w.__chat.raw) || w; };
+/** Все ключи журнала компании — по страницам списка KV до конца (повторная проверка безопасности 01.11.2026: одной страницы мало).
+ *  Список оборвался — ошибка, а не «часть»: удаление данных клиента не должно считаться законченным. @param {any} kv @param {string} cid @returns {Promise<string[]>} */
+async function walKeys(kv, cid) {
+  const out = [];
+  for (let cursor, page = 0; page < 100; page++) {
+    /** @type {any} */ const r = await kv.list({ prefix: `ibq:${cid}:`, limit: 1000, ...(cursor ? { cursor } : {}) });
+    for (const x of (r && r.keys) || []) out.push(String(x.name));
+    if (!r || r.list_complete || !r.cursor) return out;
+    cursor = r.cursor;
+  }
+  throw new Error("журнал вебхуков слишком большой — дочитать не удалось");
+}
+/** номер чата события цифрами @param {any} b */
+const chatOf = b => String((b && b.senderData && b.senderData.chatId) || (b && b.chatId) || "").replace(/\D/g, "");
 
 /** Записать событие в журнал до обработки. → ключ записи или null (журнал не нужен). @param {Env} env @param {string} cid @param {any} body */
 export async function walOpen(env, cid, body) {
@@ -44,10 +58,14 @@ export async function walReplay(env, cid, handle, o = {}) {
   if (!o.force && now - (lastRun.get(cid) || 0) < 60_000) return out;
   lastRun.set(cid, now);
   const kv = raw(env);
-  let r; try { r = await kv.list({ prefix: `ibq:${cid}:`, limit: 200 }); } catch (e) { console.log("wal list", String(e).slice(0, 120)); return out; }
-  for (const x of (r && r.keys) || []) {
+  /** @type {string[]} */ let names; try { names = await walKeys(kv, cid); } catch (e) { console.log("wal list", String(e).slice(0, 120)); return out; }
+  for (const name of names) {
+    const x = { name };
     let v; try { v = JSON.parse((await kv.get(x.name)) || "null"); } catch (e) { v = null; }
     if (!v || !v.body) { try { await kv.delete(x.name); } catch (e) {} continue; }
+    // данные этого клиента удалили после того, как событие легло в журнал: в переписку его не возвращаем
+    let er = 0; try { er = await erasedAt(env, cid, "ga", chatOf(v.body)); } catch (e) { console.log("wal erased", String(e).slice(0, 120)); continue; }
+    if (er && er >= (+v.at || 0)) { try { await kv.delete(x.name); } catch (e) {} continue; }
     out.pending++;
     if (!o.force && now - (+v.at || 0) < WAIT) continue;
     const e2 = chatEnv(/** @type {Env} */ ({ ...env, KV: kv })), st = chatStats(e2), before = st ? st.fails : 0;
@@ -66,17 +84,16 @@ export async function walReplay(env, cid, handle, o = {}) {
 export async function walForget(env, cid, digits) {
   if (!digits) return 0;
   const kv = raw(env);
-  let r, n = 0; try { r = await kv.list({ prefix: `ibq:${cid}:`, limit: 1000 }); } catch (e) { console.log("wal forget", String(e).slice(0, 120)); return 0; }
-  for (const x of (r && r.keys) || []) {
-    let v; try { v = JSON.parse((await kv.get(x.name)) || "null"); } catch (e) { v = null; }
-    const b = (v && v.body) || {}, chat = String((b.senderData && b.senderData.chatId) || b.chatId || "").replace(/\D/g, "");
-    if (!v || chat === digits) { try { await kv.delete(x.name); n++; } catch (e) { console.log("wal forget", String(e).slice(0, 120)); } }
+  let n = 0;
+  for (const name of await walKeys(kv, cid)) { // список не дочитался — ошибка наверх: удаление не закончено
+    let v; try { v = JSON.parse((await kv.get(name)) || "null"); } catch (e) { v = null; }
+    if (!v || chatOf(v.body) === digits) { await kv.delete(name); n++; }
   }
   return n;
 }
 /** Сколько событий ждёт записи (для «Хранилищ»). @param {Env} env @param {string} cid */
 export async function walPending(env, cid) {
-  try { const r = await raw(env).list({ prefix: `ibq:${cid}:`, limit: 1000 }); return ((r && r.keys) || []).length; } catch (e) { return -1; }
+  try { return (await walKeys(raw(env), cid)).length; } catch (e) { return -1; }
 }
 
 // обработчик события — тот же, что у вебхука; его подключает controllers/webhooks/greenapi.js (сервис контроллеры не подключает)

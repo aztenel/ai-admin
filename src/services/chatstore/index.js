@@ -15,7 +15,7 @@
 import { HIST_KEEP } from "../../config/constants.js";
 import { histMeta, histTtl } from "../../db/kv/chats.js";
 import { d1Ready } from "../../db/d1/status.js";
-import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaGet, metaSet, chatCounts, mkeysIn, threadKeys } from "../../db/d1/chats.js";
+import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaGet, metaSet, metaPurgeOld, chatCounts, mkeysIn, threadKeys } from "../../db/d1/chats.js";
 import { planPut, mkeyOf, bare } from "./merge.js";
 
 const HK = /^h:(wa|ga|web):([a-z][a-z0-9]{1,15}):([A-Za-z0-9_-]{1,80})$/;
@@ -352,12 +352,30 @@ async function purgeSometimes(db, now) {
   purgedAt = now;
   try { const n = await threadsPurge(db, now, 200); if (n) console.log("chat purge", n); } catch (e) { console.log("chat purge", String(e).slice(0, 120)); }
 }
-/** Фоновая задача: удалить чаты с истёкшим сроком. @param {Env} env @param {number} now */
+/** Фоновая задача: удалить чаты с истёкшим сроком и старые отметки «данные удалены» (журнал живёт 3 дня). @param {Env} env @param {number} now */
 export async function chatPurgeRun(env, now) {
   if (!anyD1(env)) return 0;
   const db = await chatDb(env, now);
   if (!db) return 0;
+  try { await metaPurgeOld(db, "erased:", now - 4 * 86400e3); } catch (e) { console.log("chat erased purge", String(e).slice(0, 120)); }
   return threadsPurge(db, now, 500);
+}
+
+// ---- «Удалить данные клиента» и журнал вебхуков: отметка в D1 (видна всем точкам сети сразу, в отличие от KV) — события журнала,
+// пришедшие до неё, в переписку не проигрываются (повторная проверка безопасности 01.11.2026)
+/** @param {Env} env @param {string} ws @param {string} ch @param {string} chat @param {number} now */
+export async function chatErased(env, ws, ch, chat, now) {
+  if (chatMode(env, ws) !== "d1") return;
+  const db = await chatDb(env, now);
+  if (!db) throw new Error(NOT_READY); // отметка не записалась — удаление не считаем законченным
+  await d1Try(() => metaSet(db, `erased:${ws}:${ch}:${chat}`, String(now)));
+}
+/** Когда удаляли данные этого чата (0 — не удаляли или переписки в KV). @param {Env} env @param {string} ws @param {string} ch @param {string} chat */
+export async function erasedAt(env, ws, ch, chat) {
+  if (chatMode(env, ws) !== "d1") return 0;
+  const db = await chatDb(env, Date.now());
+  if (!db) return 0;
+  return +((await d1Try(() => metaGet(db, `erased:${ws}:${ch}:${chat}`))) || 0) || 0;
 }
 /** Состояние для «Хранилищ» и владельца: режим, таблицы, перенос, числа. @param {Env} env @param {string} ws */
 export async function chatStoreInfo(env, ws) {

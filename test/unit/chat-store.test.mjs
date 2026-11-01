@@ -8,6 +8,7 @@ import { net, mk, mkKV, gaPass } from "../harness.mjs";
 import { sqliteOk, d1With } from "../d1.mjs";
 import { importAll, chatCheck, exportAll, chatEnv } from "../../src/services/chatstore/index.js";
 import { walKick, walPending } from "../../src/services/chatstore/wal.js";
+import { chatErased } from "../../src/services/chatstore/index.js";
 import { createHmac } from "node:crypto";
 
 const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
@@ -312,4 +313,37 @@ test("«Удалить данные клиента» убирает и его с
   assert.equal(r.done, 1);
   assert.equal(rows(d).length, 0, "удалённое не вернулось");
   assert.equal(rows(d, other).length, 1, "чужое записалось");
+});
+
+test("удаление данных клиента чистит журнал целиком (больше одной страницы списка KV) и до удаления переписки", { skip }, async () => {
+  // повторная проверка безопасности 01.11.2026: журнал читался одной страницей (1000 ключей) — события удалённого клиента дальше неё оставались
+  const { central, d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P), at = Date.now() - 60e3;
+  await inbound(W, "Здравствуйте");
+  const ev = (id, chat) => ({ at, n: 0, body: { typeWebhook: "incomingMessageReceived", idMessage: id, instanceData: { idInstance: +INST.id }, senderData: { chatId: chat + "@c.us", sender: chat + "@c.us" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: "ждёт записи" } } } });
+  for (let i = 0; i < 1003; i++) await central.api.put(`ibq:winchester:A${String(i).padStart(4, "0")}:in`, JSON.stringify(ev("A" + i, "77000008805")));
+  for (const id of ["Z1", "Z2"]) await central.api.put(`ibq:winchester:${id}:in`, JSON.stringify(ev(id, B)));   // за первой страницей списка
+  assert.equal(await walPending(W.env, "winchester"), 1005, "считаются все страницы");
+  const er = await b.post("/api/inbox/act", { c: "winchester", ch: "ga", id: B, act: "erase" });
+  assert.equal(er.status, 200, await er.clone().text());
+  const left = [...central.mem.keys()].filter(k => k.startsWith("ibq:winchester:Z"));
+  assert.deepEqual(left, [], "события удалённого клиента убраны и за первой страницей");
+  assert.equal(await walPending(W.env, "winchester"), 1003, "события другого чата на месте");
+  assert.equal(rows(d).length, 0);
+});
+
+test("проигрыш журнала не возвращает события, пришедшие до «Удалить данные клиента» (отметка в D1)", { skip }, async () => {
+  // повторная проверка безопасности 01.11.2026: проигрыш между удалением переписки и очисткой журнала вернул бы удалённое; отметка
+  // удаления лежит в D1 — её видят все точки сети сразу, а события старше неё в переписку не попадают
+  const { central, d, W } = twoPlaces(D1MODE);
+  const at = Date.now() - 5000;
+  await central.api.put("ibq:winchester:OLD1:in", JSON.stringify({ at, n: 0, body: { typeWebhook: "incomingMessageReceived", idMessage: "OLD1", instanceData: { idInstance: +INST.id }, senderData: { chatId: B + "@c.us", sender: B + "@c.us" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: "до удаления" } } } }));
+  await chatErased(chatEnv(W.env), "winchester", "ga", B, Date.now());
+  const r = await walKick(chatEnv(W.env), "winchester", { force: true });
+  assert.equal(r.done, 0, JSON.stringify(r));
+  assert.equal(rows(d).length, 0, "событие до удаления не записано");
+  assert.equal(await walPending(W.env, "winchester"), 0, "и убрано из журнала");
+  // новое сообщение после удаления — настоящее: записывается
+  await inbound(W, "Здравствуйте ещё раз", "NEW-AFTER-1");
+  assert.equal(rows(d).length, 1);
 });

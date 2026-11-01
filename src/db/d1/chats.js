@@ -122,6 +122,10 @@ export async function metaSet(db, k, v) {
   if (v === null) await db.prepare("delete from meta where k = ?").bind(k).run();
   else await db.prepare("insert into meta (k, v) values (?, ?) on conflict (k) do update set v = excluded.v").bind(k, v).run();
 }
+/** Убрать отметки вида <prefix>…, у которых время (значение) раньше before. @param {any} db @param {string} prefix @param {number} before */
+export async function metaPurgeOld(db, prefix, before) {
+  await db.prepare("delete from meta where k like ? and cast(v as integer) < ?").bind(prefix.replace(/[%_]/g, "") + "%", before).run();
+}
 /** @param {any} db @param {string} k */
 export async function metaGet(db, k) { return /** @type {string | null} */ (await db.prepare("select v from meta where k = ?").bind(k).first("v")); }
 /** Есть ли таблицы переписок (миграция 0006). @param {any} db */
