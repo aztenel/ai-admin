@@ -23,7 +23,7 @@ import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/alte
 import { selftestPage } from "../controllers/selftest.js";
 import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
-import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
+import { hookBurst, handleWAClient, waHook } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
 import { greenHook } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
@@ -216,7 +216,8 @@ export async function route(request, env, ctx, pult) {
       if (env.APP_SECRET) { if (!(await metaSigOk(env.APP_SECRET, raw, request.headers.get("x-hub-signature-256")))) return new Response("Bad signature", { status: 403 }); }
       else if (hookBurst(request)) return new Response("Too many requests", { status: 429 }); // без подписи Meta: не больше 30 запросов в минуту с одного адреса
       let body = null; try { body = JSON.parse(raw); } catch (e) {}
-      if (body) ctx.waitUntil(handleWhatsApp(body, env, { origin: url.origin, signed: !!env.APP_SECRET }).catch(err => console.log("wa error", err)));
+      // с подписью и переписками WA_CLIENT в D1 — через журнал вебхуков (controllers/webhooks/meta.js waHook); иначе — как раньше
+      if (body && !(await waHook(body, env, ctx, { origin: url.origin, signed: !!env.APP_SECRET }, { shared: true }))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Meta повторит
       return new Response("OK");
     }
     if (M === "POST") return new Response("Not found", { status: 404 });

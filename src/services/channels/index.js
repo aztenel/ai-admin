@@ -76,7 +76,8 @@ export async function waCoex(env, wx, field, val) {
         if (id && seen.includes(id)) return; // Meta повторила доставку
         h.profile.echo = seen.concat(id ? [id] : []).slice(-20);
         h.profile.pausedUntil = Math.max(h.profile.pausedUntil || 0, now + PAUSE_MS); delete h.profile.need; h.profile.pn = h.profile.pn || w.pnid || h.profile.pn;
-        h.turns = (h.turns || []).concat([{ role: "model", text: coexText(m), t: now, by: "admin", m: "phone" }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+        // переписки в D1 (wx.ids): номер сообщения — ключ строки в D1, повтор уведомления (журнал, две точки сети) её не удвоит
+        h.turns = (h.turns || []).concat([{ role: "model", text: coexText(m), t: now, by: "admin", m: "phone", ...(wx.ids && id ? { mid: id.slice(0, 80) } : {}) }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
         await putHist(env.KV, hk, h);
       });
     }

@@ -43,7 +43,7 @@ export async function greenHook(body, env, ctx, origin, r) {
   return true;
 }
 // проигрыш журнала (фоновая задача, пульт стенда): то же событие тем же кодом, мимо отметки «уже видели»
-walHandle((body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
+walHandle("ga", (body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
 
 /** @param {any} body @param {Env} env @param {any} origin @param {any} r @param {{ replay?: boolean }} [opts] replay — из журнала: отметку «уже видели» не проверять */
 export async function handleGreen(body, env, origin, r, opts = {}) {
