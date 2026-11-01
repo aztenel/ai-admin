@@ -90,6 +90,30 @@ net.mediaReply = (url, init) => {
   return new Response("gone", { status: 403 });
 };
 const uploads = () => net.ga.filter((x) => x.op === "sendFileByUpload");
+// независимая проверка Ogg Opus (RFC 3533, RFC 7845) — своим кодом, не кодом пульта: страницы «OggS», контрольная сумма каждой
+// страницы, первая — начало потока с OpusHead, вторая — OpusTags, последняя — конец потока; позиция последней страницы — длительность
+// в отсчётах 48 кГц за вычетом предварительного пропуска (pre-skip) → { ok, sec, pages, why }
+function oggCheck(b) {
+  const T = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) { let r = i << 24; for (let k = 0; k < 8; k++) r = r & 0x80000000 ? (r << 1) ^ 0x04c11db7 : r << 1; T[i] = r >>> 0; }
+  const crc = (u) => { let c = 0; for (const x of u) c = ((c << 8) ^ T[((c >>> 24) ^ x) & 255]) >>> 0; return c; };
+  let o = 0, pages = 0, last = null, first = null, second = null, preskip = 0;
+  while (o < b.length) {
+    if (b.toString("latin1", o, o + 4) !== "OggS" || b[o + 4] !== 0) return { ok: false, why: `нет страницы на ${o}` };
+    const nseg = b[o + 26], segs = b.subarray(o + 27, o + 27 + nseg), len = 27 + nseg + segs.reduce((a, x) => a + x, 0);
+    const page = Buffer.from(b.subarray(o, o + len)), want = page.readUInt32LE(22);
+    page.writeUInt32LE(0, 22);
+    if (crc(page) !== want) return { ok: false, why: `контрольная сумма страницы ${pages}` };
+    const info = { flags: b[o + 5], gran: b.readBigInt64LE(o + 6), body: b.subarray(o + 27 + nseg, o + len) };
+    if (!first) first = info; else if (!second) second = info;
+    last = info; pages++; o += len;
+  }
+  if (!first || !(first.flags & 2) || first.body.toString("latin1", 0, 8) !== "OpusHead") return { ok: false, why: "нет начала потока с OpusHead" };
+  preskip = first.body.readUInt16LE(10);
+  if (!second || second.body.toString("latin1", 0, 8) !== "OpusTags") return { ok: false, why: "нет OpusTags" };
+  if (!(last.flags & 4)) return { ok: false, why: "нет конца потока" };
+  return { ok: true, pages, sec: Number(last.gran - BigInt(preskip)) / 48000 };
+}
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
 const A = "77001112101", B = "77001112102", C = "77001112103", D = "77001112104", E = "77001112105", F = "77000002011", G = "77001112106";
 // A: ответил на напоминание просьбой перенести
@@ -470,6 +494,8 @@ async function voicePhone(t) {
   await page.waitForTimeout(700);
   const vu = uploads().slice(up0), vb = vu[0] ? Buffer.from(await vu[0].form.file.blob.arrayBuffer()) : Buffer.alloc(0);
   ok(`${tag}: голосовое — двойное нажатие: к Green-API один файл voice-….ogg (Ogg Opus)`, vu.length === 1 && /^voice-\d{14}\.ogg$/.test(vu[0].form.fileName) && vb.subarray(0, 4).toString() === "OggS" && vb.includes(Buffer.from("OpusHead")), JSON.stringify(vu.map((x) => x.form?.fileName)));
+  const oc = oggCheck(vb);
+  ok(`${tag}: голосовое — Ogg Opus по стандарту (контрольные суммы, начало и конец потока), длина ≈ записи`, oc.ok && oc.sec > 1 && oc.sec < 4, JSON.stringify(oc));
   const vt = S.hist("ga", "winchester", G).turns.at(-1);
   ok(`${tag}: голосовое — в переписке отмечено голосовым, с длиной`, vt.m && vt.m.k === "audio" && vt.m.v === 1 && vt.m.d >= 1 && vt.st === "sent", JSON.stringify({ m: vt.m, st: vt.st }));
   ok(`${tag}: отправленное голосовое — в ленте плеер и «Отправлено»`, (await ticks(page, "Отправлено").count()) === sent0 + 1 && (await log.getByRole("button", { name: "Слушать голосовое" }).count()) >= 1);
