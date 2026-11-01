@@ -199,6 +199,7 @@ D1, **без cron** (ни напоминаний, ни рассылок, ни с
 | `GA_ID_WINCHESTER`, `GA_URL_WINCHESTER`, `GA_TOKEN_WINCHESTER` — **тестового** инстанса (номер А) | `ALTEGIO_PARTNER`, `ALTEGIO_USER_WINCHESTER` — Altegio |
 | `LEADS_KEY` — **свой** ключ входа стенда, не боевой | `TG_TOKEN`, `TG_CHAT`, `TG_CHAT_WINCHESTER` — Telegram |
 | KV и D1 стенда (`deploy/test-stand/wrangler.jsonc`) | `ANTHROPIC_KEY`, `GEMINI_KEY` — ИИ |
+| `CHAT_STORE_WINCHESTER` = `d1` — в самих настройках стенда (01.11.2026, переписки в D1, `docs/chat-storage-d1.md` §5); в панели не задавать | |
 | | `WA_*`, `PHONE_NUMBER_ID_*`, `APP_SECRET_*`, `WA_VIA_*` — основной номер, Meta, Wazzapo |
 | | `BOT_GA_*`, `BOT_WA_*`, `REMIND_GA_*`, `SITE_BOOKING_*`, `MSG_V2_*`, `GA_ID`/`GA_TOKEN`/`GA_HOOK` (общий номер), `STAGE` |
 

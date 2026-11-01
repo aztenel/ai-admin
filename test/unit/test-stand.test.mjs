@@ -19,8 +19,10 @@ const jsonc = f => JSON.parse(readFileSync(resolve(ROOT, f), "utf8").replace(/("
 const PROD_D1 = "ea1610ed-d342-41ca-8170-40ffe81feb41"; // боевая D1 ai-admin — подключается правкой docs/runbooks/winchester-go-live-d1.patch
 const INST = { id: "7105000077", token: "ga-tok-stand" };
 const B = "77000007701"; // номер Б — «клиент», пишет на тестовый номер А
-/** ровно то, что владелец задаст на стенде (go-live §6); undefined стирает ключи, которые mk() ставит по умолчанию */
+/** ровно то, что владелец задаст на стенде (go-live §6), и переменные из настроек стенда (переписки Winchester в D1);
+ *  undefined стирает ключи, которые mk() ставит по умолчанию */
 const standEnv = db => ({ GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, GA_URL_WINCHESTER: "https://7105.api.greenapi.com", DB: db,
+  ...jsonc("deploy/test-stand/wrangler.jsonc").vars,
   GEMINI_KEY: undefined, MODEL: undefined, TG_TOKEN: undefined, TG_CHAT: undefined, VERIFY_TOKEN: undefined });
 const gaOps = op => net.ga.filter(x => x.op === op);
 const sends = () => gaOps("sendMessage").concat(gaOps("sendFileByUpload"));
@@ -31,12 +33,12 @@ const QUIET = { tg: 0, ai: 0, altegio: 0, meta: 0, wazzapo: 0, other: 0, otherIn
 
 async function stand() {
   net.reset();
-  const s = mk(standEnv(d1With("production").db)), b = s.browser();
+  const d = d1With("production"), s = mk(standEnv(d.db)), b = s.browser();
   await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
-  return { s, b };
+  return { s, b, d };
 }
 
-test("настройки стенда: свой Worker, тот же код, свои KV и D1, без cron, черновиков и переменных", () => {
+test("настройки стенда: свой Worker, тот же код, свои KV и D1, без cron и черновиков; из переменных — только переписки в D1", () => {
   const st = jsonc("deploy/test-stand/wrangler.jsonc"), w = jsonc("wrangler.jsonc");
   assert.equal(st.name, "ai-admin-test", "имя Worker в панели Cloudflare должно быть ровно таким");
   assert.equal(resolve(DIR, st.main), resolve(ROOT, w.main), "тот же worker.js, что у боевого сайта");
@@ -45,7 +47,9 @@ test("настройки стенда: свой Worker, тот же код, св
   assert.equal(st.keep_vars, true, "выкладка не стирает переменные, заданные в панели");
   assert.equal(st.workers_dev, true);
   assert.deepEqual(st.triggers, { crons: [] }, "без фоновой задачи: ни напоминаний, ни рассылок, ни синхронизации");
-  for (const k of ["previews", "vars", "routes", "route", "env", "services", "queues", "r2_buckets", "durable_objects", "assets"]) assert.ok(!(k in st), "в настройках стенда нет " + k);
+  for (const k of ["previews", "routes", "route", "env", "services", "queues", "r2_buckets", "durable_objects", "assets"]) assert.ok(!(k in st), "в настройках стенда нет " + k);
+  // переписки Winchester на стенде — в D1 (01.11.2026, после замера «до» владельца); ключи и токены — только в панели Cloudflare
+  assert.deepEqual(st.vars, { CHAT_STORE_WINCHESTER: "d1" }, "в настройках стенда — только хранилище переписок Winchester");
   assert.deepEqual(st.kv_namespaces.map(x => x.binding), ["KV"]);
   assert.deepEqual(st.d1_databases.map(x => x.binding), ["DB"]);
   const used = [...w.kv_namespaces, ...w.previews.kv_namespaces].map(x => x.id).concat(w.previews.d1_databases.map(x => x.database_id), PROD_D1);
@@ -55,13 +59,14 @@ test("настройки стенда: свой Worker, тот же код, св
   assert.match(st.kv_namespaces[0].id, /^(?!0+$)[0-9a-f]{32}$/);
   assert.match(st.d1_databases[0].database_id, /^(?!0{8}-)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.ok(!["ai-admin", "ai-admin-dev"].includes(st.d1_databases[0].database_name));
-  assert.equal(resolve(DIR, st.d1_databases[0].migrations_dir), resolve(ROOT, "migrations"), "те же миграции 0001–0005");
+  assert.equal(resolve(DIR, st.d1_databases[0].migrations_dir), resolve(ROOT, "migrations"), "те же миграции 0001–0006");
 });
 
 test("входящее с номера Б — чат второго номера в пульте, бот молчит; ответ уходит один раз и только Б", { skip }, async () => {
-  const { s, b } = await stand();
+  const { s, b, d } = await stand();
   await s.gaText("winchester", INST, B, "Здравствуйте, сколько стоит стрижка?", { idMessage: "IN-ST-1" });
   assert.equal(sends().length, 0, "бот на втором номере не отвечает");
+  assert.equal(d.raw.prepare("select count(*) n from chat_messages where ws = 'winchester' and ch = 'ga' and chat = ?").get(B).n, 1, "переписка стенда — в D1");
   const list = await (await b.go("/api/inbox/list?c=winchester&v=2")).json();
   assert.ok((list.chats || []).some(x => x.ch === "ga" && x.id === B), JSON.stringify(list.chats));
   const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=ga&id=${B}`)).json();
