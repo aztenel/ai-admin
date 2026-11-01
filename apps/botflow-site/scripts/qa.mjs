@@ -189,10 +189,12 @@ if (urlArg) {
     if (!hr.headers.get(hname)) fail("заголовки", `нет ${hname}`);
   }
   const og = /property="og:image" content="([^"]+)"/.exec(homeHtml)?.[1];
-  if (og) { const r = await fetch(og); if (r.status !== 200 || !/^image\//.test(r.headers.get("content-type") || "")) fail("og:image", `${og} → ${r.status} ${r.headers.get("content-type")}`); else notes.push("превью ссылки (og.png) открывается"); }
+  // картинку берём с проверяемого адреса: при --host домен из og:image может ещё не открываться
+  if (og) { const r = await fetch(base + new URL(og).pathname); if (r.status !== 200 || !/^image\//.test(r.headers.get("content-type") || "")) fail("og:image", `${og} → ${r.status} ${r.headers.get("content-type")}`); else notes.push("превью ссылки (og.png) открывается"); }
   const form = await fetch(base + "/api/contact", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-  if (form.status !== 404) fail("форма", `обработчик /api/contact отвечает ${form.status} — должен быть выключен (404), пока не включён CONTACT_FORM`);
-  else notes.push("обработчик формы выключен (404)");
+  // 404 — нет такого адреса, 405 — сервер статических файлов (Workers Static Assets) не принимает POST: формы нет
+  if (![404, 405].includes(form.status)) fail("форма", `/api/contact отвечает ${form.status} — обработчика формы быть не должно, пока она не включена`);
+  else notes.push(`обработчика формы нет (${form.status})`);
 }
 
 // форма в браузере: только если сайт собран с PUBLIC_CONTACT_FORM=1 (ответ сервера подменяется)

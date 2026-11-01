@@ -14,16 +14,38 @@ const json = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const LIMIT = 16_000;
+
+/** Тело запроса не больше LIMIT байт: читаем поток со счётчиком (Content-Length может не быть или врать). */
+async function readLimited(request: Request): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > LIMIT) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   // выключено, пока владелец не задал CONTACT_FORM=1 и не проверил доставку в Telegram вживую
   if (env.CONTACT_FORM !== "1") return json(404, { error: "Не найдено." });
   const origin = request.headers.get("origin");
   if (origin && new URL(origin).host !== new URL(request.url).host) return json(403, { error: "Запрос с другого сайта." });
-  if (Number(request.headers.get("content-length") || 0) > 16_000) return json(413, { error: "Слишком длинное сообщение." });
+  if (Number(request.headers.get("content-length") || 0) > LIMIT) return json(413, { error: "Слишком длинное сообщение." });
 
+  const raw = await readLimited(request);
+  if (raw === null) return json(413, { error: "Слишком длинное сообщение." });
   let data: Record<string, unknown>;
-  try { data = (await request.json()) as Record<string, unknown>; } catch { return json(400, { error: "Не удалось прочитать форму." }); }
+  try { data = JSON.parse(raw) as Record<string, unknown>; } catch { return json(400, { error: "Не удалось прочитать форму." }); }
 
   // ловушка и слишком быстрая отправка — скорее всего бот: отвечаем «ок» и ничего не делаем
   const started = Number(data.t);
