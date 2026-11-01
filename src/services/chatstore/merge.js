@@ -28,10 +28,27 @@ export function fp(s) {
  *  @param {Turn} t @param {number} [pos] место в переписке — только для старых реплик без времени */
 export function mkeyOf(t, pos) {
   const r = t.role === "user" ? "u" : "m";
-  if (t.mid) return `m:${String(t.mid).slice(0, 80)}:${r}`;
+  if (t.mid) return `m:${String(t.mid).slice(0, 80)}:${r}${t.cap ? ":c" : ""}`; // cap — подпись к файлу с тем же номером (capMark)
   if (t.rid) return `r:${String(t.rid).slice(0, 80)}`;
   const tt = +t.t || 0;
   return `h:${r}:` + fp([tt || "#" + (pos ?? 0), t.by || "", t.rm || "", t.bc || "", t.op || "", String(t.text ?? "").slice(0, 500)].join("|"));
+}
+/** Подпись к файлу второго номера (Green-API): у Green-API подпись приходит в том же событии, что и файл, — две реплики с одним номером
+ *  сообщения (по нему цитата, правка, удаление), и ключ строки совпадал: подпись отбрасывалась как повтор (находка 02.11.2026). У подписи —
+ *  отметка cap (ставит вебхук) и свой ключ. Реплики, записанные до этого без отметки, размечаются здесь: реплика без файла с номером
+ *  файла выше — подпись. Ключи остальных реплик не меняются: уже записанные строки D1 не задваиваются. → тот же массив, если менять нечего.
+ *  @param {Turn[]} turns @returns {Turn[]} */
+export function capMark(turns) {
+  /** @type {Set<string>} */ const files = new Set();
+  /** @type {Turn[] | null} */ let out = null;
+  for (let i = 0; i < turns.length; i++) {
+    const t = turns[i];
+    if (!t || typeof t !== "object" || !t.mid) continue;
+    const k = String(t.mid) + (t.role === "user" ? ":u" : ":m");
+    if (t.m && t.m.k) { files.add(k); continue; }
+    if (!t.cap && files.has(k)) { out = out || turns.slice(); out[i] = { ...t, cap: 1 }; }
+  }
+  return out || turns;
 }
 /** реплика без служебных полей хранилища @param {Turn} t */
 export function bare(t) { const { _i, ...rest } = t || {}; return rest; }
@@ -105,7 +122,7 @@ export function mergeTurn3(seen, mine, cur) {
 export function planPut(seen, mine, cur) {
   const S = seen.length ? seen : [cur], last = S[S.length - 1];
   const curById = new Map(cur.turns.map(t => [+t._i, t]));
-  const mineTurns = Array.isArray(mine.turns) ? mine.turns : [];
+  const mineTurns = capMark(Array.isArray(mine.turns) ? mine.turns : []);
   const inserts = [], updates = [], deletes = new Set(), seenKeys = new Set(cur.turns.map((t, i) => mkeyOf(t, i)));
   for (const [i, t] of mineTurns.entries()) {
     if (!t || typeof t !== "object") continue;

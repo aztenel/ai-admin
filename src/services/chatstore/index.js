@@ -16,7 +16,7 @@ import { HIST_KEEP } from "../../config/constants.js";
 import { histMeta, histTtl, lastAct } from "../../db/kv/chats.js";
 import { d1Ready } from "../../db/d1/status.js";
 import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaSet, metaGet, metaPurgeOld, chatCounts, mkeysIn, threadKeys, erasedSet, erasedMark } from "../../db/d1/chats.js";
-import { planPut, mkeyOf, bare } from "./merge.js";
+import { planPut, mkeyOf, bare, capMark } from "./merge.js";
 
 const HK = /^h:(wa|ga|web):([a-z][a-z0-9]{1,15}):([A-Za-z0-9_-]{1,80})$/;
 const HP = /^h:(wa|ga|web):([a-z][a-z0-9]{1,15}):$/;
@@ -232,7 +232,8 @@ function erasedProfile(pr, turns) {
 async function importBlob(db, k, raw, info, now) {
   let h; try { h = JSON.parse(raw); } catch (e) { return false; }
   if (!h || typeof h !== "object") return false;
-  let turns = (Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object").map(bare);
+  // подписи к файлам второго номера, записанные в KV без отметки (до 02.11.2026), — свой ключ строки, иначе перенос их терял (capMark)
+  let turns = capMark((Array.isArray(h.turns) ? h.turns : []).filter((/** @type {any} */ t) => t && typeof t === "object").map(bare));
   let profile = h.profile && typeof h.profile === "object" ? h.profile : {}, n = +h.n || 0;
   // данные этого клиента удаляли: копия KV может быть записана до удаления (запоздавшая тень, копия другой точки сети) — из неё
   // переносятся только сообщения новее отметки, а из состояния чата — только «стоп» и пауза, как оставляет само удаление
@@ -334,7 +335,7 @@ export async function chatCheck(env, ws) {
         rep.kvTurns += turns.length;
         if (!(await d1Try(() => threadRev(db, k.ws, k.ch, k.chat)))) { rep.missingChats++; rep.missingTurns += turns.length; continue; }
         rep.inD1++;
-        const keys = turns.map((/** @type {any} */ t, /** @type {number} */ i) => mkeyOf(bare(t), i));
+        const keys = capMark(turns.map(bare)).map((/** @type {any} */ t, /** @type {number} */ i) => mkeyOf(t, i)); // как при переносе
         const have = await d1Try(() => mkeysIn(db, k.ws, k.ch, k.chat, keys));
         rep.missingTurns += keys.filter((/** @type {string} */ x) => !have.has(x)).length;
       }

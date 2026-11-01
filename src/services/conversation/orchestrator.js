@@ -243,7 +243,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   if (phoneInText) saved.profile.phone = phoneInText;
   const who = opts.phone || saved.profile.phone || "телефон не указан";
   // номер сообщения клиента у Green-API и его цитата: на это сообщение сотрудник отвечает из пульта цитатой, по номеру приходят правки (31.10.2026)
-  const inMeta = { ...(opts.mid ? { mid: String(opts.mid).slice(0, 80) } : {}), ...(opts.qt ? { qt: opts.qt } : {}) };
+  const inMeta = { ...(opts.mid ? { mid: String(opts.mid).slice(0, 80) } : {}), ...(opts.cap ? { cap: 1 } : {}), ...(opts.qt ? { qt: opts.qt } : {}) }; // cap — подпись к файлу (ключ строки D1)
   const save = async (userText, reply) => {
     const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), t: nowMs, ...inMeta }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
     const put = async () => {

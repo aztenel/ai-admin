@@ -88,7 +88,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     const now = Date.now();
     await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
     const said = maskPhones(redact(String(text).slice(0, MAX_LEN)));
-    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => {
+    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => {
       const why = off ? "off" : +(p.pausedUntil || 0) > now ? "human" : "ai"; // чат ведёт человек — как у бота на паузе; иначе «Сбой бота»
       p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why, at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
       if (late && STOP.test(String(text).trim())) { p.stop = true; p.pausedUntil = Math.max(+(p.pausedUntil || 0), now + 30 * 86400e3); } // «стоп» — как его записал бы бот: 30 дней без автоответов
@@ -125,7 +125,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   /** @type {any[]} */ const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
   const r = /** @type {any} */ (await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: /** @param {any} f */ f => later.push(f),
-    ...(wx && wx.msgId ? { mid: wx.msgId } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) })); // номер сообщения Green-API (на него отвечают цитатой) и цитата клиента
+    ...(wx && wx.msgId ? { mid: wx.msgId } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) })); // номер сообщения Green-API (на него отвечают цитатой), подпись к файлу и цитата клиента
   try {
     if (r.paused) return; // клиентом занимается администратор — бот молчит
     if (r.isNew) {
@@ -180,7 +180,9 @@ export async function handleWAMedia(env, channel, fromDigits, kind, link, captio
     } catch (e) { console.log("history", String(e)); }
   };
   if ((paused || botOff(env, c, channel) || replay) && !caption) return note(""); // бот выключен (или проигрыш журнала) — файл виден в пульте, ответ не уходит
-  if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, channel === "wa" && wx && wx.msgId ? { ...wx, msgId: "c:" + wx.msgId } : wx); }
+  // подпись — отдельная реплика: у Meta свой номер «c:…», у Green-API тот же номер сообщения (по нему цитата, правка, удаление) и
+  // отметка cap — свой ключ строки в D1 (иначе подпись отбрасывалась как повтор файла, 02.11.2026; merge.js, capMark)
+  if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, channel === "wa" && wx && wx.msgId ? { ...wx, msgId: "c:" + wx.msgId } : channel === "ga" && wx && wx.msgId ? { ...wx, cap: 1 } : wx); }
   const reply = mediaReply(kind, (h && h.profile && h.profile.lang) || "ru"); // на языке чата
   if (kind === "sticker" && (h?.profile?.cxAsk || h?.profile?.mvAsk)) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }
   await note(reply);
