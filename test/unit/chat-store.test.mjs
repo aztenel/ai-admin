@@ -347,3 +347,26 @@ test("проигрыш журнала не возвращает события, 
   await inbound(W, "Здравствуйте ещё раз", "NEW-AFTER-1");
   assert.equal(rows(d).length, 1);
 });
+
+test("журнал: срок события — от его прихода (повторы его не продлевают), старше 3 дней — не проигрывается", { skip }, async () => {
+  // третья проверка безопасности 01.11.2026: неудачный повтор переписывал событие со сроком «ещё 3 дня» — при долгом сбое оно пережило бы
+  // отметку «данные удалены» (её фоновая задача убирает через 4 дня) и вернуло бы удалённое
+  const { central, d, W } = twoPlaces(D1MODE);
+  const ev = (id, at) => JSON.stringify({ at, n: 0, body: { typeWebhook: "incomingMessageReceived", idMessage: id, instanceData: { idInstance: +INST.id }, senderData: { chatId: B + "@c.us", sender: B + "@c.us" }, messageData: { typeMessage: "textMessage", textMessageData: { textMessage: "старое" } } } });
+  const now = Date.now();
+  await central.api.put("ibq:winchester:OLD3D:in", ev("OLD3D", now - 3 * 86400e3 - 60e3));
+  let r = await walKick(chatEnv(W.env), "winchester", { force: true });
+  assert.equal(r.done, 0);
+  assert.equal(rows(d).length, 0, "событие старше срока журнала не записано");
+  assert.ok(!central.mem.has("ibq:winchester:OLD3D:in"), "и убрано");
+  // неудачный повтор: событие остаётся, но срок — прежний (от прихода), а не «ещё 3 дня»
+  const at = now - 86400e3;
+  await central.api.put("ibq:winchester:FAIL1:in", ev("FAIL1", at));
+  const puts = [], put0 = central.api.put;
+  central.api.put = async (k, v, o) => { if (k.startsWith("ibq:")) puts.push(o); return put0(k, v, o); };
+  d.ctl.fail = sql => /chat_(threads|messages)/.test(sql) && !/sqlite_master/.test(sql);
+  r = await walKick(chatEnv(W.env), "winchester", { force: true });
+  d.ctl.fail = null; central.api.put = put0;
+  assert.equal(r.failed, 1);
+  assert.deepEqual(puts, [{ expiration: Math.floor((at + 3 * 86400e3) / 1000) }], JSON.stringify(puts));
+});

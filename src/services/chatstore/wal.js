@@ -9,7 +9,7 @@ import { CLIENTS } from "../../config/builtin-clients.js";
 import { chatMode, chatStats, chatEnv, erasedAt } from "./index.js";
 
 const TYPES = new Set(["incomingMessageReceived", "outgoingMessageReceived", "outgoingMessageStatus"]);
-const KEEP = 3 * 86400;     // сколько живёт запись журнала
+const KEEP = 3 * 86400;     // сколько живёт запись журнала — от прихода события; повторы срок не продлевают (отметка «данные удалены» живёт дольше — 4 дня)
 const WAIT = 45_000;        // моложе — ещё обрабатывается, не трогаем
 const MAX_TRIES = 30;       // потом — сигнал владельцу, запись остаётся до срока
 /** @param {Env} env */
@@ -63,6 +63,9 @@ export async function walReplay(env, cid, handle, o = {}) {
     const x = { name };
     let v; try { v = JSON.parse((await kv.get(x.name)) || "null"); } catch (e) { v = null; }
     if (!v || !v.body) { try { await kv.delete(x.name); } catch (e) {} continue; }
+    // старше срока журнала — не проигрываем (третья проверка безопасности 01.11.2026: иначе событие пережило бы отметку «данные удалены»)
+    const ends = (+v.at || now) + KEEP * 1000;
+    if (ends - now <= 60_000) { console.log("wal expired", x.name.slice(0, 60)); try { await kv.delete(x.name); } catch (e) {} continue; }
     // данные этого клиента удалили после того, как событие легло в журнал: в переписку его не возвращаем
     let er = 0; try { er = await erasedAt(env, cid, "ga", chatOf(v.body)); } catch (e) { console.log("wal erased", String(e).slice(0, 120)); continue; }
     if (er && er >= (+v.at || 0)) { try { await kv.delete(x.name); } catch (e) {} continue; }
@@ -73,7 +76,7 @@ export async function walReplay(env, cid, handle, o = {}) {
     if (!threw && !(st && st.fails > before)) { try { await kv.delete(x.name); out.done++; } catch (e) {} continue; }
     out.failed++;
     v.n = (+v.n || 0) + 1;
-    try { await kv.put(x.name, JSON.stringify(v), { expirationTtl: KEEP }); } catch (e) {}
+    try { await kv.put(x.name, JSON.stringify(v), { expiration: Math.floor(ends / 1000) }); } catch (e) {} // срок — прежний, от прихода события
     if (v.n === MAX_TRIES) console.log("wal stuck", cid, x.name.slice(0, 60));
   }
   return out;
