@@ -65,9 +65,10 @@ export type State = {
   /** Замер скорости пульта (Настройки → Диагностика): через сколько мс после сервера пульт показал новое — по видам. */
   speed: Speed;
 };
-export type SpeedKind = "inbound" | "newChat" | "ticks" | "open";
-export type Speed = { store: "d1" | "kv" | ""; samples: Record<SpeedKind, number[]> };
-const SPEED0 = (): Speed => ({ store: "", samples: { inbound: [], newChat: [], ticks: [], open: [] } });
+export type SpeedKind = "inbound" | "newChat" | "ticks" | "open" | "poll";
+/** away — сколько событий не посчитано: они случились, пока пульт был свёрнут или экран погас (это не задержка пульта) */
+export type Speed = { store: "d1" | "kv" | ""; samples: Record<SpeedKind, number[]>; away: number };
+const SPEED0 = (): Speed => ({ store: "", samples: { inbound: [], newChat: [], ticks: [], open: [], poll: [] }, away: 0 });
 
 const initial: State = {
   speed: SPEED0(),
@@ -133,6 +134,12 @@ class Store {
   private ver = ""; // версия списка (переписки в D1): опрос присылает её, сервер отвечает «без изменений» одним маленьким ответом
   private skew = 0; // насколько часы сервера впереди часов устройства (по «now» в ответах) — для замера скорости
   private opening = new Map<string, number>(); // чат открыли, переписки ещё нет: когда начали (замер «открытие переписки»)
+  // замер скорости: с какого времени (часы устройства) пульт на экране без перерыва. Живой замер стенда 01.11.2026 считал и время,
+  // пока пульт был свёрнут или экран погас (свёрнутый пульт сервер не опрашивает): галочки «через 39 с» оказались временем на телефоне Б
+  private shownAt = typeof document !== "undefined" && document.hidden ? Infinity : Date.now();
+  private sampled = new Set<string>(); // одно событие — один замер: опрос списка и опрос чата могут принести одно и то же сообщение
+  private chatDue = 0; // когда должен сработать таймер чата: опоздал больше чем на 3 с — устройство усыпляло пульт
+  private listDue = 0;
 
   subscribe = (f: () => void) => {
     this.subs.add(f);
@@ -172,6 +179,7 @@ class Store {
       this.set({ phase: "error", error: errText(e), offline: e instanceof ApiError && e.offline });
     }
     document.addEventListener("visibilitychange", () => {
+      this.shownAt = document.hidden ? Infinity : Date.now();
       if (document.hidden) return;
       this.poll();
       this.tickChat();
@@ -221,7 +229,7 @@ class Store {
     // замер: новый чат с сообщением клиента появился в списке — через сколько после того, как сервер его записал
     if (!first && this.state.conversations.length) {
       const had = new Set(this.state.conversations.map((c) => c.key));
-      for (const c of snap.conversations) if (!had.has(c.key) && c.lastInboundAt) this.sample("newChat", this.srvNow() - c.lastInboundAt);
+      for (const c of snap.conversations) if (!had.has(c.key) && c.lastInboundAt) this.sample("newChat", this.srvNow() - c.lastInboundAt, c.key + "|" + c.lastInboundAt);
     }
     if (first || this.state.speed.store !== (snap.ver ? "d1" : "kv")) this.set({ speed: { ...this.state.speed, store: snap.ver ? "d1" : "kv" } });
     const report = this.state.report;
@@ -248,12 +256,15 @@ class Store {
   // список: раз в 15 с; переписки в D1 — раз в 5 с (сервер отвечает «без изменений» маленьким ответом, без всего списка)
   private schedule() {
     clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => this.poll(), this.ver ? LIST_POLL_D1_MS : 15e3);
+    const ms = this.ver ? LIST_POLL_D1_MS : 15e3;
+    this.listDue = Date.now() + ms;
+    this.timer = window.setTimeout(() => this.poll(), ms);
   }
 
   /** Обновить список и открытый чат. Вызывается по таймеру, при возврате во вкладку и кнопкой «Обновить». */
   async poll(manual = false) {
     clearTimeout(this.timer);
+    if (!manual) this.woke(this.listDue);
     const ws = this.state.wsId;
     if (!this.src || !ws || this.state.phase === "pick") return;
     // свёрнутая вкладка не опрашивает сервер — кроме случая, когда включены уведомления: ради них опрашиваем список
@@ -293,10 +304,11 @@ class Store {
    *  а получив старую копию, больше его не трогал. Свёрнутая вкладка чат не перечитывает. */
   private scheduleChat() {
     clearTimeout(this.chatTimer);
-    if (this.open) this.chatTimer = window.setTimeout(() => this.tickChat(), CHAT_POLL_MS);
+    if (this.open) { this.chatDue = Date.now() + CHAT_POLL_MS; this.chatTimer = window.setTimeout(() => this.tickChat(), CHAT_POLL_MS); }
   }
   private async tickChat() {
     clearTimeout(this.chatTimer);
+    this.woke(this.chatDue);
     const key = this.open;
     if (key && !document.hidden && this.state.phase === "ready" && this.chatBusy !== key) {
       this.chatBusy = key;
@@ -313,8 +325,24 @@ class Store {
   private srvNow() {
     return Date.now() + this.skew;
   }
-  private sample(kind: SpeedKind, ms: number) {
+  /** таймер сработал позже, чем должен, больше чем на 3 с: устройство усыпляло пульт (экран погас, другое приложение), а события
+   *  «свёрнут» могло и не быть — замер считает пульт на экране только с этого момента @param due когда таймер должен был сработать */
+  private woke(due: number) {
+    if (due && Date.now() - due > 3e3) this.shownAt = Math.max(this.shownAt === Infinity ? 0 : this.shownAt, Date.now());
+  }
+  /** @param key событие (сообщение, галочка, чат): засчитывается один раз */
+  private sample(kind: SpeedKind, ms: number, key = "") {
     if (!(ms >= 0) || ms > 30 * 60e3) return; // старое сообщение (открыли чат позже) — не задержка пульта
+    if (key) {
+      if (this.sampled.has(kind + "\u0000" + key)) return;
+      if (this.sampled.size > 3000) this.sampled.clear();
+      this.sampled.add(kind + "\u0000" + key);
+    }
+    // событие случилось, пока пульт был свёрнут или экран погас: показать его раньше пульт не мог — это не задержка, не считаем
+    if (kind !== "open" && kind !== "poll" && Date.now() - ms < this.shownAt) {
+      this.set({ speed: { ...this.state.speed, away: this.state.speed.away + 1 } });
+      return;
+    }
     const all = this.state.speed.samples, list = [...all[kind], Math.round(ms)].slice(-20);
     this.set({ speed: { ...this.state.speed, samples: { ...all, [kind]: list } } });
   }
@@ -322,12 +350,13 @@ class Store {
   private measure(prev: ConversationDetail, data: ConversationDetail) {
     const old = new Map(prev.messages.map((m) => [m.mid || `${m.at}|${m.text}`, m]));
     for (const m of data.messages) {
-      const was = old.get(m.mid || `${m.at}|${m.text}`);
-      if (!was) { if (m.from === "contact") this.sample("inbound", this.srvNow() - m.at); continue; }
-      if (m.from !== "contact" && m.status && m.statusAt && (RANK[m.status] ?? -1) > (RANK[was.status ?? ""] ?? -1) && (m.status === "delivered" || m.status === "read")) this.sample("ticks", this.srvNow() - m.statusAt);
+      const k = m.mid || `${m.at}|${m.text}`, was = old.get(k);
+      if (!was) { if (m.from === "contact") this.sample("inbound", this.srvNow() - m.at, k); continue; }
+      if (m.from !== "contact" && m.status && m.statusAt && (RANK[m.status] ?? -1) > (RANK[was.status ?? ""] ?? -1) && (m.status === "delivered" || m.status === "read")) this.sample("ticks", this.srvNow() - m.statusAt, k + "|" + m.status);
     }
   }
   resetSpeed() {
+    this.sampled.clear();
     this.set({ speed: { ...SPEED0(), store: this.state.speed.store } });
   }
 
@@ -366,8 +395,11 @@ class Store {
     const prev = this.state.details[key]?.data;
     try {
       // опрос открытого чата с ревизией (переписки в D1): «без изменений» — переписку не перерисовываем
+      const t1 = performance.now(), shown = this.shownAt;
       const data = await this.src.conversation(ws, ref, quiet && prev?.rev ? prev.rev : undefined);
       if (g !== this.gen) return;
+      // сколько идёт проверка открытого чата (запрос к серверу и база): пульт всё это время был на экране
+      if (quiet && shown === this.shownAt && shown !== Infinity && !document.hidden) this.sample("poll", performance.now() - t1);
       if (!data) { const d = this.state.details[key]; if (d) d.at = Date.now(); return; }
       const t0 = this.opening.get(key);
       if (t0 !== undefined) { this.opening.delete(key); this.sample("open", performance.now() - t0); }

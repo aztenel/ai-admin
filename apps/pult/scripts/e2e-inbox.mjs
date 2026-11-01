@@ -253,6 +253,27 @@ async function phoneRun(scheme) {
   ok(`${tag}: в шапке — второй номер и кто ведёт`, /Второй WhatsApp/.test(head) && /ведёт вы/.test(head), head);
   ok(`${tag}: нет «Бот в этой компании выключен» и «Оператор, с телефона»`, !/Бот в этой компании выключен|Оператор, с телефона/.test(await page.content()));
   await t.shot("4-chat-ticks");
+  // «Скорость чатов» (Настройки → Диагностика): живой замер стенда 01.11.2026 считал и время, пока пульт был свёрнут (свёрнутый пульт
+  // сервер не спрашивает), — галочки «через 39 с» оказались временем на телефоне Б. Такое событие не считается; одно — один замер
+  const vis = (hidden) => page.evaluate((h) => {
+    for (const [k, v] of [["hidden", h], ["visibilityState", h ? "hidden" : "visible"]]) Object.defineProperty(document, k, { configurable: true, get: () => v });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+  await vis(true);
+  await text(B, "Пишу, пока пульт свёрнут");
+  await page.waitForTimeout(1500);
+  await vis(false);
+  await page.waitForTimeout(2000);
+  ok(`${tag}: вернулись в пульт — сообщение, пришедшее пока он был свёрнут, сразу в чате`, /пока пульт свёрнут/.test(await log.innerText()));
+  await chatTick(page);
+  await page.evaluate(() => { location.hash = "#/settings/diagnostics"; });
+  await page.waitForTimeout(1200);
+  const away = await page.getByText(/не посчитано: \d+/).first().innerText().catch(() => "");
+  ok(`${tag}: скорость — сообщение, пришедшее пока пульт был свёрнут, не посчитано`, /не посчитано: 1\)/.test(away), away.slice(0, 300));
+  const pollRow = await page.getByRole("list", { name: "Скорость чатов" }).locator("li", { hasText: "Проверка открытого чата" }).innerText().catch(() => "");
+  ok(`${tag}: скорость — строка «Проверка открытого чата» с замерами`, /замеров \d+/.test(pollRow), pollRow.replace(/\s+/g, " "));
+  await page.evaluate(() => { location.hash = "#/inbox"; });
+  await page.waitForTimeout(800);
   await page.getByRole("button", { name: "Назад к чатам" }).first().click().catch(() => {});
 
   // ответ на напоминание: карточка, «Готово» с подтверждением
