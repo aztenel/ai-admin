@@ -9,6 +9,7 @@
 // Доставку обещать нельзя: службы push (Apple, Google) доставляют, когда могут; на iPhone — только с экрана «Домой».
 /** @import { Env } from "../../lib/types.js" */
 /** @import { VapidPair } from "../integrations/webpush/crypto.js" */
+import { kvKey } from "../../lib/kv-id.js";
 import { CLIENTS, hasClient } from "../../config/builtin-clients.js";
 import { local } from "../../lib/time.js";
 import { hash } from "../../lib/crypto.js";
@@ -65,11 +66,11 @@ export async function vapidKeys(env) {
     const v = { publicKey: String(env.VAPID_PUBLIC_KEY || "").trim(), privateKey: String(env.VAPID_PRIVATE_KEY || "").trim() };
     return (await vapidOk(v)) ? { ...v, subject } : null;
   }
-  const mem = keyCache.get(env.KV);
+  const mem = keyCache.get(kvKey(env.KV));
   if (mem) return { ...mem, subject };
   let v = await pushVapidGet(env);
   if (!(await vapidOk(v))) { v = await vapidGenerate(); await pushVapidPut(env, v); }
-  keyCache.set(env.KV, v);
+  keyCache.set(kvKey(env.KV), v);
   return { publicKey: v.publicKey, privateKey: v.privateKey, subject };
 }
 

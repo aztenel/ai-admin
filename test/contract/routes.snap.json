@@ -3094,6 +3094,132 @@
    "error"
   ]
  },
+ "GET /api/chatstore/status?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/status?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "mode",
+   "pending",
+   "ready",
+   "shadow"
+  ]
+ },
+ "GET /api/chatstore/status?c=barber [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "done",
+   "failed",
+   "ok",
+   "pending"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "GET /api/contacts/status?c=barber [anon]": {
   "status": 401,
   "type": "application/json",

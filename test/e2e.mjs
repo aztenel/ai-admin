@@ -21,6 +21,22 @@ const newPage = async (viewport = { width: 390, height: 844 }, opts = {}) => {
 };
 const shot = async (page, name) => { if (shots) await page.screenshot({ path: `${shots}/${name}.png`, fullPage: false }); };
 const wa = (b) => fetch(url + "/_wa", { method: "POST", body: JSON.stringify(b) }).then(r => r.json());
+// подготовка чата для проверки: «клиент писал 26 часов назад», «длинная старая переписка». С переписками в D1 (CHAT_STORE_ALL=d1,
+// services/chatstore) чат лежит в D1 — правим его там, иначе — в KV, как раньше
+const inD1 = () => S.env.CHAT_STORE === "d1" && S.env.DB;
+const keyParts = k => { const [, ch, ws, chat] = k.split(":"); return [ws, ch, chat]; };
+async function setLi(k, li) {
+  if (!inD1()) { const h = S.kv.json(k); h.profile.li = li; await S.kv.api.put(k, JSON.stringify(h), { metadata: { ...(S.kv.meta.get(k) || {}), li } }); return; }
+  const [ws, ch, chat] = keyParts(k), r = await S.env.DB.prepare("select profile, meta from chat_threads where ws = ? and ch = ? and chat = ?").bind(ws, ch, chat).first();
+  const p = JSON.parse(r.profile), m = JSON.parse(r.meta); p.li = li; m.li = li;
+  await S.env.DB.prepare("update chat_threads set profile = ?, meta = ?, last_in = ?, rev = rev + 1 where ws = ? and ch = ? and chat = ?").bind(JSON.stringify(p), JSON.stringify(m), li, ws, ch, chat).run();
+}
+async function addOld(k, turns) {
+  if (!inD1()) { const h = S.kv.json(k); h.turns = turns.concat(h.turns); await S.kv.api.put(k, JSON.stringify(h), { metadata: S.kv.meta.get(k) || {} }); return; }
+  const [ws, ch, chat] = keyParts(k);
+  for (const [i, t] of turns.entries()) await S.env.DB.prepare("insert into chat_messages (ws, ch, chat, mkey, role, t, data) values (?, ?, ?, ?, ?, ?, ?)").bind(ws, ch, chat, "h:e2e-old:" + i, t.role === "user" ? "user" : "model", t.t, JSON.stringify(t)).run();
+  await S.env.DB.prepare("update chat_threads set rev = rev + 1 where ws = ? and ch = ? and chat = ?").bind(ws, ch, chat).run();
+}
 const realFetch = globalThis.fetch; // harness подменил fetch: запросы к локальному серверу пропускаем настоящим
 {
   const stub = globalThis.fetch, http = await import("node:http");
@@ -238,7 +254,7 @@ try {
   await v.waitForFunction(() => !document.querySelector(".rq"));
   ok("чат с сайта: «Отправить клиенту и закрыть» не предлагается, заявка закрывается без сообщения", !(await v.locator("body").innerText()).includes("Отправить клиенту и закрыть") && S.leads("acme").some(l => l.status === "выполнена"));
   await wa({ c: "acme", from: "77051110009", name: "Тимур", text: "Тимур, +7 705 111 22 77, завтра в 12:00" });
-  { const k = "h:wa:acme:77051110009", h = S.kv.json(k), old = Date.now() - 26 * 3600e3; h.profile.li = old; await S.kv.api.put(k, JSON.stringify(h), { metadata: { ...(S.kv.meta.get(k) || {}), li: old } }); }
+  await setLi("h:wa:acme:77051110009", Date.now() - 26 * 3600e3);
   await v.goto("about:blank"); await v.goto(url + "/inbox?c=acme#wa:77051110009"); await v.waitForSelector(".rq");
   ok("чат старше 24 часов с заявкой: «Готово — убрать» скрыта", !(await sheetText()).includes("Готово — убрать"));
   ok("чат старше 24 часов: поле ответа заблокировано, сказано почему", await v.locator("#txt").isDisabled() && /больше 24 часов/.test(await v.locator("#warn").innerText()));
@@ -876,10 +892,9 @@ try {
     const PID = "77051119901", hk = "h:wa:acme:" + PID;
     await wa({ c: "acme", from: PID, name: "Опрос Три", text: "Добрый день" });
     { // длинная переписка, чтобы было что прокручивать
-      const h = S.kv.json(hk), t0 = Date.now() - 3 * 3600e3, old = [];
+      const t0 = Date.now() - 3 * 3600e3, old = [];
       for (let i = 0; i < 40; i++) old.push({ role: i % 2 ? "assistant" : "user", text: "Старая реплика номер " + i + " для прокрутки", t: t0 + i * 60e3 });
-      h.turns = old.concat(h.turns);
-      await S.kv.api.put(hk, JSON.stringify(h), { metadata: S.kv.meta.get(hk) || {} });
+      await addOld(hk, old);
     }
     const pp = await newPage({ width: 390, height: 844 });
     const cnt = { chat: 0, list: 0, act: 0, max: 0 };

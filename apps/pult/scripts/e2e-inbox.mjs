@@ -229,7 +229,8 @@ async function phoneRun(scheme) {
   edge.view = snap; edge.getOld = true;
   await listPoll(page);
   await chatTick(page);
-  ok(`${tag}: (проверка заглушки) пока у пульта старая копия — нового сообщения нет`, !/приду к 15:00/.test(await log.innerText()));
+  if (process.env.CHAT_STORE === "d1") ok(`${tag}: переписки в D1 — старой копии у пульта нет: новое сообщение уже в чате`, /приду к 15:00/.test(await log.innerText()));
+  else ok(`${tag}: (проверка заглушки) пока у пульта старая копия — нового сообщения нет`, !/приду к 15:00/.test(await log.innerText()));
   edge.getOld = false;
   await chatTick(page);
   ok(`${tag}: входящее появилось в открытом чате само, хотя список ещё старый`, /приду к 15:00/.test(await log.innerText()));

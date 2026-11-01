@@ -139,15 +139,24 @@ export interface ContactSource {
   stopsAction(ws: string, action: StopsAction): Promise<string[]>;
 }
 
+/** Где хранятся переписки компании (01.11.2026, переписки в D1) и что дал перенос: только числа. */
+export type ChatStoreStatus = { mode: "kv" | "d1"; ready: boolean; shadow: boolean; imported?: number; pending?: number; counts?: Record<string, { threads: number; fromKv: number; messages: number }> };
+export type ChatStoreAct = "import" | "check" | "export" | "replay";
+
 export interface DataSource extends CampaignSource, ContactSource {
   readonly mode: "live" | "demo";
+  /** Переписки в D1 — только владелец (в демо нет). */
+  chatStore?(ws: string): Promise<ChatStoreStatus>;
+  chatStoreRun?(ws: string, act: ChatStoreAct): Promise<Record<string, unknown>>;
   session(): Promise<Session>;
   /** Компании, между которыми может переключаться пользователь (владелец сервиса — все, сотрудник — своя). */
   workspaces(): Promise<WorkspaceOption[]>;
-  inbox(ws: string): Promise<InboxSnapshot>;
+  /** since — версия прошлого списка (переписки в D1): null — с тех пор ничего не изменилось. */
+  inbox(ws: string, since?: string): Promise<InboxSnapshot | null>;
   /** Сведения о номерах и рассылках. Медленнее списка (сервер спрашивает Meta и Green-API) — грузится вторым. */
   channelReport(ws: string): Promise<ChannelReport>;
-  conversation(ws: string, ref: ConversationRef): Promise<ConversationDetail>;
+  /** since — ревизия открытого чата (переписки в D1): null — с тех пор ничего не изменилось. */
+  conversation(ws: string, ref: ConversationRef, since?: number): Promise<ConversationDetail | null>;
   /** Ответ клиенту. opts.rid — свой номер у каждого сообщения: повтор того же запроса сервер второй раз не отправит;
    *  opts.quote — номер сообщения, на которое это ответ (только второй номер). */
   send(ws: string, ref: ConversationRef, text: string, opts?: SendOpts): Promise<ConversationDetail>;

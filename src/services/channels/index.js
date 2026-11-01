@@ -1,6 +1,7 @@
 // @ts-check
 // Общие функции каналов WhatsApp: выбор клиента по номеру, повторы вебхуков, «стоп» на рассылку, ответ с телефона (coex), номер пульта.
 /** @import { Env, Profile } from "../../lib/types.js" */
+import { kvKey } from "../../lib/kv-id.js";
 import { clean } from "../../lib/text.js";
 import { redact, maskPhones } from "../../lib/phone.js";
 import { kvRetry } from "../../db/kv/retry.js";
@@ -36,8 +37,8 @@ export async function nicheOf(env, channel, fromDigits, wx) {
 const recent = new WeakMap();
 /** @param {Env} env @param {string} id @returns {Promise<boolean>} */
 export async function seenBefore(env, id) {
-  const mem = recent.get(env.KV) || new Map(), now = Date.now();
-  if (!recent.has(env.KV)) recent.set(env.KV, mem);
+  const kk = kvKey(env.KV), mem = recent.get(kk) || new Map(), now = Date.now(); // хранилище под обёрткой переписок (lib/kv-id.js)
+  if (!recent.has(kk)) recent.set(kk, mem);
   if ((mem.get(id) || 0) > now - 600e3) return true;
   if (mem.size > 5000) { for (const [k, t] of mem) if (t < now - 600e3) mem.delete(k); if (mem.size > 5000) mem.clear(); }
   mem.set(id, now);

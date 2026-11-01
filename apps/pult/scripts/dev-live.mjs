@@ -42,6 +42,7 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const bot = await start(botPort, {
     ...(sqliteOk ? { DB: d1With(stage).db } : {}),
     ...(stage === "preview" ? { STAGE: "preview" } : {}),
+    ...(process.env.CHAT_STORE ? { CHAT_STORE: process.env.CHAT_STORE } : {}), // CHAT_STORE=d1 — переписки всех компаний в D1 (services/chatstore)
     WA_TOKEN_DENT: "tok-dent",
     APP_SECRET_DENT: "sec-dent",
     PHONE_NUMBER_ID_DENT: "900111",

@@ -12,12 +12,29 @@ import { applyStatus, patchTurn, stOf } from "../../services/inbox/status.js";
 import { statStatus } from "../../services/inbox/stats.js";
 import { inboundPush, failedPush } from "../../services/inbox/notify.js";
 import { quoteOf } from "../../services/inbox/send.js";
+import { walOpen, walClose, walHandle, walKick } from "../../services/chatstore/wal.js";
+import { chatStats } from "../../services/chatstore/index.js";
+import { gaRoute } from "../../services/inbox/deps.js";
 /** @import { Env } from "../../lib/types.js" */
 
 /** @param {any} md */
 export const gaText = md => { md = md || {}; const t = md.textMessageData?.textMessage || md.extendedTextMessageData?.text || md.fileMessageData?.caption || ""; return clean(t, 1000) || `[${(/** @type {Record<string, string>} */ ({ imageMessage: "фото", videoMessage: "видео", audioMessage: "голосовое", documentMessage: "файл", locationMessage: "геолокация", contactMessage: "контакт" }))[md.typeMessage] || "сообщение"}]`; };
-/** @param {any} body @param {Env} env @param {any} origin @param {any} r */
-export async function handleGreen(body, env, origin, r) {
+/** Вебхук Green-API: ответ «OK» сразу, обработка — после ответа (ctx.waitUntil). У компании с переписками в D1 событие сначала
+ *  ложится в журнал (services/chatstore/wal.js) и убирается только после удачной записи — сбой D1 не теряет сообщение.
+ *  @param {any} body @param {Env} env @param {any} ctx @param {string} origin @param {any} r */
+export async function greenHook(body, env, ctx, origin, r) {
+  const cid = r && !r.shared ? String(r.client || "") : "";
+  const wk = cid ? await walOpen(env, cid, body) : null, st = chatStats(env), before = st ? st.fails : 0;
+  ctx.waitUntil(handleGreen(body, env, origin, r)
+    .then(() => walClose(env, wk, before, false), err => { console.log("ga error", String(err)); return walClose(env, wk, before, true); })
+    .then(() => (cid && wk ? walKick(env, cid) : null)) // пока здесь: то, что не записалось раньше (не чаще раза в минуту)
+    .catch(err => console.log("ga wal", String(err))));
+}
+// проигрыш журнала (фоновая задача, пульт стенда): то же событие тем же кодом, мимо отметки «уже видели»
+walHandle((body, env, cid) => handleGreen(body, env, "", gaRoute(env, cid), { replay: true }));
+
+/** @param {any} body @param {Env} env @param {any} origin @param {any} r @param {{ replay?: boolean }} [opts] replay — из журнала: отметку «уже видели» не проверять */
+export async function handleGreen(body, env, origin, r, opts = {}) {
   if (!r) return; // номер — тот, на чей вебхук пришло событие (свой номер компании или общий /ga): другого не подставляем
   const type = body?.typeWebhook, iid = body?.instanceData?.idInstance;
   if (iid !== undefined && iid !== null && String(iid) !== r.id) { console.log("ga: сообщение другого инстанса", String(iid).slice(0, 20)); return; } // адрес вебхука вставлен в кабинет другого номера
@@ -63,7 +80,7 @@ export async function handleGreen(body, env, origin, r) {
   }
   if (type !== "incomingMessageReceived") return;
   const id = body.idMessage;
-  if (id && await seenBefore(env, id)) return;
+  if (id && !opts.replay && await seenBefore(env, id)) return; // из журнала — второй раз в D1 не запишется: у сообщения там устойчивый ключ
   const md = body.messageData || {};
   if (md.typeMessage === "editedMessage" || md.typeMessage === "deletedMessage" || md.typeMessage === "reactionMessage") return gaChange(env, digitsId, gx, md); // не новое сообщение
   // клиент ответил на конкретное сообщение (цитата WhatsApp): пульт покажет цитату над текстом. Текст и автор цитаты в вебхуке —

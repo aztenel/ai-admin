@@ -63,6 +63,7 @@ export function applyStatus(env, hk, mid, status, desc, seen) {
     const next = stNext(t.st, status);
     if (!next) return false;
     t.st = next;
+    t.sa = Date.now(); // когда записан статус: пульт меряет, через сколько показал галочки (Настройки → Диагностика)
     if (next === "failed") t.se = stErr(status, desc); else delete t.se;
     return true;
   });

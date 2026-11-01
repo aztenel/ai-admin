@@ -16,6 +16,7 @@ export function mkKV() {
   const tooFast = k => { if (!strict.on) return false; const now = performance.now(), prev = strict.last.get(k); if (prev !== undefined && now - prev < 1000) { strict.hits++; return true; } strict.last.set(k, now); return false; };
   const api = {
     get: async k => { ops.get++; if (fail.get && fail.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return mem.get(k) ?? null; },
+    getWithMetadata: async k => { ops.get++; if (fail.get && fail.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return { value: mem.get(k) ?? null, metadata: meta.get(k) ?? null }; },
     put: async (k, v, o) => {
       ops.put++;
       if ((fail.put && fail.put(k)) || tooFast(k)) throw new Error("KV PUT failed: 429 Too Many Requests");
@@ -259,9 +260,13 @@ globalThis.fetch = async (u, init = {}) => {
 export const gaPass = (c, inst) => createHmac("sha256", inst.token).update(`ga-hook:${c}:${inst.id}`).digest("hex").slice(0, 32);
 
 // ---- один «сайт»: окружение воркера и помощники для запросов
+// CHAT_STORE_ALL=d1 — все проверки с переписками в D1 (services/chatstore, 01.11.2026): каждой копии Worker — своя D1 на node:sqlite
+// с миграциями, если проверка не дала свою; так весь набор проверок сверяет, что бот, пульт и вебхуки ведут себя так же, как на KV
+const ALL_D1 = process.env.CHAT_STORE_ALL === "d1" ? await import("./d1.mjs") : null;
 export function mk(envExtra = {}) {
   const kv = mkKV();
-  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ...envExtra };
+  const d1 = ALL_D1 && !("DB" in envExtra) && !Object.keys(envExtra).some(k => k.startsWith("CHAT_STORE")) ? { CHAT_STORE: "d1", DB: ALL_D1.d1With(envExtra.STAGE === "preview" ? "preview" : "production").db } : {};
+  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ...d1, ...envExtra };
   const pending = [], ctx = { waitUntil: p => pending.push(p) };
   const settle = async () => { while (pending.length) await Promise.allSettled(pending.splice(0)); };
   const call = async (path, init = {}) => { const r = await worker.fetch(new Request("https://bot.test" + path, init), env, ctx); await settle(); return r; };

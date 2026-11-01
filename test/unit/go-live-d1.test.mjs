@@ -2,7 +2,7 @@
 // Боевая база сейчас пустая (проверено чтением 01.11.2026: только служебная таблица Cloudflare _cf_KV). Порядок из инструкции:
 // миграции 0001–0005 → отметка meta.stage = 'production' → привязка DB (docs/runbooks/winchester-go-live-d1.patch) → выкладка.
 // Здесь — что будет на каждом шаге: до миграций пульт честно пишет «не настроена», после — второй номер отправляет ровно один раз;
-// повтор миграций и отметки ничего не меняет; чужая отметка не перезаписывается; база черновиков получает только 0005, данные целы.
+// повтор миграций и отметки ничего не меняет; чужая отметка не перезаписывается; база черновиков получает только 0005 и 0006, данные целы.
 // Те же команды настоящим wrangler (локальная копия, --local) — в инструкции, раздел «Что уже проверено».
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +24,7 @@ const PROD_ID = "ea1610ed-d342-41ca-8170-40ffe81feb41", DEV_ID = "ecfe6f12-469b-
 // отметка окружения — та же строка, что в инструкции (проверяется ниже): ON CONFLICT — второй запуск ничего не меняет,
 // а чужую отметку (preview) не перезаписывает — её покажет /diag/storage
 const STAGE_SQL = "INSERT INTO meta (k, v) VALUES ('stage', 'production') ON CONFLICT(k) DO NOTHING";
-const ALL = ["0001_messaging.sql", "0002_contacts_sync.sql", "0003_consent_evidence.sql", "0004_demo_source.sql", "0005_send_claims.sql"];
+const ALL = ["0001_messaging.sql", "0002_contacts_sync.sql", "0003_consent_evidence.sql", "0004_demo_source.sql", "0005_send_claims.sql", "0006_chat_storage.sql"];
 const INST = { id: "7105000066", token: "ga-tok-golive" };
 const GA_W = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
 const sends = () => net.ga.filter(x => x.op === "sendMessage");
@@ -68,7 +68,7 @@ test("миграции и отметка по инструкции: база с�
   assert.deepEqual(migrate(d.raw), ALL, "как wrangler d1 migrations apply ai-admin --remote");
   d.raw.exec(STAGE_SQL);
   const st = await d1Status({ DB: d.db });
-  assert.deepEqual({ ...st, ms: 0 }, { want: "production", bound: true, ok: true, stage: "production", migrations: ALL, tables: 23, ms: 0 });
+  assert.deepEqual({ ...st, ms: 0 }, { want: "production", bound: true, ok: true, stage: "production", migrations: ALL, tables: 25, ms: 0 });
   assert.equal(await d1Ready({ DB: d.db }, 1), d.db, "боевой сайт (без STAGE) пользуется базой");
   // ответ проверки помнится минуту на экземпляр (status.js); у черновика и боевого сайта разные экземпляры — здесь через минуту
   assert.equal(await d1Ready({ STAGE: "preview", DB: d.db }, 61_002), null, "черновик с боевой базой — нет");
@@ -85,7 +85,7 @@ test("миграции и отметка по инструкции: база с�
   const html = await (await b.go("/diag/storage")).text();
   assert.match(html, /боевой сайт/);
   assert.match(html, /отметка базы: production — совпадает ✅/);
-  assert.match(html, /миграции: 0001_messaging\.sql, 0002_contacts_sync\.sql, 0003_consent_evidence\.sql, 0004_demo_source\.sql, 0005_send_claims\.sql; таблиц: 23/);
+  assert.match(html, /миграции: 0001_messaging\.sql, 0002_contacts_sync\.sql, 0003_consent_evidence\.sql, 0004_demo_source\.sql, 0005_send_claims\.sql, 0006_chat_storage\.sql; таблиц: 25/);
   assert.ok(!html.includes(from), "номеров на странице нет");
 
   const rows = () => d.raw.prepare("select count(*) n from send_claims").get().n;
@@ -103,7 +103,7 @@ test("команда отметки не перезаписывает чужую
   assert.equal(await d1Ready({ DB: d.db }, 1), null, "/diag/storage покажет «preview ❌ — база чужая»");
 });
 
-test("база черновиков (0001–0004 с данными) получает только 0005; контакты, источники и согласия на месте", { skip }, async () => {
+test("база черновиков (0001–0004 с данными) получает только 0005 и 0006; контакты, источники и согласия на месте", { skip }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "golive-")), src = fileURLToPath(MIGRATIONS);
   for (const f of readdirSync(src).filter(f => f < "0005")) copyFileSync(join(src, f), join(dir, f));
   const { raw } = openD1();
@@ -114,7 +114,7 @@ test("база черновиков (0001–0004 с данными) получа
   raw.prepare("insert into contact_sources (contact_id, ws, source, external_id, first_seen, last_seen) values (?, 'winchester', 'demo', '', ?, ?)").run("c-golive-1", t, t);
   const count = () => ["contacts", "contact_sources", "meta"].map(n => raw.prepare(`select count(*) n from ${n}`).get().n);
   const before = count();
-  assert.deepEqual(migrate(raw), ["0005_send_claims.sql"], "применяется только новая миграция");
+  assert.deepEqual(migrate(raw), ["0005_send_claims.sql", "0006_chat_storage.sql"], "применяются только новые миграции");
   assert.deepEqual(count(), before, "данные не тронуты");
   assert.ok(raw.prepare("select name from sqlite_master where type = 'table' and name = 'send_claims'").get());
 });

@@ -12,6 +12,8 @@ import { leadPatch } from "../services/inbox/leads.js";
 import { eraseClient } from "../services/inbox/erase.js";
 import { loadLeads, allLeads, leadTs, logTurns, forgetChat, readForgot, applyForget, histGet, gaRoute, gaWhy, WA_HINT } from "../services/inbox/deps.js";
 import { stFresh } from "../services/inbox/status.js";
+import { chatMode, chatRevOf, chatVerOf } from "../services/chatstore/index.js";
+import { walKick } from "../services/chatstore/wal.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { waRoute, waBotOff, botOff } from "../services/channels/index.js";
@@ -66,6 +68,10 @@ export async function inboxApi(request, env, url, s, ctx) {
     try { return jsonP(await growthReport(env, c, now)); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте обновить через минуту." }, 503); }
   }
   if (M === "GET" && P === "/api/inbox/list") {
+    // переписки в D1: версия всех чатов компании — пульт спрашивает «изменилось ли что-нибудь» без чтения всего списка (since)
+    const d1 = chatMode(env, cid) === "d1", ver = d1 ? await chatVerOf(env, cid) : null;
+    if (d1 && ctx) ctx.waitUntil(walKick(env, cid).catch(e => console.log("wal kick", String(e).slice(0, 120)))); // журнал вебхуков, если запись в D1 не прошла (у стенда нет фоновой задачи)
+    if (ver && q.get("since") === ver) return jsonP({ same: 1, ver, now });
     const chans = q.get("ch") === "web" ? ["web"] : env.GA_ID || gaRoute(env, cid) ? ["wa", "ga"] : ["wa"], rows = [];
     let more = false;
     for (const ch of chans) {
@@ -91,7 +97,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       const inb = rows.filter(r => r.li || r.d === "u" || r.nd), out = rows.filter(r => !(r.li || r.d === "u" || r.nd));
       const lines = await linesOf(env, cid, lineChans(env, cid), ctx);
       return jsonP({ client, lines, ops: await opsOf(env, cid), need, total: inb.length, outOnly: out.length, more: more || inb.length > 1000,
-        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now });
+        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now, ...(ver ? { ver } : {}) });
     }
     return jsonP({ client, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
@@ -115,6 +121,11 @@ export async function inboxApi(request, env, url, s, ctx) {
   const ch = String((jb ? b.ch : q.get("ch")) || ""), id = String((jb ? b.id : q.get("id")) || "");
   if (!/** @type {any} */ (CHAT_ID)[ch] || !/** @type {any} */ (CHAT_ID)[ch].test(id)) return jsonP({ error: "Чат не найден." }, 404);
   const hk = `h:${ch}:${cid}:${id}`;
+  // переписки в D1: опрос открытого чата (раз в 5 с) с since=<ревизия> — «ничего не изменилось» одним маленьким запросом, без всей переписки
+  if (M === "GET" && P === "/api/inbox/chat" && q.get("since")) {
+    let rv = null; try { rv = await chatRevOf(env, hk); } catch (e) {}
+    if (rv && String(rv) === q.get("since")) return jsonP({ same: 1, rev: rv, now });
+  }
   /** @type {any} */
   let h; try { h = JSON.parse((await histGet(env.KV, hk)) || "null"); } catch (e) { return jsonP({ error: "Сервер не отвечает. Попробуйте ещё раз." }, 503); }
   if (!h) return jsonP({ error: "Чат не найден: переписка хранится 7 дней после последнего сообщения." }, 404);
@@ -129,7 +140,8 @@ export async function inboxApi(request, env, url, s, ctx) {
   const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn ? await sendDbOff(env, now) : "";
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id, sendOff = await sendOffOf();
-    const fresh = await stFresh(env, cid, ch, h.turns || [], now); // галочки из D1, если копия переписки здесь ещё старая (01.11.2026)
+    // галочки из D1, если копия переписки здесь ещё старая (01.11.2026); переписки в D1 — уже согласованы, лишний запрос не нужен
+    const fresh = chatMode(env, cid) === "d1" ? new Map() : await stFresh(env, cid, ch, h.turns || [], now);
     /** @type {any[]} */
     let reqs = [];
     if (phone) { try { reqs = (await loadLeads(env.KV, cid)).filter(l => l.phone === (normPhone(phone) || phone) && !l.status && (l.kind || !(l.altegio && l.altegio.record_id))).slice(-6).map(l => ({ id: l.id, kind: l.kind || "lead", name: l.name || "", service: l.service || "", time: l.time || "", note: l.note || "", at: l.at || "" })); } catch (e) {} }
@@ -147,7 +159,8 @@ export async function inboxApi(request, env, url, s, ctx) {
       canSend: ch !== "web" && !sendOff && (ch === "ga" ? gaOn : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {}),
       ...(sendOff ? { sendOff } : {}),
       // файлы и ответ на конкретное сообщение — только со второго номера (Green-API): у Meta и чата сайта из пульта этого нет
-      canFiles: gaOn && !sendOff, canQuote: gaOn && !sendOff
+      canFiles: gaOn && !sendOff, canQuote: gaOn && !sendOff,
+      ...(h._rev ? { rev: h._rev } : {}) // ревизия чата в D1: пульт присылает её в since
     };
   };
   if (M === "GET" && P === "/api/inbox/chat") return jsonP(await view());
@@ -347,7 +360,7 @@ function turnView(t, turns) {
   const q = quoteView(turns, t);
   return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.mid ? { mid: String(t.mid) } : {}), ...(q ? { q } : {}),
     ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}) } } : {}),
-    ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),
+    ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.st && t.sa ? { sa: +t.sa || 0 } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),
     ...(t.ed ? { ed: 1 } : {}), ...(t.del ? { del: 1 } : {}), ...(t.re ? { re: String(t.re).slice(0, 8) } : {}) };
 }
 // на что ответил клиент: текст нашего автоматического сообщения (коротко) и когда оно ушло

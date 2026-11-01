@@ -116,6 +116,7 @@ const R = [
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],
   ["POST", "/api/crm/refresh", { c: "barber" }], ["POST", "/api/crm/refresh", { c: "dent" }], ["GET", "/api/crm/nope?c=barber"],
   // база контактов D1 (этап 1): у Worker контракта базы нет — status отвечает ready: false, остальное 503; права — как у всех /api
+  ["GET", "/api/chatstore/status?c=barber"], ["GET", "/api/chatstore/check?c=barber"], ["POST", "/api/chatstore/import", { c: "barber" }], ["POST", "/api/chatstore/export", { c: "barber" }], ["POST", "/api/chatstore/replay", { c: "barber" }],
   ["GET", "/api/contacts/status?c=barber"], ["GET", "/api/contacts/status?c=dent"], ["GET", "/api/contacts/segments?c=barber"], ["GET", "/api/contacts/list?c=barber&q=x"],
   ["GET", "/api/contacts/card?c=barber&id=x"], ["POST", "/api/contacts/add", { c: "barber", phone: "+77000000999" }], ["POST", "/api/contacts/consent", { c: "barber", id: "x" }],
   ["POST", "/api/contacts/restrict", { c: "barber", id: "x" }], ["POST", "/api/contacts/lift", { c: "barber", id: "x" }], ["POST", "/api/contacts/review", { c: "barber", id: "x", decision: "lift" }],

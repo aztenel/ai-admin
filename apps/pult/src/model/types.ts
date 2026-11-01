@@ -113,6 +113,8 @@ export type Message = {
   /** Автоматическое сообщение: напоминание или отзыв (service) и рассылка (campaign). */
   auto?: "service" | "campaign";
   status?: DeliveryStatus;
+  /** Когда сервер записал этот статус (замер скорости галочек в «Диагностике»). */
+  statusAt?: number;
   statusError?: string;
   edited?: boolean;
   deleted?: boolean;
@@ -135,6 +137,8 @@ export type ReplyState =
   | { allowed: false; reason: "web" | "window" | "not_connected" | "stopped" | "blocked"; text: string };
 
 export type ConversationDetail = {
+  /** Ревизия чата (переписки в D1): опрос присылает её и получает «без изменений» без всей переписки. */
+  rev?: number;
   key: string;
   ref: ConversationRef;
   contact: Contact;
@@ -223,6 +227,8 @@ export type InboxSnapshot = {
   outOnly?: number;
   /** Имена сотрудников для «Назначить». */
   operators?: string[];
+  /** Версия всех переписок компании (переписки в D1): опрос присылает её и получает «без изменений» без всего списка. */
+  ver?: string;
   now: number;
 };
 

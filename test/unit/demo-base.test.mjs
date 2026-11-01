@@ -50,7 +50,7 @@ test("миграция 0004: источник «демо» разрешён, п�
   raw.prepare("insert into contacts(id, ws, phone, created_at, updated_at) values ('c1', 'winchester', '77000000701', 1, 1)").run();
   raw.prepare("insert into contact_sources(contact_id, ws, source, external_id, first_seen, last_seen) values ('c1', 'winchester', 'import', '', 1, 1)").run();
   assert.throws(() => raw.prepare("insert into contact_sources(contact_id, ws, source, external_id, first_seen, last_seen) values ('c1', 'winchester', 'demo', 'demo', 1, 1)").run(), /CHECK/);
-  assert.deepEqual(migrate(raw), ["0004_demo_source.sql", "0005_send_claims.sql"]);
+  assert.deepEqual(migrate(raw), ["0004_demo_source.sql", "0005_send_claims.sql", "0006_chat_storage.sql"]);
   assert.deepEqual(raw.prepare("select source from contact_sources").all().map(r => r.source), ["import"], "строка источника перенесена");
   raw.prepare("insert into contact_sources(contact_id, ws, source, external_id, first_seen, last_seen) values ('c1', 'winchester', 'demo', 'demo', 1, 1)").run();
   assert.throws(() => raw.prepare("insert into contact_sources(contact_id, ws, source, external_id, first_seen, last_seen) values ('c1', 'winchester', 'other', '', 1, 1)").run(), /CHECK/);

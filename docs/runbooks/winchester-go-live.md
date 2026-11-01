@@ -108,15 +108,16 @@ npx wrangler d1 execute DB --remote --command "INSERT INTO meta (k, v) VALUES ('
 npx wrangler d1 execute DB --remote --command "SELECT (SELECT v FROM meta WHERE k = 'stage') AS stage, (SELECT count(*) FROM d1_migrations) AS migrations, (SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'send_claims') AS send_claims"
 ```
 
-Ожидаем: `stage = production`, `migrations = 5`, `send_claims = 1`. Миграции применяются по одной: 0001_messaging.sql,
-0002_contacts_sync.sql, 0003_consent_evidence.sql, 0004_demo_source.sql, 0005_send_claims.sql.
+Ожидаем: `stage = production`, `migrations = 6`, `send_claims = 1`. Миграции применяются по одной: 0001_messaging.sql,
+0002_contacts_sync.sql, 0003_consent_evidence.sql, 0004_demo_source.sql, 0005_send_claims.sql, 0006_chat_storage.sql
+(переписки в D1, 01.11.2026; включаются отдельно переменной `CHAT_STORE_WINCHESTER` — §8).
 
 **Вариант Б — без компьютера: помощник Claude через подключение Cloudflare** (так обновляли базу черновиков 31.10). По слову
 «подключай D1» помощник выполняет на базе `ai-admin` (id `ea1610ed-d342-41ca-8170-40ffe81feb41`, не путать с `ai-admin-dev`):
 
 1. `CREATE TABLE IF NOT EXISTS d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)`
 2. Для каждого файла по порядку — 0001_messaging.sql, 0002_contacts_sync.sql, 0003_consent_evidence.sql,
-   0004_demo_source.sql, 0005_send_claims.sql: текст файла целиком (строки-комментарии `--` можно убрать — так выполняли для базы
+   0004_demo_source.sql, 0005_send_claims.sql, 0006_chat_storage.sql: текст файла целиком (строки-комментарии `--` можно убрать — так выполняли для базы
    черновиков), затем `INSERT INTO d1_migrations (name) VALUES ('<имя файла>')`. Ошибка на файле — остановиться: учёт показывает,
    какие уже применены.
 3. `INSERT INTO meta (k, v) VALUES ('stage', 'production') ON CONFLICT(k) DO NOTHING`
@@ -252,3 +253,33 @@ D1 — видно в панели Cloudflare → ai-admin-test → Bindings. С�
 | `/launch`: вебхук «ведёт на другой адрес» | Вебхук инстанса указывает на черновик или старый адрес | «Настроить Green-API» на боевом сайте |
 | Green-API: «номер не на связи» | Телефон второго номера офлайн или вышел из WhatsApp | Включить телефон; при необходимости заново QR в кабинете Green-API |
 | Сообщение «Результат неизвестен» / «Не знаем, ушло ли» | Green-API или база не ответили | Не отправлять повторно вслепую: открыть переписку на телефоне второго номера и проверить |
+
+## 8. Переписки в D1 на боевом сайте — только после «переноси production»
+
+Что это и почему — `docs/chat-storage-d1.md`. На стенде `ai-admin-test` миграция 0006 применена 01.11.2026 (схема сверена с эталоном);
+переключение и живые замеры стенда — там же, §5. Боевой сайт до слова владельца **не трогаем**: ни миграций боевой D1, ни `main`,
+ни переменной `CHAT_STORE_WINCHESTER`.
+
+Порядок (каждый шаг — проверка, потом следующий):
+
+1. **Точка восстановления D1.** Боевая `ai-admin` сейчас пустая; время перед шагом 2 записать (UTC) — к нему D1 возвращается Time Travel
+   (`npx wrangler d1 time-travel restore ai-admin --timestamp=<время>`), для 0006 есть и обратный шаг: `DROP TABLE chat_messages;
+   DROP TABLE chat_threads; DELETE FROM d1_migrations WHERE name = '0006_chat_storage.sql';`.
+2. **KV не очищается.** Перенос только читает KV; после переключения KV получает «тень» — тот же чат из D1 (в нём уже всё из KV).
+   Отдельная выгрузка KV не нужна; при желании — `npx wrangler kv key list --binding KV --prefix "h:ga:winchester:"` (компьютер, вход).
+3. **Миграции 0001–0006 и отметка** — §4, шаг 3 (`migrations = 6`, таблиц 25).
+4. **Привязка `DB` и выкладка кода** — §4, шаги 4–5 (по слову «выкладывай»). Переписки ещё в KV: `CHAT_STORE_WINCHESTER` не задана.
+   Проверка: `/diag/storage` — база своя, миграции 0001–0006; пульт работает как раньше.
+5. **Переключение.** Cloudflare → Workers → `ai-admin` → Settings → Variables and Secrets → Production → Text
+   `CHAT_STORE_WINCHESTER` = `d1` → Deploy. Пульт `/app/` → Настройки → Диагностика → «Переписки»: «База D1».
+6. **Перенос и сверка.** Первый список чатов переносит все чаты Winchester из KV сам. Через 2–3 минуты (пока обновляются все копии
+   Worker) — «Перенести из KV» ещё раз (добавит сообщения, записанные старой версией только в KV), затем «Сверить KV и D1»:
+   `missingChats: 0`, `missingTurns: 0`. Сверку чисел чатов, сообщений и статусов по D1 делает помощник запросами чтения.
+7. **Живая проверка** на номере владельца (не клиентов Кайрата): входящее, ответ из пульта, галочки, файл, «Готово»; «Скорость чатов»
+   в Диагностике; в журнале ожидания («ждут записи») — 0.
+8. **Наблюдение первые сутки:** «Переписки» → «ждут записи» = 0; ошибки `chat …` в журнале Worker; при «Чат меняли одновременно
+   слишком много раз» — сообщить помощнику (запись повторяется до 6 раз, такого не ожидается).
+
+**Откат без потери новых сообщений:** 1) «Выгрузить в KV (перед откатом)» — все чаты из D1 в KV; 2) удалить переменную
+`CHAT_STORE_WINCHESTER` (Deploy) — переписки снова в KV, со всем, что пришло после переключения (до удаления переменной каждая запись
+в D1 продолжала класть тень в KV). Откат версии Worker на прежнюю — после шагов 1–2, не вместо них.

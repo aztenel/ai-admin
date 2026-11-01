@@ -3,6 +3,7 @@
 // вебхук Wazzapo перекладывается в формат вебхука Meta и идёт в общий обработчик — запись в Altegio, пауза бота,
 // «стоп», пульт, напоминания и рассылки работают без отдельной ветки кода.
 /** @import { Env } from "../../lib/types.js" */
+import { kvKey } from "../../lib/kv-id.js";
 import { wzOn, wzSend, wzCall, WZ_HINT, metaCode } from "../integrations/wazzapo/client.js";
 import { hash } from "../../lib/crypto.js";
 
@@ -59,8 +60,8 @@ const twinsOf = new WeakMap(); // память экземпляра Worker — �
 async function twin(env, m, from) {
   const text = typeof m.text === "string" ? m.text : (m.text && m.text.body) || "";
   if (!m.timestamp || !text) return false;
-  const k = `wzc:${from}:${String(m.timestamp).slice(0, 20)}:${hash(String(text))}`, now = Date.now(), twins = twinsOf.get(env.KV) || new Map();
-  twinsOf.set(env.KV, twins);
+  const k = `wzc:${from}:${String(m.timestamp).slice(0, 20)}:${hash(String(text))}`, now = Date.now(), twins = twinsOf.get(kvKey(env.KV)) || new Map();
+  twinsOf.set(kvKey(env.KV), twins);
   if ((twins.get(k) || 0) > now - 600e3) return true;
   if (twins.size > 5000) twins.clear();
   twins.set(k, now);

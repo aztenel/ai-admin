@@ -62,9 +62,15 @@ export type State = {
   scope: Scope;
   filter: Filter;
   refreshing: boolean;
+  /** Замер скорости пульта (Настройки → Диагностика): через сколько мс после сервера пульт показал новое — по видам. */
+  speed: Speed;
 };
+export type SpeedKind = "inbound" | "newChat" | "ticks" | "open";
+export type Speed = { store: "d1" | "kv" | ""; samples: Record<SpeedKind, number[]> };
+const SPEED0 = (): Speed => ({ store: "", samples: { inbound: [], newChat: [], ticks: [], open: [] } });
 
 const initial: State = {
+  speed: SPEED0(),
   phase: "boot",
   mode: null,
   offline: false,
@@ -112,6 +118,7 @@ export function parseKey(key: string): ConversationRef | null {
 }
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Что-то пошло не так. Обновите страницу.");
 const CHAT_POLL_MS = 5e3; // открытый чат — чаще списка (15 с): store.tickChat
+const LIST_POLL_D1_MS = 5e3; // список при переписках в D1: «без изменений» стоит один маленький запрос
 const RANK: Record<string, number> = { queued: 0, unknown: 1, sent: 2, delivered: 3, read: 4 }; // как на сервере (services/inbox/status.js)
 
 class Store {
@@ -123,6 +130,9 @@ class Store {
   private gen = 0; // смена компании отменяет ответы, пришедшие для прежней
   private chatTimer = 0;
   private chatBusy = ""; // открытый чат, который сейчас перечитывает таймер (запросы не наслаиваются)
+  private ver = ""; // версия списка (переписки в D1): опрос присылает её, сервер отвечает «без изменений» одним маленьким ответом
+  private skew = 0; // насколько часы сервера впереди часов устройства (по «now» в ответах) — для замера скорости
+  private opening = new Map<string, number>(); // чат открыли, переписки ещё нет: когда начали (замер «открытие переписки»)
 
   subscribe = (f: () => void) => {
     this.subs.add(f);
@@ -188,10 +198,12 @@ class Store {
       u.searchParams.set("c", id);
       history.replaceState(history.state, "", u.pathname + u.search + u.hash);
     }
+    this.ver = "";
     try {
       const snap = await this.src.inbox(id);
       if (g !== this.gen) return;
-      this.applySnapshot(snap);
+      if (!snap) throw new Error("Список чатов не загрузился. Обновите страницу.");
+      this.applySnapshot(snap, true);
       this.set({ phase: "ready", offline: false });
     } catch (e) {
       if (g !== this.gen) return;
@@ -203,7 +215,15 @@ class Store {
     this.schedule();
   }
 
-  private applySnapshot(snap: InboxSnapshot) {
+  private applySnapshot(snap: InboxSnapshot, first = false) {
+    this.ver = snap.ver || "";
+    if (snap.now) this.skew = snap.now - Date.now();
+    // замер: новый чат с сообщением клиента появился в списке — через сколько после того, как сервер его записал
+    if (!first && this.state.conversations.length) {
+      const had = new Set(this.state.conversations.map((c) => c.key));
+      for (const c of snap.conversations) if (!had.has(c.key) && c.lastInboundAt) this.sample("newChat", this.srvNow() - c.lastInboundAt);
+    }
+    if (first || this.state.speed.store !== (snap.ver ? "d1" : "kv")) this.set({ speed: { ...this.state.speed, store: snap.ver ? "d1" : "kv" } });
     const report = this.state.report;
     const workspace = { ...snap.workspace, channels: mergeChannels(snap.workspace.channels, report?.channels) };
     // показанные по кнопке чаты только с нашими сообщениями не пропадают при обновлении списка
@@ -225,9 +245,10 @@ class Store {
     }
   }
 
+  // список: раз в 15 с; переписки в D1 — раз в 5 с (сервер отвечает «без изменений» маленьким ответом, без всего списка)
   private schedule() {
     clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => this.poll(), 15e3);
+    this.timer = window.setTimeout(() => this.poll(), this.ver ? LIST_POLL_D1_MS : 15e3);
   }
 
   /** Обновить список и открытый чат. Вызывается по таймеру, при возврате во вкладку и кнопкой «Обновить». */
@@ -243,8 +264,12 @@ class Store {
     const g = this.gen;
     if (manual) this.set({ refreshing: true });
     try {
-      const snap = await this.src.inbox(ws);
+      const snap = await this.src.inbox(ws, manual ? undefined : this.ver || undefined);
       if (g !== this.gen) return;
+      if (!snap) { // переписки в D1: с прошлого опроса ничего не изменилось
+        if (this.state.offline || this.state.phase !== "ready") this.set({ offline: false, phase: "ready" });
+        return;
+      }
       const before = this.open ? this.state.conversations.find((c) => c.key === this.open)?.lastAt : undefined;
       this.applySnapshot(snap);
       this.set({ offline: false, phase: "ready" });
@@ -284,6 +309,28 @@ class Store {
     this.scheduleChat();
   }
 
+  // ---- замер скорости (Настройки → Диагностика): только на этом устройстве, никуда не отправляется
+  private srvNow() {
+    return Date.now() + this.skew;
+  }
+  private sample(kind: SpeedKind, ms: number) {
+    if (!(ms >= 0) || ms > 30 * 60e3) return; // старое сообщение (открыли чат позже) — не задержка пульта
+    const all = this.state.speed.samples, list = [...all[kind], Math.round(ms)].slice(-20);
+    this.set({ speed: { ...this.state.speed, samples: { ...all, [kind]: list } } });
+  }
+  /** новое входящее в открытом чате и новые галочки — через сколько после записи на сервере пульт их показал */
+  private measure(prev: ConversationDetail, data: ConversationDetail) {
+    const old = new Map(prev.messages.map((m) => [m.mid || `${m.at}|${m.text}`, m]));
+    for (const m of data.messages) {
+      const was = old.get(m.mid || `${m.at}|${m.text}`);
+      if (!was) { if (m.from === "contact") this.sample("inbound", this.srvNow() - m.at); continue; }
+      if (m.from !== "contact" && m.status && m.statusAt && (RANK[m.status] ?? -1) > (RANK[was.status ?? ""] ?? -1) && (m.status === "delivered" || m.status === "read")) this.sample("ticks", this.srvNow() - m.statusAt);
+    }
+  }
+  resetSpeed() {
+    this.set({ speed: { ...SPEED0(), store: this.state.speed.store } });
+  }
+
   /** Галочки в строке открытого чата — не меньше, чем у последнего сообщения в самой переписке: список отстаёт сильнее (до 60 с). */
   private rowStatus(rows: ConversationSummary[]) {
     const key = this.open, last = key ? this.state.details[key]?.data?.messages.at(-1) : undefined;
@@ -302,6 +349,7 @@ class Store {
     this.open = key;
     if (key) {
       const d = this.state.details[key];
+      if (!d?.data) this.opening.set(key, performance.now());
       if (!d?.data || Date.now() - (d.at || 0) > 5e3) this.loadConversation(key, !!d?.data);
       // открытый чат прочитан
       const c = this.state.conversations.find((x) => x.key === key);
@@ -315,9 +363,15 @@ class Store {
     if (!this.src || !ws || !ref) return;
     const g = this.gen;
     if (!quiet) this.setDetail(key, { loading: true, error: undefined });
+    const prev = this.state.details[key]?.data;
     try {
-      const data = await this.src.conversation(ws, ref);
+      // опрос открытого чата с ревизией (переписки в D1): «без изменений» — переписку не перерисовываем
+      const data = await this.src.conversation(ws, ref, quiet && prev?.rev ? prev.rev : undefined);
       if (g !== this.gen) return;
+      if (!data) { const d = this.state.details[key]; if (d) d.at = Date.now(); return; }
+      const t0 = this.opening.get(key);
+      if (t0 !== undefined) { this.opening.delete(key); this.sample("open", performance.now() - t0); }
+      if (prev) this.measure(prev, data);
       this.setDetail(key, { data, loading: false, error: undefined, at: Date.now() });
       const rows = this.rowStatus(this.state.conversations);
       if (rows !== this.state.conversations) this.set({ conversations: rows });

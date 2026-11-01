@@ -15,6 +15,7 @@ import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
 import { contactsApi } from "../controllers/contacts.js";
+import { chatStoreApi } from "../controllers/chatstore.js";
 import { pushApi } from "../controllers/push.js";
 import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/pages.js";
 import { diag, storage } from "../controllers/diag.js";
@@ -24,7 +25,7 @@ import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
-import { handleGreen } from "../controllers/webhooks/greenapi.js";
+import { greenHook } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
 import { siteApi } from "../controllers/site.js";
 
@@ -127,6 +128,11 @@ export async function route(request, env, ctx, pult) {
       const s = await sessionRead(env, request);
       return s ? contactsApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
+    // ---- переписки в D1 (01.11.2026): перенос из KV, сверка, выгрузка в KV для отката — только владелец (controllers/chatstore.js)
+    if (P.startsWith("/api/chatstore/")) {
+      const s = await sessionRead(env, request);
+      return s ? chatStoreApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
     // ---- push-уведомления пульта /app/ на телефоны и компьютеры сотрудников (ТЗ v2.0 §3)
     if (P.startsWith("/api/push/")) {
       const s = await sessionRead(env, request);
@@ -186,14 +192,14 @@ export async function route(request, env, ctx, pult) {
       const c = hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : "dent";
       const sid = cleanSid(url.searchParams.get("sid"));
       let turns = [];
-      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns; }
+      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns.map((/** @type {any} */ t) => { const { _i, ...x } = t || {}; return x; }); } // _i — номер строки в D1, наружу не нужен
       catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
       return jsonP({ turns }); // переписка клиента: не кэшировать
     }
     if (M === "POST" && P === "/ga") { // Green-API, общий номер воркера
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, gaShared(env)).catch(err => console.log("ga error", String(err))));
+      if (body) await greenHook(body, env, ctx, url.origin, gaShared(env));
       return new Response("OK");
     }
     const gam = M === "POST" && /^\/ga\/([a-z][a-z0-9]{1,15})$/.exec(P);
@@ -201,7 +207,7 @@ export async function route(request, env, ctx, pult) {
       const r = /** @type {any} */ (gaRoute(env, gam[1]));
       if (!r || r.shared || !eqSafe(url.searchParams.get("t") || "", await gaHook(r))) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, r).catch(err => console.log("ga error", String(err))));
+      if (body) await greenHook(body, env, ctx, url.origin, r);
       return new Response("OK");
     }
     if (M === "POST" && (P === "/" || P === "/webhook")) { // WhatsApp Cloud API (Meta), общий номер воркера. Вебхуки клиентов со своим номером — /wa/<id>

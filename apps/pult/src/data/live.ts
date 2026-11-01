@@ -27,15 +27,15 @@ import type {
 } from "@/model/types";
 import { channelKind } from "@/model/channels";
 import { ApiError } from "./errors";
-import type { CampaignSource, ContactSource, DataSource } from "./source";
+import type { CampaignSource, ChatStoreStatus, ContactSource, DataSource } from "./source";
 import { readMarks } from "./read-marks";
 import { getOperator } from "@/lib/operator";
 
 // ---------- ответы сервера ----------
 type ChRaw = "wa" | "ga" | "web";
 type ListRowRaw = { ch: ChRaw; id: string; t: number; li: number; s: string; d: "" | "u" | "a" | "b"; nm: string; ph: string; nd: string; pu: number; st: 0 | 1; bk: number; tp?: string; rs?: string; as?: string; dn?: 1; ls?: string };
-type ListRaw = { client: { id: string; name: string; off: boolean }; need: number; total: number; more: boolean; chats: ListRowRaw[]; now: number; lines?: Record<string, { label: string; phone?: string }>; ops?: string[]; outOnly?: number };
-type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; mid?: string; q?: { mid: string; x: string; r: "u" | "a" | "b" }; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string };
+type ListRaw = { client: { id: string; name: string; off: boolean }; need: number; total: number; more: boolean; chats: ListRowRaw[]; now: number; lines?: Record<string, { label: string; phone?: string }>; ops?: string[]; outOnly?: number; ver?: string; same?: 1 };
+type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; sa?: number; mid?: string; q?: { mid: string; x: string; r: "u" | "a" | "b" }; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string };
 type ReqRaw = { id: string; kind: string; name: string; service: string; time: string; note: string; at: string };
 type ChatRaw = {
   promo: { at: number; name: string; text: string } | null;
@@ -43,7 +43,7 @@ type ChatRaw = {
   bookings: string[]; pend: string[]; booked: string;
   need: { why: string; text: string; at: number; tp?: string; src?: { k: "rm" | "bc"; at: number; text: string } } | null; paused: number; stop: boolean; off: boolean;
   assignee?: string; done?: number; line?: { ch: string; label: string }; audit?: { t: number; w: string; a: string; to?: string }[];
-  canSend: boolean; sendOff?: string; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean;
+  canSend: boolean; sendOff?: string; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean; rev?: number; same?: 1;
 };
 type LeadRaw = { id: string; name: string; phone: string; service: string; time: string; note: string; status: string; kind: string; source: string; ts: number };
 type StudioClientRaw = { id: string; name: string; kind: string; niche: string; off: boolean; booking: string };
@@ -178,6 +178,7 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     if (t.op) m.operator = t.op;
     if (t.auto) m.auto = t.auto;
     if (status(t.st)) m.status = status(t.st);
+    if (t.sa) m.statusAt = t.sa;
     if (t.se) m.statusError = t.se;
     if (t.ed) m.edited = true;
     if (t.del) m.deleted = true;
@@ -201,6 +202,7 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
   else if (!d.open) reply = { allowed: false, reason: "window", text: "Клиент писал больше суток назад, а с основного номера WhatsApp первым написать нельзя. Позвоните клиенту или дождитесь его сообщения." };
   else reply = { allowed: true, closesAt: d.ch === "wa" && d.li ? d.li + 24 * 3600e3 : undefined };
   return {
+    ...(d.rev ? { rev: d.rev } : {}),
     key: keyOf(d.ch, d.id),
     ref,
     contact: { key: digits(d.phone) || `web:${d.id}`, name: d.name || undefined, profileName: d.waName || undefined, phone: d.phone || undefined },
@@ -261,6 +263,8 @@ export function createLiveSource(): DataSource {
   const studio = new Map<string, StudioClientRaw>();
   return {
     mode: "live",
+    chatStore: (ws) => call<ChatStoreStatus>(`/api/chatstore/status?c=${enc(ws)}`),
+    chatStoreRun: (ws, act) => (act === "check" ? call<Record<string, unknown>>(`/api/chatstore/check?c=${enc(ws)}`) : call<Record<string, unknown>>(`/api/chatstore/${act}`, { c: ws })),
     async session(): Promise<Session> {
       const me = await call<{ owner: boolean; c: string; stage?: string; brand?: string | null; brands?: Record<string, string>; site?: Record<string, "off" | "dry" | "live"> }>("/api/inbox/me");
       const q = new URLSearchParams(location.search).get("c");
@@ -273,10 +277,16 @@ export function createLiveSource(): DataSource {
       for (const c of d.clients) studio.set(c.id, c);
       return d.clients.map((c) => ({ id: c.id, name: c.name, kind: c.kind }));
     },
-    async inbox(ws): Promise<InboxSnapshot> {
+    async inbox(ws, since): Promise<InboxSnapshot | null> {
       // v=2 (ТЗ v2.0 §2.1): все чаты, где клиент писал (до 1000), номера компании, имена сотрудников, число чатов только с нашими сообщениями
       const base = `/api/inbox/list?c=${enc(ws)}&f=all&v=2`;
-      const [wa, web] = await Promise.all([call<ListRaw>(base + "&ch=wa"), call<ListRaw>(base + "&ch=web")]);
+      // переписки в D1: версия общая для всех номеров компании — «без изменений» по основным номерам значит и по чату сайта
+      let wa: ListRaw, web: ListRaw;
+      if (since) {
+        wa = await call<ListRaw>(base + "&ch=wa&since=" + enc(since));
+        if (wa.same) return null;
+        web = await call<ListRaw>(base + "&ch=web");
+      } else [wa, web] = await Promise.all([call<ListRaw>(base + "&ch=wa"), call<ListRaw>(base + "&ch=web")]);
       const rows = [...wa.chats, ...web.chats];
       const now = wa.now || Date.now();
       const isRead = marks.forWorkspace(ws);
@@ -293,7 +303,7 @@ export function createLiveSource(): DataSource {
         capabilities: { booking: sc ? sc.booking !== "none" : null, campaigns: true },
       };
       const shown = wa.chats.length + web.chats.length, total = wa.total + web.total;
-      return { workspace, conversations, truncated: total > shown ? { shown, total } : null, outOnly: wa.outOnly || 0, operators: wa.ops || [], now };
+      return { workspace, conversations, truncated: total > shown ? { shown, total } : null, outOnly: wa.outOnly || 0, operators: wa.ops || [], now, ...(wa.ver ? { ver: wa.ver } : {}) };
     },
     async bookingCard(ws, ref) {
       return call<{ available: boolean; records: BookingCard[] }>(`/api/inbox/booking?c=${enc(ws)}&ch=${enc(ref.channelId)}&id=${enc(ref.externalId)}`);
@@ -329,10 +339,10 @@ export function createLiveSource(): DataSource {
       const campaigns: Campaign[] = (d.list || []).map((b) => ({ id: b.id, name: b.name || "Без названия", status: b.status, total: b.total || 0, sent: b.sent || 0, failed: b.failed || 0, createdAt: b.created || 0, channelId: b.ch === "ga" ? "ga" : "wa" }));
       return { channels, optouts: d.stops, campaigns, owner: !!d.owner };
     },
-    async conversation(ws, ref) {
-      const d = await call<ChatRaw>(`/api/inbox/chat?c=${enc(ws)}&ch=${enc(ref.channelId)}&id=${enc(ref.externalId)}`);
+    async conversation(ws, ref, since) {
+      const d = await call<ChatRaw>(`/api/inbox/chat?c=${enc(ws)}&ch=${enc(ref.channelId)}&id=${enc(ref.externalId)}` + (since ? `&since=${since}` : ""));
       marks.mark(ws, keyOf(ref.channelId, ref.externalId));
-      return detail(ws, d);
+      return d.same ? null : detail(ws, d);
     },
     async send(ws, ref, text, opts) {
       const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) }).catch(lostSend);

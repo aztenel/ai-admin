@@ -6,6 +6,7 @@ import { Activity, Bell, Building2, ChevronRight, ExternalLink, KeyRound, MapPin
 import { useEffect, useState, type ReactNode } from "react";
 import { DemoBase, SyncPanel } from "@/clients/SyncPanel";
 import type { ContactsStatus } from "@/model/contacts";
+import type { ChatStoreAct, ChatStoreStatus } from "@/data/source";
 import type { CampaignsOverview, ServiceOverview } from "@/model/campaigns";
 import { whenText } from "@/campaigns/base/shared";
 import { buttonClass, Button, Field, Segmented } from "@/components/ui";
@@ -16,7 +17,7 @@ import { askNotify, notifyState, type NotifyState } from "@/lib/notify";
 import { back, navigate } from "@/lib/router";
 import { setBrand, setChatBg, useLook, useTheme, type BrandPref, type ChatBg, type ThemePref } from "@/lib/theme";
 import { cn, useMedia } from "@/lib/utils";
-import { store, useStore } from "@/state/store";
+import { store, useStore, type SpeedKind } from "@/state/store";
 import { THEMES } from "@/shell/AppShell";
 import { Group, Page } from "./Page";
 import { PushSettings } from "./PushSettings";
@@ -181,6 +182,96 @@ function SiteBooking() {
   );
 }
 
+/** Скорость чатов (01.11.2026, переписки в D1): через сколько после того, как сервер записал новое, пульт его показал — замеры только
+ *  этого устройства с открытия пульта, никуда не отправляются. Так сравнивали KV и D1 на тестовом стенде. */
+const SPEED_ROWS: [SpeedKind, string, string][] = [
+  ["inbound", "Новое сообщение в открытом чате", "от записи на сервере до появления в чате"],
+  ["newChat", "Новый чат в списке", "от записи на сервере до появления строки"],
+  ["ticks", "Галочки «доставлено», «прочитано»", "от отчёта WhatsApp на сервере до галочки"],
+  ["open", "Открытие переписки", "от нажатия до показа"],
+];
+const fmtMs = (ms: number) => (ms < 1000 ? `${ms} мс` : `${(ms / 1000).toFixed(1).replace(".", ",")} с`);
+function SpeedPanel() {
+  const sp = useStore((s) => s.speed);
+  const where = sp.store === "d1" ? "база D1" : sp.store === "kv" ? "KV" : "…";
+  return (
+    <Group title="Скорость чатов" note={`Замеры этого устройства с открытия пульта. Переписки хранятся: ${where}.`}>
+      <ul aria-label="Скорость чатов" className="divide-y divide-line">
+        {SPEED_ROWS.map(([k, label, hint]) => {
+          const v = [...sp.samples[k]].sort((a, b) => a - b), med = v.length ? v[Math.floor((v.length - 1) / 2)] : 0;
+          return (
+            <li key={k} className="flex items-start justify-between gap-3 py-2.5">
+              <span className="min-w-0">
+                <span className="block text-ui font-medium pointer-coarse:text-base">{label}</span>
+                <span className="block text-sm text-fg-3">{hint}</span>
+              </span>
+              <span className="shrink-0 text-right text-ui tabular-nums text-fg-2 pointer-coarse:text-base">
+                {v.length ? <>{fmtMs(med)}<span className="block text-sm text-fg-3">самое долгое {fmtMs(v[v.length - 1])} · замеров {v.length}</span></> : "пока нет"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="pb-2 pt-1"><Button size="sm" variant="outline" onClick={() => store.resetSpeed()}>Сбросить замеры</Button></div>
+    </Group>
+  );
+}
+
+/** Переписки компании: где хранятся (KV или база D1), перенос из KV, сверка, выгрузка в KV перед откатом (docs/chat-storage-d1.md).
+ *  Переключает хранение переменная CHAT_STORE_<ID> в Cloudflare, здесь — только проверки и перенос. Только числа, без текста переписок. */
+const CS_LABEL: Record<string, string> = { import: "Перенести из KV", check: "Сверить KV и D1", export: "Выгрузить в KV (перед откатом)", replay: "Записать ждущие сообщения" };
+function ChatStorePanel({ ws }: { ws: string }) {
+  const [st, setSt] = useState<ChatStoreStatus | null | undefined>(undefined);
+  const [busy, setBusy] = useState("");
+  const [res, setRes] = useState<{ act: string; text: string; bad?: boolean } | null>(null);
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const src = store.source;
+    if (!src?.chatStore) return;
+    src.chatStore(ws).then((d) => live && setSt(d), () => live && setSt(null));
+    return () => {
+      live = false;
+    };
+  }, [ws, rev]);
+  if (st === undefined) return null;
+  const run = async (act: ChatStoreAct) => {
+    const src = store.source;
+    if (!src?.chatStoreRun) return;
+    setBusy(act);
+    try {
+      const r = await src.chatStoreRun(ws, act);
+      setRes({ act, text: Object.entries(r).filter(([k, v]) => k !== "ok" && typeof v !== "object").map(([k, v]) => `${k}: ${v}`).join(", ") || "готово" });
+    } catch (e) {
+      setRes({ act, text: e instanceof Error ? e.message : "не получилось", bad: true });
+    } finally {
+      setBusy("");
+      setRev((x) => x + 1);
+    }
+  };
+  const n = st?.counts ? Object.values(st.counts).reduce((a, c) => ({ t: a.t + c.threads, m: a.m + c.messages }), { t: 0, m: 0 }) : null;
+  return (
+    <Group title="Переписки" note={!st ? "Сведения не загрузились." : st.mode === "d1" ? (st.ready ? "Хранятся в базе D1: одинаково для всех точек сети, без задержки и потерь." : "Включена база D1, но она не подключена — сообщения ждут в журнале.") : "Хранятся в KV (как раньше). Переключает переменная CHAT_STORE в Cloudflare."}>
+      {st && (
+        <p className="py-2 text-ui text-fg-2 pointer-coarse:text-base">
+          {st.mode === "d1" ? "База D1" : "KV"}
+          {n ? ` · чатов ${n.t}, сообщений ${n.m}` : ""}
+          {st.imported ? ` · перенос из KV был ${whenText(st.imported, Date.now())}` : ""}
+          {st.pending ? ` · ждут записи: ${st.pending}` : ""}
+        </p>
+      )}
+      {st?.ready && (
+        <div className="flex flex-wrap gap-2 pb-2">
+          {(["import", "check", "export", ...(st.pending ? ["replay"] : [])] as ChatStoreAct[]).map((a) => (
+            <Button key={a} size="sm" variant="outline" disabled={!!busy} onClick={() => run(a)}>{busy === a ? "Подождите…" : CS_LABEL[a]}</Button>
+          ))}
+        </div>
+      )}
+      {res && <p role="status" className={cn("pb-2 text-sm", res.bad ? "text-critical" : "text-fg-2")}>{CS_LABEL[res.act]}: {res.text}</p>}
+    </Group>
+  );
+}
+
 /** Диагностика — только владельцу: проверки базы клиентов и связи с Altegio (раньше — баннер на экране «Клиенты»). */
 /** Диагностика (ТЗ V3): сверху — коротко для владельца (подключено ли, работает ли, когда обновлялось), ниже по кнопке — подробности
  *  для разработчика (синхронизация, проверки данных, «стоп», ошибки, служебные страницы). Большие тексты — только внизу. */
@@ -258,6 +349,8 @@ function Diagnostics() {
           ))}
         </ul>
       </Group>
+      <SpeedPanel />
+      {mode !== "demo" && <ChatStorePanel ws={ws} />}
       {d?.ready && d.stage === "preview" && (d.demoAllowed ?? d.owner) && <DemoBase ws={ws} status={d} onChanged={() => setSt((x) => ({ ...x, rev: x.rev + 1 }))} />}
       <button type="button" aria-expanded={tech} onClick={() => setTech(!tech)} className="mb-3 flex items-center gap-1.5 px-1 text-ui font-medium text-accent-ink">
         <ChevronRight aria-hidden className={cn("size-4 transition-transform", tech && "rotate-90")} />
