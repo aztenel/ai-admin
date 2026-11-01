@@ -1,13 +1,14 @@
 // Список чатов: компания крупным заголовком, справа — какой номер показан; поиск; вкладки-фильтры; строки.
 // Главное в строке — кто и что написал. Третьей строкой, одной фразой, — кто ведёт переписку и через какой номер.
 // Клиент ждёт человека — вместо времени сообщения красным «сколько ждёт», третья строка — причина.
-import { Inbox, RefreshCw, Search, SearchX, X } from "lucide-react";
+import { ChevronDown, ClipboardList, Inbox, RefreshCw, Search, SearchX, X } from "lucide-react";
+import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/overlay";
 import { memo, useMemo, useRef, useState } from "react";
 import { Avatar, Button, CountBadge, EmptyState, IconButton, Skeleton } from "@/components/ui";
 import { channelBadge, channelOf } from "@/model/channels";
 import type { ConversationSummary, Workspace } from "@/model/types";
 import { formatPhone, rowTime, waited } from "@/lib/format";
-import { href } from "@/lib/router";
+import { href, navigate } from "@/lib/router";
 import { cn, useNow } from "@/lib/utils";
 import { store, useStore, type Filter } from "@/state/store";
 import { WorkspaceSwitcher } from "@/shell/WorkspaceSwitcher";
@@ -18,15 +19,27 @@ import { getOperator } from "@/lib/operator";
 import { handling } from "./handling";
 import { ScopePicker } from "./ScopePicker";
 
-// разделы (ТЗ v2.0 §2.1): по умолчанию — «Нужен ответ»; «Мои» — только если на устройстве указано имя сотрудника
-const FILTERS: { id: Filter; label: string }[] = [
+// разделы (решение владельца 02.11.2026): «Все» — первым и по умолчанию, «Нужен ответ» — вторым, с красным счётчиком, «Готово» —
+// третьим; «Записи», «Ответы», «Мои» — в меню «Ещё» (отбор чатов прежний — derive.ts). «Мои» — только если на устройстве указано имя
+const MAIN: { id: Filter; label: string }[] = [
+  { id: "all", label: "Все" },
   { id: "waiting", label: "Нужен ответ" },
+  { id: "done", label: "Готово" },
+];
+const MORE: { id: Filter; label: string }[] = [
   { id: "booking", label: "Записи" },
   { id: "replies", label: "Ответы" },
   { id: "mine", label: "Мои" },
-  { id: "all", label: "Все" },
-  { id: "done", label: "Готово" },
 ];
+// на телефоне четыре капсулы («Все», «Нужен ответ» со счётчиком, «Готово», «Ещё») помещаются в 390 px без прокрутки: 14 px, поля по 12 px
+const chipCls = (on: boolean) =>
+  cn(
+    "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-sm font-medium transition-colors pointer-coarse:h-10 md:h-8 md:px-3",
+    on ? "bg-selected text-selected-fg" : "bg-surface text-fg-2 hover:text-fg md:bg-surface-2",
+  );
+const Count = ({ n, hot }: { n: number; hot?: boolean }) => (
+  <span className={cn("tnum min-w-5 rounded-full px-1.5 text-center text-xs font-semibold leading-5", hot ? "bg-critical text-surface" : "bg-surface-3 text-fg-2")}>{n}</span>
+);
 
 export function ListPane({ openKey, onOpen, className, inert }: { openKey?: string; onOpen: (key: string) => void; className?: string; inert?: boolean }) {
   const phase = useStore((s) => s.phase);
@@ -57,6 +70,15 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h1 className="title-display min-w-0 flex-1 text-[1.75rem] font-bold leading-9 tracking-[-0.022em] md:text-2xl md:font-semibold md:leading-8">Чаты</h1>
             {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
+            {/* телефон: «Заявки» — здесь, внизу только четыре раздела; на компьютере они в левой колонке */}
+            <a
+              href={href({ name: "requests" })}
+              onClick={(e) => (e.preventDefault(), navigate({ name: "requests" }))}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-surface-2 px-3 text-sm font-medium text-fg-2 hover:text-fg md:hidden"
+            >
+              <ClipboardList aria-hidden className="size-4" strokeWidth={1.75} />
+              Заявки
+            </a>
           </div>
           <div className="flex min-w-0 items-center gap-2">
             <WorkspaceSwitcher compact className="min-w-0" />
@@ -88,25 +110,16 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
         </div>
         {ws && !q && all.length > 0 ? (
           // ТЗ v3.0, макет Figma «Чаты»: фильтры — капсулы, выбранная залита, счётчик «Нужен ответ» — красная плашка
-          <div role="radiogroup" aria-label="Фильтр" className="no-scrollbar mt-2.5 flex gap-2 overflow-x-auto px-4 pb-3 md:mt-2 md:border-b md:border-line md:pb-2.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
-            {FILTERS.filter((f) => f.id !== "mine" || me).map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                role="radio"
-                aria-checked={filter === f.id}
-                onClick={() => store.setFilter(f.id)}
-                className={cn(
-                  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-ui font-medium transition-colors pointer-coarse:h-10 md:h-8 md:px-3 md:text-sm",
-                  filter === f.id ? "bg-selected text-selected-fg" : "bg-surface text-fg-2 hover:text-fg md:bg-surface-2",
-                )}
-              >
-                {f.label}
-                {f.id !== "all" && f.id !== "done" && n[f.id] > 0 && (
-                  <span className={cn("tnum min-w-5 rounded-full px-1.5 text-center text-xs font-semibold leading-5", f.id === "waiting" ? "bg-critical text-surface" : "bg-surface-3 text-fg-2")}>{n[f.id]}</span>
-                )}
-              </button>
-            ))}
+          <div className="no-scrollbar mt-2.5 flex gap-1.5 overflow-x-auto px-4 pb-3 md:mt-2 md:gap-2 md:border-b md:border-line md:pb-2.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
+            <div role="radiogroup" aria-label="Фильтр" className="flex shrink-0 gap-1.5 md:gap-2">
+              {MAIN.map((f) => (
+                <button key={f.id} type="button" role="radio" aria-checked={filter === f.id} onClick={() => store.setFilter(f.id)} className={chipCls(filter === f.id)}>
+                  {f.label}
+                  {f.id === "waiting" && n.waiting > 0 && <Count n={n.waiting} hot />}
+                </button>
+              ))}
+            </div>
+            <MoreFilters filter={filter} n={n} me={me} />
           </div>
         ) : q ? (
           <p className="mt-1 px-4 pb-2 pt-1.5 text-sm text-fg-3 md:border-b md:border-line">{rows.length ? `Найдено: ${rows.length}` : "\u00a0"}</p>
@@ -143,6 +156,32 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
         )}
       </div>
     </section>
+  );
+}
+
+/** «Ещё»: Записи, Ответы, Мои. Выбран один из них — на кнопке его название и счётчик, иначе «Ещё». */
+function MoreFilters({ filter, n, me }: { filter: Filter; n: Record<Filter, number>; me: string }) {
+  const list = MORE.filter((f) => f.id !== "mine" || me), cur = list.find((f) => f.id === filter);
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <button type="button" aria-label={cur ? `Раздел ${cur.label}. Другие разделы` : "Другие разделы: записи, ответы, мои"} className={chipCls(!!cur)}>
+          {cur ? cur.label : "Ещё"}
+          {cur && n[cur.id] > 0 && <Count n={n[cur.id]} />}
+          <ChevronDown aria-hidden className="-mr-1 size-4 opacity-70" strokeWidth={2} />
+        </button>
+      </MenuTrigger>
+      <MenuContent align="end" className="min-w-[13rem]">
+        <MenuRadioGroup value={cur ? cur.id : ""} onValueChange={(v) => store.setFilter(v as Filter)}>
+          {list.map((f) => (
+            <MenuRadioItem key={f.id} value={f.id}>
+              <span className="flex-1">{f.label}</span>
+              {n[f.id] > 0 && <Count n={n[f.id]} />}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuContent>
+    </Menu>
   );
 }
 

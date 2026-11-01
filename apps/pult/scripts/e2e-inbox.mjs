@@ -7,6 +7,11 @@
 // «Полноценные чаты» (31.10.2026, сценарии ТЗ 1, 2, 3, 7): ответ цитатой (долгое нажатие на телефоне, «⋯» на компьютере), «Копировать»
 // (буфер обмена), видео на весь экран, документ Word скачивается, фото и PDF от сотрудника — по одному, у каждого «Отправлено», оба
 // открываются; Green-API ответил 500 — «не знаем, ушло ли», ровно один запрос; у основного номера (Meta) нет скрепки и «Ответить».
+// Финальная доработка (02.11.2026): фильтры «Все» (по умолчанию) · «Нужен ответ» со счётчиком · «Готово» и меню «Ещё» (Записи, Ответы,
+// Мои); снизу на телефоне — Чаты, Рассылки, Клиенты, Настройки, «Заявки» — кнопкой в списке; голосовое из пульта (микрофон-заглушка
+// Chromium: запись, таймер, прослушивание, двойное нажатие — одна отправка, Ogg Opus «voice-….ogg»; путь iPhone — запись M4A уходит
+// аудиофайлом с пометкой; нет доступа к микрофону; запись прервалась — записанное остаётся); «Удалить у меня» и «Удалить у всех»
+// (подтверждение, один запрос deleteMessage, после перезагрузки так же); «прочитано» у двух сотрудников (общее только с D1).
 // Снимки 390×844 (как iPhone 14/15, вырез и «полоска Домой» нарисованы) и 1280×800, светлая и тёмная тема.
 // Это Chromium в размере iPhone, а не Safari на iPhone: на настоящем телефоне не проверено.
 // Запуск: node scripts/e2e-inbox.mjs [папка для снимков]
@@ -77,6 +82,11 @@ net.mediaReply = (url, init) => {
   if (url.endsWith(".docx")) return served(DOCX, DOCX_TYPE, init);
   if (url.endsWith(".png")) return new Response(pngFace(url), { headers: { "content-type": "image/png" } });
   if (url.endsWith(".pdf")) return new Response("%PDF-1.4\n%…\n", { headers: { "content-type": "application/pdf" } });
+  // голосовое из пульта: заглушка Green-API отдаёт тот самый файл, который ей загрузили (его и слушает пульт)
+  if (url.startsWith("https://media.green-api.test/out/") && /\.(ogg|m4a)$/.test(url)) {
+    const rec = [...net.ga].reverse().find((x) => x.op === "sendFileByUpload" && x.form && url.endsWith("/" + encodeURIComponent(x.form.fileName)));
+    if (rec) return rec.form.file.blob.arrayBuffer().then((ab) => served(Buffer.from(ab), url.endsWith(".ogg") ? "audio/ogg" : "audio/mp4", init));
+  }
   return new Response("gone", { status: 403 });
 };
 const uploads = () => net.ga.filter((x) => x.op === "sendFileByUpload");
@@ -107,7 +117,8 @@ await text(F, "Напомните, во сколько я записан?", "К�
 await S.settle?.();
 
 // ---------- браузер ----------
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" });
+// микрофон-заглушка Chromium: запись голосового без настоящего микрофона и без окна «разрешить микрофон»
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium", args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
 { // короткое видео WebM (VP8) с холста — настоящий файл, который Chromium воспроизводит
   const p = await browser.newPage();
   const b64 = await p.evaluate(async () => {
@@ -145,10 +156,15 @@ function shiftClock(shift) {
 function iphoneSafeArea() {
   document.addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = ":root{--safe-t:47px;--safe-b:34px}"; document.head.appendChild(s); });
 }
+/** пульт свёрнут (hidden = true) или снова на экране — как при смене приложения на телефоне */
+const setHidden = (page, hidden) => page.evaluate((h) => {
+  for (const [k, v] of [["hidden", h], ["visibilityState", h ? "hidden" : "visible"]]) Object.defineProperty(document, k, { configurable: true, get: () => v });
+  document.dispatchEvent(new Event("visibilitychange"));
+}, hidden);
 async function session(vp, scheme, tag, op = "") {
   const phone = vp.width < 500;
   const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone, locale: "ru-RU", timezoneId: "Asia/Almaty" });
-  await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(dl.app).origin }); // «Копировать» — проверка буфера обмена
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write", "microphone"], { origin: new URL(dl.app).origin }); // «Копировать» — буфер обмена; голосовое — микрофон
   await ctx.addInitScript(shiftClock, SHIFT);
   if (phone) await ctx.addInitScript(iphoneSafeArea);
   if (op) await ctx.addInitScript((o) => localStorage.setItem("pult.op", o), op);
@@ -165,14 +181,36 @@ async function session(vp, scheme, tag, op = "") {
   return { page, ctx, tag, phone, errs, shot: async (name) => page.screenshot({ path: `${OUT}/${tag}-${name}.png` }) };
 }
 const row = (page, name) => page.locator("ul a[href^='#/inbox/']").filter({ hasText: name });
-const tab = (page, label) => page.getByRole("radio", { name: new RegExp("^" + label) });
+// «Записи», «Ответы», «Мои» — в меню «Ещё» (02.11.2026); остальные — капсулы на виду
+const MORE_TABS = new Set(["Записи", "Ответы", "Мои"]);
+const moreBtn = (page) => page.getByRole("button", { name: /^(Другие разделы|Раздел )/ });
+const tab = (page, label) => MORE_TABS.has(label)
+  ? { click: async () => { await moreBtn(page).click(); await page.getByRole("menuitemradio", { name: new RegExp("^" + label) }).click(); await page.waitForTimeout(150); } }
+  : page.getByRole("radio", { name: new RegExp("^" + label) });
 
 async function phoneRun(scheme) {
   const t = await session({ width: 390, height: 844 }, scheme, `390-${scheme}`, "Айгерим");
   const { page } = t;
   const tag = t.tag;
   await page.waitForSelector("ul a[href^='#/inbox/']");
-  ok(`${tag}: по умолчанию — «Нужен ответ»`, await tab(page, "Нужен ответ").getAttribute("aria-checked") === "true");
+  // порядок разделов (02.11.2026): «Все» первым и по умолчанию, «Нужен ответ» вторым — с красным счётчиком, «Готово» третьим, остальное — «Ещё»
+  const radios = await page.getByRole("radiogroup", { name: "Фильтр" }).getByRole("radio").allInnerTexts();
+  ok(`${tag}: разделы — «Все», «Нужен ответ» со счётчиком, «Готово»`, radios.length === 3 && radios[0].trim() === "Все" && /^Нужен ответ\s*\d+$/.test(radios[1].replace(/\s+/g, " ").trim()) && radios[2].trim() === "Готово", JSON.stringify(radios));
+  ok(`${tag}: по умолчанию — «Все»`, await tab(page, "Все").getAttribute("aria-checked") === "true");
+  await moreBtn(page).click();
+  const more = await page.getByRole("menuitemradio").allInnerTexts();
+  ok(`${tag}: в «Ещё» — Записи, Ответы, Мои`, more.length === 3 && /^Записи/.test(more[0]) && /^Ответы/.test(more[1]) && /^Мои/.test(more[2]), JSON.stringify(more));
+  await page.keyboard.press("Escape");
+  const nav = await page.locator("nav[aria-label='Разделы']").last().getByRole("link").allInnerTexts();
+  ok(`${tag}: снизу — Чаты, Рассылки, Клиенты, Настройки`, JSON.stringify(nav.map((x) => x.replace(/\d+/g, "").trim())) === JSON.stringify(["Чаты", "Рассылки", "Клиенты", "Настройки"]), JSON.stringify(nav));
+  await page.getByRole("link", { name: "Заявки" }).click();
+  await page.waitForTimeout(500);
+  ok(`${tag}: «Заявки» — кнопкой в списке чатов, открываются`, /#\/requests/.test(page.url()) && (await page.locator("nav[aria-label='Разделы']").last().getByRole("link", { name: /Чаты/ }).getAttribute("aria-current")) === "page");
+  await t.shot("0-requests");
+  await page.locator("nav[aria-label='Разделы']").last().getByRole("link", { name: /Чаты/ }).click();
+  await page.waitForSelector("ul a[href^='#/inbox/']");
+  await t.shot("0-list-all-default");
+  await tab(page, "Нужен ответ").click();
   const listText = await page.locator("section[aria-label='Чаты']").innerText();
   ok(`${tag}: в очереди просьба перенести (ответ на напоминание), голосовое, документ, «во сколько я записан»`, /Просит перенести/.test(listText) && /Прислал файл/.test(listText) && /Спрашивает время записи/.test(listText), listText.slice(0, 400));
   ok(`${tag}: «спасибо» после ответа с телефона — не в очереди`, !(await row(page, "Тимур").count()));
@@ -398,9 +436,165 @@ async function filesPhone(t) {
   } finally {
     net.gaReply = prev;
   }
+  await voicePhone(t);
+  await deletePhone(t, orig);
   await page.getByRole("button", { name: /Назад к чатам/ }).click();
   await page.waitForSelector("section[aria-label='Чаты']");
   ok(`${tag}: (1) после ответа — не в «Нужен ответ»`, (await row(page, "Асель").count()) === 0);
+}
+
+// голосовое из пульта (02.11.2026), чат Асель (второй номер): микрофон-заглушка Chromium. Это Chromium, а не Safari на iPhone:
+// путь iPhone (Safari пишет только MP4) повторён подменой MediaRecorder.isTypeSupported; на настоящем телефоне не проверено
+async function voicePhone(t) {
+  const { page, tag } = t;
+  const log = page.locator("[role=log]");
+  await page.getByLabel("Ответ клиенту").fill("");
+  const mic = page.getByRole("button", { name: "Записать голосовое" });
+  ok(`${tag}: голосовое — при пустом поле на месте «Отправить» кнопка микрофона`, (await mic.count()) === 1);
+  await mic.click();
+  await page.getByText("Идёт запись").waitFor({ timeout: 5000 });
+  await page.waitForTimeout(1700);
+  const rec = page.locator("[role=group][aria-label='Запись голосового']");
+  const timer = await rec.innerText();
+  ok(`${tag}: голосовое — идёт запись, таймер, «Отменить» и «Стоп»`, /0:0[1-9]/.test(timer) && (await rec.getByRole("button", { name: "Отменить запись" }).count()) === 1 && (await rec.getByRole("button", { name: "Остановить запись" }).count()) === 1, timer);
+  await t.shot("13-voice-rec");
+  await rec.getByRole("button", { name: "Остановить запись" }).click();
+  const ready = page.locator("[role=group][aria-label='Голосовое перед отправкой']");
+  await ready.waitFor({ timeout: 5000 });
+  ok(`${tag}: голосовое — перед отправкой прослушать, удалить или отправить`, (await ready.getByRole("button", { name: "Слушать голосовое" }).count()) === 1 && (await ready.getByRole("button", { name: "Удалить запись" }).count()) === 1);
+  ok(`${tag}: Chromium пишет Opus — уйдёт голосовым, без пометки об M4A`, !(await page.getByText(/записывает только в формате M4A/).count()));
+  await t.shot("14-voice-ready");
+  const up0 = uploads().length, sent0 = await ticks(page, "Отправлено").count();
+  await ready.getByRole("button", { name: "Отправить голосовое" }).dblclick();
+  await page.waitForFunction(() => !/отправляется/.test(document.querySelector("[role=log]")?.textContent || ""), null, { timeout: 15000 });
+  await page.waitForTimeout(700);
+  const vu = uploads().slice(up0), vb = vu[0] ? Buffer.from(await vu[0].form.file.blob.arrayBuffer()) : Buffer.alloc(0);
+  ok(`${tag}: голосовое — двойное нажатие: к Green-API один файл voice-….ogg (Ogg Opus)`, vu.length === 1 && /^voice-\d{14}\.ogg$/.test(vu[0].form.fileName) && vb.subarray(0, 4).toString() === "OggS" && vb.includes(Buffer.from("OpusHead")), JSON.stringify(vu.map((x) => x.form?.fileName)));
+  const vt = S.hist("ga", "winchester", G).turns.at(-1);
+  ok(`${tag}: голосовое — в переписке отмечено голосовым, с длиной`, vt.m && vt.m.k === "audio" && vt.m.v === 1 && vt.m.d >= 1 && vt.st === "sent", JSON.stringify({ m: vt.m, st: vt.st }));
+  ok(`${tag}: отправленное голосовое — в ленте плеер и «Отправлено»`, (await ticks(page, "Отправлено").count()) === sent0 + 1 && (await log.getByRole("button", { name: "Слушать голосовое" }).count()) >= 1);
+  await log.getByRole("button", { name: "Слушать голосовое" }).last().click();
+  await page.waitForTimeout(700);
+  ok(`${tag}: отправленное голосовое воспроизводится в пульте`, (await log.getByRole("button", { name: "Пауза" }).count()) >= 1 || /0:0[1-9]/.test(await log.innerText()));
+  await log.getByRole("button", { name: "Пауза" }).first().click().catch(() => {});
+  await t.shot("15-voice-sent");
+
+  // путь iPhone: Safari записывает только MP4 (AAC) — уходит аудиофайлом .m4a, и пульт пишет об этом до отправки
+  const mp4 = await page.evaluate(() => MediaRecorder.isTypeSupported("audio/mp4"));
+  if (!mp4) console.log(`  · ${tag}: этот Chromium не пишет MP4 — путь iPhone не проверен`);
+  else {
+    await page.evaluate(() => { const real = MediaRecorder.isTypeSupported.bind(MediaRecorder); MediaRecorder.isTypeSupported = (x) => /mp4/.test(x) && real(x); });
+    await mic.click();
+    await page.getByText("Идёт запись").waitFor({ timeout: 5000 });
+    await page.waitForTimeout(1500);
+    await rec.getByRole("button", { name: "Остановить запись" }).click();
+    await ready.waitFor({ timeout: 5000 });
+    ok(`${tag}: запись M4A (как Safari на iPhone) — честная пометка «уйдёт аудиофайлом»`, (await page.getByText(/записывает только в формате M4A: уйдёт аудиофайлом/).count()) === 1);
+    await t.shot("16-voice-m4a");
+    const up1 = uploads().length;
+    await ready.getByRole("button", { name: "Отправить голосовое" }).click();
+    await page.waitForFunction(() => !/отправляется/.test(document.querySelector("[role=log]")?.textContent || ""), null, { timeout: 15000 });
+    await page.waitForTimeout(500);
+    const mu = uploads().slice(up1), mb = mu[0] ? Buffer.from(await mu[0].form.file.blob.arrayBuffer()) : Buffer.alloc(0);
+    ok(`${tag}: M4A — один файл voice-….m4a (MP4), отправлен`, mu.length === 1 && /^voice-\d{14}\.m4a$/.test(mu[0].form.fileName) && mb.subarray(4, 8).toString() === "ftyp", JSON.stringify(mu.map((x) => x.form?.fileName)));
+  }
+
+  // запись прервалась (свернули пульт, звонок, погас экран): что успели записать, остаётся для прослушивания
+  await mic.click();
+  await page.getByText("Идёт запись").waitFor({ timeout: 5000 });
+  await page.waitForTimeout(1200);
+  await setHidden(page, true);
+  await page.waitForTimeout(400);
+  await setHidden(page, false);
+  await ready.waitFor({ timeout: 5000 }).catch(() => {});
+  ok(`${tag}: запись прервалась — записанное осталось, можно прослушать`, (await ready.count()) === 1);
+  const up2 = uploads().length;
+  await ready.getByRole("button", { name: "Удалить запись" }).click();
+  ok(`${tag}: «Удалить запись» — ничего не ушло, снова поле ввода`, uploads().length === up2 && (await page.getByLabel("Ответ клиенту").count()) === 1);
+
+  // нет доступа к микрофону — понятная причина, записи нет
+  await page.evaluate(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException("denied", "NotAllowedError")); });
+  await mic.click();
+  const deny = page.getByRole("alert").filter({ hasText: "Нет доступа к микрофону" });
+  await deny.waitFor({ timeout: 3000 }).catch(() => {});
+  ok(`${tag}: нет доступа к микрофону — объяснение, как разрешить`, (await deny.count()) === 1 && (await rec.count()) === 0);
+  await t.shot("17-mic-denied");
+  await deny.getByRole("button", { name: "Закрыть" }).click().catch(() => {});
+}
+
+// «Удалить у всех» (наше сообщение) и «Удалить у меня» (сообщение клиента), после перезагрузки — так же (02.11.2026)
+async function deletePhone(t, orig) {
+  const { page, tag } = t;
+  const log = page.locator("[role=log]");
+  const dels = () => net.ga.filter((x) => x.op === "deleteMessage");
+  const mine = log.locator("[data-mid]").filter({ hasText: "Да, завтра в 15:00 у Тони свободно" }).first();
+  await longPress(page, mine);
+  ok(`${tag}: у нашего сообщения — «Удалить у меня» и «Удалить у всех»`, (await page.getByRole("menuitem", { name: "Удалить у меня" }).count()) === 1 && (await page.getByRole("menuitem", { name: "Удалить у всех" }).count()) === 1);
+  await t.shot("18-msg-delete-menu");
+  const d0 = dels().length;
+  await page.getByRole("menuitem", { name: "Удалить у всех" }).click();
+  const dlg = page.getByRole("dialog", { name: "Удалить у всех?" });
+  await dlg.waitFor({ timeout: 3000 }).catch(() => {});
+  ok(`${tag}: «Удалить у всех» — сначала подтверждение, запроса ещё нет`, (await dlg.count()) === 1 && dels().length === d0);
+  await t.shot("19-delete-confirm");
+  await dlg.getByRole("button", { name: "Удалить у всех" }).click();
+  await page.waitForTimeout(900);
+  const want = S.hist("ga", "winchester", G).turns.find((x) => /Тони свободно/.test(x.text));
+  ok(`${tag}: удалено у всех — один запрос deleteMessage с номером нашего сообщения`, dels().length === d0 + 1 && dels().at(-1).body.idMessage === want.mid && want.del === 1, JSON.stringify(dels().slice(d0).map((x) => x.body)));
+  ok(`${tag}: в ленте — «удалено у всех»`, /удалено у всех/.test(await log.innerText()));
+  await longPress(page, orig);
+  ok(`${tag}: у сообщения клиента — только «Удалить у меня»`, (await page.getByRole("menuitem", { name: "Удалить у меня" }).count()) === 1 && !(await page.getByRole("menuitem", { name: "Удалить у всех" }).count()));
+  await page.getByRole("menuitem", { name: "Удалить у меня" }).click();
+  await page.waitForTimeout(800);
+  const origText = log.locator("[data-mid='E2E-G-1'] p");
+  ok(`${tag}: «Удалить у меня» — на месте сообщения «Скрыто в пульте» и «Вернуть», к Green-API ничего`, (await log.getByText(/Скрыто в пульте/).count()) === 1 && (await log.getByRole("button", { name: "Вернуть" }).count()) === 1 && (await origText.count()) === 0 && dels().length === d0 + 1);
+  await t.shot("20-hidden");
+  await page.reload();
+  await page.waitForSelector("[role=log] [data-mid='E2E-G-1']");
+  await page.waitForTimeout(700);
+  ok(`${tag}: после перезагрузки — скрыто и «удалено у всех» так же`, (await log.getByText(/Скрыто в пульте/).count()) === 1 && /удалено у всех/.test(await log.innerText()));
+  await log.getByRole("button", { name: "Вернуть" }).click();
+  await page.waitForTimeout(800);
+  ok(`${tag}: «Вернуть» — сообщение клиента снова видно`, (await origText.count()) === 1 && !(await log.getByText(/Скрыто в пульте/).count()));
+}
+
+// «прочитано» и «Ждёт ответа» у двух сотрудников сразу (02.11.2026): открыть чат — не ответить; переписки в D1 — «прочитано» общее
+async function readSync() {
+  const a = await session({ width: 390, height: 844 }, "light", "sync-a", "Айгерим"), b = await session({ width: 1280, height: 800 }, "light", "sync-b", "Ержан");
+  const H = "77001112107", dot = (page) => row(page, "Мадина").locator("[aria-label='новое']");
+  await a.page.waitForSelector("section[aria-label='Чаты']");
+  await b.page.waitForSelector("section[aria-label='Чаты']");
+  await S.gaText("winchester", GAW, H, "Добрый день! Можно записаться на субботу?", { name: "Мадина", idMessage: "E2E-H-1" });
+  await listPoll(a.page);
+  await listPoll(b.page);
+  ok("sync: новое сообщение — «новое» у обоих сотрудников", (await dot(a.page).count()) === 1 && (await dot(b.page).count()) === 1);
+  await row(a.page, "Мадина").first().click();
+  await a.page.waitForSelector("[role=log]");
+  await a.page.waitForTimeout(900);
+  await a.page.getByRole("button", { name: /Назад к чатам/ }).click();
+  await a.page.waitForSelector("section[aria-label='Чаты']");
+  await tab(a.page, "Нужен ответ").click();
+  ok("sync: открыли чат — «Ждёт ответа» осталось (чат в «Нужен ответ»), «новое» снято", (await row(a.page, "Мадина").count()) === 1 && (await dot(a.page).count()) === 0);
+  await listPoll(b.page);
+  if (process.env.CHAT_STORE === "d1") ok("sync: переписки в D1 — у второго сотрудника тоже не «новое»", (await dot(b.page).count()) === 0);
+  else ok("sync: без D1 — у второго сотрудника «новое» остаётся (прочитанное помнит устройство)", (await dot(b.page).count()) === 1);
+  await tab(b.page, "Нужен ответ").click();
+  ok("sync: у второго сотрудника чат по-прежнему ждёт ответа", (await row(b.page, "Мадина").count()) === 1);
+  await a.shot("1-open-not-answered");
+  await b.shot("1-other-admin");
+  await row(a.page, "Мадина").first().click();
+  await a.page.waitForSelector("[role=log]");
+  await a.page.getByLabel("Ответ клиенту").fill("Здравствуйте! В субботу в 12:00 у Рауана свободно. Записать?");
+  await a.page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await a.page.waitForTimeout(700);
+  await listPoll(b.page);
+  ok("sync: ответили — у второго сотрудника чат ушёл из «Нужен ответ»", (await row(b.page, "Мадина").count()) === 0);
+  await S.gaText("winchester", GAW, H, "Да, запишите", { name: "Мадина", idMessage: "E2E-H-2" });
+  await listPoll(b.page);
+  ok("sync: новое сообщение после ответа — снова в «Нужен ответ» и «новое»", (await row(b.page, "Мадина").count()) === 1 && (await dot(b.page).count()) === 1);
+  ok("sync: ошибок в консоли нет", !a.errs.length && !b.errs.length, [...a.errs, ...b.errs].join(" | "));
+  await a.ctx.close();
+  await b.ctx.close();
 }
 
 async function deskRun(scheme) {
@@ -510,6 +704,7 @@ try {
   await deskRun("light");
   await darkShots({ width: 390, height: 844 }, "390-dark");
   await darkShots({ width: 1280, height: 800 }, "1280-dark");
+  await readSync();
 } catch (e) {
   ok("сценарий дошёл до конца", false, String(e && e.stack || e).slice(0, 600));
 } finally {

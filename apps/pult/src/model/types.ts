@@ -90,8 +90,11 @@ export type ConversationSummary = {
   lastStatus?: DeliveryStatus;
   /** Число непрочитанных, если сервер его знает (после фазы 2 — chats.unread_count). */
   unreadCount?: number;
-  /** Новое сообщение клиента после последнего просмотра на этом устройстве. */
+  /** Новое сообщение клиента: никто из сотрудников его ещё не открыл (переписки в D1), иначе — не открывали на этом устройстве.
+   *  Это не «Ждёт ответа» (attention): открыть чат — не значит ответить. */
   unread: boolean;
+  /** До какого времени чат открывали сотрудники (сервер, переписки в D1): общее для всех устройств. */
+  readAt?: number;
 };
 
 export type MediaKind = "audio" | "image" | "video" | "document" | "sticker" | "location" | "contact";
@@ -117,10 +120,18 @@ export type Message = {
   statusAt?: number;
   statusError?: string;
   edited?: boolean;
+  /** Удалено: клиентом (его сообщение) или у всех (наше). */
   deleted?: boolean;
+  /** Удалено у всех из пульта («Удалить у всех», 02.11.2026). */
+  deletedByUs?: boolean;
+  /** Удаляли у всех, но Green-API не ответил: неизвестно, удалилось ли у клиента. */
+  deleteUnknown?: boolean;
+  /** Скрыто в пульте («Удалить у меня»): у всех сотрудников, у клиента сообщение осталось. */
+  hidden?: boolean;
   /** Реакция клиента на это сообщение. */
   reaction?: string;
-  media?: { kind: MediaKind; url?: string; name?: string; mime?: string; size?: number };
+  /** voice — голосовое, записанное в пульте; dur — его длина в секундах (видна до загрузки файла). */
+  media?: { kind: MediaKind; url?: string; name?: string; mime?: string; size?: number; voice?: boolean; dur?: number };
   /** Только у сообщений, которые пульт ещё отправляет или не смог отправить. */
   delivery?: "sending" | "failed";
   error?: string;
@@ -156,6 +167,8 @@ export type ConversationDetail = {
   canFiles?: boolean;
   /** Можно ответить на конкретное сообщение цитатой (только второй номер). */
   canQuote?: boolean;
+  /** «Удалить у всех» — только второй номер (Green-API) и не в тестовой версии; «Удалить у меня» есть всегда. */
+  canDelete?: boolean;
   /** Реквизиты для оплаты из паспорта — администратор вставляет их в ответ сам. */
   payment?: string;
   /** Недавняя рассылка: клиент мог ответить на неё. */
@@ -229,11 +242,14 @@ export type InboxSnapshot = {
   operators?: string[];
   /** Версия всех переписок компании (переписки в D1): опрос присылает её и получает «без изменений» без всего списка. */
   ver?: string;
+  /** «Прочитано» общее для сотрудников (переписки в D1): открыв чат, пульт сообщает об этом серверу. */
+  reads?: boolean;
   now: number;
 };
 
 /** Запись клиента в Altegio для карточки чата (только чтение журнала). */
 export type BookingCard = { id: string; date: string; time: string; staff: string; services: string; minutes?: number; state: string; source: string };
-export type ChatAction = "pause" | "resume" | "resolve" | "forget" | "take" | "assign" | "reopen" | "task" | "late";
-/** Дополнительно к действию: кому назначить, закрыть несмотря на вопрос клиента. */
-export type ChatActionExtra = { to?: string; force?: boolean; text?: string; min?: number };
+export type ChatAction = "pause" | "resume" | "resolve" | "forget" | "take" | "assign" | "reopen" | "task" | "late" | "hide" | "unhide" | "delete";
+/** Дополнительно к действию: кому назначить, закрыть несмотря на вопрос клиента; какое сообщение скрыть или удалить
+ *  (номер у провайдера, а у сообщений без номера — время и автор: u — клиент, a — сотрудник, b — бот). */
+export type ChatActionExtra = { to?: string; force?: boolean; text?: string; min?: number; mid?: string; at?: number; r?: "u" | "a" | "b" };

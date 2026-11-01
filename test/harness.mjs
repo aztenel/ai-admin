@@ -226,7 +226,7 @@ globalThis.fetch = async (u, init = {}) => {
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
   if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}; файлы (sendFileByUpload) — multipart на хосте media
     const form = typeof FormData !== "undefined" && init.body instanceof FormData ? init.body : null;
-    const fields = form ? Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { name: v.name, size: v.size, type: v.type }])) : null;
+    const fields = form ? Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { name: v.name, size: v.size, type: v.type, blob: v }])) : null;
     const rec = { url, host: new URL(url).host, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: form ? null : init.body ? JSON.parse(init.body) : null, ...(fields ? { form: fields } : {}) }; net.ga.push(rec);
     const own = net.gaReply && net.gaReply(rec);
     if (own) return own;
@@ -236,6 +236,7 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.op === "setSettings") { Object.assign(st, rec.body); return J({ saveSettings: true }); }
     if (rec.op === "sendMessage" || rec.op === "sendFileByUrl") return J({ idMessage: "GA" + net.ga.length });
     if (rec.op === "sendFileByUpload") return J({ idMessage: "GAF" + net.ga.length, urlFile: `https://media.green-api.test/out/${net.ga.length}/${encodeURIComponent(fields && fields.fileName || "file")}` });
+    if (rec.op === "deleteMessage") return new Response("", { status: 200 }); // как в документации Green-API: удалено — 200 с пустым телом
     return J({ message: "unknown method" }, 404);
   }
   if (url.startsWith("https://wazzapo.kz/api/v2/external/")) { // Wazzapo: ключ в заголовке X-API-Key

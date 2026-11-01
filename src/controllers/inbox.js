@@ -30,6 +30,7 @@ import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
 import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbOff } from "../services/inbox/send.js";
 import { isPreview, PREVIEW_SEND } from "../lib/stage.js";
+import { DEL_WHY, DEL_UNKNOWN, delAllWhy, delRid, findTurn, gaDeleteMsg, turnSel } from "../services/inbox/remove.js";
 /** @import { Env } from "../lib/types.js" */
 
 // кто вошёл и что показать в шапке пульта (ТЗ v3.0, 31.10.2026): оформление компании (brand: «winchester» — фирменные цвета, у
@@ -82,7 +83,7 @@ export async function inboxApi(request, env, url, s, ctx) {
           const m = k.metadata || {}, id = String(k.name).slice(prefix.length);
           if (!/** @type {any} */ (CHAT_ID)[ch].test(id)) continue;
           rows.push({ ch, id, t: m.t || 0, li: m.li || 0, s: m.s || "", d: m.d || "", nm: m.nm || "", ph: ch === "web" ? m.ph || "" : "+" + id, nd: m.nd || "", pu: m.pu > now ? m.pu : 0, st: m.st ? 1 : 0, bk: m.bk || 0,
-            ...(m.tp ? { tp: m.tp } : {}), ...(m.rs ? { rs: m.rs } : {}), ...(m.as ? { as: m.as } : {}), ...(m.dn ? { dn: 1 } : {}), ...(m.ls ? { ls: m.ls } : {}) });
+            ...(m.tp ? { tp: m.tp } : {}), ...(m.rs ? { rs: m.rs } : {}), ...(m.as ? { as: m.as } : {}), ...(m.dn ? { dn: 1 } : {}), ...(m.ls ? { ls: m.ls } : {}), ...(m.rd ? { rd: m.rd } : {}) });
         }
         if (!r || r.list_complete || !r.cursor) break;
         cursor = r.cursor; if (page === 2) more = true;
@@ -96,8 +97,9 @@ export async function inboxApi(request, env, url, s, ctx) {
       // (напоминания, ответы с телефона без ответа клиента): раньше они занимали 200 мест списка и вытесняли настоящие переписки
       const inb = rows.filter(r => r.li || r.d === "u" || r.nd), out = rows.filter(r => !(r.li || r.d === "u" || r.nd));
       const lines = await linesOf(env, cid, lineChans(env, cid), ctx);
+      // reads — «прочитано» общее для всех сотрудников (переписки в D1): пульт сообщает серверу, что открыл чат (act: read)
       return jsonP({ client, lines, ops: await opsOf(env, cid), need, total: inb.length, outOnly: out.length, more: more || inb.length > 1000,
-        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now, ...(ver ? { ver } : {}) });
+        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now, ...(ver ? { ver } : {}), ...(d1 ? { reads: true } : {}) });
     }
     return jsonP({ client, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }
@@ -218,7 +220,8 @@ export async function inboxApi(request, env, url, s, ctx) {
   /** @param {any} turn @param {{ unknown?: boolean }} r */
   const saveReply = async (turn, r) => {
     let warn = r.unknown ? UNKNOWN_SENT : ""; // ответа на отправку нет: само не повторяется, сотрудник проверяет в WhatsApp
-    try { h = await logTurns(env.KV, hk, [turn], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; if (op && !pr.as) pr.as = { n: op, at: now, by: op }; }); }
+    // ответивший прочитал чат (rd): «новое» снимается у всех сотрудников вместе с «Ждёт ответа»
+    try { h = await logTurns(env.KV, hk, [turn], pr => { pr.pausedUntil = Math.max(pr.pausedUntil || 0, now + PAUSE_MS); delete pr.need; delete pr.fw; delete pr.cxAsk; delete pr.mvAsk; pr.rd = Math.max(+pr.rd || 0, now); if (op && !pr.as) pr.as = { n: op, at: now, by: op }; }); }
     catch (e) { console.log("inbox log", String(e)); warn = "Сообщение клиенту ушло, но не сохранилось в переписке (хранилище не ответило). Второй раз не отправляйте."; } // сообщение уже у клиента: ошибка здесь привела бы к повторной отправке
     applyForget(h, fgAt); // ответ пульту — тоже без того, что забыто (копию до очистки мог записать вебхук в другом месте сети)
     p = h.profile || {};
@@ -255,13 +258,62 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (!r.ok) return jsonP({ error: r.error }, 409);
     // файл в истории — как у клиента: вид, имя, тип, размер, номер сообщения (по нему файл открывается в пульте: downloadFile)
     // и ссылка Green-API из ответа на отправку (её пробуем первой). Подпись — текстом реплики; без подписи — служебная строка для ИИ
-    const m = { k: kind, name, ...(f.mime ? { mime: f.mime.slice(0, 60) } : {}), size: f.size, ...(r.id ? { id: r.id } : {}), ...("url" in r && r.url ? { url: r.url } : {}) };
-    return saveReply({ ...adminTurn(msg || `[сотрудник отправил ${FILE_WORD[kind]}]`, r), m, ...(qt ? { qt } : {}) }, r);
+    const voice = !!b.voice && kind === "audio";
+    const m = { k: kind, name, ...(f.mime ? { mime: f.mime.slice(0, 60) } : {}), size: f.size, ...(r.id ? { id: r.id } : {}), ...("url" in r && r.url ? { url: r.url } : {}),
+      ...(voice ? { v: 1, ...(b.dur > 0 ? { d: b.dur } : {}) } : {}) };
+    return saveReply({ ...adminTurn(msg || (voice ? "[сотрудник отправил голосовое]" : `[сотрудник отправил ${FILE_WORD[kind]}]`), r), m, ...(qt ? { qt } : {}) }, r);
   }
   if (P === "/api/inbox/act") {
     const act = String(b.act || "");
     let actWarn = ""; // «не знаем, ушло ли» у сообщения клиенту при «Отправить клиенту и закрыть»
-    if (act === "resolve") {
+    // сотрудник открыл чат (02.11.2026): «новое» снимается у всех сотрудников, «Ждёт ответа» — нет: его снимают ответ или «Готово».
+    // Только при переписках в D1 (у Winchester): там запись чата сливается с одновременными. В KV запись по старой копии затёрла бы
+    // соседнюю (новое сообщение клиента) — без D1 пульт помнит прочитанное на своём устройстве, как раньше
+    if (act === "read") {
+      if (chatMode(env, cid) !== "d1") return jsonP({ ok: true, local: true });
+      const at = Math.min(now, Math.max(0, Math.round(+b.at || 0)) || now);
+      if ((+p.rd || 0) >= at) return jsonP({ ok: true, rd: +p.rd });
+      try { h = await logTurns(env.KV, hk, [], pr => { pr.rd = Math.max(+pr.rd || 0, at); }); }
+      catch (e) { console.log("inbox read", String(e).slice(0, 120)); return jsonP({ error: "Сервер не ответил." }, 503); }
+      return jsonP({ ok: true, rd: +((h.profile || {}).rd || at) });
+    }
+    if (act === "hide" || act === "unhide") {
+      // «Удалить у меня» (02.11.2026, services/inbox/remove.js): скрыто в пульте у всех сотрудников; у клиента сообщение остаётся
+      const sel = turnSel(b), i0 = sel ? findTurn(h.turns || [], sel) : -1;
+      if (!sel) return jsonP({ error: "Не выбрано сообщение." }, 400);
+      if (i0 < 0) return jsonP({ error: DEL_WHY.nomsg, code: "nomsg" }, 404);
+      if ((act === "hide") !== !!h.turns[i0].hid) h = await logTurns(env.KV, hk, [], (pr, hh) => {
+        const i = findTurn(hh.turns || [], sel), t = i >= 0 ? hh.turns[i] : null;
+        if (!t || (act === "hide") === !!t.hid) return;
+        if (act === "hide") t.hid = { at: now, by: who }; else delete t.hid;
+        chatAudit(pr, now, who, act);
+      });
+    }
+    else if (act === "delete") {
+      // «Удалить у всех» (02.11.2026, services/inbox/remove.js): только наше сообщение второго номера, не позже 59 часов, один раз на все
+      // устройства (отметка D1 del-<номер сообщения>); неизвестно, удалилось ли, — отметка dlu и предупреждение, без повтора
+      if (ch !== "ga" || !gaOn) return jsonP({ error: DEL_WHY.channel, code: "channel" }, 409);
+      if (isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
+      const mid = String(b.mid || "").slice(0, 80);
+      if (!mid) return jsonP({ error: DEL_WHY.nomid, code: "nomid" }, 400);
+      const why = delAllWhy((h.turns || [])[findTurn(h.turns || [], { mid })], now);
+      if (why && why !== "deleted") return jsonP({ error: DEL_WHY[why], code: why }, why === "nomsg" ? 404 : 409);
+      if (!why) {
+        const r = /** @type {any} */ (await sendOnce(env, cid, ch, id, delRid(mid), () => gaDeleteMsg(env, cid, id, mid)));
+        if ("blocked" in r) return blockedAnswer(r.blocked);
+        if (r.dup === "busy") return jsonP({ error: DEL_WHY.busy, code: "busy" }, 409);
+        if (!r.ok) return jsonP({ error: r.error, ...(r.gone ? { code: "gone" } : {}) }, 409);
+        const unknown = !!r.unknown;
+        if (unknown) actWarn = DEL_UNKNOWN;
+        h = await logTurns(env.KV, hk, [], (pr, hh) => {
+          const i = findTurn(hh.turns || [], { mid }), t = i >= 0 ? hh.turns[i] : null;
+          if (!t || t.role === "user" || t.del) return;
+          if (unknown) { if (t.dlu) return; t.dlu = { at: now, by: who }; chatAudit(pr, now, who, "delete-unknown"); }
+          else { t.del = 1; t.dl = { at: now, by: who }; delete t.dlu; chatAudit(pr, now, who, "delete"); }
+        });
+      }
+    }
+    else if (act === "resolve") {
       if ((await view()).reqs.length) return jsonP({ error: "В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке, тогда чат закроется сам." }, 409);
       if (p.need && !b.force) return jsonP({ confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" }, 409); // ТЗ v2.0 §2.5: закрытие с вопросом — только с подтверждением
       h = await logTurns(env.KV, hk, [], pr => { delete pr.need; pr.done = now; chatAudit(pr, now, who, p.need ? "close-unanswered" : "close"); });
@@ -359,9 +411,12 @@ export async function inboxApi(request, env, url, s, ctx) {
 function turnView(t, turns) {
   const q = quoteView(turns, t);
   return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.mid ? { mid: String(t.mid) } : {}), ...(q ? { q } : {}),
-    ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}) } } : {}),
+    ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}),
+      ...(t.m.v ? { v: 1 } : {}), ...(t.m.d ? { d: +t.m.d || 0 } : {}) } } : {}),
     ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.st && t.sa ? { sa: +t.sa || 0 } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),
-    ...(t.ed ? { ed: 1 } : {}), ...(t.del ? { del: 1 } : {}), ...(t.re ? { re: String(t.re).slice(0, 8) } : {}) };
+    ...(t.ed ? { ed: 1 } : {}), ...(t.del ? { del: 1 } : {}), ...(t.re ? { re: String(t.re).slice(0, 8) } : {}),
+    // скрыто в пульте («Удалить у меня»), удалено у всех нами, неизвестно, удалилось ли (02.11.2026)
+    ...(t.hid ? { hid: 1 } : {}), ...(t.dl ? { dl: 1 } : {}), ...(t.dlu ? { dlu: 1 } : {}) };
 }
 // на что ответил клиент: текст нашего автоматического сообщения (коротко) и когда оно ушло
 /** @param {any[]} turns @param {any} src */
@@ -386,5 +441,6 @@ async function readUpload(request) {
   if (!up || typeof up === "string" || typeof up.arrayBuffer !== "function") return fail(400, "Выберите файл.");
   const str = (/** @type {string} */ k) => { const v = f.get(k); return typeof v === "string" ? v : ""; };
   return { ok: /** @type {const} */ (true), file: { blob: /** @type {Blob} */ (up), name: String(up.name || "").slice(0, 200), mime: String(up.type || "").slice(0, 100), size: +up.size || 0 },
-    fields: { text: str("caption").slice(0, 4000), quote: str("quote"), op: str("op"), rid: str("rid") } };
+    // voice — голосовое, записанное в пульте (02.11.2026): в переписке — плеер голосового, dur — его длина в секундах
+    fields: { text: str("caption").slice(0, 4000), quote: str("quote"), op: str("op"), rid: str("rid"), voice: str("voice") === "1", dur: Math.max(0, Math.min(3600, Math.round(+str("dur") || 0))) } };
 }

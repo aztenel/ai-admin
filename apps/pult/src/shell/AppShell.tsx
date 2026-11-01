@@ -62,23 +62,28 @@ export function AppShell({ route, children }: { route: Route; children: ReactNod
       {/* iPhone горизонтально: вырез экрана бывает и справа — содержимое не заходит под него */}
       <main className="relative flex min-w-0 flex-1 flex-col md:pr-safe">{children}</main>
 
+      {/* телефон (решение владельца 02.11.2026): снизу четыре раздела — Чаты, Рассылки, Клиенты, Настройки; «Заявки» открываются
+          кнопкой в списке чатов и считаются частью «Чатов» */}
       {!inConversation && !deepSettings && !inClient && (
         <nav aria-label="Разделы" className="hide-kb pb-safe absolute inset-x-0 bottom-0 z-30 border-t border-line bg-surface md:hidden">
           <ul className="flex">
-            {items.map((it) => (
+            {items.filter((it) => it.id !== "requests").map((it) => {
+              const on = route.name === it.id || (it.id === "inbox" && route.name === "requests");
+              return (
               <li key={it.id} className="flex-1">
                 <a
                   href={href({ name: it.id } as Route)}
                   onClick={(e) => (e.preventDefault(), go(it.id))}
-                  aria-current={route.name === it.id ? "page" : undefined}
-                  className={cn("relative flex h-[3.125rem] flex-col items-center justify-center gap-[3px] text-[0.6875rem] font-medium leading-none", route.name === it.id ? "text-accent" : "text-fg-3")}
+                  aria-current={on ? "page" : undefined}
+                  className={cn("relative flex h-[3.125rem] flex-col items-center justify-center gap-[3px] text-[0.6875rem] font-medium leading-none", on ? "text-accent" : "text-fg-3")}
                 >
-                  <it.icon aria-hidden className="size-6" strokeWidth={route.name === it.id ? 2 : 1.6} />
+                  <it.icon aria-hidden className="size-6" strokeWidth={on ? 2 : 1.6} />
                   {it.label}
                   {!!it.badge && <CountBadge n={it.badge} tone="critical" className="absolute left-[calc(50%+0.25rem)] top-1 ring-2 ring-surface" />}
                 </a>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </nav>
       )}

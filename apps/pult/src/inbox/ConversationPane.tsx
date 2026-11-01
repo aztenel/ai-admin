@@ -78,6 +78,25 @@ export function ConversationPane({
     const warn = await store.sendFiles(convKey, files, caption, q);
     if (warn.length) toast(warn.join(" "), "critical");
   };
+  // голосовое — тот же путь, что файлы (send-file, rid, защита D1), с отметкой голосового и длиной
+  const sendVoice = async (file: File, ms: number) => {
+    const q = quote || undefined;
+    setQuoteFor(null);
+    const warn = await store.sendFiles(convKey, [file], "", q, { dur: Math.max(1, Math.round(ms / 1000)) });
+    if (warn.length) toast(warn.join(" "), "critical");
+  };
+  // «Удалить у меня» — скрыть в пульте у всех сотрудников (у клиента остаётся), «Вернуть»; «Удалить у всех» — после подтверждения
+  const hideMsg = async (m: Message, hide: boolean) => {
+    const r = await store.messageAct(convKey, m, hide ? "hide" : "unhide");
+    if (r && "error" in r) toast(r.error, "critical");
+    else if (hide) toast("Скрыто в пульте у всех сотрудников. У клиента сообщение осталось.");
+  };
+  const deleteAll = async (m: Message) => {
+    const r = await store.messageAct(convKey, m, "delete");
+    if (r && "error" in r) toast(r.error, "critical");
+    else if (r && "warn" in r) toast(r.warn, "critical");
+    else toast("Удалено у всех");
+  };
   const retry = async (m: Message) => {
     if (!m.hasFile) return send(m.text, m.id);
     const warn = await store.retryFile(convKey, m.id);
@@ -194,6 +213,8 @@ export function ConversationPane({
             onRetry={retry}
             onDrop={(m) => store.dropOutgoing(convKey, m.id)}
             onReply={(q) => setQuoteFor({ key: convKey, q })}
+            onHide={hideMsg}
+            onDeleteAll={d.canDelete ? deleteAll : undefined}
           />
           {d.requests.map((q) => (
             <RequestCard key={q.id} q={q} since={d.attention?.since} now={now} canMessage={d.reply.allowed} booking={!!ws.capabilities.booking} onDone={(text) => store.complete(convKey, q.id, text)} />
@@ -211,6 +232,7 @@ export function ConversationPane({
             onTimes={ws.capabilities.booking ? () => setTimesOpen(true) : undefined}
             address={ws.branches.find((b) => b.address)?.address}
             onFiles={d.canFiles ? sendFiles : undefined}
+            onVoice={d.canFiles ? sendVoice : undefined}
             quote={d.canQuote ? quote : null}
             onClearQuote={() => setQuoteFor(null)}
             contactName={d.contact.name || d.contact.profileName}

@@ -161,8 +161,12 @@ export interface DataSource extends CampaignSource, ContactSource {
    *  opts.quote — номер сообщения, на которое это ответ (только второй номер). */
   send(ws: string, ref: ConversationRef, text: string, opts?: SendOpts): Promise<ConversationDetail>;
   /** Файл клиенту (только второй номер, detail.canFiles). Ответа на отправку нет — сообщение со статусом unknown и warning. */
-  sendFile?(ws: string, ref: ConversationRef, file: File, opts: SendOpts & { caption?: string }): Promise<ConversationDetail>;
+  /** voice — голосовое, записанное в пульте; dur — длина в секундах. */
+  sendFile?(ws: string, ref: ConversationRef, file: File, opts: SendOpts & { caption?: string; voice?: boolean; dur?: number }): Promise<ConversationDetail>;
   act(ws: string, ref: ConversationRef, act: ChatAction, extra?: ChatActionExtra): Promise<ConversationDetail>;
+  /** Сотрудник открыл чат и видел сообщения клиента до at: «новое» снимается у всех сотрудников (переписки в D1), «Ждёт ответа» —
+   *  нет. → до какого времени чат теперь прочитан. Без D1 — только на этом устройстве. */
+  markRead?(ws: string, ref: ConversationRef, at: number): Promise<number>;
   /** Чаты, где писали только мы (клиент не отвечал): в общем списке их нет, показываются по кнопке. */
   outboundOnly?(ws: string): Promise<ConversationSummary[]>;
   /** Ближайшие записи клиента в Altegio (available: false — журнал не подключён). */

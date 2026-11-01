@@ -33,9 +33,9 @@ import { getOperator } from "@/lib/operator";
 
 // ---------- ответы сервера ----------
 type ChRaw = "wa" | "ga" | "web";
-type ListRowRaw = { ch: ChRaw; id: string; t: number; li: number; s: string; d: "" | "u" | "a" | "b"; nm: string; ph: string; nd: string; pu: number; st: 0 | 1; bk: number; tp?: string; rs?: string; as?: string; dn?: 1; ls?: string };
-type ListRaw = { client: { id: string; name: string; off: boolean }; need: number; total: number; more: boolean; chats: ListRowRaw[]; now: number; lines?: Record<string, { label: string; phone?: string }>; ops?: string[]; outOnly?: number; ver?: string; same?: 1 };
-type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; sa?: number; mid?: string; q?: { mid: string; x: string; r: "u" | "a" | "b" }; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string };
+type ListRowRaw = { ch: ChRaw; id: string; t: number; li: number; s: string; d: "" | "u" | "a" | "b"; nm: string; ph: string; nd: string; pu: number; st: 0 | 1; bk: number; tp?: string; rs?: string; as?: string; dn?: 1; ls?: string; rd?: number };
+type ListRaw = { client: { id: string; name: string; off: boolean }; need: number; total: number; more: boolean; chats: ListRowRaw[]; now: number; lines?: Record<string, { label: string; phone?: string }>; ops?: string[]; outOnly?: number; ver?: string; same?: 1; reads?: true };
+type TurnRaw = { r: "u" | "a" | "b"; x: string; t: number; sa?: number; mid?: string; q?: { mid: string; x: string; r: "u" | "a" | "b" }; m?: { k?: string; id: string; f: boolean; name?: string; size?: number; mime?: string; v?: 1; d?: number }; op?: string; st?: string; se?: string; auto?: "service" | "campaign"; ed?: 1; del?: 1; re?: string; hid?: 1; dl?: 1; dlu?: 1 };
 type ReqRaw = { id: string; kind: string; name: string; service: string; time: string; note: string; at: string };
 type ChatRaw = {
   promo: { at: number; name: string; text: string } | null;
@@ -161,8 +161,10 @@ function summary(r: ListRowRaw, off: boolean, now: number, isRead: (key: string,
     assignee: r.as || undefined,
     done: !!r.dn,
     lastStatus: status(r.ls),
-    // счётчика непрочитанных на сервере нет: «новое» — сообщение клиента после последнего просмотра на этом устройстве
-    unread: inbound > 0 && !isRead(key, inbound),
+    // «новое» — сообщение клиента, которое никто из сотрудников ещё не открыл (rd — переписки в D1, общее) и не открывали на этом
+    // устройстве. «Ждёт ответа» (attention) — отдельно: открыть чат не значит ответить
+    unread: inbound > 0 && !isRead(key, inbound) && !((r.rd || 0) >= inbound),
+    ...(r.rd ? { readAt: r.rd } : {}),
   };
 }
 
@@ -182,12 +184,15 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     if (t.se) m.statusError = t.se;
     if (t.ed) m.edited = true;
     if (t.del) m.deleted = true;
+    if (t.dl) m.deletedByUs = true;
+    if (t.dlu) m.deleteUnknown = true;
+    if (t.hid) m.hidden = true;
     if (t.re) m.reaction = t.re;
     if (t.m) {
       // у ответа с телефона сервер кладёт m без вида файла (src/controllers/inbox.js: m = "phone" → { id: "", f: false })
       if (!t.m.k && from === "operator") m.via = "phone";
       else if (t.m.k) {
-        const media: Message["media"] = { kind: MEDIA[t.m.k] || "document", ...(t.m.name ? { name: t.m.name } : {}), ...(t.m.mime ? { mime: t.m.mime } : {}), ...(t.m.size ? { size: t.m.size } : {}) };
+        const media: Message["media"] = { kind: MEDIA[t.m.k] || "document", ...(t.m.name ? { name: t.m.name } : {}), ...(t.m.mime ? { mime: t.m.mime } : {}), ...(t.m.size ? { size: t.m.size } : {}), ...(t.m.v ? { voice: true } : {}), ...(t.m.d ? { dur: t.m.d } : {}) };
         if (t.m.f) media.url = `/api/inbox/media?c=${enc(ws)}&ch=${d.ch}&id=${enc(d.id)}&` + (t.m.id ? `mid=${enc(t.m.id)}` : `n=${i}`);
         m.media = media;
       }
@@ -220,6 +225,7 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     reply,
     canFiles: !!d.canFiles && reply.allowed,
     canQuote: !!d.canQuote && reply.allowed,
+    canDelete: !!d.canFiles, // второй номер, база защиты от повтора есть, не тестовая версия (сервер проверит ещё раз)
     payment: d.pay,
     campaign: d.promo || undefined,
     warning: warn,
@@ -303,7 +309,7 @@ export function createLiveSource(): DataSource {
         capabilities: { booking: sc ? sc.booking !== "none" : null, campaigns: true },
       };
       const shown = wa.chats.length + web.chats.length, total = wa.total + web.total;
-      return { workspace, conversations, truncated: total > shown ? { shown, total } : null, outOnly: wa.outOnly || 0, operators: wa.ops || [], now, ...(wa.ver ? { ver: wa.ver } : {}) };
+      return { workspace, conversations, truncated: total > shown ? { shown, total } : null, outOnly: wa.outOnly || 0, operators: wa.ops || [], now, ...(wa.ver ? { ver: wa.ver } : {}), ...(wa.reads ? { reads: true } : {}) };
     },
     async bookingCard(ws, ref) {
       return call<{ available: boolean; records: BookingCard[] }>(`/api/inbox/booking?c=${enc(ws)}&ch=${enc(ref.channelId)}&id=${enc(ref.externalId)}`);
@@ -356,6 +362,8 @@ export function createLiveSource(): DataSource {
       if (opts.caption) fd.set("caption", opts.caption);
       if (opts.quote) fd.set("quote", opts.quote);
       if (opts.rid) fd.set("rid", opts.rid);
+      if (opts.voice) fd.set("voice", "1");
+      if (opts.dur) fd.set("dur", String(Math.round(opts.dur)));
       const op = getOperator();
       if (op) fd.set("op", op);
       let r: Response;
@@ -374,8 +382,13 @@ export function createLiveSource(): DataSource {
       return detail(ws, d.chat, d.warn);
     },
     async act(ws, ref, act: ChatAction, extra?: ChatActionExtra) {
-      const d = await call<{ ok: true; chat: ChatRaw }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act, op: getOperator(), ...(extra || {}) });
-      return detail(ws, d.chat);
+      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act, op: getOperator(), ...(extra || {}) });
+      return detail(ws, d.chat, d.warn);
+    },
+    async markRead(ws, ref, at) {
+      marks.mark(ws, keyOf(ref.channelId, ref.externalId), at);
+      const d = await call<{ ok: true; rd?: number; local?: true }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act: "read", at: Math.round(at) });
+      return d.rd || at;
     },
     async complete(ws, ref, leadId, text) {
       // номер отправки — от заявки и текста: повтор после обрыва связи не отправит клиенту второй раз (аудит 31.10.2026)

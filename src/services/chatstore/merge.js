@@ -70,8 +70,9 @@ export function mergeProfile3(seen, mine, cur) {
     if (!S.every(s => !eq((s || {})[k], m))) continue; // не менял — остаётся текущее
     if (m === undefined) { delete out[k]; continue; }
     if (Array.isArray(m)) { out[k] = mergeList(S.map(s => (s || {})[k]), m, cur[k]); continue; }
-    // пауза бота и последнее сообщение клиента — только вперёд: более поздняя пауза другого запроса не укорачивается
-    if ((k === "pausedUntil" || k === "li") && typeof m === "number") { out[k] = Math.max(m, +cur[k] || 0); continue; }
+    // пауза бота, последнее сообщение клиента и «прочитано» — только вперёд: более поздняя пауза или отметка «прочитано» другого
+    // запроса (второй сотрудник открыл чат позже) не откатывается
+    if ((k === "pausedUntil" || k === "li" || k === "rd") && typeof m === "number") { out[k] = Math.max(m, +cur[k] || 0); continue; }
     out[k] = m;
   }
   return out;

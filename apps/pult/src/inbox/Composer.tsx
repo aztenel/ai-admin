@@ -15,6 +15,7 @@ import { isTouch } from "@/lib/viewport";
 import { store } from "@/state/store";
 import { ACCEPT, FILES_AT_ONCE, FileSheet } from "./FileSheet";
 import { quoteWho } from "./Messages";
+import { MicButton, useVoiceRecorder, VoiceBar } from "./VoiceRecorder";
 
 const drafts = new Map<string, string>();
 const FROM: Record<string, string> = { "Основной WhatsApp": "с основного номера", "Второй WhatsApp": "со второго номера" };
@@ -37,11 +38,19 @@ type ComposerProps = {
   onSend: (text: string) => void; onTimes?: () => void; address?: string;
   /** Скрепка: только у второго номера (detail.canFiles). */
   onFiles?: (files: File[], caption: string) => void;
+  /** Голосовое (тоже только второй номер): готовый файл и длина записи в мс. */
+  onVoice?: (file: File, ms: number) => void;
   /** Ответ на это сообщение (цитата) и как его убрать. */
   quote?: Quote | null; onClearQuote?: () => void; contactName?: string;
 };
-export function Composer({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend, onTimes, address, onFiles, quote, onClearQuote, contactName }: ComposerProps) {
+export function Composer(props: ComposerProps) {
+  // своя запись голоса у каждого чата: перешли в другой чат — микрофон освобождается, запись не переезжает
+  return <ComposerInner key={props.convKey} {...props} />;
+}
+function ComposerInner({ convKey, channel, reply, payment, botActive, multiChannel, phone, now, onSend, onTimes, address, onFiles, onVoice, quote, onClearQuote, contactName }: ComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const voice = useVoiceRecorder();
+  const recording = voice.s.st !== "idle";
   const [picked, setPicked] = useState<File[]>([]);
   useEffect(() => setPicked([]), [convKey]);
   // ближайшая запись клиента из журнала Altegio — для ответа «Когда моя запись?»; грузится при открытии меню
@@ -124,6 +133,10 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
         </div>
       )}
       <div className="mx-auto flex max-w-[50rem] items-end gap-2">
+        {recording && onVoice ? (
+          <VoiceBar r={voice} onSend={onVoice} />
+        ) : (
+          <>
         <Menu onOpenChange={(v) => v && loadVisit()}>
           <MenuTrigger asChild>
             <IconButton icon={Zap} label="Быстрые ответы и реквизиты" className="text-brand-gold" />
@@ -221,15 +234,22 @@ export function Composer({ convKey, channel, reply, payment, botActive, multiCha
             </>
           )}
         </div>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!text.trim()}
-          aria-label="Отправить"
-          className="relative grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1 hover:brightness-95 disabled:opacity-40"
-        >
-          <SendHorizontal aria-hidden className="size-[1.125rem]" strokeWidth={2.2} />
-        </button>
+        {/* пустое поле второго номера — микрофон (как в WhatsApp), есть текст — «Отправить» */}
+        {onVoice && !text.trim() ? (
+          <MicButton onClick={() => void voice.start()} busy={false} />
+        ) : (
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!text.trim()}
+            aria-label="Отправить"
+            className="relative grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-fg transition-[opacity,background-color] after:absolute after:-inset-1 hover:brightness-95 disabled:opacity-40"
+          >
+            <SendHorizontal aria-hidden className="size-[1.125rem]" strokeWidth={2.2} />
+          </button>
+        )}
+          </>
+        )}
       </div>
       {onFiles && (
         <FileSheet

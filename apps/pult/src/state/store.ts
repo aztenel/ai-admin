@@ -31,9 +31,11 @@ export function fileKindOf(f: { type: string; name: string }): MediaKind {
   return "document";
 }
 
-// разделы чатов (ТЗ v2.0 §2.1): нужен ответ, записи и изменения, ответы на рассылки и напоминания, назначено мне, все, готово
+// разделы чатов (ТЗ v2.0 §2.1): нужен ответ, записи и изменения, ответы на рассылки и напоминания, назначено мне, все, готово.
+// По умолчанию — «Все» (решение владельца 02.11.2026: «Все» — первая вкладка, «Нужен ответ» — вторая, со счётчиком)
 export type Filter = "waiting" | "booking" | "replies" | "mine" | "all" | "done";
 const FILTERS: Filter[] = ["waiting", "booking", "replies", "mine", "all", "done"];
+const DEFAULT_FILTER: Filter = "all";
 /** Итог действия в чате: ошибка, вопрос перед действием (например, «клиент ждёт ответа — закрыть?») или null — сделано. */
 export type ActResult = null | { error: string } | { confirm: string };
 export type DetailState = { data?: ConversationDetail; loading: boolean; error?: string; at?: number };
@@ -62,6 +64,8 @@ export type State = {
   scope: Scope;
   filter: Filter;
   refreshing: boolean;
+  /** «Прочитано» общее для сотрудников (переписки в D1): открытый чат пульт отмечает на сервере. */
+  reads: boolean;
   /** Замер скорости пульта (Настройки → Диагностика): через сколько мс после сервера пульт показал новое — по видам. */
   speed: Speed;
 };
@@ -88,11 +92,13 @@ const initial: State = {
   details: {},
   outbox: {},
   scope: { kind: "all" },
-  filter: "waiting",
+  filter: DEFAULT_FILTER,
   refreshing: false,
+  reads: false,
 };
 
-const VIEW_KEY = "pult2.view";
+// v2 (02.11.2026): раньше «Нужен ответ» было выбором по умолчанию и запоминалось у всех — с новым порядком начинаем со «Все»
+const VIEW_KEY = "pult2.view2";
 type SavedView = { scope: Scope; filter: Filter };
 function savedView(ws: string): SavedView | null {
   try {
@@ -199,7 +205,7 @@ class Store {
     }
     resetNotify();
     for (const k of [...this.pending.keys()]) this.forgetFile(k); // неотправленные файлы прежней компании
-    this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, showOut: false, outOnly: 0, operators: [], filter: v && FILTERS.includes(v.filter) ? v.filter : "waiting", scope: v?.scope || { kind: "all" } });
+    this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, showOut: false, outOnly: 0, operators: [], filter: v && FILTERS.includes(v.filter) ? v.filter : DEFAULT_FILTER, scope: v?.scope || { kind: "all" }, reads: false });
     // адрес с ?c= — как у рабочего пульта (/inbox?c=…): ссылку можно открыть заново и переслать коллеге
     const u = new URL(location.href);
     if (u.searchParams.get("c") !== id) {
@@ -236,7 +242,8 @@ class Store {
     const workspace = { ...snap.workspace, channels: mergeChannels(snap.workspace.channels, report?.channels) };
     // показанные по кнопке чаты только с нашими сообщениями не пропадают при обновлении списка
     const keep = this.state.showOut ? this.state.conversations.filter((c) => !c.inbound && !snap.conversations.some((x) => x.key === c.key)) : [];
-    this.set({ workspace, conversations: this.rowStatus(keep.length ? [...snap.conversations, ...keep] : snap.conversations), truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope) });
+    this.set({ workspace, conversations: this.rowStatus(keep.length ? [...snap.conversations, ...keep] : snap.conversations), truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope), reads: !!snap.reads });
+    if (this.open) this.readMark(this.open);
     if (this.state.mode === "live") notifyWaiting(snap.conversations, this.open, (key) => navigate({ name: "inbox", conv: key }));
   }
 
@@ -380,11 +387,33 @@ class Store {
       const d = this.state.details[key];
       if (!d?.data) this.opening.set(key, performance.now());
       if (!d?.data || Date.now() - (d.at || 0) > 5e3) this.loadConversation(key, !!d?.data);
-      // открытый чат прочитан
+      // открытый чат прочитан: «новое» снимается (и у других сотрудников — readMark), «Ждёт ответа» остаётся до ответа или «Готово»
       const c = this.state.conversations.find((x) => x.key === key);
       if (c && (c.unread || c.unreadCount)) this.set({ conversations: this.state.conversations.map((x) => (x.key === key ? { ...x, unread: false, unreadCount: 0 } : x)) });
+      this.readMark(key);
     }
     this.scheduleChat();
+  }
+
+  private reading = new Set<string>(); // чаты, о прочтении которых пульт сейчас сообщает серверу: запросы не наслаиваются
+  /** Сотрудник видит открытый чат: сообщить серверу, до какого сообщения клиента прочитано (только переписки в D1 — там это общее
+   *  для всех сотрудников; без D1 прочитанное помнит это устройство). Свёрнутый пульт ничего не читает. */
+  private readMark(key: string) {
+    const ws = this.state.wsId, ref = parseKey(key), src = this.src;
+    if (!src?.markRead || !ws || !ref || !this.state.reads || this.open !== key || document.hidden || this.reading.has(key)) return;
+    const c = this.state.conversations.find((x) => x.key === key), msgs = this.state.details[key]?.data?.messages || [];
+    const at = Math.max(c?.lastInboundAt || 0, ...msgs.filter((m) => m.from === "contact").map((m) => m.at || 0));
+    if (!at || (c?.readAt || 0) >= at) return;
+    this.reading.add(key);
+    const g = this.gen;
+    src
+      .markRead(ws, ref, at)
+      .then((rd) => {
+        if (g !== this.gen) return;
+        this.set({ conversations: this.state.conversations.map((x) => (x.key === key ? { ...x, readAt: Math.max(x.readAt || 0, rd || at), unread: false, unreadCount: 0 } : x)) });
+      })
+      .catch(() => {}) // не вышло — «новое» останется у других сотрудников до следующего открытия; здесь оно уже снято
+      .finally(() => this.reading.delete(key));
   }
 
   async loadConversation(key: string, quiet = false) {
@@ -407,6 +436,7 @@ class Store {
       this.setDetail(key, { data, loading: false, error: undefined, at: Date.now() });
       const rows = this.rowStatus(this.state.conversations);
       if (rows !== this.state.conversations) this.set({ conversations: rows });
+      if (this.open === key) this.readMark(key); // новое сообщение клиента в открытом чате — тоже прочитано
     } catch (e) {
       if (g !== this.gen) return;
       if (e instanceof ApiError && e.offline) this.set({ offline: true });
@@ -453,11 +483,12 @@ class Store {
 
   /** Файлы — по одному, по очереди: каждый сразу в ленте своим пузырём со своим состоянием («отправляется», ушло, не ушло).
    *  Подпись — у одного файла, цитата — у первого. Вернёт предупреждения сервера (например, «не знаем, ушло ли»). */
-  async sendFiles(key: string, files: File[], caption: string, quote?: Quote) {
+  async sendFiles(key: string, files: File[], caption: string, quote?: Quote, voice?: { dur: number }) {
     const ws = this.state.wsId, ref = parseKey(key);
     if (!this.src?.sendFile || !ws || !ref || !files.length) return [];
     const now = Date.now(), seed = Math.random().toString(36).slice(2, 8);
-    const items = files.map((file, i) => ({ id: `file-${Math.floor(now).toString(36)}-${seed}-${i}`, file, caption: files.length === 1 ? caption : "", quote: i === 0 ? quote : undefined }));
+    // голосовое — один файл с отметкой voice: в переписке у него плеер, на сервере — отметка голосового (02.11.2026)
+    const items = files.map((file, i) => ({ id: `file-${Math.floor(now).toString(36)}-${seed}-${i}`, file, caption: files.length === 1 ? caption : "", quote: i === 0 ? quote : undefined, ...(voice && files.length === 1 ? { voice } : {}) }));
     for (const it of items) this.pending.set(it.id, it);
     this.setOutbox(key, (box) => [...box, ...items.map((it) => this.fileMessage(it, now))]);
     const warnings: string[] = [];
@@ -472,19 +503,20 @@ class Store {
     const r = await this.uploadOne(key, id);
     return r?.ok && r.warning ? [r.warning] : [];
   }
-  private pending = new Map<string, { id: string; file: File; caption: string; quote?: Quote; url?: string }>();
-  private fileMessage(it: { id: string; file: File; caption: string; quote?: Quote; url?: string }, at: number): Message {
+  private pending = new Map<string, { id: string; file: File; caption: string; quote?: Quote; url?: string; voice?: { dur: number } }>();
+  private fileMessage(it: { id: string; file: File; caption: string; quote?: Quote; url?: string; voice?: { dur: number } }, at: number): Message {
     const kind = fileKindOf(it.file);
-    // фото и видео видно сразу, до ответа сервера: ссылка на файл в этом браузере (освобождается, когда пузырь уходит)
-    if (!it.url && (kind === "image" || kind === "video")) it.url = URL.createObjectURL(it.file);
-    return { id: it.id, from: "operator", text: it.caption, at, delivery: "sending", hasFile: true, ...(it.quote ? { quote: it.quote } : {}), media: { kind, name: it.file.name, mime: it.file.type, size: it.file.size, ...(it.url ? { url: it.url } : {}) } };
+    // фото, видео и голосовое видно и слышно сразу, до ответа сервера: ссылка на файл в этом браузере (освобождается, когда пузырь уходит)
+    if (!it.url && (kind === "image" || kind === "video" || kind === "audio")) it.url = URL.createObjectURL(it.file);
+    return { id: it.id, from: "operator", text: it.caption, at, delivery: "sending", hasFile: true, ...(it.quote ? { quote: it.quote } : {}),
+      media: { kind, name: it.file.name, mime: it.file.type, size: it.file.size, ...(it.url ? { url: it.url } : {}), ...(it.voice ? { voice: true, dur: it.voice.dur } : {}) } };
   }
   private async uploadOne(key: string, id: string) {
     const ws = this.state.wsId, ref = parseKey(key), it = this.pending.get(id);
     if (!this.src?.sendFile || !ws || !ref || !it) return null;
     this.setOutbox(key, (box) => box.map((x) => (x.id === id ? { ...x, delivery: "sending" as const, error: undefined } : x)));
     try {
-      const data = await this.src.sendFile(ws, ref, it.file, { rid: id, caption: it.caption, ...(it.quote ? { quote: it.quote.mid } : {}) });
+      const data = await this.src.sendFile(ws, ref, it.file, { rid: id, caption: it.caption, ...(it.quote ? { quote: it.quote.mid } : {}), ...(it.voice ? { voice: true, dur: it.voice.dur } : {}) });
       this.forgetFile(id);
       this.setOutbox(key, (box) => box.filter((x) => x.id !== id));
       this.applyDetail(key, data);
@@ -521,6 +553,26 @@ class Store {
     } catch (e) {
       if (e instanceof ApiError && e.confirm) return { confirm: e.confirm };
       return { error: errText(e) };
+    }
+  }
+  private removing = new Set<string>(); // сообщения, которые сейчас скрываются или удаляются: второе нажатие ничего не отправляет
+  /** «Удалить у меня» (скрыть в пульте), «Вернуть» и «Удалить у всех» (только наше сообщение второго номера; сервер удаляет один
+   *  раз на все устройства). → null — сделано; warn — сделано, но с оговоркой (неизвестно, удалилось ли у клиента); error — нет. */
+  async messageAct(key: string, m: Message, act: "hide" | "unhide" | "delete"): Promise<null | { warn: string } | { error: string }> {
+    const ws = this.state.wsId, ref = parseKey(key);
+    if (!this.src || !ws || !ref) return { error: "Чат не найден." };
+    const id = `${key}|${m.mid || m.at}`;
+    if (this.removing.has(id)) return null;
+    this.removing.add(id);
+    try {
+      const sel: ChatActionExtra = m.mid ? { mid: m.mid } : { at: m.at, r: m.from === "contact" ? "u" : m.from === "operator" ? "a" : "b" };
+      const d = await this.src.act(ws, ref, act, sel);
+      this.applyDetail(key, d);
+      return d.warning ? { warn: d.warning } : null;
+    } catch (e) {
+      return { error: errText(e) };
+    } finally {
+      this.removing.delete(id);
     }
   }
   /** GET к API пульта текущей компании (свободное время Altegio). В демо — «недоступно». */

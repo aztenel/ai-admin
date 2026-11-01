@@ -397,6 +397,15 @@ export function createDemoSource(): DataSource {
         c.requests = [];
         c.bookings = [];
         delete c.attention;
+      } else if (act === "hide" || act === "unhide" || act === "delete") {
+        // демо: скрыть в пульте и «удалить у всех» — как у настоящего пульта, без отправки куда-либо
+        const m = c.messages.find((x) => (extra?.mid ? x.mid === extra.mid : x.at === extra?.at));
+        if (!m) throw new ApiError("Сообщение не найдено. Обновите чат.", 404);
+        if (act === "delete") {
+          if (m.from === "contact") throw new ApiError("Сообщение клиента у него удалить нельзя. Скрыть его в пульте можно: «Удалить у меня».", 409);
+          m.deleted = true;
+          m.deletedByUs = true;
+        } else m.hidden = act === "hide";
       }
       return detail(f, c);
     },

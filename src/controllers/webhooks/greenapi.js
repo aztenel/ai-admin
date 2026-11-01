@@ -77,6 +77,13 @@ export async function handleGreen(body, env, origin, r, opts = {}) {
     const niche = await nicheOf(env, "ga", digitsId, gx);
     if (!niche) return;
     const hk = `h:ga:${niche}:${digitsId}`, now = Date.now(), mid = String(body.idMessage || "");
+    // наше сообщение удалили у всех — с телефона или из пульта (02.11.2026): в пульте «удалено», нового ответа нет, очередь не меняется
+    const md0 = body.messageData || {};
+    if (md0.typeMessage === "deletedMessage") {
+      const e = md0.deletedMessageData || {};
+      if (e.stanzaId) try { await patchTurn(env, hk, String(e.stanzaId).slice(0, 80), true, t => { if (t.del) return false; t.del = 1; delete t.dlu; return true; }); } catch (err) { console.log("ga out delete", String(err)); }
+      return;
+    }
     await kvRetry(async () => {
       const h = (await readHist(env, hk)) || { n: 0, turns: [], profile: {} };
       h.profile = h.profile || {}; const seen = h.profile.echo || [];

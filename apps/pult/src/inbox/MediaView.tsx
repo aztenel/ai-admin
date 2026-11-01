@@ -30,7 +30,7 @@ export function MediaView({ media, onDark, onOpen, mine }: { media: Media; onDar
   // файл не сохранился (например, не знаем, ушёл ли он): имя видно, открыть нельзя
   if (!media.url) return media.name && media.kind !== "location" && media.kind !== "contact" ? <DocView media={media} /> : <Unavailable kind={media.kind} text="Файл не сохранился в переписке." />;
   if (media.kind === "image" || media.kind === "sticker") return <ImageView url={media.url} onOpen={onOpen} mine={mine} />;
-  if (media.kind === "audio") return <VoicePlayer url={media.url} onDark={onDark} />;
+  if (media.kind === "audio") return <VoicePlayer url={media.url} onDark={onDark} mime={media.mime} name={media.name} dur={media.dur} />;
   if (media.kind === "video") return <VideoView url={media.url} onOpen={onOpen} />;
   if (media.kind === "location" || media.kind === "contact") return <Unavailable kind={media.kind} text={media.kind === "location" ? "Геолокация. Откройте в WhatsApp" : "Контакт. Откройте в WhatsApp"} />;
   return <DocView media={media} />;
@@ -172,13 +172,16 @@ async function decodeOgg(url: string): Promise<string> {
   }
 }
 
-export function VoicePlayer({ url, onDark }: { url: string; onDark: boolean }) {
+export function VoicePlayer({ url, onDark, mime, name, dur: dur0 }: { url: string; onDark: boolean; mime?: string; name?: string; dur?: number }) {
   const a = useRef<HTMLAudioElement>(null);
   const [src, setSrc] = useState("");
   const [state, setState] = useState<"idle" | "prep" | "play" | "pause" | "error">("idle");
   const [err, setErr] = useState("");
   const [t, setT] = useState(0);
-  const [dur, setDur] = useState(0);
+  const [dur, setDur] = useState(dur0 || 0);
+  // расшифровывать в браузере — только Ogg (голосовые WhatsApp); M4A с iPhone и MP3 браузер играет сам (02.11.2026: раньше Safari
+  // пытался расшифровать как Ogg и любое не-Ogg аудио — и показывал «недоступно»)
+  const ogg = /ogg|opus/i.test(mime || "") || /\.(ogg|oga|opus)$/i.test(name || "") || (!mime && !name);
   const [speed, setSpeed] = useState(1);
   useEffect(() => () => void (src.startsWith("blob:") && URL.revokeObjectURL(src)), [src]);
 
@@ -190,7 +193,7 @@ export function VoicePlayer({ url, onDark }: { url: string; onDark: boolean }) {
       setState("prep");
       try {
         // сначала как есть; Safari, который не знает Ogg Opus, — через расшифровку
-        const s = oggNative() ? url : await decodeOgg(url);
+        const s = !ogg || oggNative() ? url : await decodeOgg(url);
         setSrc(s);
         el.src = s;
       } catch (e) {
@@ -207,7 +210,7 @@ export function VoicePlayer({ url, onDark }: { url: string; onDark: boolean }) {
   };
   const onError = async () => {
     // нативно не вышло (старый Safari, обрезанный файл) — пробуем расшифровать, иначе — причина с сервера
-    if (src === url) {
+    if (src === url && ogg) {
       try {
         const s = await decodeOgg(url);
         setSrc(s);
@@ -274,8 +277,8 @@ export function VoicePlayer({ url, onDark }: { url: string; onDark: boolean }) {
         onPause={() => setState("pause")}
         onEnded={() => (setState("pause"), setT(0))}
         onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-        onDurationChange={(e) => setDur(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && setDur(e.currentTarget.duration)}
+        onDurationChange={(e) => Number.isFinite(e.currentTarget.duration) && setDur(e.currentTarget.duration)}
         onError={() => src && onError()}
       />
     </div>
