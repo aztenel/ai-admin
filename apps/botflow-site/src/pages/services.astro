@@ -1,10 +1,10 @@
 ---
-import { canContact } from "../config/site";
+import { canContact, BRAND } from "../config/site";
 import Base from "../layouts/Base.astro";
 import Button from "../components/Button.astro";
 import { services } from "../lib/content";
 ---
-<Base title="Услуги" description="Разработка сайтов и веб-приложений, CRM и ERP, интеграции с 1С, банками, мессенджерами и сервисами записи, AI-автоматизация. Студия BOT FLOW, Казахстан.">
+<Base title="Услуги" description={`Разработка сайтов и веб-приложений, CRM и ERP, интеграции с 1С, банками, мессенджерами и сервисами записи, AI-автоматизация. Студия ${BRAND}, Казахстан.`}>
   <section class="wrap pt-10 md:pt-16 lg:pt-20" aria-labelledby="page-title">
     <div class="grid gap-6 lg:grid-cols-12 lg:items-end">
       <h1 id="page-title" class="t-h1 lg:col-span-7">Услуги</h1>

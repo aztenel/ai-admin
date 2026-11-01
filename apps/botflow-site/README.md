@@ -1,6 +1,6 @@
-# Сайт студии BOT FLOW (ИП Bot Flow)
+# Сайт студии TAYVENO (ИП Bot Flow)
 
-Публичный сайт студии разработки: Astro 7 + TypeScript + Tailwind CSS 4, без React. Публикация — Cloudflare Pages.
+Публичный сайт студии разработки: Astro 7 + TypeScript + Tailwind CSS 4, без React. Публикация — Cloudflare Worker `tayveno` (Workers Static Assets), адрес — https://tayveno.xyz.
 Дизайн — утверждённая концепция B «Contemporary Software» (Figma, файл `z9nrk5bW3ZFw7PKyF46rxN`, раздел «Раунд 2»):
 Manrope (заголовки) + Golos Text (текст), белый фон, акцент `#2457A6`, сетка 12 колонок, контейнер 1248, поля 96 / 20.
 
@@ -46,7 +46,7 @@ npm run qa -- --url https://адрес   # то же на опубликован
 npm run check:meta   # что не заполнено для проверки в Meta (--strict — с ошибкой)
 ```
 
-`npm run qa` проверяет собранный `dist/` на локальном сервере с заголовками из `public/_headers` (как Cloudflare Pages).
+`npm run qa` проверяет собранный `dist/` на локальном сервере с заголовками из `public/_headers` (как Cloudflare).
 Нужен Playwright с Chromium (в облачной среде — уже установлен в `/opt/node-tools`). Чтобы проверить форму:
 `PUBLIC_CONTACT_FORM=1 npm run build && npm run qa` (ответ сервера подменяется, в Telegram ничего не уходит).
 
@@ -54,10 +54,10 @@ npm run check:meta   # что не заполнено для проверки в
 
 | | Тестовая | Боевая |
 |---|---|---|
-| Когда | `SITE_URL` не задан | `SITE_URL=https://свой-домен` |
+| Когда | `SITE_URL` не задан, сборка не в Cloudflare | `SITE_URL=https://…` или сборка в Workers Builds (`WORKERS_CI=1` → https://tayveno.xyz) |
 | Адрес в canonical, sitemap, превью | адрес этой публикации Cloudflare (`CF_PAGES_URL`), локально — localhost | `SITE_URL` |
 | Поисковики | закрыто: `noindex` на страницах, `Disallow: /` в robots.txt | открыто, robots.txt со ссылкой на sitemap |
-| Условие | нет | сборка **остановится**, пока не сверено название ИП (`legal.nameVerified`) и нет контакта (почта или телефон) |
+| Условие | нет | сборка **остановится**, если название ИП не сверено (`legal.nameVerified`); без контакта — только предупреждение |
 
 Адреса по умолчанию нет намеренно: 01.11.2026 оказалось, что `botflow-site.pages.dev` занят чужим проектом —
 canonical и ссылки указывали бы на чужой сайт.
@@ -66,23 +66,38 @@ canonical и ссылки указывали бы на чужой сайт.
 «Контакты» на сайте нет: страница без контактов — тупик. Страница `/contacts/` остаётся с реквизитами, закрыта от
 поисковиков и не попадает в карту сайта.
 
-## Публикация на Cloudflare Pages (бесплатно)
+## Публикация: Cloudflare Worker `tayveno`
 
-1. Cloudflare → Workers & Pages → Create → Pages → **Connect to Git** → репозиторий `aztenel/ai-admin`.
-2. Project name — любое свободное (`botflow-site` занят). Адрес будет `https://<имя>.pages.dev`.
-3. Production branch: `dev` (позже — `main`). Framework preset: **Astro**. Root directory: `apps/botflow-site`.
-   Build command: `npm run build`. Build output directory: `dist`.
-4. Variables: `NODE_VERSION` = `22.12.0`. **`SITE_URL` пока не задавать** — выйдет тестовая версия (закрыта от поисковиков).
-5. Settings → Builds → **Build watch paths**: include `apps/botflow-site/*` — иначе сайт пересобирается на каждый коммит бота.
-6. Когда заполнены данные (раздел ниже) и подключён свой домен (Pages → Custom domains): `SITE_URL` = `https://домен`
-   в Production → пересобрать. Это и есть боевая версия.
-7. Проверка опубликованного сайта: `npm run qa -- --url https://адрес` (страницы на трёх ширинах, HTTPS и переадресация
-   с http, canonical, sitemap, robots, заголовки безопасности, превью ссылки, выключенный обработчик формы).
+Сайт — статические файлы `dist/` в Worker `tayveno` (Workers Static Assets, `wrangler.jsonc`), без скрипта: так
+применяются заголовки из `public/_headers` (CSP, HSTS, кэш). Выкладка — Cloudflare **Workers Builds** из `main`:
+
+| Настройка (Worker `tayveno` → Settings → Build) | Значение |
+|---|---|
+| Git repository | `aztenel/ai-admin` |
+| Branch | `main` |
+| Root directory | `apps/botflow-site` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+| Build watch paths (include) | `apps/botflow-site/*` |
+| Переменные сборки | не нужны: в Workers Builds (`WORKERS_CI=1`) адрес — https://tayveno.xyz; версия Node — `.node-version` (22.12.0) |
+
+У Worker `ai-admin` (бот) в его настройках сборки — Build watch paths **exclude** `apps/botflow-site/*`, чтобы правки
+сайта не пересобирали бота. Вручную с компьютера владельца: `npx wrangler login`, затем `npm run deploy`.
+
+Домен `tayveno.xyz`:
+1. Зона `tayveno.xyz` в Cloudflare (Add a domain, тариф Free) → Cloudflare показывает два nameserver'а.
+2. В Spaceship: Domains → tayveno.xyz → Nameservers → Custom → эти два адреса. DNSSEC в Spaceship выключить
+   (сейчас в реестре висит запись DS без ключей у Spaceship — домен не открывается у резолверов с проверкой DNSSEC).
+   После активации зоны DNSSEC можно включить уже в Cloudflare и добавить её DS в Spaceship.
+3. Worker `tayveno` → Settings → Domains & Routes → Add → Custom domain: `tayveno.xyz` и `www.tayveno.xyz`
+   (Cloudflare сам создаст записи и сертификат).
+4. Зона → Rules → Redirect Rules → шаблон «Redirect from WWW to root» (301, сохранить путь и параметры).
+5. Проверка: `npm run qa -- --url https://tayveno.xyz`.
 
 **Форма связи — выключена.** Включать только после настройки секретов и живой проверки доставки:
-переменные Pages `TG_TOKEN` (Secret, токен бота Telegram), `TG_CHAT` (id чата), `CONTACT_FORM` = `1` (обработчик),
-`PUBLIC_CONTACT_FORM` = `1` (форма на странице) → пересобрать → отправить себе пробное сообщение и убедиться, что оно
-пришло в Telegram. Без `CONTACT_FORM=1` обработчик `/api/contact` отвечает 404. Обработчик — `functions/api/contact.ts`.
+обработчик `functions/api/contact.ts` написан для Cloudflare Pages Functions и в Worker со статическими файлами **не
+выкладывается**: для формы его нужно перенести в скрипт Worker (и тогда заголовки безопасности задавать в скрипте).
+До этого формы на сайте нет (`PUBLIC_CONTACT_FORM` не задан).
 
 ## Юридический блок: как заполнить по документу
 
