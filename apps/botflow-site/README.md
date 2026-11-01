@@ -77,12 +77,14 @@ canonical и ссылки указывали бы на чужой сайт.
 | Branch | `main` |
 | Root directory | `apps/botflow-site` |
 | Build command | `npm run build` |
-| Deploy command | `npx wrangler deploy` |
+| Deploy command | `npm run deploy:cf` — проверяет папку, имя Worker «tayveno» и отсутствие привязок, затем `wrangler deploy --config ./wrangler.jsonc --name tayveno` |
 | Build watch paths (include) | `apps/botflow-site/*` |
 | Переменные сборки | не нужны: в Workers Builds (`WORKERS_CI=1`) адрес — https://tayveno.xyz; версия Node — `.node-version` (22.12.0) |
 
-У Worker `ai-admin` (бот) в его настройках сборки — Build watch paths **exclude** `apps/botflow-site/*`, чтобы правки
-сайта не пересобирали бота. Вручную с компьютера владельца: `npx wrangler login`, затем `npm run deploy`.
+У Workers `ai-admin` и `ai-admin-test` (боты) в их настройках сборки — Build watch paths **exclude** `apps/botflow-site/*`:
+01.11.2026 коммиты сайта в `main` выложили `ai-admin` (дважды), в `dev` — `ai-admin-test` (дважды); код ботов при этом
+не менялся (проверено сравнением коммитов и живыми страницами), но так быть не должно. Вручную с компьютера владельца:
+`npx wrangler login`, затем `npm run deploy` (с той же проверкой). Прямой `npx wrangler deploy` не использовать.
 
 Домен `tayveno.xyz`:
 1. Зона `tayveno.xyz` в Cloudflare (Add a domain, тариф Free) → Cloudflare показывает два nameserver'а.
@@ -128,8 +130,8 @@ canonical и ссылки указывали бы на чужой сайт.
 
 1. **Название ИП** — сверено: «Bot Flow» (латиница, заглавные только первые буквы). В форме Meta — так же; в заявке
    Winchester Meta отказывала именно из-за расхождения букв.
-2. **Реальный контакт**: почта (лучше на своём домене — Meta может прислать на неё код подтверждения) и/или телефон —
-   те же, что в форме Meta и в документе.
+2. **Реальный контакт** — почта `info@tayveno.xyz` (Cloudflare Email Routing, пересылка проверена владельцем
+   01.11.2026). В форме Meta — тот же адрес.
 3. **Свой домен.** `*.workers.dev` Meta уже отклоняла как «общий хостинг»; `*.pages.dev` — такой же общий адрес.
 4. **Боевая сборка** с `SITE_URL` на своём домене и проверка `npm run qa -- --url https://домен`.
 5. Юридический адрес и ИИН/БИН — по решению владельца; если адрес указан в форме Meta, на сайте лучше тот же.
