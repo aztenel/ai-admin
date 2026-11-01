@@ -13,7 +13,7 @@
 // чат кладётся и в KV (тень, CHAT_SHADOW_<ID> = 0 — без неё): откат на KV — без потери сообщений, полученных после переключения.
 /** @import { Env } from "../../lib/types.js" */
 import { HIST_KEEP } from "../../config/constants.js";
-import { histMeta, histTtl } from "../../db/kv/chats.js";
+import { histMeta, histTtl, lastAct } from "../../db/kv/chats.js";
 import { d1Ready } from "../../db/d1/status.js";
 import { threadLoad, threadCommit, threadList, threadsVer, threadDelete, threadsPurge, threadRev, messagesById, chatTablesOk, metaSet, metaGet, metaPurgeOld, chatCounts, mkeysIn, threadKeys, erasedSet, erasedMark } from "../../db/d1/chats.js";
 import { planPut, mkeyOf, bare } from "./merge.js";
@@ -140,7 +140,10 @@ export function chatEnv(env, o = {}) {
         const all = kept.concat(fresh).sort(byTime), last = all.slice(-HIST_KEEP);
         const unchanged = !c.absent && !plan.inserts.length && !plan.updates.length && !plan.deletes.length && plan.n === c.n && JSON.stringify(plan.profile) === JSON.stringify(c.profile);
         if (unchanged) { await shadow(key, k, { n: plan.n, turns: last, profile: plan.profile }, now, true); return; }
-        const meta = histMeta({ n: plan.n, turns: last.map(bare), profile: plan.profile });
+        // время строки списка — как у пишущего (putHist): запись без нового события (прочитано, скрыть, удалить у всех) передаёт
+        // время последнего события, и чат не поднимается в списке; что успели дописать другие — учитывается (lastAct)
+        const metaAt = +((opts && opts.metadata && opts.metadata.t) || 0), body = { n: plan.n, turns: last.map(bare), profile: plan.profile };
+        const meta = histMeta(body, metaAt ? Math.max(metaAt, lastAct(body)) : 0);
         const exp = now + histTtl(plan.profile) * 1000;
         const res = await d1Try(() => threadCommit(db, {
           ws: k.ws, ch: k.ch, chat: k.chat, baseRev: c.absent ? 0 : c.rev, now, n: plan.n, profile: plan.profile, meta, expiresAt: exp,

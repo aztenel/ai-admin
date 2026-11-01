@@ -82,6 +82,25 @@ test("D1: ответ снимает «Ждёт ответа» и отмечае�
   assert.ok(r.nd, "после «Готово» новое входящее — снова в очереди"); assert.ok(!r.dn, "и уже не «Готово»"); assert.ok(r.li > (r.rd || 0));
 });
 
+test("D1 и KV: «прочитано», «скрыть» и «удалить у всех» не поднимают чат в списке (время строки — время последнего сообщения)", { skip }, async () => {
+  for (const mode of [D1MODE, {}]) {
+    fresh();
+    const s = mk(env(mode)), a = await login(s);
+    await inbound(s, "Здравствуйте");
+    const mid = (await send(a, "Добрый день!", "out-quiet-" + (mode.CHAT_STORE_WINCHESTER || "kv"))).chat.turns.at(-1).mid;
+    await wait(5);
+    await inbound(s, "Можно на завтра?", "IN-Q-" + (mode.CHAT_STORE_WINCHESTER || "kv"));
+    const t0 = (await rowOf(a)).t;
+    await wait(30);
+    await act(a, "read", { at: Date.now() });
+    await act(a, "hide", { mid: "IN-Q-" + (mode.CHAT_STORE_WINCHESTER || "kv") });
+    await act(a, "unhide", { mid: "IN-Q-" + (mode.CHAT_STORE_WINCHESTER || "kv") });
+    assert.equal((await act(a, "delete", { mid })).status, 200);
+    const t1 = (await rowOf(a)).t;
+    assert.ok(t1 <= t0, `${mode.CHAT_STORE_WINCHESTER || "kv"}: время строки не сдвинулось вперёд (${t1 - t0} мс)`);
+  }
+});
+
 test("D1: прочитано — не позже «сейчас» и не назад", { skip }, async () => {
   fresh();
   const s = mk(env(D1MODE)), a = await login(s);

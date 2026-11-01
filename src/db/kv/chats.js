@@ -12,10 +12,19 @@ export const histTtl = prof => Math.max(7 * 86400, prof && prof.pausedUntil > Da
 // В ИИ уходят последние MAX_TURNS реплик, хранится HIST_KEEP: их видит администратор в пульте чатов.
 // Метаданные ключа — строка списка чатов в пульте (весь список читается одним запросом KV.list, без чтения самих чатов)
 /** @param {Hist | Record<string, any> | null | undefined} h */
-export function histMeta(h) {
+/** Время последнего события чата: сообщение или его статус доставки. @param {any} h */
+export function lastAct(h) {
+  let m = 0;
+  for (const t of (h && h.turns) || []) m = Math.max(m, +(t && t.t) || 0, +(t && t.sa) || 0);
+  return m;
+}
+/** Сведения для строки списка чатов. at — время строки (t): по умолчанию — сейчас (запись чата — событие в нём). Запись, которая ничего
+ *  не добавила в переписку, — «прочитано», «скрыть», «удалить у всех» (02.11.2026) — передаёт время последнего события: иначе открытый
+ *  чат поднимался бы наверх списка у всех сотрудников. @param {any} h @param {number} [at] */
+export function histMeta(h, at) {
   const p = (h && h.profile) || {}, ts = (h && h.turns) || [], last = ts[ts.length - 1] || null, now = Date.now();
   /** @type {Record<string, any>} */
-  const m = { t: now };
+  const m = { t: at || now };
   if (p.li) m.li = p.li;
   // последнее сообщение удалили у всех или скрыли в пульте (02.11.2026) — в списке без его текста
   if (last) { m.s = last.del || last.dl ? "Сообщение удалено" : last.hid ? "Скрыто в пульте" : snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
@@ -42,16 +51,17 @@ export async function histGet(store, key) {
   try { return await store.get(key, { cacheTtl: HIST_CACHE_TTL }); }
   catch (e) { return store.get(key); }
 }
-/** @param {any} store @param {string} key @param {Hist | Record<string, any>} h */
-export async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
+/** quiet — запись без нового события в чате: время строки списка не меняется (histMeta) @param {any} store @param {string} key @param {Hist | Record<string, any>} h @param {boolean} [quiet] */
+export async function putHist(store, key, h, quiet) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h, quiet ? lastAct(h) : 0) }); }
 // дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
-/** @param {any} store @param {string} key @param {any[] | undefined} add @param {((profile: Profile, h: Hist) => void) | undefined} [patch] @returns {Promise<Hist>} */
-export async function logTurns(store, key, add, patch) {
+/** quiet — пульт только отмечает (прочитано, скрыть, удалить у всех): время строки списка не меняется
+ *  @param {any} store @param {string} key @param {any[] | undefined} add @param {((profile: Profile, h: Hist) => void) | undefined} [patch] @param {boolean} [quiet] @returns {Promise<Hist>} */
+export async function logTurns(store, key, add, patch, quiet) {
   return kvRetry(async () => {
     const h = JSON.parse((await histGet(store, key)) || "null") || { n: 0, turns: [], profile: {} };
     h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
     if (patch) patch(h.profile, h);
-    await putHist(store, key, h);
+    await putHist(store, key, h, !!quiet && !(add && add.length));
     return h;
   });
 }

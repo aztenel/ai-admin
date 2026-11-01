@@ -273,7 +273,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       if (chatMode(env, cid) !== "d1") return jsonP({ ok: true, local: true });
       const at = Math.min(now, Math.max(0, Math.round(+b.at || 0)) || now);
       if ((+p.rd || 0) >= at) return jsonP({ ok: true, rd: +p.rd });
-      try { h = await logTurns(env.KV, hk, [], pr => { pr.rd = Math.max(+pr.rd || 0, at); }); }
+      try { h = await logTurns(env.KV, hk, [], pr => { pr.rd = Math.max(+pr.rd || 0, at); }, true); }
       catch (e) { console.log("inbox read", String(e).slice(0, 120)); return jsonP({ error: "Сервер не ответил." }, 503); }
       return jsonP({ ok: true, rd: +((h.profile || {}).rd || at) });
     }
@@ -287,7 +287,7 @@ export async function inboxApi(request, env, url, s, ctx) {
         if (!t || (act === "hide") === !!t.hid) return;
         if (act === "hide") t.hid = { at: now, by: who }; else delete t.hid;
         chatAudit(pr, now, who, act);
-      });
+      }, true);
     }
     else if (act === "delete") {
       // «Удалить у всех» (02.11.2026, services/inbox/remove.js): только наше сообщение второго номера, не позже 59 часов, один раз на все
@@ -310,7 +310,7 @@ export async function inboxApi(request, env, url, s, ctx) {
           if (!t || t.role === "user" || t.del) return;
           if (unknown) { if (t.dlu) return; t.dlu = { at: now, by: who }; chatAudit(pr, now, who, "delete-unknown"); }
           else { t.del = 1; t.dl = { at: now, by: who }; delete t.dlu; chatAudit(pr, now, who, "delete"); }
-        });
+        }, true);
       }
     }
     else if (act === "resolve") {
