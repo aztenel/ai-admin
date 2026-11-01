@@ -447,6 +447,10 @@ const BGS: { id: ChatBg; label: string }[] = [
 function Appearance() {
   const { pref, setTheme } = useTheme();
   const look = useLook();
+  // «Как в системе» на телефоне не помещалось в треть ширины и обрезалось («Как в …»): ширина варианта — по тексту,
+  // значки — только на широком экране
+  const wide = useMedia("(min-width: 768px)");
+  const modes = wide ? THEMES : THEMES.map(({ id, label }) => ({ id, label }));
   // «Как у компании»: у Winchester — фирменное оформление, у остальных — нейтральное
   const brands: { id: BrandPref; label: string }[] = [
     { id: "auto", label: look.company === "winchester" ? "Winchester" : "Как у компании" },
@@ -462,10 +466,10 @@ function Appearance() {
       </Group>
       <Group title="Режим" note="«Как в системе» меняется вместе с настройкой телефона или компьютера.">
         <div className="py-3">
-          <Segmented label="Режим" value={pref} onChange={(v: ThemePref) => setTheme(v)} options={THEMES} className="w-full max-w-md" />
+          <Segmented label="Режим" value={pref} onChange={(v: ThemePref) => setTheme(v)} options={modes} className="w-full max-w-md [&>button]:flex-auto" />
         </div>
       </Group>
-      <Group title="Фон переписки">
+      <Group title="Фон переписки" note="Выбор запоминается на этом устройстве.">
         <div role="radiogroup" aria-label="Фон переписки" className="grid grid-cols-3 gap-3 py-3">
           {BGS.map((b) => (
             <button

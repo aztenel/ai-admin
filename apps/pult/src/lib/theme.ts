@@ -2,7 +2,9 @@
 // auto | light | dark), и действует сразу во всех открытых вкладках. Первую отрисовку без мигания делает скрипт в index.html.
 // Оформление (ТЗ v3.0, 31.10.2026): Winchester (цвета сайта winchester.kz) или нейтральное. По умолчанию — как у компании
 // (у Winchester фирменное, у остальных нейтральное); выбор на устройстве — pult.brand: auto | winchester | neutral.
-// Фон переписки — pult.chatbg: plain | pattern | leather.
+// Фон переписки — pult.chatbg: plain | pattern | leather. Не выбирали — как у оформления: у Winchester узор из каракулей
+// (ножницы, расчёски, бритвы, усы — index.css), у остальных однотонный. Выбор хранится явно, «Однотонный» тоже: иначе
+// у Winchester выключенный узор после перезагрузки появлялся бы снова (задача 5, 01.11.2026).
 import { useEffect, useSyncExternalStore } from "react";
 
 export type ThemePref = "auto" | "light" | "dark";
@@ -37,9 +39,10 @@ const readBrand = (): BrandPref => {
   const v = get(BRAND);
   return v === "winchester" || v === "neutral" ? v : "auto";
 };
-const readBg = (): ChatBg => {
+/** выбор фона на этом устройстве; null — не выбирали (тогда фон — как у оформления, bgOf) */
+const readBg = (): ChatBg | null => {
   const v = get(BG);
-  return v === "pattern" || v === "leather" ? v : "plain";
+  return v === "plain" || v === "pattern" || v === "leather" ? v : null;
 };
 
 let pref = read();
@@ -50,6 +53,7 @@ const subs = new Set<() => void>();
 const emit = () => subs.forEach((f) => f());
 
 const brandOf = () => (brandPref === "auto" ? company : brandPref === "neutral" ? null : brandPref);
+const bgOf = (brand: string | null): ChatBg => bg ?? (brand === "winchester" ? "pattern" : "plain");
 const BAR: Record<string, [string, string]> = { winchester: ["#fbf7f0", "#210f0f"], neutral: ["#ffffff", "#16191e"] };
 
 function apply() {
@@ -59,12 +63,14 @@ function apply() {
   r.setAttribute("data-theme", dark ? "dark" : "light");
   if (brand) r.setAttribute("data-brand", brand);
   else r.removeAttribute("data-brand");
-  r.setAttribute("data-chatbg", bg);
+  r.setAttribute("data-chatbg", bgOf(brand));
   r.style.colorScheme = dark ? "dark" : "light";
   // цвет полосы состояния и заголовка окна — как у панелей пульта
   const bar = BAR[brand || "neutral"] || BAR.neutral;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? bar[1] : bar[0]);
 }
+// сразу при загрузке, до первой отрисовки React: скрипт index.html не знает, что у Winchester узор по умолчанию
+apply();
 
 export function setTheme(p: ThemePref) {
   pref = p;
@@ -80,7 +86,7 @@ export function setBrand(p: BrandPref) {
 }
 export function setChatBg(p: ChatBg) {
   bg = p;
-  put(BG, p === "plain" ? null : p);
+  put(BG, p);
   apply();
   emit();
 }
@@ -119,7 +125,7 @@ export function useTheme(): { pref: ThemePref; dark: boolean; setTheme: (p: Them
 export function useLook(): { brand: BrandPref; company: string | null; active: string | null; bg: ChatBg } {
   const brand = useSyncExternalStore(subscribe, () => brandPref);
   const co = useSyncExternalStore(subscribe, () => company);
-  const b = useSyncExternalStore(subscribe, () => bg);
+  const b = useSyncExternalStore(subscribe, () => bgOf(brandOf())); // действующий фон: без выбора — как у оформления
   return { brand, company: co, active: brand === "auto" ? co : brand === "neutral" ? null : brand, bg: b };
 }
 
