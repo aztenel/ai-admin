@@ -13,7 +13,7 @@ import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/con
 import { hStr } from "../schedule/slots.js";
 import { notify } from "../integrations/telegram/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
-import { gaCall, gaCode, gaWhy, gaKind } from "../integrations/greenapi/client.js";
+import { gaCall, gaCode, gaWhy, gaKind, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
 import { sendTemplate } from "../channels/templates.js";
 import { wzOn, wzHealth } from "../channels/wazzapo.js";
@@ -75,19 +75,20 @@ export async function bcSendGa(env, digits, b, name, r, ready) {
   const text = ready || bcGaText(b, name), chatId = digits + "@c.us";
   if (!b.img) return sendGreen(env, chatId, text, r, true);
   const x = await gaCall(r, "sendFileByUrl", { chatId, urlFile: b.img, fileName: bcFileName(b.img), caption: text.slice(0, 1024) }); // картинка с подписью
-  return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
+  return x.ok ? { ok: true, id: String(x.j.idMessage || "") } : { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160), ...(x.j && x.j.idMessage ? { id: String(x.j.idMessage).slice(0, 80) } : {}) };
 }
 // сообщение рассылки — в переписку клиента (ТЗ v2.0 §2.1, 31.10.2026): раньше его там не было, и ответ на рассылку выглядел обычным
 // сообщением без повода, раздел «Ответы на рассылки» его не видел, а галочки (отчёты Green-API) некуда было ставить. Чат только с нашим
 // сообщением в очередь «Нужен ответ» не встаёт — пульт прячет его под «только наши сообщения». Ключи разные (у каждого клиента
 // свой чат) — по 10 одновременно. Сбой записи рассылку не останавливает
-/** @param {Env} env @param {string} cid @param {any} b @param {string[][]} list [цифры, имя, номер сообщения, готовый текст] @param {number} now */
+/** @param {Env} env @param {string} cid @param {any} b @param {string[][]} list [цифры, имя, номер сообщения, готовый текст, статус, причина]
+ *  статус — "sent" (по умолчанию) или "unknown" (Green-API мог принять, причина — в se) @param {number} now */
 async function bcLog(env, cid, b, list, now) {
   const ch = b.ch === "ga" ? "ga" : "wa", bc = String(b.id || "bc").slice(0, 40);
   for (let i = 0; i < list.length; i += 10) {
-    await Promise.all(list.slice(i, i + 10).map(([digits, name, mid, ready]) => {
+    await Promise.all(list.slice(i, i + 10).map(([digits, name, mid, ready, st, se]) => {
       const text = b.ch === "ga" ? ready || bcGaText(b, name) : `[Рассылка «${String(b.name || "").slice(0, 60)}», шаблон ${String(b.tpl || "").slice(0, 60)}]`;
-      return logTurns(env.KV, `h:${ch}:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc, by: "bc", ...(mid ? { mid: mid.slice(0, 80) } : {}), st: "sent" }])
+      return logTurns(env.KV, `h:${ch}:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc, by: "bc", ...(mid ? { mid: mid.slice(0, 80) } : {}), st: st || "sent", ...(se ? { se: String(se).slice(0, 80) } : {}) }])
         .catch(e => console.log("bc log", String(e).slice(0, 120)));
     }));
   }
@@ -267,6 +268,17 @@ export async function bcTick(env, cid, id, gaBusy) {
       did = true;
       const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route);
       if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga || gaCrm) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || ""), ready]); continue; }
+      if (ga && gaKind(r.code) === "net") {
+        // Green-API мог принять сообщение (ответа нет, обрыв, срок, 5xx): этому клиенту второй раз не пишем. В отчёте — «неизвестно, дошло
+        // ли» (b.unsure), не «не отправлено»; в переписке — то же сообщение с «неизвестно» и причиной; в предел номера за сутки и в отметку
+        // «писали рекламу» — как отправленное. Дальше — пауза 10 минут: у Green-API сбой. Раньше 5xx возвращал клиента в очередь, и через
+        // 10 минут он получал сообщение второй раз, а «не ответил» считался ошибкой (01.11.2026, перед приёмкой Winchester)
+        const rr = /** @type {any} */ (r);
+        b.unsure = (b.unsure || 0) + 1; sentNow++; done++;
+        if (gaCrm) marked.push(digits);
+        logged.push([digits, name, String(rr.id || ""), ready, "unknown", gaUnsureNote(rr)]);
+        halt = { kind: "temp", r }; break;
+      }
       if (!ga && r.code === 0) marked.push(digits); // связь оборвалась — шаблон мог уйти: второй раз за 14 дней такому клиенту не пишем
       const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
       if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь

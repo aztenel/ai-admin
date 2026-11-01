@@ -16,7 +16,8 @@ export async function sendGreen(env, chatId, message, r, quiet, quote) {
   const x = await gaCall(r, "sendMessage", { chatId, message: String(message).slice(0, 4000), typingTime: 1500, ...(quote ? { quotedMessageId: String(quote).slice(0, 80) } : {}) });
   if (x.ok) return { ok: true, id: String(x.j.idMessage || "") };
   console.log("GA send", x.status, logSafe(x.text.slice(0, 300)));
-  const res = { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160) };
+  // id — если Green-API в ответе с ошибкой всё же вернул номер сообщения: по нему отчёт о доставке потом уточнит «неизвестно»
+  const res = { ok: false, status: x.status, code: gaCode(x), error: clean((x.j && x.j.message) || x.text || "", 160), ...(x.j && x.j.idMessage ? { id: String(x.j.idMessage).slice(0, 80) } : {}) };
   if (!quiet && res.code !== "ga:preview") { try { await notifyOnce(env, "gasend:" + r.client, `⚠️ Ответы бота не доходят до клиентов WhatsApp (Green-API: ${gaWhy(res, r)})\nКлиент +${String(chatId).replace(/\D/g, "")} ответа не получил — напишите ему сами.`, r.client); } catch (e) {} }
   return res;
 }

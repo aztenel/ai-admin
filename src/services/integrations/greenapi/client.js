@@ -54,16 +54,27 @@ export async function gaUpload(r, op, form, ms = 60000) {
   } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
   finally { clearTimeout(timer); }
 }
-// Неизвестно, ушло ли сообщение: ответа нет, обрыв (499), срок (408), сбой у них (5xx). Такую отправку сами не повторяем — она могла
-// дойти (CLAUDE.md §5.2); подтверждённый отказ (остальные 4xx) — ничего не ушло, «Повторить» можно (ревью PR №2, F3, 01.11.2026)
-/** @param {{ ok?: boolean, status: number, preview?: boolean }} x */
-export const gaUnsure = x => !x.ok && !x.preview && (!x.status || x.status === 408 || x.status === 499 || x.status >= 500);
+// Неизвестно, ушло ли сообщение: ответа нет, обрыв (499), срок (408), сбой у них (5xx), а ещё любой отказ, в котором Green-API вернул
+// номер созданного сообщения (idMessage). Такую отправку сами не повторяем — она могла дойти (CLAUDE.md §5.2): доказать, что сообщение
+// не принято, может только подтверждённый отказ (остальные 4xx без idMessage) — тогда «Повторить» можно (ревью PR №2, F3, 01.11.2026;
+// 5xx в напоминаниях и рассылках — 01.11.2026, перед приёмкой Winchester)
+/** @param {{ ok?: boolean, status: number, preview?: boolean, j?: any }} x */
+export const gaUnsure = x => !x.ok && !x.preview && (!x.status || x.status === 408 || x.status === 499 || x.status >= 500 || !!(x.j && x.j.idMessage));
+// причина «неизвестно» для переписки и журнала — коротко (до 80 знаков), без номеров. res — ответ sendGreen ({ status }) или gaCall
+/** @param {{ status?: number }} res @returns {string} */
+export function gaUnsureNote(res) {
+  const s = Number((res && res.status) || 0);
+  const what = !s ? "Green-API не ответил" : s === 408 ? "Green-API не дождался запроса (408)" : s === 499 ? "связь с Green-API оборвалась (499)"
+    : s >= 500 ? `Green-API ответил ошибкой ${s}` : `Green-API ответил ${s}, но сообщение создал`;
+  return what + ": сообщение могло уйти";
+}
 // ответ Green-API → код причины (подсказки — в GA_HINT)
 /** @param {any} x @returns {string} */
 export function gaCode(x) {
   if (x.preview) return "ga:preview";
   const s = x.status, t = String((x.j && x.j.message) || x.text || "");
   if (!s || s === 499 || s === 408) return "ga:net"; // ответа нет, обрыв (499) или срок вышел (408): дошло ли сообщение, неизвестно
+  if (!x.ok && s < 500 && x.j && x.j.idMessage) return "ga:net"; // отказ, но с номером созданного сообщения — не доказано, что не ушло
   if (s === 400) return /expired/i.test(t) ? "ga:expired" : /starting process/i.test(t) ? "ga:starting" : /not authorized/i.test(t) ? "ga:auth" : /deleted/i.test(t) ? "ga:deleted" : "ga:400";
   if ([401, 403, 429, 466].includes(s)) return "ga:" + s;
   return s >= 500 ? "ga:5xx" : "ga:" + s;
@@ -73,7 +84,7 @@ export const GA_HINT = {
   "ga:net": "Green-API не ответил — дошло ли сообщение, неизвестно", "ga:401": "неверный токен Green-API", "ga:403": "неверный номер инстанса Green-API", "ga:429": "слишком частые запросы к Green-API",
   "ga:466": "закончился лимит тарифа Green-API (бесплатный тариф пишет только нескольким номерам) — оплатите тариф в кабинете Green-API",
   "ga:expired": "оплаченный срок инстанса Green-API закончился — оплатите его в кабинете Green-API", "ga:auth": "WhatsApp не привязан к Green-API — отсканируйте QR-код в кабинете Green-API",
-  "ga:starting": "Green-API перезапускает инстанс", "ga:deleted": "инстанс Green-API удалён", "ga:400": "Green-API не принял номер или текст (неверные данные)", "ga:5xx": "временный сбой Green-API",
+  "ga:starting": "Green-API перезапускает инстанс", "ga:deleted": "инстанс Green-API удалён", "ga:400": "Green-API не принял номер или текст (неверные данные)", "ga:5xx": "сбой у Green-API — дошло ли сообщение, неизвестно",
   "ga:noAccount": "у номера нет WhatsApp", "ga:failed": "WhatsApp не доставил сообщение", "ga:preview": "это тестовая версия, отсюда сообщения клиентам не отправляются"
 };
 // причина отказа человеческим языком, с именем переменной, которую нужно проверить
@@ -104,6 +115,8 @@ export async function gaInfo(env, r, origin) {
   return { state: String(s.j.stateInstance || ""), phone: wid ? fmtPhone(wid) : "", hook, host, other };
 }
 
-// как поступать с ошибкой Green-API: temp — подождать 10 минут (получатель в очереди), net — неизвестно, ушло ли (получатель не повторяется), one — дело в этом номере, stop — пауза
+// как поступать с ошибкой Green-API: net — неизвестно, ушло ли (ответа нет, обрыв, срок, 5xx): получатель не повторяется; temp — Green-API
+// точно не принял (429, перезапуск инстанса): подождать, получатель в очереди; one — дело в этом номере; stop — пауза. 5xx раньше был temp:
+// сообщение, которое Green-API принял и ответил 500, напоминание через минуту, а рассылка через 10 минут отправляли второй раз (01.11.2026)
 /** @param {string} code @returns {string} */
-export const gaKind = code => code === "ga:net" ? "net" : ["ga:429", "ga:5xx", "ga:starting"].includes(code) ? "temp" : code === "ga:400" ? "one" : "stop";
+export const gaKind = code => code === "ga:net" || code === "ga:5xx" ? "net" : ["ga:429", "ga:starting"].includes(code) ? "temp" : code === "ga:400" ? "one" : "stop";

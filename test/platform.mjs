@@ -1192,7 +1192,8 @@ section("рассылки через Green-API");
   id = await fresh("Связь", 2, 150);
   net.gaReply = rec => { if (rec.op === "sendMessage") throw new Error("network down"); return null; };
   await S3.cron(); b = bcOf(id);
-  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && b.failed === 1 && b.retryAt > Date.now(), JSON.stringify(b));
+  // «неизвестно, дошло ли», а не «ошибка»: сообщение могло уйти (01.11.2026, test/unit/ga-5xx.test.mjs)
+  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && (b.failed || 0) === 0 && b.unsure === 1 && b.retryAt > Date.now(), JSON.stringify(b));
   net.gaReply = null; await all(id); b = bcOf(id);
   ok("после обрыва связи остальным — по одному сообщению", b.status === "done" && b.sent === 1 && sends().length === 2 && new Set(sends().map(to)).size === 2, JSON.stringify(b));
 
