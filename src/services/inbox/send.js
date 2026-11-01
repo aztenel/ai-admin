@@ -7,9 +7,11 @@
 /** @import { Env } from "../../lib/types.js" */
 import { clean, snip } from "../../lib/text.js";
 import { logSafe } from "../../lib/phone.js";
-import { gaRoute, gaShared } from "../integrations/greenapi/webhook.js";
-import { gaUpload, gaCode, gaWhy } from "../integrations/greenapi/client.js";
+import { gaRoute } from "../integrations/greenapi/webhook.js";
+import { gaUpload, gaCode, gaWhy, gaUnsure } from "../integrations/greenapi/client.js";
 import { sendMarkGet, sendMarkPut, sendMarkDrop } from "../../db/kv/inbox.js";
+import { d1Ready, d1Status } from "../../db/d1/status.js";
+import { claimSend, finishSend, releaseSend, sendTableReady } from "../../db/d1/sends.js";
 import { RISKY, fileName } from "./media.js";
 
 export const FILE_MAX = 25 * 1024 * 1024;
@@ -18,6 +20,13 @@ export const NO_FILES = "С этого номера файлы из пульта
 export const TOO_BIG = "Файл больше 25 МБ. Уменьшите его или отправьте с телефона.";
 export const QUOTE_GONE = "Сообщение, на которое вы отвечаете, не найдено в переписке. Обновите переписку.";
 export const BUSY = "Это сообщение уже отправляется. Обновите переписку через минуту.";
+export const NO_RID = "Обновите страницу пульта: у сообщения нет номера отправки, поэтому оно не отправлено.";
+export const NO_DB = "Отправка со второго номера сейчас недоступна: не отвечает база, которая защищает от двойной отправки. Сообщение не отправлено, попробуйте через минуту.";
+// база есть, но без таблицы отметок (миграция 0005) или к адресу не подключена — это настройка сайта, а не сбой связи (ревью PR №2, F1)
+export const NO_SETUP = "Отправка со второго номера не настроена: у сайта нет базы, которая защищает от двойной отправки. Сообщение не отправлено. Сообщите тому, кто настраивает сайт.";
+// отметка попытки могла записаться, а ответ базы потерялся и освободить её не удалось (ревью PR №2, F7): до Green-API запрос не дошёл,
+// но повтор с тем же номером может пару минут отвечать «уже отправляется»
+export const CLAIM_UNKNOWN = "Результат неизвестен: база не ответила, и попытка отправки могла сохраниться. Обновите переписку через минуту и проверьте, прежде чем отправлять снова.";
 
 /** @type {Record<string, string>} */
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "video/3gpp": "3gp", "video/webm": "webm",
@@ -98,7 +107,7 @@ export function quoteView(turns, t) {
  * @returns {Promise<{ ok: true, id?: string, url?: string, unknown?: boolean } | { ok: false, error: string }>}
  */
 export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
-  const gr = gaRoute(env, cid) || gaShared(env);
+  const gr = gaRoute(env, cid); // только свой номер компании или общий, закреплённый за ней (аудит 31.10.2026)
   if (!gr) return { ok: false, error: "Green-API не настроен." };
   const form = new FormData();
   form.set("chatId", chatDigits + "@c.us");
@@ -109,34 +118,113 @@ export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   const x = await gaUpload(gr, "sendFileByUpload", form);
   const mid = String((x.j && x.j.idMessage) || ""), url = String((x.j && x.j.urlFile) || "");
   if (x.ok && mid) return { ok: true, id: mid.slice(0, 80), ...(/^https:\/\//.test(url) ? { url: url.slice(0, 500) } : {}) };
-  if (x.ok || !x.status || x.status >= 500) return { ok: true, unknown: true }; // ответа нет или сбой у них: файл мог уйти — сам не повторяется
+  if (x.ok || gaUnsure(x)) return { ok: true, unknown: true }; // ответа нет, обрыв, срок или сбой у них: файл мог уйти — сам не повторяется
   console.log("GA file", x.status, logSafe(x.text.slice(0, 300)));
   return { ok: false, error: `Green-API не принял файл: ${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 160) }, gr)}.` };
 }
 
 // ---- одна отправка на rid
 const RID = /^[A-Za-z0-9_-]{6,64}$/;
-// в памяти экземпляра — rid, которые сейчас уходят или уже ушли: KV согласован не сразу, а двойное нажатие приходит за миллисекунды
+const OLD_PENDING_MS = 120e3; // «отправляется» дольше 2 минут — результат так и не записался: считаем «неизвестно», не отправляем
+/**
+ * Одно нажатие «Отправить» — не больше одного сообщения клиенту.
+ * Второй номер (Green-API) — атомарная отметка в D1 (claimSend, аудит 31.10.2026): из одновременных запросов с тем же rid — в одном
+ * экземпляре Worker или в разных — отправит только тот, чья вставка прошла. Без rid или без базы — отказ ДО обращения к Green-API
+ * (blocked): лучше «не отправлено, попробуйте ещё раз», чем два одинаковых сообщения. Ответа Green-API нет (unknown) или итог не
+ * записался (строка осталась pending) — повторно сами не отправляем никогда; отказ Green-API (ничего не ушло) — «Повторить» можно.
+ * Основной номер (Meta) — как раньше: память экземпляра и KV (на боевом сайте базы D1 пока нет).
+ * → результат fn, { dup: "busy" | "done", … } (уже отправляется или отправлено) или { blocked: { status, code, error } }.
+ * @template {{ ok: boolean, id?: string, unknown?: boolean }} R
+ * @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid @param {() => Promise<R>} fn
+ * @returns {Promise<R | { dup: "busy" | "done", ok: true, id?: string, unknown?: boolean } | { blocked: { status: number, code: string, error: string } }>}
+ */
+export async function sendOnce(env, cid, ch, chat, rid, fn) {
+  return ch === "ga" ? sendOnceD1(env, cid, ch, chat, rid, fn) : sendOnceKV(env, cid, ch, chat, rid, fn);
+}
+
+/** @type {WeakMap<object, number>} */
+const tableSeen = new WeakMap(); // база, где таблица отметок уже нашлась (время проверки): не спрашиваем её о каждом сообщении
+/**
+ * Готова ли база отметок: ok — да; nosetup — к адресу не подключена своя D1, у неё не та отметка окружения или нет таблицы
+ * send_claims (миграция 0005); nodb — база не ответила. → { state, db? }
+ * @param {Env} env @param {number} now @returns {Promise<{ state: "ok", db: any } | { state: "nodb" | "nosetup" }>}
+ */
+export async function sendDb(env, now) {
+  if (!env.DB || typeof env.DB.prepare !== "function") return { state: "nosetup" };
+  /** @type {any} */ let db = null;
+  try { db = await d1Ready(env, now, true); } catch (e) { db = null; }
+  if (!db) {
+    /** @type {any} */ let st = null;
+    try { st = await d1Status(env); } catch (e) { st = null; }
+    return { state: !st || st.error ? "nodb" : "nosetup" }; // ответила, но не та база или без миграций — настройка
+  }
+  const seen = tableSeen.get(db);
+  if (seen && now - seen < 60e3) return { state: "ok", db };
+  try {
+    if (!(await sendTableReady(db))) return { state: "nosetup" };
+    tableSeen.set(db, now);
+    return { state: "ok", db };
+  } catch (e) { return { state: "nodb" }; }
+}
+/** Почему со второго номера сейчас не отправить: "" — можно; иначе текст для пульта. @param {Env} env @param {number} now */
+export async function sendDbOff(env, now) {
+  const x = await sendDb(env, now);
+  return x.state === "ok" ? "" : x.state === "nosetup" ? NO_SETUP : NO_DB;
+}
+
+/**
+ * @template {{ ok: boolean, id?: string, unknown?: boolean }} R
+ * @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid @param {() => Promise<R>} fn
+ * @returns {Promise<R | { dup: "busy" | "done", ok: true, id?: string, unknown?: boolean } | { blocked: { status: number, code: string, error: string } }>}
+ */
+async function sendOnceD1(env, cid, ch, chat, rid, fn) {
+  if (!RID.test(rid || "")) return { blocked: { status: 400, code: "rid", error: NO_RID } };
+  const now = Date.now(), k = { ws: cid, ch, chat, rid }, owner = crypto.randomUUID();
+  const base = await sendDb(env, now);
+  if (base.state !== "ok") return { blocked: base.state === "nosetup" ? { status: 503, code: "nosetup", error: NO_SETUP } : { status: 503, code: "nodb", error: NO_DB } };
+  const db = base.db;
+  /** @param {any} row */
+  const dupOf = row => !row || (row.state === "pending" && now - row.updated_at < OLD_PENDING_MS) ? /** @type {const} */ ({ dup: "busy", ok: true })
+    : { dup: /** @type {const} */ ("done"), ok: /** @type {const} */ (true), ...(row.state === "sent" && row.mid ? { id: row.mid } : {}), ...(row.state === "sent" ? {} : { unknown: true }) };
+  /** @type {any} */ let c;
+  try { c = await claimSend(db, k, now, owner); }
+  catch (e) {
+    // вставка могла пройти, а ответ потеряться. Green-API ещё не вызывали: освобождаем свою строку, и «Повторить» отправит (F7)
+    console.log("send claim", String(e).slice(0, 160));
+    try {
+      const rel = await releaseSend(db, k, owner, Date.now());
+      return rel.mine ? { blocked: { status: 503, code: "nodb", error: NO_DB } } : dupOf(rel.row);
+    } catch (e2) { return { blocked: { status: 503, code: "claim_unknown", error: CLAIM_UNKNOWN } }; }
+  }
+  if (!c.own) return dupOf(c.row);
+  /** @type {any} */ let r;
+  try { r = await fn(); }
+  catch (e) { console.log("send", String(e).slice(0, 160)); r = { ok: true, unknown: true }; } // непредвиденный сбой после начала отправки: могло уйти
+  const state = r && r.ok ? (r.unknown ? "unknown" : "sent") : "refused";
+  try { await finishSend(db, k, state, r && r.id ? String(r.id).slice(0, 80) : "", Date.now(), owner); }
+  catch (e) { console.log("send claim finish", String(e).slice(0, 160)); } // строка осталась pending: повтор этого rid ничего не отправит
+  return r;
+}
+
+// Основной номер (Meta): в памяти экземпляра — rid, которые сейчас уходят или уже ушли, и отметка в KV. KV согласован не сразу,
+// поэтому одновременные запросы в разных экземплярах эта защита не ловит (P1 аудита 31.10.2026: перевести на D1 вместе с боевой базой)
 /** @type {Map<string, { st: "busy" | "done", id?: string, unknown?: boolean, at: number }>} */
 const live = new Map();
 const LIVE_MS = 600e3;
 /**
- * Повтор того же rid (двойное нажатие, повтор запроса браузером после обрыва) не отправляет клиенту второй раз:
- * → { dup: "busy" } (первая отправка ещё идёт) или { dup: "done", id, unknown } (уже ушло). Без rid — просто отправка.
- * Отказ провайдера (ничего не ушло) отметку снимает: «Повторить» в пульте отправит заново.
  * @template {{ ok: boolean, id?: string, unknown?: boolean }} R
  * @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid @param {() => Promise<R>} fn
  * @returns {Promise<R | { dup: "busy" | "done", ok: true, id?: string, unknown?: boolean }>}
  */
-export async function sendOnce(env, cid, ch, chat, rid, fn) {
+async function sendOnceKV(env, cid, ch, chat, rid, fn) {
   if (!RID.test(rid || "")) return fn();
   const k = `${cid}:${ch}:${chat}:${rid}`, now = Date.now();
   if (live.size > 500) for (const [key, v] of live) if (now - v.at > LIVE_MS) live.delete(key);
   const mem = live.get(k);
   if (mem && now - mem.at < LIVE_MS) return { dup: mem.st, ok: true, ...(mem.id ? { id: mem.id } : {}), ...(mem.unknown ? { unknown: true } : {}) };
+  live.set(k, { st: "busy", at: now }); // до чтения KV: двойное нажатие в этом экземпляре приходит за миллисекунды
   const was = await sendMarkGet(env, cid, ch, chat, rid);
-  if (was && (was.st === "busy" || was.st === "done")) return { dup: was.st, ok: true, ...(was.id ? { id: String(was.id) } : {}), ...(was.unknown ? { unknown: true } : {}) };
-  live.set(k, { st: "busy", at: now });
+  if (was && (was.st === "busy" || was.st === "done")) { live.set(k, { st: was.st, ...(was.id ? { id: String(was.id) } : {}), ...(was.unknown ? { unknown: true } : {}), at: now }); return { dup: was.st, ok: true, ...(was.id ? { id: String(was.id) } : {}), ...(was.unknown ? { unknown: true } : {}) }; }
   try { await sendMarkPut(env, cid, ch, chat, rid, { st: "busy", at: now }); } catch (e) { console.log("send mark", String(e)); } // хранилище не ответило — защита в памяти остаётся
   /** @type {any} */ let r;
   try { r = await fn(); }

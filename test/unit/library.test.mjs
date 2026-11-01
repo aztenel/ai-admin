@@ -124,12 +124,12 @@ test("пример: на вымышленном клиенте, если баз�
   assert.equal((await staff.post("/api/bc/templates/preview", { c: "winchester" })).status, 400);
 });
 
-test("тестовая версия (STAGE=preview) рассылку не запускает: проверка и создание работают, запуск — 409; BC_DEV_REAL=1 (заглушки) — запускает", async () => {
+test("тестовая версия (STAGE=preview) рассылку не запускает: проверка и создание работают, запуск — 409, и BC_DEV_REAL этого не меняет (аудит 31.10.2026); боевой сайт — запускает", async () => {
   net.reset();
   const META = { WA_TOKEN_BARBER: "tok-barber", APP_SECRET_BARBER: "sec-barber", PHONE_NUMBER_ID_BARBER: "900222" };
   const FORM = { c: "barber", name: "Октябрь", tpl: "promo_october", lang: "ru", text: "Здравствуйте, {{1}}! Чтобы не получать сообщения, ответьте СТОП", params: "{имя}", recipients: "+7 701 111 00 01, Арман", cap: 100, from: 10, to: 20, consent: true };
-  for (const [extra, want] of [[{}, 409], [{ BC_DEV_REAL: "1" }, 200]]) {
-    const s = mk({ STAGE: "preview", ...META, ...extra }), own = await login(s, "owner-key-123456");
+  for (const [extra, want] of [[{ STAGE: "preview" }, 409], [{ STAGE: "preview", BC_DEV_REAL: "1" }, 409], [{}, 200]]) {
+    const s = mk({ ...META, ...extra }), own = await login(s, "owner-key-123456");
     const c = await (await own.post("/api/bc/create", FORM)).json();
     assert.equal(c.ok, true, JSON.stringify(c));
     const r = await own.post("/api/bc/act", { c: "barber", id: c.b.id, act: "start" });

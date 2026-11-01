@@ -51,7 +51,7 @@ if (DEMO) {
   close = () => vite.close();
 } else {
   const { startDevLive } = await import("./dev-live.mjs");
-  const dl = await startDevLive({ port: 0 });
+  const dl = await startDevLive({ port: 0, stage: "preview" }); // демо-база и проверки синхронизации — режим черновика (аудит 31.10.2026)
   app = dl.app;
   OWNER = dl.OWNER;
   STAFF = dl.STAFF_W;

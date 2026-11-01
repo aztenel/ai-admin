@@ -9,9 +9,12 @@
 //   npm run dev:live            → адреса и ключи — в выводе; владелец входит ключом owner-key-123456
 //   фоновая отправка рассылок:  curl -X POST http://127.0.0.1:<порт пульта>/_cron   (или на порт бота — «прошла минута»)
 //   ещё сообщение клиента:      curl -X POST http://127.0.0.1:<порт бота>/_wa -d '{"c":"dent","from":"77001110001","text":"Привет"}'
-// Раздел «Клиенты» (/api/contacts/*): база D1 — как у черновика ai-admin-dev, но в памяти (test/d1.mjs на node:sqlite, Node 22+;
-// на Node 20 базы нет — раздел покажет «База клиентов ещё не подключена»), STAGE=preview: настоящий Altegio черновик читает только
-// проверкой без записи, для экрана — «Загрузить демо-базу (150 вымышленных клиентов)» в «Синхронизации» (scripts/e2e-contacts.mjs).
+// Раздел «Клиенты» (/api/contacts/*): база D1 в памяти (test/d1.mjs на node:sqlite, Node 22+; на Node 20 базы нет — раздел покажет
+// «База клиентов ещё не подключена», а второй номер не отправляет: защите от двойной отправки нужна D1).
+// Режим (аудит 31.10.2026): по умолчанию стенд — как БОЕВОЙ сайт на заглушках (STAGE нет, отметка базы production): отправка из пульта,
+// файлы, рассылки работают — наружу всё равно ничего не уходит, Meta, Green-API и Altegio здесь подменены. stage: "preview"
+// (--preview, STAGE=preview) — как черновик: отправки, вебхуки и запись в Altegio закрыты, есть «Загрузить демо-базу» у владельца
+// (scripts/e2e-contacts.mjs). Обхода BC_DEV_REAL больше нет.
 // Демо-база сразу при запуске: npm run dev:live -- --demo (или DEMO=1, или startDevLive({ demo: true })) — 150 вымышленных клиентов
 // Winchester тем же кодом, что кнопка владельца (src/services/contacts/demo.js): база D1, снимок для рассылок, «стопы», согласия,
 // три демо-рассылки с итогами и черновик; журнал заглушки Altegio — тот же (кнопка «Обновить базу» соберёт ту же базу). Нужен Node 22+.
@@ -28,16 +31,17 @@ const GA = { id: "1101000001", token: "ga-token-dent" };
 const GAW = { id: "1101000002", token: "ga-token-winch" };
 export const STAFF_W = "staff-key-winch-0001";
 
-/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота, demo — демо-база на 150 клиентов. */
-export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo") } = {}) {
+/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота, demo — демо-база на 150 клиентов
+ *  (она есть только на черновике — demo включает stage "preview"), stage — "production" (по умолчанию) или "preview". */
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production" } = {}) {
+  if (demo) stage = "preview";
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
   const { net, gaPass } = await import(new URL("../../../test/harness.mjs", import.meta.url).href);
   const { sqliteOk, d1With } = await import(new URL("../../../test/d1.mjs", import.meta.url).href);
   const bot = await start(botPort, {
-    ...(sqliteOk ? { DB: d1With("preview").db, STAGE: "preview" } : {}),
-    // запуск рассылки на черновике закрыт (ТЗ v2.0: в dev — только проверка); здесь Meta и Green-API — заглушки, настоящих отправок нет
-    BC_DEV_REAL: "1",
+    ...(sqliteOk ? { DB: d1With(stage).db } : {}),
+    ...(stage === "preview" ? { STAGE: "preview" } : {}),
     WA_TOKEN_DENT: "tok-dent",
     APP_SECRET_DENT: "sec-dent",
     PHONE_NUMBER_ID_DENT: "900111",
@@ -55,8 +59,6 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   });
   const { S } = bot;
 
-  // вебхуки Green-API ведут в этого бота: без этого рассылку с номера бота не запустить (бот не увидел бы «стоп»)
-  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${bot.url}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   // сведения о номерах Meta: у Winchester качество высокое и предел 1000, у «Дента» — среднее и 250 (видно оба вида плашки)
   net.graphReply = (url, init) => {
     if ((init.method && init.method !== "GET") || !url.includes("fields=")) return null;
@@ -170,12 +172,17 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
       port,
       strictPort: !!port,
       // /_cron — «прошла минута» (фоновая отправка рассылок), чтобы проверке хватало одного адреса
-      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/_cron"].map((p) => [p, { target: bot.url }])),
+      // /ga — вебхук Green-API: на сайте он и пульт — один адрес Worker, здесь — адрес Vite (заголовок Host прокси сохраняет)
+      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/ga", "/_cron"].map((p) => [p, { target: bot.url }])),
     },
   });
   await vite.listen();
   const addr = vite.httpServer?.address();
   const app = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : port}/app/`;
+  // вебхуки Green-API ведут в этого бота, и по тому адресу, который видит сервер из пульта: сервер сверяет адрес вебхука со своим
+  // (ревью PR №2, F2: вебхук на другом адресе — номер не настроен). Без этого рассылку с номера бота не запустить.
+  const site = new URL(app).origin;
+  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${site}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   const close = async () => {
     await vite.close();
     await new Promise((r) => bot.server.close(() => r(undefined)));

@@ -6,7 +6,7 @@ import { logTurns } from "../../db/kv/chats.js";
 import { REMIND_LATE } from "../../config/constants.js";
 import { CLIENTS, hasClient } from "../../config/builtin-clients.js";
 import { syncClients } from "../tenants/passport.js";
-import { gaRoute, gaShared } from "../integrations/greenapi/webhook.js";
+import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { sendWA } from "../channels/meta.js";
 import { waRoute } from "../channels/index.js";
@@ -38,7 +38,7 @@ export async function remindSend(env, cid, x, now) {
   // почти всегда за окном: без шаблона их не было бы вовсе (16.10.2026). Шаблон задаётся в Cloudflare: TPL_REMIND_<ID>, TPL_REVIEW_<ID>
   const tpl = x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) ? remindTpl(env, c, b, x.k) : null;
   if (x.ch === "wa" && !(p.li && now - p.li < 24 * 3600e3) && !tpl) return false;
-  const route = x.ch === "ga" ? gaRoute(env, cid) || gaShared(env) : waRoute(env, cid, p);
+  const route = x.ch === "ga" ? gaRoute(env, cid) : waRoute(env, cid, p); // общий номер Green-API — только закреплённый за этой компанией
   if (!route) return false;
   const text = remindText(c, b, x.k, p.lang);
   await env.KV.put(mk, "1", { expirationTtl: 3 * 86400 });

@@ -1,6 +1,7 @@
 // Проверки новых частей на заглушках: история чата для пульта, WhatsApp на несколько клиентов, паспорт бота, вход, страница владельца, пульт чатов.
 // Запуск: node test/platform.mjs (его же запускает test/smoke.mjs в конце). SHOW=1 — показать все проверки.
 import { mk, net, ok, section, T, D0, D1, D2, wait, ALT_DEFAULT } from "./harness.mjs";
+import { sqliteOk, d1With } from "./d1.mjs";
 
 const text = (from, body) => ({ from, type: "text", text: { body } });
 const echo = b => "Ответ на: " + b.contents.at(-1).parts[0].text;
@@ -1028,7 +1029,8 @@ section("заявка: выходной, после закрытия, прошл
 // ====== Рассылки через Green-API: обычный WhatsApp клиента по QR-коду, обычный текст, по одному сообщению с паузой
 section("рассылки через Green-API");
 {
-  const S3 = mk({ GA_ID_ACME: "7105000001", GA_TOKEN_ACME: "ga-tok-acme", GA_URL_ACME: "https://7105.api.greenapi.com" });
+  // ответ из пульта со второго номера — только с отметкой отправки в D1 (аудит 31.10.2026); на Node 20 node:sqlite нет — там проверяется отказ
+  const S3 = mk({ GA_ID_ACME: "7105000001", GA_TOKEN_ACME: "ga-tok-acme", GA_URL_ACME: "https://7105.api.greenapi.com", ...(sqliteOk ? { DB: d1With("production").db } : {}) });
   const own = S3.browser(); await own.go("/studio?key=" + OWNER);
   await own.post("/api/studio/save", PASS);
   const J = async r => r.json();
@@ -1088,12 +1090,17 @@ section("рассылки через Green-API");
   d = await J(await own.go("/api/inbox/list?c=acme"));
   ok("в пульте — чат Green-API этого клиента", d.chats.some(x => x.ch === "ga" && x.id === "77012220009"), JSON.stringify(d.chats));
   net.reset();
-  d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?" }));
-  ok("ответ из пульта уходит с номера Green-API клиента", d.ok === true && sends().length === 1 && sends()[0].inst === "7105000001" && to(sends()[0]) === "77012220009", JSON.stringify([d, net.ga]));
-  net.gaReply = rec => rec.op === "sendMessage" ? new Response(JSON.stringify({ message: "Instance account is expired" }), { status: 400 }) : null;
-  d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Ещё раз" }));
-  ok("Green-API не принял ответ → администратор видит причину, в переписку ответ не записан", /оплат/i.test(d.error || "") && !S3.hist("ga", "acme", "77012220009").turns.some(t => t.text === "Ещё раз"), JSON.stringify(d));
-  net.gaReply = null;
+  if (sqliteOk) {
+    d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?", rid: "rid-acme-001" }));
+    ok("ответ из пульта уходит с номера Green-API клиента", d.ok === true && sends().length === 1 && sends()[0].inst === "7105000001" && to(sends()[0]) === "77012220009", JSON.stringify([d, net.ga]));
+    net.gaReply = rec => rec.op === "sendMessage" ? new Response(JSON.stringify({ message: "Instance account is expired" }), { status: 400 }) : null;
+    d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Ещё раз", rid: "rid-acme-002" }));
+    ok("Green-API не принял ответ → администратор видит причину, в переписку ответ не записан", /оплат/i.test(d.error || "") && !S3.hist("ga", "acme", "77012220009").turns.some(t => t.text === "Ещё раз"), JSON.stringify(d));
+    net.gaReply = null;
+  } else {
+    const r0 = await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?", rid: "rid-acme-001" }); d = await J(r0);
+    ok("без базы D1 ответ со второго номера не уходит: 503 с понятной причиной, Green-API не вызывается", r0.status === 503 && d.code === "nosetup" && sends().length === 0, JSON.stringify(d));
+  }
 
   // --- создание рассылки
   d = await J(await own.post("/api/bc/check", FORM));
@@ -1185,7 +1192,8 @@ section("рассылки через Green-API");
   id = await fresh("Связь", 2, 150);
   net.gaReply = rec => { if (rec.op === "sendMessage") throw new Error("network down"); return null; };
   await S3.cron(); b = bcOf(id);
-  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && b.failed === 1 && b.retryAt > Date.now(), JSON.stringify(b));
+  // «неизвестно, дошло ли», а не «ошибка»: сообщение могло уйти (01.11.2026, test/unit/ga-5xx.test.mjs)
+  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && (b.failed || 0) === 0 && b.unsure === 1 && b.retryAt > Date.now(), JSON.stringify(b));
   net.gaReply = null; await all(id); b = bcOf(id);
   ok("после обрыва связи остальным — по одному сообщению", b.status === "done" && b.sent === 1 && sends().length === 2 && new Set(sends().map(to)).size === 2, JSON.stringify(b));
 

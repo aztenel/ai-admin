@@ -17,7 +17,7 @@ import { hash } from "../../lib/crypto.js";
 import { altText } from "../integrations/altegio/client.js";
 import { altRecordsRange } from "../integrations/altegio/records-api.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
-import { gaKind, gaWhy } from "../integrations/greenapi/client.js";
+import { gaKind, gaWhy, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { notify } from "../integrations/telegram/client.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { sendGreen } from "../channels/greenapi.js";
@@ -36,7 +36,7 @@ const PER_MIN = 2;           // сообщений в минуту со втор
 const H2_LATE = 45 * 60e3;   // «за 2 часа» позже чем через 45 минут уже не к месту
 const QUEUE_MAX = 600;
 const NEW_LATE = 3 * 3600e3; // подтверждение новой записи и переноса — не позже чем через 3 часа (позже — уже не к месту)
-const MAX_TRIES = 3;         // временный отказ Green-API (429, 5xx): столько попыток, дальше — задача администратору (S18)
+const MAX_TRIES = 3;         // Green-API точно не принял (429, перезапуск инстанса): столько попыток, дальше — задача администратору (S18). 5xx — не здесь: сообщение могло уйти
 const NEW_GAP = 5 * 60e3;    // подтверждение — через 5 минут после записи: администратор успевает поправить опечатку
 
 /** @param {Client} c */
@@ -288,9 +288,16 @@ async function jrSend(env, c, o, x, now, ctx, st) {
       await notify(env, `⛔ ${c.name}: напоминания со второго номера остановлены на 6 часов.\nGreen-API: ${why}\nПроверьте, не заблокирован ли номер.`, c.id);
       return "stop";
     }
-    if (kind === "net") { // Green-API не ответил: могло уйти — второй раз не шлём, в переписке — «неизвестно» (знак вопроса)
-      await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, st: "unknown" });
-      st.logs.push(entry(x, "unknown", "Green-API не ответил: неизвестно, ушло ли, второй раз не шлём", now));
+    if (kind === "net") {
+      // ответа нет, обрыв, срок или сбой у Green-API (5xx): сообщение могло уйти — второй раз не шлём (отметка попытки rms: остаётся,
+      // задача из очереди уходит). В переписке — «неизвестно» с причиной (номер сообщения, если Green-API его вернул: отчёт о доставке
+      // уточнит статус). В «ушло» (rmok:) не считается, в дневной предел — считается; отзыв — как просили (раз в 60 дней). Раньше 5xx
+      // был «временным сбоем», и через минуту напоминание уходило ещё раз (01.11.2026, перед приёмкой Winchester)
+      const note = gaUnsureNote(res);
+      st.cnt++;
+      if (x.k === "rv") { try { await jrReviewMark(env, c.id, x.p, now); } catch (e) { console.log("jr review mark", String(e)); } }
+      await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: "unknown", se: note });
+      st.logs.push(entry(x, "unknown", `${note}. Второй раз не шлём — проверьте переписку`, now));
       return "drop";
     }
     if (kind === "temp") {

@@ -4,6 +4,7 @@
 /** @import { Env } from "../../lib/types.js" */
 import { GRAPH } from "../../config/constants.js";
 import { logSafe } from "../../lib/phone.js";
+import { isPreview, PREVIEW_SEND } from "../../lib/stage.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { waCreds, waErr, WA_HINT } from "../integrations/meta/client.js";
 import { WZ_HINT } from "../integrations/wazzapo/client.js";
@@ -19,6 +20,7 @@ async function sendFailed(env, to, wx, what, hint) {
 // → { ok, id } или { ok: false, status, code, error }
 /** @param {Env} env @param {string} to @param {string} t @param {Record<string, any>=} wx @returns {Promise<Record<string, any>>} */
 export async function sendWA(env, to, t, wx) {
+  if (isPreview(env)) return { ok: false, status: 409, code: "preview", error: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const cr = waCreds(env, wx);
   if (wx && wzOn(env, wx.client)) {
     const r = await wzSendOwn(env, cr.token, { phone_number_id: cr.pnid, to: String(to).replace(/\D/g, ""), type: "text", text: { body: t.slice(0, 4000) } });

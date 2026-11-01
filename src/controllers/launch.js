@@ -1,6 +1,7 @@
 // @ts-check
 // Проверка запуска (/launch, /api/launch/*): чек-лист подключений и экзамен бота по его паспорту.
 import { money } from "../lib/money.js";
+import { isPreview, PREVIEW_HOOK } from "../lib/stage.js";
 import { phonesIn } from "../lib/phone.js";
 import { local } from "../lib/time.js";
 import { clean, lowE } from "../lib/text.js";
@@ -93,10 +94,10 @@ export async function launchApi(request, env, url, s) {
     } else add("Запись", (c.services || []).length || BUILTIN.has(cid) ? true : null, c.booking === "none" ? "бот не записывает — берёт телефон для звонка" : "бот собирает заявку, администратор подтверждает её в пульте чатов", "");
     const tok = !!env["WA_TOKEN_" + up], sec = !!env["APP_SECRET_" + up], gr = /** @type {any} */ (gaRoute(env, cid));
     if (gr) { // WhatsApp через Green-API: номер привязан, вебхук ведёт в этот бот
-      const g = await gaInfo(env, gr), name = gr.shared ? "общий номер воркера (GA_ID)" : `GA_ID_${up}`;
+      const g = await gaInfo(env, gr, url.origin), name = gr.shared ? "общий номер воркера (GA_ID)" : `GA_ID_${up}`;
       add("WhatsApp (Green-API)", g.error ? false : g.state === "authorized", g.error || (g.state === "authorized" ? `номер ${g.phone || "?"} привязан (${name})` : GA_STATE_TEXT[g.state] || `номер в состоянии «${clean(g.state, 30)}»`),
         g.error ? `Проверьте ${gaSecret(gr, "GA_ID")}, секрет ${gaSecret(gr, "GA_TOKEN")} и ${gaSecret(gr, "GA_URL")} (apiUrl из кабинета Green-API) в Cloudflare.` : "Кабинет Green-API → инстанс → QR-код: отсканируйте его в WhatsApp на телефоне с этим номером (Связанные устройства).");
-      if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
+      if (!g.error) add("Green-API: вебхук", g.hook, g.hook ? `настроен на ${g.host}: сообщения клиентов, их «стоп» и ответы с телефона приходят боту` : g.other ? `ведёт на другой адрес (${g.other}): сообщения клиентов и их «стоп» приходят туда, а не сюда — рассылки через Green-API отсюда не запустятся` : "не настроен: бот не видит сообщения клиентов и их «стоп» — рассылки через Green-API не запустятся",
         gr.shared && !env.GA_HOOK ? "Задайте в Cloudflare секрет GA_HOOK (любой пароль), потом нажмите «Настроить Green-API»." : "Нажмите «Настроить Green-API» — бот сам впишет адрес вебхука и включит нужные уведомления. Green-API перезапустит инстанс, это до 5 минут.");
     }
     if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: те же имена секретов, другой смысл
@@ -131,6 +132,8 @@ export async function launchApi(request, env, url, s) {
   }
   if (M === "POST" && P === "/api/launch/tg") return jsonP(await tgProbe(env, c));
   if (M === "POST" && P === "/api/launch/ga") { // вебхук Green-API одной кнопкой: адрес этого бота и нужные уведомления
+    // с черновика вебхук не меняем: сообщения настоящих клиентов пошли бы в тестовую версию (аудит 31.10.2026; запрет есть и в gaCall)
+    if (isPreview(env)) return jsonP({ error: PREVIEW_HOOK, code: "preview" }, 409);
     const gr = /** @type {any} */ (gaRoute(env, cid));
     if (!gr) return jsonP({ error: `У этого клиента нет Green-API: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up}.` }, 409);
     if (gr.shared && !env.GA_HOOK) return jsonP({ error: "Для общего номера задайте в Cloudflare секрет GA_HOOK (любой пароль)." }, 409);

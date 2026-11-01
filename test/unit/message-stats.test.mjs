@@ -37,7 +37,7 @@ test("отчёты о доставке и ответы → числа по ви�
   const ev = d.raw.prepare("select event_key, details from events where kind like 'msg_%'").all();
   assert.ok(!ev.some(e => /7700000090/.test(e.event_key + e.details)), "номеров в журнале событий нет");
   // ответ сотрудника из пульта — свой источник; его галочки тоже считаются
-  const sent = await b.go("/api/inbox/send", { method: "POST", headers: { "content-type": "application/json", origin: "https://bot.test" }, body: JSON.stringify({ c: "winchester", ch: "ga", id: "77000000901", text: "Да, 16:00 свободно", op: "Айгерим" }) });
+  const sent = await b.go("/api/inbox/send", { method: "POST", headers: { "content-type": "application/json", origin: "https://bot.test" }, body: JSON.stringify({ c: "winchester", ch: "ga", id: "77000000901", text: "Да, 16:00 свободно", op: "Айгерим", rid: "rid-stats-01" }) });
   assert.equal(sent.status, 200, await sent.text());
   const h = s.kv.json("h:ga:winchester:77000000901"), mine = h.turns.at(-1);
   assert.equal(mine.by, "admin"); assert.ok(mine.mid);

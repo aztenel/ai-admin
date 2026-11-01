@@ -43,7 +43,7 @@ type ChatRaw = {
   bookings: string[]; pend: string[]; booked: string;
   need: { why: string; text: string; at: number; tp?: string; src?: { k: "rm" | "bc"; at: number; text: string } } | null; paused: number; stop: boolean; off: boolean;
   assignee?: string; done?: number; line?: { ch: string; label: string }; audit?: { t: number; w: string; a: string; to?: string }[];
-  canSend: boolean; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean;
+  canSend: boolean; sendOff?: string; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean;
 };
 type LeadRaw = { id: string; name: string; phone: string; service: string; time: string; note: string; status: string; kind: string; source: string; ts: number };
 type StudioClientRaw = { id: string; name: string; kind: string; niche: string; off: boolean; booking: string };
@@ -195,6 +195,8 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
   });
   let reply: ReplyState;
   if (d.ch === "web") reply = { allowed: false, reason: "web", text: "Это чат с сайта, ответить в него нельзя. Позвоните клиенту, если он оставил номер." };
+  // сервер сам говорит, почему сейчас нельзя: тестовая версия или нет базы защиты от двойной отправки (аудит 31.10.2026)
+  else if (d.sendOff) reply = { allowed: false, reason: "blocked", text: d.sendOff };
   else if (!d.canSend) reply = { allowed: false, reason: "not_connected", text: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." };
   else if (!d.open) reply = { allowed: false, reason: "window", text: "Клиент писал больше суток назад, а с основного номера WhatsApp первым написать нельзя. Позвоните клиенту или дождитесь его сообщения." };
   else reply = { allowed: true, closesAt: d.ch === "wa" && d.li ? d.li + 24 * 3600e3 : undefined };
@@ -240,6 +242,19 @@ const campaignsApi = <K extends keyof CampaignSource>(k: K): CampaignSource[K] =
 // раздел «Клиенты» — тоже отдельный файл (live-contacts.ts)
 const contactsApi = <K extends keyof ContactSource>(k: K): ContactSource[K] =>
   ((...a: unknown[]) => import("./live-contacts").then((m) => (m.liveContacts[k] as (...x: unknown[]) => unknown)(...a))) as ContactSource[K];
+
+/** Обрыв связи при отправке клиенту: запрос мог дойти — «действие не выполнено» было бы неправдой (ревью PR №2, F4). */
+function lostSend(e: unknown): never {
+  if (e instanceof ApiError && e.offline) throw new ApiError("Связь оборвалась: сообщение могло уйти. Нажмите «Повторить» — второй раз оно не уйдёт.", 0, true);
+  throw e;
+}
+
+/** rid для «Отправить клиенту и закрыть»: одна заявка и один текст — одно сообщение, сколько бы раз ни нажали. */
+function doneRid(leadId: string, text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `dn-${leadId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "x"}-${h.toString(36)}`;
+}
 
 export function createLiveSource(): DataSource {
   const marks = readMarks();
@@ -320,7 +335,7 @@ export function createLiveSource(): DataSource {
       return detail(ws, d);
     },
     async send(ws, ref, text, opts) {
-      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) });
+      const d = await call<{ ok: true; chat: ChatRaw; warn?: string }>("/api/inbox/send", { c: ws, ch: ref.channelId, id: ref.externalId, text, op: getOperator(), ...(opts?.rid ? { rid: opts.rid } : {}), ...(opts?.quote ? { quote: opts.quote } : {}) }).catch(lostSend);
       marks.mark(ws, keyOf(ref.channelId, ref.externalId));
       return detail(ws, d.chat, d.warn);
     },
@@ -353,7 +368,9 @@ export function createLiveSource(): DataSource {
       return detail(ws, d.chat);
     },
     async complete(ws, ref, leadId, text) {
-      const d = await call<{ ok: true; chat: ChatRaw }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act: "done", lead: leadId, text, op: getOperator() });
+      // номер отправки — от заявки и текста: повтор после обрыва связи не отправит клиенту второй раз (аудит 31.10.2026)
+      const rid = text ? doneRid(leadId, text) : undefined;
+      const d = await call<{ ok: true; chat: ChatRaw }>("/api/inbox/act", { c: ws, ch: ref.channelId, id: ref.externalId, act: "done", lead: leadId, text, op: getOperator(), ...(rid ? { rid } : {}) }).catch(text ? lostSend : (e) => Promise.reject(e));
       return detail(ws, d.chat);
     },
     async leads(ws): Promise<Lead[]> {
