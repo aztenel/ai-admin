@@ -196,11 +196,25 @@ async function phoneRun(scheme) {
   ok(`${tag}: ответ подписан именем сотрудника`, /Айгерим/.test(await log.innerText()));
   ok(`${tag}: одна галочка — «Отправлено»`, (await log.getByRole("img", { name: "Отправлено" }).count()) >= 1);
   const h = S.hist("ga", "winchester", B), mine = h.turns.filter((x) => x.by === "admin").at(-1);
-  for (const st of ["delivered", "read"]) await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine.mid, status: st, sendByApi: true });
-  await page.getByRole("button", { name: "Действия с чатом" }).click();
-  await page.getByRole("menuitem", { name: "Обновить переписку" }).click();
-  await page.waitForTimeout(500);
-  ok(`${tag}: после вебхуков — «Прочитано» (две синие)`, (await log.getByRole("img", { name: "Прочитано" }).count()) >= 1);
+  // живая проверка на стенде 01.11.2026: отчёты Green-API «доставлено» и «прочитано» пришли, строка списка показала синие
+  // галочки, а открытый чат — одну серую. Отчёты пишет одна точка сети Cloudflare, пульт читает другая: чтение ключа KV там до 60 с
+  // отдаёт прежнюю копию, а список ключей с метаданными уже новый. Опрос видел новое время в списке, перезагружал чат — и получал
+  // старую копию; следующие опросы ничего нового в списке не видели и чат больше не трогали. Здесь — то же: пока stale, чтение
+  // переписки отдаёт копию до отчёта. Опрос по таймеру — тот же store.poll(), что и по событию «online» (без «Обновить»)
+  const hkey = `h:ga:winchester:${B}`, realGet = S.kv.api.get, pre = S.kv.mem.get(hkey);
+  let stale = false;
+  S.kv.api.get = async (k, ...rest) => (stale && k === hkey ? pre : realGet(k, ...rest));
+  const autoPoll = async () => { await page.evaluate(() => window.dispatchEvent(new Event("online"))); await page.waitForTimeout(900); };
+  await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine.mid, status: "delivered", sendByApi: true });
+  stale = true;
+  await autoPoll(); // список уже «доставлено», чат перезагружен — из старой копии
+  stale = false;
+  await autoPoll(); // в списке нового нет — открытый чат должен догнать статус сам
+  ok(`${tag}: открытый чат догоняет статус после устаревшего чтения — «Доставлено» (без «Обновить»)`, (await log.getByRole("img", { name: "Доставлено" }).count()) >= 1);
+  await hook({ typeWebhook: "outgoingMessageStatus", chatId: B + "@c.us", idMessage: mine.mid, status: "read", sendByApi: true });
+  await autoPoll();
+  S.kv.api.get = realGet;
+  ok(`${tag}: открытый чат сам — «Прочитано» (две синие, без «Обновить»)`, (await log.getByRole("img", { name: "Прочитано" }).count()) >= 1);
   const head = await page.locator("section[aria-label^='Переписка'] header").innerText();
   ok(`${tag}: в шапке — второй номер и кто ведёт`, /Второй WhatsApp/.test(head) && /ведёт вы/.test(head), head);
   ok(`${tag}: нет «Бот в этой компании выключен» и «Оператор, с телефона»`, !/Бот в этой компании выключен|Оператор, с телефона/.test(await page.content()));

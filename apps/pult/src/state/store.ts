@@ -119,6 +119,7 @@ class Store {
   private timer = 0;
   private open: string | null = null;
   private gen = 0; // смена компании отменяет ответы, пришедшие для прежней
+  private lag = { sig: "", n: 0 }; // сколько раз подряд перезагружали открытый чат, отставший от списка по статусу (statusBehind)
 
   subscribe = (f: () => void) => {
     this.subs.add(f);
@@ -242,8 +243,8 @@ class Store {
       const before = this.open ? this.state.conversations.find((c) => c.key === this.open)?.lastAt : undefined;
       this.applySnapshot(snap);
       this.set({ offline: false, phase: "ready" });
-      const after = this.open ? snap.conversations.find((c) => c.key === this.open)?.lastAt : undefined;
-      if (this.open && (manual || after !== before)) this.loadConversation(this.open, true);
+      const row = this.open ? snap.conversations.find((c) => c.key === this.open) : undefined;
+      if (this.open && (manual || row?.lastAt !== before || this.statusBehind(this.open, row))) this.loadConversation(this.open, true);
       if (manual) this.loadReport(g);
     } catch (e) {
       if (g !== this.gen) return;
@@ -253,6 +254,18 @@ class Store {
       if (manual) this.set({ refreshing: false });
       this.schedule();
     }
+  }
+
+  /** Открытый чат отстал от списка: в строке списка у нашего последнего сообщения уже другой статус. Живая проверка на стенде
+   *  01.11.2026: отчёты Green-API пишет одна точка сети Cloudflare, пульт читает другая — чтение переписки там до 60 с отдаёт прежнюю
+   *  копию, а список ключей уже новый; опрос перезагружал чат по новому времени, получал старую копию, и галочка так и оставалась
+   *  одна. Перезагружаем, пока не догонит, но не больше 5 раз подряд на одно состояние строки: кэш живёт до 60 с, опрос — раз в 15 с. */
+  private statusBehind(key: string, row?: ConversationSummary) {
+    const last = this.state.details[key]?.data?.messages.at(-1);
+    if (!row?.lastStatus || !last || last.from === "contact" || last.status === row.lastStatus) return false;
+    const sig = `${key}|${row.lastAt}|${row.lastStatus}`;
+    if (this.lag.sig !== sig) this.lag = { sig, n: 0 };
+    return ++this.lag.n <= 5;
   }
 
   setOpen(key: string | null) {
