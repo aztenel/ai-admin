@@ -1,0 +1,82 @@
+---
+import Base from "../layouts/Base.astro";
+import Button from "../components/Button.astro";
+import { BRAND, legal, legalRows, ownerLine, canContact } from "../config/site";
+
+const principles = [
+  { title: "Вы говорите с разработчиками", text: "Задачу обсуждаете с теми, кто будет писать код. Без посредников, которые пересказывают её своими словами." },
+  { title: "Сначала процесс, потом экраны", text: "Прежде чем рисовать интерфейс, разбираемся, откуда приходят данные и кто ими пользуется. Часть задач решается без новых экранов." },
+  { title: "Одна правда о данных", text: "Запись, заказ или оплата живут в одной системе, остальные читают оттуда. Так данные не расходятся между сайтом, CRM и таблицами." },
+  { title: "Показываем только запущенное", text: "В разделе «Работы» только проекты, которые работают у клиентов. О том, что ещё не запущено, так и пишем." },
+];
+---
+<Base title="О студии" description={`${BRAND}: независимая студия разработки программного обеспечения в Казахстане. Сайт и услуги студии: ${legal.name}.`}>
+  <section class="wrap pt-10 md:pt-16 lg:pt-20" aria-labelledby="page-title">
+    <div class="grid gap-6 lg:grid-cols-12">
+      <h1 id="page-title" class="t-h1 lg:col-span-7">О студии</h1>
+    </div>
+    <div class="mt-8 grid gap-6 lg:grid-cols-12">
+      <div class="space-y-4 lg:col-span-7">
+        <p class="t-lead text-heading">{BRAND} — независимая студия разработки программного обеспечения в Казахстане. Мы проектируем и разрабатываем сайты и веб-приложения, системы учёта, интеграции и AI-автоматизацию для компаний.</p>
+        <p>Мы небольшая команда инженеров и берём задачу целиком: разбираем процесс, проектируем, пишем код, запускаем и сопровождаем. Работаем с бизнесом в Казахстане.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="principles-title">
+    <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-4">
+        <h2 id="principles-title" class="t-h2">Как мы работаем</h2>
+      </div>
+      <ul class="grid md:grid-cols-2 md:gap-x-6 lg:col-span-8">
+        {principles.map((p) => (
+          <li class="border-t border-border pt-5 pb-7">
+            <h3 class="t-h3">{p.title}</h3>
+            <p class="t-small mt-2">{p.text}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <section id="company" class="wrap section" aria-labelledby="company-title">
+    <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-4">
+        <h2 id="company-title" class="t-h2">Сведения о компании</h2>
+      </div>
+      <div class="lg:col-span-8">
+        <p class="max-w-[718px]">{ownerLine()}</p>
+        <dl class="mt-6 max-w-[718px]">
+          {legalRows().map((r) => (
+            <div class="grid gap-1 border-t border-border py-3 sm:grid-cols-[260px_1fr] sm:gap-6">
+              <dt class="t-small">{r.label}</dt>
+              <dd class="t-small text-heading">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+        {legal.activities.length > 0 && (
+          <div class="mt-8 max-w-[718px]">
+            <h3 class="t-cap font-medium text-heading">Виды деятельности по ОКЭД</h3>
+            <ul class="mt-2">
+              {legal.activities.map((x) => <li class="t-small border-t border-border py-2.5 first:border-0">{x}</li>)}
+            </ul>
+          </div>
+        )}
+        <p class="t-small mt-6">{canContact() && <><a class="link" href="/contacts/">Контакты</a> · </>}<a class="link" href="/privacy/">Политика конфиденциальности</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="cta-title">
+    <div class="grid gap-6 rounded-2xl bg-surface px-5 py-8 md:px-10 md:py-12 lg:grid-cols-12 lg:items-end lg:px-12">
+      <div class="lg:col-span-7">
+        <h2 id="cta-title" class="t-h2">Посмотрите, что мы уже сделали</h2>
+        <p class="mt-4 max-w-[560px]">Сайт и онлайн-запись для барбершопа Winchester: мастера, цены и свободное время приходят из CRM салона.</p>
+      </div>
+      <div class="flex flex-col gap-3 sm:flex-row lg:col-span-5 lg:justify-self-end">
+        <Button href="/cases/winchester/" variant={canContact() ? "secondary" : "primary"}>Открыть кейс</Button>
+        {canContact() && <Button href="/contacts/">Обсудить проект</Button>}
+      </div>
+    </div>
+  </section>
+</Base>

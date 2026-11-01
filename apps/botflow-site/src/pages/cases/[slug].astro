@@ -1,0 +1,122 @@
+---
+import { getCollection, render } from "astro:content";
+import type { CollectionEntry } from "astro:content";
+import { canContact } from "../../config/site";
+import Base from "../../layouts/Base.astro";
+import Button from "../../components/Button.astro";
+import Screenshot from "../../components/Screenshot.astro";
+import BrowserFrame from "../../components/BrowserFrame.astro";
+
+export async function getStaticPaths() {
+  const cases = await getCollection("cases");
+  return cases.map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
+}
+interface Props { entry: CollectionEntry<"cases"> }
+const { entry } = Astro.props;
+const d = entry.data;
+const { Content } = await render(entry);
+const host = d.url ? new URL(d.url).host : "";
+const desktop = d.screens.filter((s) => !s.phone);
+const phones = d.screens.filter((s) => s.phone);
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "CreativeWork",
+  name: d.title,
+  about: d.client,
+  dateCreated: String(d.year),
+  url: new URL(Astro.url.pathname, Astro.site).href,
+};
+---
+<Base title={d.title} description={d.description} jsonLd={jsonLd}>
+  <section class="wrap pt-8 md:pt-12 lg:pt-16" aria-labelledby="page-title">
+    <a href="/cases/" class="t-small inline-flex items-center gap-2 text-body transition-colors hover:text-heading"><span aria-hidden="true">←</span> Все работы</a>
+    <div class="mt-6 grid gap-6 lg:grid-cols-12 lg:items-end">
+      <h1 id="page-title" class="t-h1 lg:col-span-8">{d.title}</h1>
+      <div class="lg:col-span-4 lg:pb-1">
+        <p class="t-lead">{d.summary}</p>
+      </div>
+    </div>
+    <dl class="mt-10 grid grid-cols-2 gap-x-6 md:grid-cols-4">
+      <div class="border-t border-border pt-3 pb-5"><dt class="t-cap">Клиент</dt><dd class="t-small mt-1 text-heading">{d.client}</dd></div>
+      <div class="border-t border-border pt-3 pb-5"><dt class="t-cap">Год</dt><dd class="t-small mt-1 text-heading">{d.year}</dd></div>
+      <div class="border-t border-border pt-3 pb-5"><dt class="t-cap">Что делали</dt><dd class="t-small mt-1 text-heading">{d.services.join(", ")}</dd></div>
+      <div class="border-t border-border pt-3 pb-5"><dt class="t-cap">Статус</dt><dd class="t-small mt-1 text-heading">{d.status}{d.url && <>, <a class="link" href={d.url} target="_blank" rel="noopener">{host}</a></>}</dd></div>
+    </dl>
+  </section>
+
+  <section class="wrap mt-6 md:mt-8" aria-label="Сайт на компьютере и телефоне">
+    <div class="grid gap-6 md:grid-cols-12 md:items-end">
+      <figure class="md:col-span-9">
+        <BrowserFrame url={host}>
+          <Screenshot name="site-desktop" widths={[1440, 960]} ratio="2880 / 1800" frame="2880 / 1756" bare eager sizes="(min-width: 768px) 70vw, 92vw" alt={`Главная страница ${host} на компьютере`} />
+        </BrowserFrame>
+        <figcaption class="t-cap mt-3">Главная страница на компьютере</figcaption>
+      </figure>
+      <figure class="md:col-span-3">
+        <Screenshot name="site-mobile" widths={[780, 400]} ratio="780 / 1688" frame="390 / 760" phone sizes="(min-width: 768px) 22vw, 60vw" class="max-w-[260px] md:max-w-none" alt={`Главная страница ${host} на телефоне`} />
+        <figcaption class="t-cap mt-3">На телефоне</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="facts-title">
+    <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
+      <div class="lg:col-span-4">
+        <h2 id="facts-title" class="t-h2">Коротко</h2>
+      </div>
+      <dl class="grid gap-x-6 sm:grid-cols-2 lg:col-span-8">
+        {d.facts.map((f) => (
+          <div class="border-t border-border pt-4 pb-6">
+            <dt class="t-cap font-medium text-heading">{f.term}</dt>
+            <dd class="t-small mt-1">{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-label="Описание проекта">
+    <div class="grid lg:grid-cols-12 lg:gap-6">
+      <div class="case-body lg:col-span-8 lg:col-start-5">
+        <Content />
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="screens-title">
+    <h2 id="screens-title" class="t-h2">Форма записи по шагам</h2>
+    <div class="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-12 lg:items-start">
+      {desktop.map((s, i) => (
+        <figure class:list={[i === 0 ? "md:col-span-2 lg:col-span-7" : "lg:col-span-5", i === 2 && "lg:col-span-7"]}>
+          <Screenshot name={s.src} widths={s.widths} ratio={s.ratio} sizes="(min-width: 1024px) 50vw, (min-width: 768px) 46vw, 92vw" alt={s.alt} />
+          <figcaption class="t-cap mt-3 max-w-[520px]">{s.caption}</figcaption>
+        </figure>
+      ))}
+      {phones.map((s) => (
+        <figure class="lg:col-span-5">
+          <Screenshot name={s.src} widths={s.widths} ratio={s.ratio} frame="390 / 640" phone sizes="(min-width: 768px) 30vw, 70vw" class="max-w-[300px]" alt={s.alt} />
+          <figcaption class="t-cap mt-3 max-w-[300px]">{s.caption}</figcaption>
+        </figure>
+      ))}
+    </div>
+  </section>
+
+  {canContact() && <section class="wrap section" aria-labelledby="cta-title">
+    <div class="grid gap-6 rounded-2xl bg-surface px-5 py-8 md:px-10 md:py-12 lg:grid-cols-12 lg:items-end lg:px-12">
+      <div class="lg:col-span-7">
+        <h2 id="cta-title" class="t-h2">Нужна похожая система?</h2>
+        <p class="mt-4 max-w-[560px]">Онлайн-запись, связь сайта с CRM, своя форма вместо чужого виджета. Расскажите, как у вас устроена работа с клиентами.</p>
+      </div>
+      <div class="lg:col-span-4 lg:col-start-9 lg:justify-self-end">
+        <Button href="/contacts/">Обсудить проект</Button>
+      </div>
+    </div>
+  </section>}
+</Base>
+
+<style>
+  .case-body :global(h2) { font-family: var(--font-display); color: var(--color-heading); font-weight: 600; font-size: 24px; line-height: 32px; letter-spacing: -0.01em; margin-top: 40px; }
+  .case-body :global(h2:first-child) { margin-top: 0; }
+  .case-body :global(p) { margin-top: 12px; max-width: 718px; }
+  @media (min-width: 48rem) { .case-body :global(h2) { font-size: 28px; line-height: 36px; } }
+</style>

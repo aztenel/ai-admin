@@ -1,0 +1,11 @@
+---
+/** Окно браузера вокруг настоящего скриншота сайта: адресная строка с доменом, без декоративных «точек». */
+interface Props { url: string; class?: string }
+const { url, class: cls = "" } = Astro.props;
+---
+<div class:list={["overflow-hidden rounded-xl bg-white shadow-[0_0_0_1px_rgb(22_26_34/0.10),0_16px_32px_-20px_rgb(22_26_34/0.35)]", cls]}>
+  <div class="flex h-9 items-center justify-center border-b border-border bg-surface px-3 md:h-10">
+    <span class="rounded-md bg-white px-3 py-0.5 text-[12px] leading-5 text-body ring-1 ring-border">{url}</span>
+  </div>
+  <slot />
+</div>
