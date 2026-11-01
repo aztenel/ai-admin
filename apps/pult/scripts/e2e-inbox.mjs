@@ -12,6 +12,8 @@
 // Chromium: запись, таймер, прослушивание, двойное нажатие — одна отправка, Ogg Opus «voice-….ogg»; путь iPhone — запись M4A уходит
 // аудиофайлом с пометкой; нет доступа к микрофону; запись прервалась — записанное остаётся); «Удалить у меня» и «Удалить у всех»
 // (подтверждение, один запрос deleteMessage, после перезагрузки так же); «прочитано» у двух сотрудников (общее только с D1).
+// Фон переписки (задача 5, 01.11.2026): у Winchester по умолчанию узор из каракулей, «Однотонный» помнится после перезагрузки,
+// у другой компании «Узор» — прежние точки.
 // Снимки 390×844 (как iPhone 14/15, вырез и «полоска Домой» нарисованы) и 1280×800, светлая и тёмная тема.
 // Это Chromium в размере iPhone, а не Safari на iPhone: на настоящем телефоне не проверено.
 // Запуск: node scripts/e2e-inbox.mjs [папка для снимков]
@@ -725,12 +727,53 @@ async function darkShots(vp, tag) {
   await t.ctx.close();
 }
 
+// фон переписки Winchester (задача 5, 01.11.2026): без выбора — узор из каракулей (маска SVG над слоем цвета темы, лента — над ним),
+// «Однотонный» выключает узор и помнит это после перезагрузки; у другой компании «Узор» — прежние точки, каракулей нет
+async function chatBgRun() {
+  const t = await session({ width: 390, height: 844 }, "light", "390-chatbg", "Айгерим");
+  const { page, tag } = t;
+  const look = () => page.evaluate(() => {
+    const el = document.querySelector("[role=log]")?.parentElement, pre = el ? getComputedStyle(el, "::before") : null;
+    return { bg: document.documentElement.dataset.chatbg, saved: localStorage.getItem("pult.chatbg"), dots: !!el && /radial-gradient/.test(getComputedStyle(el).backgroundImage),
+      doodles: !!pre && pre.content !== "none" && /data:image\/svg\+xml/.test(pre.maskImage || pre.webkitMaskImage || ""), lifted: getComputedStyle(document.querySelector("[role=log]")).position === "relative" };
+  });
+  const openChat = async () => {
+    await page.waitForSelector("section[aria-label='Чаты']");
+    await tab(page, "Все").click();
+    await page.locator("ul a[href^='#/inbox/']").first().click();
+    await page.waitForSelector("[role=log]");
+    await page.waitForTimeout(300);
+  };
+  await openChat();
+  let l = await look();
+  ok(`${tag}: Winchester без выбора — узор из каракулей, не точки; лента над узором`, l.bg === "pattern" && l.saved === null && l.doodles && !l.dots && l.lifted, JSON.stringify(l));
+  await t.shot("1-doodles");
+  await page.evaluate(() => { location.hash = "#/settings/appearance"; });
+  await page.getByRole("radio", { name: "Однотонный" }).click();
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const plain = await page.getByRole("radio", { name: "Однотонный" }).getAttribute("aria-checked");
+  await page.evaluate(() => { location.hash = "#/inbox"; });
+  await openChat();
+  l = await look();
+  ok(`${tag}: «Однотонный» выключает узор и остаётся после перезагрузки`, plain === "true" && l.bg === "plain" && l.saved === "plain" && !l.doodles && !l.dots, JSON.stringify({ plain, ...l }));
+  await page.evaluate(() => localStorage.setItem("pult.chatbg", "pattern"));
+  await page.goto(`${dl.app}?c=dent`);
+  await page.waitForLoadState("networkidle");
+  await openChat();
+  l = await look();
+  ok(`${tag}: у другой компании «Узор» — прежние точки, без каракулей`, l.bg === "pattern" && l.dots && !l.doodles, JSON.stringify(l));
+  ok(`${tag}: ошибок в консоли нет`, !t.errs.length, t.errs.join(" | "));
+  await t.ctx.close();
+}
+
 try {
   await phoneRun("light");
   await deskRun("light");
   await darkShots({ width: 390, height: 844 }, "390-dark");
   await darkShots({ width: 1280, height: 800 }, "1280-dark");
   await readSync();
+  await chatBgRun();
 } catch (e) {
   ok("сценарий дошёл до конца", false, String(e && e.stack || e).slice(0, 600));
 } finally {
