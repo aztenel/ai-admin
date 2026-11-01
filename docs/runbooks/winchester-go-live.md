@@ -384,7 +384,7 @@ Production → Variables and Secrets: `GA_ID_WINCHESTER` (Text), `GA_URL_WINCHES
 
 ### 9.8. Первые сутки (П)
 
-«Переписки» → «ждут записи» = 0; в журнале Worker нет ошибок `chat …` и `wa journal …`; `/diag/storage` — база отвечает;
+«Переписки» → «ждут записи» = 0; в журнале Worker нет строк `chat …`, `wal stuck`, `wal replay`, `wa wal …`; `/diag/storage` — база отвечает;
 «Скорость чатов» в Диагностике — без провалов.
 
 ### 9.9. Откат — по шагам, в обратном порядке
