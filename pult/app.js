@@ -70,7 +70,7 @@ var API = DEMO ? window.__DEMO_API : {
   list: function (f, ch) { return jf("/api/inbox/list?c=" + enc(S.C) + "&f=" + (ch === "web" ? "all" : f) + "&ch=" + ch); },
   chat: function (ch, id) { return jf("/api/inbox/chat?c=" + enc(S.C) + "&ch=" + ch + "&id=" + enc(id)); },
   send: function (ch, id, text, rid) { return jf("/api/inbox/send", { c: S.C, ch: ch, id: id, text: text, rid: rid }); },
-  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; if (x.text) b.rid = doneRid(x.lead, x.text); } return jf("/api/inbox/act", b); },
+  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; if (x.text) b.rid = doneRid(x.lead, x.text); if (x.force) b.force = true; } return jf("/api/inbox/act", b); },
   me: function () { return jf("/api/inbox/me"); },
   leads: function () { return jf("/api/inbox/leads?c=" + enc(S.C)); },
   report: function () { return jf("/api/inbox/report?c=" + enc(S.C)); },
@@ -485,7 +485,10 @@ function swFlush(key) {
   p.sent = true; clearTimeout(p.t);
   if (SW.tOn) { clearTimeout(toastT); $("toast").hidden = true; SW.tOn = false; }
   function back() { if (SW.pend === p) SW.pend = null; }
-  p.p = API.act(p.ch, p.id, p.a).then(function (d) {
+  // «Готово» жестом на чате, где клиент ждёт ответа: сервер спрашивает «Закрыть чат без ответа?» (ТЗ v2.0 §2.5). У жеста свой
+  // ответ на этот вопрос — окно «Отменить», а при уходе со страницы спросить уже нельзя: отправляем сразу с подтверждением.
+  // Раньше вопрос сервера пульт не понимал, и чат молча возвращался в «Ждут ответа» (проверка 01.11.2026)
+  p.p = API.act(p.ch, p.id, p.a, p.a === "resolve" ? { force: true } : null).then(function (d) {
     back();
     if (d && d.error) { swUnpatch(p); swRepaint(); toast(d.error, { ms: 7000 }); return; } // сервер не разрешил: строка на месте, причина словами сервера
     loadList();
@@ -641,9 +644,15 @@ function done(d, tgt) {
   if (d.warn) notice("Обратите внимание", d.warn);
   if (tgt && !same(S.cur, tgt)) { loadList(); return; }
   if (d.erased) { closeChat(); notice("Данные удалены", "Переписка, заявки и согласие этого клиента удалены. Отметка «стоп», если была, осталась."); return; }
+  if (!d.chat) { loadChat(false); loadList(); return; } // ответ без переписки — перечитать, а не падать с «Нет связи»
   clear($("cards")); renderChat(d.chat, true); loadList();
 }
-function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) { done(d, tgt); }).catch(oops); }
+// сервер просит подтвердить («Клиент ждёт ответа. Закрыть чат без ответа?», ТЗ v2.0 §2.5) — спрашиваем и повторяем с подтверждением.
+// Раньше ответ без переписки ронял renderChat: сотрудник видел ложное «Нет связи», а чат оставался в «Ждут ответа» (проверка 01.11.2026)
+function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) {
+  if (d && d.confirm && !(x && x.force)) { S.busy = false; ask("Готово", d.confirm, "Закрыть", function () { doAct(a, Object.assign({}, x, { force: true })); }); return; }
+  done(d, tgt);
+}).catch(oops); }
 // номер отправки (rid): одно нажатие — одно сообщение клиенту. Связь оборвалась — запрос мог дойти: тот же текст в тот же чат
 // уходит с тем же номером, и сервер второй раз не отправит (аудит 31.10.2026; без номера второй номер не отправляет вовсе)
 // rid для «Отправить клиенту и закрыть»: одна заявка и один текст — одно сообщение, сколько бы раз ни нажали
