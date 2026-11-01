@@ -1,9 +1,10 @@
 ---
-import { BRAND } from "../config/site";
+import { BRAND, canContact } from "../config/site";
 import { nav, t } from "../i18n/ui";
 import Button from "./Button.astro";
 const path = Astro.url.pathname;
-const items = nav();
+const contact = canContact();
+const items = nav(contact);
 const isCurrent = (href: string, match?: string) => path === href || (match ? path.startsWith(match) : false);
 ---
 <header class="sticky top-0 z-40 border-b border-border bg-white/95 backdrop-blur-[2px] supports-[backdrop-filter]:bg-white/90">
@@ -25,7 +26,7 @@ const isCurrent = (href: string, match?: string) => path === href || (match ? pa
       </nav>
     </div>
     <div class="flex items-center gap-3">
-      <div class="hidden md:block"><Button href="/contacts/">{t("cta.discuss")}</Button></div>
+      {contact && <div class="hidden md:block"><Button href="/contacts/">{t("cta.discuss")}</Button></div>}
       <button
         type="button"
         class="-mr-2 inline-flex h-11 items-center gap-2 rounded-lg px-2 text-[15px] font-medium text-heading lg:hidden"
@@ -53,7 +54,7 @@ const isCurrent = (href: string, match?: string) => path === href || (match ? pa
           </li>
         ))}
       </ul>
-      <Button href="/contacts/" full class="mt-4 md:hidden">{t("cta.discuss")}</Button>
+      {contact && <Button href="/contacts/" full class="mt-4 md:hidden">{t("cta.discuss")}</Button>}
     </nav>
   </div>
 </header>

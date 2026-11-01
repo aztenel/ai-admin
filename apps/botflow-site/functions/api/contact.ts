@@ -3,10 +3,11 @@
  *
  * Переменные проекта Pages (Settings → Variables and Secrets):
  *   TG_TOKEN (Secret) — токен бота Telegram, TG_CHAT (Text) — id чата, можно несколько через запятую.
- * Форма на сайте появляется только при сборке с PUBLIC_CONTACT_FORM=1.
+ * Форма на сайте появляется только при сборке с PUBLIC_CONTACT_FORM=1, обработчик работает только с CONTACT_FORM=1
+ * (по умолчанию выключено: включать после настройки секретов и живой проверки доставки).
  * Без переменных — честный 503, сообщение никуда не «теряется молча».
  */
-interface Env { TG_TOKEN?: string; TG_CHAT?: string }
+interface Env { TG_TOKEN?: string; TG_CHAT?: string; CONTACT_FORM?: string }
 
 const MAX = { name: 120, contact: 160, company: 160, message: 4000 } as const;
 const json = (status: number, body: Record<string, unknown>) =>
@@ -15,6 +16,8 @@ const json = (status: number, body: Record<string, unknown>) =>
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  // выключено, пока владелец не задал CONTACT_FORM=1 и не проверил доставку в Telegram вживую
+  if (env.CONTACT_FORM !== "1") return json(404, { error: "Не найдено." });
   const origin = request.headers.get("origin");
   if (origin && new URL(origin).host !== new URL(request.url).host) return json(403, { error: "Запрос с другого сайта." });
   if (Number(request.headers.get("content-length") || 0) > 16_000) return json(413, { error: "Слишком длинное сообщение." });

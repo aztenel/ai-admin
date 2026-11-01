@@ -1,5 +1,5 @@
 ---
-import { BRAND, legal, legalRows, contactChannels } from "../config/site";
+import { BRAND, legal, legalRows, contactChannels, canContact } from "../config/site";
 import { nav, t } from "../i18n/ui";
 const year = new Date().getFullYear();
 const channels = contactChannels();
@@ -13,7 +13,7 @@ const channels = contactChannels();
     <nav aria-label="Разделы сайта" class="md:col-span-3 lg:col-span-2 lg:col-start-6">
       <ul class="t-small space-y-2">
         <li><a href="/" class="text-body transition-colors hover:text-heading">Главная</a></li>
-        {nav().map((i) => <li><a href={i.href} class="text-body transition-colors hover:text-heading">{i.label}</a></li>)}
+        {nav(canContact()).map((i) => <li><a href={i.href} class="text-body transition-colors hover:text-heading">{i.label}</a></li>)}
       </ul>
     </nav>
     <div class="md:col-span-4 lg:col-span-4 lg:col-start-9">

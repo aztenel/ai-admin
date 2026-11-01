@@ -29,9 +29,10 @@ export const t = (key: keyof UI, lang: Lang = defaultLang) => ui[lang][key];
 /** Путь с учётом языка: у основного языка префикса нет. */
 export const localePath = (path: string, lang: Lang = defaultLang) => (lang === defaultLang ? path : `/${lang}${path}`);
 
-export const nav = (lang: Lang = defaultLang) => [
+/** withContacts=false — пока нет ни одного способа связи, пункта «Контакты» в меню нет (страница без контактов — тупик). */
+export const nav = (withContacts = true, lang: Lang = defaultLang) => [
   { href: localePath("/services/", lang), label: t("nav.services", lang) },
-  { href: localePath("/cases/winchester/", lang), label: t("nav.work", lang), match: "/cases/" },
+  { href: localePath("/cases/", lang), label: t("nav.work", lang), match: "/cases/" },
   { href: localePath("/about/", lang), label: t("nav.about", lang) },
-  { href: localePath("/contacts/", lang), label: t("nav.contacts", lang) },
+  ...(withContacts ? [{ href: localePath("/contacts/", lang), label: t("nav.contacts", lang) }] : []),
 ];
