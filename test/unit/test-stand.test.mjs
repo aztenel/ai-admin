@@ -51,6 +51,9 @@ test("настройки стенда: свой Worker, тот же код, св
   const used = [...w.kv_namespaces, ...w.previews.kv_namespaces].map(x => x.id).concat(w.previews.d1_databases.map(x => x.database_id), PROD_D1);
   assert.ok(!used.includes(st.kv_namespaces[0].id), "KV стенда — не боевое и не черновиков");
   assert.ok(!used.includes(st.d1_databases[0].database_id), "D1 стенда — не боевая и не черновиков");
+  // KV и D1 стенда созданы 01.11.2026 (до того в id стояли нули — выкладка не прошла бы): KV — 32 знака, D1 — UUID
+  assert.match(st.kv_namespaces[0].id, /^(?!0+$)[0-9a-f]{32}$/);
+  assert.match(st.d1_databases[0].database_id, /^(?!0{8}-)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.ok(!["ai-admin", "ai-admin-dev"].includes(st.d1_databases[0].database_name));
   assert.equal(resolve(DIR, st.d1_databases[0].migrations_dir), resolve(ROOT, "migrations"), "те же миграции 0001–0005");
 });

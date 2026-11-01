@@ -203,9 +203,12 @@ D1, **без cron** (ни напоминаний, ни рассылок, ни с
 
 **Порядок.**
 
-1. **Помощник — по слову владельца «делай стенд».** Через подключение Cloudflare: создать KV `ai-admin-test` и D1 `ai-admin-test`;
-   на D1 стенда — миграции 0001–0005 и отметка `production` (шаг 3, вариант Б, но на базе стенда); вписать их id в
-   `deploy/test-stand/wrangler.jsonc` вместо нулей; проверки зелёные; push в `dev`. Боевые и черновые KV и D1 не трогаются.
+1. **Помощник — по слову владельца «делай стенд». Сделано 01.11.2026.** Через подключение Cloudflare созданы KV `ai-admin-test`
+   (`af23120d8dd1492392d447249af6ae1c`) и D1 `ai-admin-test` (`f0bb3060-1d69-41dd-8fed-ab6dff642041`, регион EEUR). На D1 стенда —
+   миграции 0001–0005 дословно, каждая со строкой в `d1_migrations` (как `wrangler`), и отметка `production`. Схема сверена с
+   эталоном (те же файлы на локальной копии): 50 объектов, контрольная сумма текста схемы совпала. Id вписаны в
+   `deploy/test-stand/wrangler.jsonc`; пробная сборка из папки стенда — только `env.KV (af23120d…)` и `env.DB (ai-admin-test)`.
+   Боевая `ai-admin` (только `_cf_KV`) и черновая `ai-admin-dev` (`preview`, 0001–0004) после этого проверены чтением — не тронуты.
 2. **Владелец, Green-API** (green-api.com → личный кабинет). «Создать инстанс» — бесплатный тариф Developer подходит: писать будем
    только на номер Б. У инстанса — «Сканировать QR-код». На телефоне с номером А: WhatsApp → Настройки → Связанные устройства →
    Привязка устройства → навести камеру на QR. В кабинете статус — «authorized». Себе (не в чат) записать `idInstance`,
@@ -214,7 +217,8 @@ D1, **без cron** (ни напоминаний, ни рассылок, ни с
    - имя проекта — ровно `ai-admin-test`;
    - Root directory — **`deploy/test-stand`**;
    - Build command — пусто; Deploy command — `npx wrangler deploy` (как предложено);
-   - ветка — `dev`; сборки других веток (non-production branch builds) — **выключить**;
+   - ветка (production branch) — **`dev`**: по умолчанию Cloudflare предложит `main`, а папки стенда в `main` нет;
+   - сборки других веток (Enable Preview Builds / non-production branch builds) — **выключить**;
    - «Save and Deploy». Сборка — 2–5 минут, адрес `https://ai-admin-test.azikonps4.workers.dev`.
 
    Если Cloudflare откроет в GitHub PR с правкой `wrangler.jsonc` — **не сливать** и сказать помощнику.

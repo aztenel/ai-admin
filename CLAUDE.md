@@ -177,7 +177,7 @@
 - `test/review/bot-copy.mjs` — копии бота в папках `test/review/4a`, `4b` подключают `src/` по абсолютному пути.
 - `.github/workflows/checks.yml` — тесты на Node 20/22/24 и пробная сборка `wrangler deploy --dry-run`.
 - `wrangler.jsonc` — **не `wrangler.toml`**: имя `ai-admin`, `main: worker.js`, KV `KV`, cron `* * * * *`, `keep_vars: true`, блок `previews`. У боевого сайта (верхний уровень) — только `KV` → `aiai`. У черновиков (`previews`, с 31.10.2026) — свои `KV` → `ai-admin-dev`, `DB` → база D1 `ai-admin-dev` и `STAGE = "preview"`; боевых id в `previews` быть не должно (проверяет `test/unit/d1-schema.test.mjs`). Миграции D1 — `migrations/` (только вперёд), черновика — `wrangler.preview-migrations.jsonc`; код берёт базу через `d1Ready` (`src/db/d1/status.js`): отметка `meta.stage` должна совпасть со `STAGE`. Тестовая D1 на `node:sqlite` — `test/d1.mjs` (Node 22+, на Node 20 проверки D1 пропускаются).
-- `deploy/test-stand/wrangler.jsonc` — тестовый стенд `ai-admin-test` для живой проверки второго номера на номере владельца (01.11.2026, `docs/runbooks/winchester-go-live.md` §6): тот же `worker.js` (`main: ../../worker.js`), свои KV и D1, `triggers.crons: []`, без `previews`; в Workers Builds — отдельный Worker с корнем `deploy/test-stand` (имя в панели должно совпасть с `name`, иначе сборка падает). Боевой `wrangler.jsonc` стенд не трогает; `test/unit/test-stand.test.mjs` проверяет, что в нём нет боевых и черновых id и cron.
+- `deploy/test-stand/wrangler.jsonc` — тестовый стенд `ai-admin-test` для живой проверки второго номера на номере владельца (01.11.2026, `docs/runbooks/winchester-go-live.md` §6): тот же `worker.js` (`main: ../../worker.js`), свои KV и D1, `triggers.crons: []`, без `previews`; в Workers Builds — отдельный Worker с корнем `deploy/test-stand` (имя в панели должно совпасть с `name`, иначе сборка падает). Боевой `wrangler.jsonc` стенд не трогает; `test/unit/test-stand.test.mjs` проверяет, что в нём нет боевых и черновых id и cron. KV `ai-admin-test` (`af23120d…`) и D1 `ai-admin-test` (`f0bb3060…`, EEUR; миграции 0001–0005, отметка `production`, схема сверена с эталоном) созданы 01.11.2026; Worker `ai-admin-test` создаёт владелец в панели (корень `deploy/test-stand`, ветка `dev`), переменные — только `GA_ID_/GA_URL_/GA_TOKEN_WINCHESTER` тестового инстанса и свой `LEADS_KEY`.
 
 ---
 
@@ -190,7 +190,7 @@
 | Имя | Тип | Обязательно | Назначение |
 |---|---|---|---|
 | `KV` | KV binding | да | Хранилище (`wrangler.jsonc`): боевой сайт — `aiai`, черновики — `ai-admin-dev` (с 31.10.2026) |
-| `DB` | D1 binding | нет | База D1 (`docs/architecture-cloudflare-d1.md`): пока только у черновиков — `ai-admin-dev`; боевая `ai-admin` не подключена |
+| `DB` | D1 binding | нет | База D1 (`docs/architecture-cloudflare-d1.md`): пока только у черновиков — `ai-admin-dev` и у тестового стенда — `ai-admin-test` (`deploy/test-stand`); боевая `ai-admin` не подключена |
 | `STAGE` | Text (в `wrangler.jsonc`) | нет | `preview` — у черновиков (`previews.vars`); у боевого сайта нет. Сверяется с отметкой базы D1. С `preview` наружу не уходит ничего: сообщения клиентам, смена вебхука, запись в Altegio, фоновые задачи (`src/lib/stage.js`) |
 | `CONTACTS_DEV_REAL` | Text | нет | `1` — черновику можно писать настоящий журнал Altegio в свою базу D1 (иначе — только «Проверка без записи» и тестовые клиенты). Только по решению владельца |
 | `ANTHROPIC_KEY` | Secret | при `MODEL=claude-…` | Ключ Claude API (console.anthropic.com) |
