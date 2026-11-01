@@ -138,6 +138,24 @@ test("D1: сбой базы до записи — событие ждёт в ж�
   assert.equal(rows(d).length, 2, "второй раз не записалось");
 });
 
+test("проигрыш журнала второго номера, пока база лежит, клиенту не пишет — «спасибо за сообщение» не уходит на каждую попытку", { skip }, async () => {
+  // находка 01.11.2026 (журнал основного номера): при сбое записи handleWAText шлёт клиенту «Спасибо за сообщение! Администратор
+  // ответит…» — у проигрыша журнала это повторялось на каждой попытке (раз в минуту, пока D1 лежит) с неофициального номера, и при
+  // выключенном боте тоже
+  const { d, W, P } = twoPlaces(D1MODE);
+  const b = await login(P), sends = () => net.ga.filter(x => x.op === "sendMessage").length;
+  await inbound(W, "Здравствуйте");
+  d.ctl.fail = sql => /chat_(threads|messages)/.test(sql) && !/sqlite_master/.test(sql);
+  await inbound(W, "Пока база лежит", "IN-RF-1");
+  const was = sends(); // первая обработка при сбое — «спасибо за сообщение», как и раньше
+  for (let i = 0; i < 3; i++) assert.equal((await walKick(chatEnv(W.env), "winchester", { force: true })).failed, 1);
+  assert.equal(sends(), was, "попытки проигрыша клиенту не пишут");
+  d.ctl.fail = null;
+  assert.equal((await walKick(chatEnv(W.env), "winchester", { force: true })).done, 1);
+  assert.equal(sends(), was);
+  assert.deepEqual(texts(await chatOf(b)), ["Здравствуйте", "Пока база лежит"]);
+});
+
 test("D1: база записала, а ответ до Worker не дошёл — повтор не удваивает сообщение", { skip }, async () => {
   const { d, W, P } = twoPlaces(D1MODE);
   const real = d.db.batch;

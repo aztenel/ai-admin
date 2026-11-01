@@ -106,7 +106,8 @@ export async function handleGreen(body, env, origin, r, opts = {}) {
       qt = h ? quoteOf(h.turns || [], String(qm.stanzaId).slice(0, 80)) : null;
     } catch (e) { console.log("ga quote", String(e)); }
   }
-  const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}) };
+  // replay — из журнала: клиенту не пишем (ни ответа бота, ни «спасибо за сообщение» на каждую неудачную попытку), только записываем (meta.js)
+  const gxm = { ...gx, msgId: String(id || ""), ...(qt ? { qt } : {}), ...(opts.replay ? { replay: true } : {}) };
   const send = watchSend(env, "ga", digitsId, gxm, t => sendGreen(env, chatId, t, r));
   const text = (md.textMessageData?.textMessage || md.extendedTextMessageData?.text || "").trim();
   const niche0 = r.shared ? "" : r.client; // компания номера: по ней — push сотрудникам (общий демо-номер — без push)
