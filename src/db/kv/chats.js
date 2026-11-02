@@ -12,30 +12,56 @@ export const histTtl = prof => Math.max(7 * 86400, prof && prof.pausedUntil > Da
 // В ИИ уходят последние MAX_TURNS реплик, хранится HIST_KEEP: их видит администратор в пульте чатов.
 // Метаданные ключа — строка списка чатов в пульте (весь список читается одним запросом KV.list, без чтения самих чатов)
 /** @param {Hist | Record<string, any> | null | undefined} h */
-export function histMeta(h) {
+/** Время последнего события чата: сообщение или его статус доставки. @param {any} h */
+export function lastAct(h) {
+  let m = 0;
+  for (const t of (h && h.turns) || []) m = Math.max(m, +(t && t.t) || 0, +(t && t.sa) || 0);
+  return m;
+}
+/** Сведения для строки списка чатов. at — время строки (t): по умолчанию — сейчас (запись чата — событие в нём). Запись, которая ничего
+ *  не добавила в переписку, — «прочитано», «скрыть», «удалить у всех» (02.11.2026) — передаёт время последнего события: иначе открытый
+ *  чат поднимался бы наверх списка у всех сотрудников. @param {any} h @param {number} [at] */
+export function histMeta(h, at) {
   const p = (h && h.profile) || {}, ts = (h && h.turns) || [], last = ts[ts.length - 1] || null, now = Date.now();
   /** @type {Record<string, any>} */
-  const m = { t: now };
+  const m = { t: at || now };
   if (p.li) m.li = p.li;
-  if (last) { m.s = snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
+  // последнее сообщение удалили у всех или скрыли в пульте (02.11.2026) — в списке без его текста
+  if (last) { m.s = last.del || last.dl ? "Сообщение удалено" : last.hid ? "Скрыто в пульте" : snip(last.text, 70); m.d = last.role === "user" ? "u" : last.by === "admin" ? "a" : "b"; }
   const nm = p.name || p.waName; if (nm) m.nm = snip(nm, 40);
   if (p.phone) m.ph = String(p.phone).slice(0, 20);
-  if (p.need && p.need.why) m.nd = String(p.need.why).slice(0, 12);
+  if (p.need && p.need.why) { m.nd = String(p.need.why).slice(0, 12); if (p.need.tp) m.tp = String(p.need.tp).slice(0, 8); if (p.need.src && p.need.src.k) m.rs = String(p.need.src.k).slice(0, 4); }
+  if (p.as && p.as.n) m.as = snip(p.as.n, 32); // кто ведёт чат (имя сотрудника с устройства, ТЗ v2.0 §2.5)
+  if (p.done) m.dn = 1;                         // «Готово»: сотрудник закрыл чат, клиент больше не писал
+  if (p.rd) m.rd = p.rd;                        // до какого времени чат прочитан сотрудниками (общее, только при переписках в D1 и после ответа)
+  if (last && last.role !== "user" && last.st) m.ls = String(last.st).slice(0, 10); // статус нашего последнего сообщения — галочки в списке
   if (p.pausedUntil > now) m.pu = p.pausedUntil;
   if (p.stop) m.st = 1;
   const bk = (p.bookings || []).length + (p.pend || []).length; if (bk) m.bk = bk;
   return m;
 }
-/** @param {any} store @param {string} key @param {Hist | Record<string, any>} h */
-export async function putHist(store, key, h) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h) }); }
+// Чтение переписки. KV отдаёт копию, прочитанную в этой точке сети раньше, до cacheTtl секунд (по умолчанию 60), а запись из другой
+// точки видна не сразу. Вебхуки Green-API принимает одна точка, пульт администратора читает другая: на стенде ai-admin-test 01.11.2026
+// входящие и галочки появлялись в пульте через минуту-две, в WhatsApp — сразу. 30 с — наименьший срок, который принимает Cloudflare
+// (с 30.01.2026); он же вдвое сокращает окно, в котором запись по старой копии затирает соседнюю. Чтение со сроком не удалось (среда его
+// не приняла или сбой) — ещё раз без него: из-за срока чат не должен перестать открываться; вторая ошибка уходит наверх, как раньше
+export const HIST_CACHE_TTL = 30;
+/** @param {any} store @param {string} key @returns {Promise<string | null>} */
+export async function histGet(store, key) {
+  try { return await store.get(key, { cacheTtl: HIST_CACHE_TTL }); }
+  catch (e) { return store.get(key); }
+}
+/** quiet — запись без нового события в чате: время строки списка не меняется (histMeta) @param {any} store @param {string} key @param {Hist | Record<string, any>} h @param {boolean} [quiet] */
+export async function putHist(store, key, h, quiet) { await store.put(key, JSON.stringify(h), { expirationTtl: histTtl(h.profile), metadata: histMeta(h, quiet ? lastAct(h) : 0) }); }
 // дописать реплики в историю чата помимо think(): голосовое или фото клиента, ответ администратора из пульта. n растёт — think(), который в это время отвечает в том же чате, сольёт свои изменения с этими
-/** @param {any} store @param {string} key @param {any[] | undefined} add @param {((profile: Profile, h: Hist) => void) | undefined} [patch] @returns {Promise<Hist>} */
-export async function logTurns(store, key, add, patch) {
+/** quiet — пульт только отмечает (прочитано, скрыть, удалить у всех): время строки списка не меняется
+ *  @param {any} store @param {string} key @param {any[] | undefined} add @param {((profile: Profile, h: Hist) => void) | undefined} [patch] @param {boolean} [quiet] @returns {Promise<Hist>} */
+export async function logTurns(store, key, add, patch, quiet) {
   return kvRetry(async () => {
-    const h = JSON.parse((await store.get(key)) || "null") || { n: 0, turns: [], profile: {} };
+    const h = JSON.parse((await histGet(store, key)) || "null") || { n: 0, turns: [], profile: {} };
     h.profile = h.profile || {}; h.turns = (h.turns || []).concat(add || []).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
     if (patch) patch(h.profile, h);
-    await putHist(store, key, h);
+    await putHist(store, key, h, !!quiet && !(add && add.length));
     return h;
   });
 }
@@ -57,7 +83,7 @@ export function mergeProfile(cur, mine, base, added, removed, droppedPend) {
   return out;
 }
 /** @param {Env} env @param {string} hk */
-export async function readHist(env, hk) { return JSON.parse((await env.KV.get(hk)) || "null"); }
+export async function readHist(env, hk) { return JSON.parse((await histGet(env.KV, hk)) || "null"); }
 
 // ---- «Очистить память бота» (пульт). Cloudflare KV согласован не сразу: там, где принят вебхук (Green-API — в другом месте сети, чем пульт),
 // до ~60 с читается копия чата до очистки — бот отвечал по ней и записывал её обратно, очистка пропадала навсегда (живая проверка владельца

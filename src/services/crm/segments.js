@@ -6,12 +6,14 @@
 // сегмента и автосценарий «Пора на стрижку» (полные номера — только на сервере, браузеру — маской в controllers/crm.js).
 /** @import { Env, Client } from "../../lib/types.js" */
 import { CRM_QUIET_DAYS, CRM_PAST_DAYS } from "../../config/constants.js";
+import { marketingGate } from "../contacts/gate.js";
+import { MARKETING_GAP_DAYS } from "../contacts/segments.js";
 import { isoDay } from "../../lib/time.js";
 import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string> }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number }, reasons?: Map<string, string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -37,8 +39,8 @@ export function crmSegSpec(v) {
   const o = v && typeof v === "object" ? v : { id: v }, errors = [];
   const num = (/** @type {string} */ k) => o[k] == null || String(o[k]).trim() === "" ? undefined : Math.round(+o[k]);
   const id = String(o.id ?? "").trim().slice(0, 80), from = num("from"), to = num("to"), days = num("days"), staff = String(o.staff ?? "").trim().slice(0, 60) || undefined;
-  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден — выберите его заново");
-  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита — число от 0 до 400");
+  if (!crmSegTest(id)) errors.push("сегмент базы клиентов не найден, выберите его заново");
+  if ([from, to, days].some(x => x !== undefined && !(x >= 0 && x <= 400))) errors.push("дни с последнего визита: число от 0 до 400");
   return { id, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(days !== undefined ? { days } : {}), ...(staff ? { staff } : {}), errors };
 }
 // название сегмента для рассылки и отчёта: «Пора на стрижку», «Мастер: Тони · 36–60 дн. с визита»
@@ -60,28 +62,64 @@ export const daysSince = (last, now) => dayNo(isoDay(now)) - dayNo(last);
 export async function crmView(env, c, now) {
   const snap = await crmLoad(env, c.id);
   if (!snap || !Array.isArray(snap.list)) return { snap: null, rows: [] };
-  const days = Array.from({ length: CRM_QUIET_DAYS }, (_, i) => isoDay(now - i * 86400e3));
-  const [stop, marked] = await Promise.all([bcOptouts(env, c.id), bcmRead(env, c.id, days)]);
+  // реклама: 30 дней между рекламными сообщениями (решение владельца 31.10.2026, было 14) и только с подтверждённым согласием
+  const days = Array.from({ length: MARKETING_GAP_DAYS }, (_, i) => isoDay(now - i * 86400e3));
+  const [stop, marked, gate] = await Promise.all([bcOptouts(env, c.id), bcmRead(env, c.id, days), marketingGate(env, c, now)]);
   const rows = snap.list.map((/** @type {any} */ x) => {
     const d = daysSince(x.last, now);
-    return { ...x, d, why: stop.has(x.p) ? "stop" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
+    return { ...x, d, why: stop.has(x.p) ? "stop" : !gate.phones.has(x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+  return { snap, rows, marked, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, reasons: gate.reasons, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+}
+
+// воронка рассылки по сегменту (ТЗ v3.0 P0): сколько всего, с правильным номером, в сегменте и почему не все получат. Кто получит,
+// решают crmView и crmPick — здесь только счёт по их же причинам; каждый человек — один раз, по первой причине (порядок crmView:
+// «стоп» → нет согласия → будущая запись → недавний визит → реклама за 30 дней). «Нет согласия» раскрывается по базе контактов D1
+// (marketingGate): «стоп» в D1, полный запрет, неоднозначный «стоп», отказ, не подтверждено, нет согласия; пауза после отменённой записи —
+// правило компании, а не разрешение. rules и consent — коды и числа; тексты и «нет данных для текста» добавляет проверка рассылки
+/** @param {CrmView} view @param {string} seg @param {{ days?: number, from?: number, to?: number, staff?: string }} [o] */
+export function crmFunnel(view, seg, o = {}) {
+  const snap = view.snap || {}, test = crmSegTest(seg), rules = /** @type {Record<string, number>} */ ({}), consent = /** @type {Record<string, number>} */ ({});
+  const valid = view.rows.length + (Array.isArray(snap.futOnly) ? snap.futOnly.length : 0);
+  let segment = 0;
+  for (const x of view.rows) {
+    if (!test || !test(x) || (o.days != null && x.d !== o.days) || (o.from != null && x.d < o.from) || (o.to != null && x.d > o.to) || (o.staff && x.staff !== o.staff)) continue;
+    segment++;
+    if (!x.why) continue;
+    if (x.why === "stop") consent.stop = (consent.stop || 0) + 1;
+    else if (x.why === "noconsent") {
+      const r = (view.reasons && view.reasons.get(x.p)) || "noconsent";
+      if (r === "cooldown") rules.cooldown = (rules.cooldown || 0) + 1; else consent[r] = (consent[r] || 0) + 1;
+    } else rules[x.why] = (rules[x.why] || 0) + 1;
+  }
+  return { total: valid + (+snap.masked || 0) + (+snap.bad || 0), valid, segment, rules, consent };
 }
 
 // кнопки с числами и сведения о снимке (для пульта)
 /** @param {Env} env @param {Client} c @param {number} now */
 export async function crmSegments(env, c, now) {
-  const { snap, rows } = await crmView(env, c, now);
+  const view = await crmView(env, c, now), { snap, rows } = view;
   /** @type {any} */ let err = null; try { err = await crmErrLoad(env, c.id); } catch (e) {}
   const ok = rows.filter(x => !x.why), cnt = (/** @type {string} */ w) => rows.filter(x => x.why === w).length;
   const staff = [...new Set(rows.map(x => x.staff).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
   const segments = CRM_SEGS.map(s => ({ id: s.id, label: s.label, rule: s.rule, n: ok.filter(s.test).length }))
     .concat(staff.map(n => ({ id: "staff:" + n, label: "Мастер: " + n, rule: "последний визит у мастера", n: ok.filter(x => x.staff === n).length })));
   const { list, futOnly, ...info } = snap || {}; // номера — только на сервере
-  return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") },
+  return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, consent: view.gate,
     info: snap ? info : null, ...(err && err.at > ((snap && snap.at) || 0) ? { error: err.error, errorAt: err.at } : {}) };
+}
+
+/** кто из сегмента отсеян и почему: { stop: 2, noconsent: 5, … } — для проверки рассылки (числа, без номеров)
+ *  @param {CrmView} view @param {string} seg @param {{ days?: number, from?: number, to?: number, staff?: string }} [o] @returns {Record<string, number>} */
+export function crmSegWhy(view, seg, o = {}) {
+  const test = crmSegTest(seg), out = /** @type {Record<string, number>} */ ({});
+  if (!test) return out;
+  for (const x of view.rows) {
+    if (!x.why || !test(x) || (o.days != null && x.d !== o.days) || (o.from != null && x.d < o.from) || (o.to != null && x.d > o.to) || (o.staff && x.staff !== o.staff)) continue;
+    out[x.why] = (out[x.why] || 0) + 1;
+  }
+  return out;
 }
 
 /**

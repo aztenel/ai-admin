@@ -1,6 +1,7 @@
 // Проверки новых частей на заглушках: история чата для пульта, WhatsApp на несколько клиентов, паспорт бота, вход, страница владельца, пульт чатов.
 // Запуск: node test/platform.mjs (его же запускает test/smoke.mjs в конце). SHOW=1 — показать все проверки.
 import { mk, net, ok, section, T, D0, D1, D2, wait, ALT_DEFAULT } from "./harness.mjs";
+import { sqliteOk, d1With } from "./d1.mjs";
 
 const text = (from, body) => ({ from, type: "text", text: { body } });
 const echo = b => "Ответ на: " + b.contents.at(-1).parts[0].text;
@@ -233,9 +234,10 @@ section("WhatsApp на несколько клиентов");
   const own = S.browser(); await own.go("/studio?key=" + OWNER);
   await own.post("/api/studio/save", { ...PASS, isNew: false, off: true });
   net.reset();
+  // чат уже ждёт ответа (заявка выше): пометка «новая заявка» и время ожидания остаются, добавляется тема «перенос» (ТЗ v2.0 §2.1)
   await S.waText("/wa/acme", "77051110001", "А можно перенести?", o);
   const h = S.hist("wa", "acme", "77051110001");
-  ok("бот выключен: клиенту ничего не уходит, сообщение лежит в чате с пометкой, администратор предупреждён", net.graph.length === 0 && net.gemini.length === 0 && h.turns.at(-1).text === "А можно перенести?" && h.profile.need.why === "off" && net.tg.some(x => /Бот выключен/.test(x.text) && x.chat_id === "555000111"), JSON.stringify([net.graph.length, h.turns.at(-1), net.tg]));
+  ok("бот выключен: клиенту ничего не уходит, сообщение лежит в чате с пометкой, администратор предупреждён", net.graph.length === 0 && net.gemini.length === 0 && h.turns.at(-1).text === "А можно перенести?" && h.profile.need.why === "lead" && h.profile.need.tp === "move" && net.tg.some(x => /Бот выключен/.test(x.text) && x.chat_id === "555000111"), JSON.stringify([net.graph.length, h.turns.at(-1), net.tg]));
   const cw = await S.chat("acme", "k9", "Здравствуйте");
   ok("бот выключен: в веб-чате — просьба написать в WhatsApp или позвонить", /отвечает администратор/.test(cw.reply) && net.gemini.length === 0);
   await own.post("/api/studio/save", { ...PASS, isNew: false, off: false });
@@ -265,7 +267,7 @@ section("пульт чатов");
 
   d = await J(await staff.go("/api/inbox/list?c=acme&f=need"));
   const row = d.chats.find(x => x.id === A);
-  ok("список «Ждут ответа»: чат с пометкой, именем, номером и началом последнего сообщения", d.client.name === "Barber House" && row && row.nd === "off" && row.nm === "Данияр" && row.ph === "+" + A && /перенести/.test(row.s) && row.d === "u" && d.need >= 1, JSON.stringify(d).slice(0, 500));
+  ok("список «Ждут ответа»: чат с пометкой, именем, номером и началом последнего сообщения", d.client.name === "Barber House" && row && row.nd === "lead" && row.tp === "move" && row.nm === "Данияр" && row.ph === "+" + A && /перенести/.test(row.s) && row.d === "u" && d.need >= 1, JSON.stringify(d).slice(0, 500));
   const lops = S.kv.ops.list, gops = S.kv.ops.get;
   await staff.go("/api/inbox/list?c=acme&f=all");
   ok("список чатов — один запрос списка ключей и ни одного чтения чата", S.kv.ops.list - lops === 1 && S.kv.ops.get - gops <= 2, `list ${S.kv.ops.list - lops}, get ${S.kv.ops.get - gops}`);
@@ -550,7 +552,7 @@ section("рассылки");
   net.reset(); net.graphReply = url => url.includes("?fields=") ? new Response(JSON.stringify({ display_phone_number: "+7 700 111 22 33", verified_name: "Barber House", quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_250" }), { status: 200 }) : null;
   let d = await J(await own.post("/api/bc/check", FORM));
   ok("проверка списка: номера в разных видах, повтор убран, мусор показан", d.ok === true && d.valid === 6 && d.dup === 1 && d.badN === 2 && d.bad.join("|") === "мусор|12345", JSON.stringify(d));
-  ok("имена: первое слово, ИМЯ → Имя; пометка администратора («не записывать») именем не становится", d.named === 4 && d.sample.join("|") === "+77011110001 — Айгерим|+77011110002 — Данияр|+77011110003 — без имени|+77011110004 — без имени|+77011110005 — Арман" && d.preview[0] === "Айгерим", JSON.stringify(d));
+  ok("имена: первое слово, ИМЯ → Имя; пометка администратора («не записывать») именем не становится", d.named === 4 && d.sample.join("|") === "+77011110001 · Айгерим|+77011110002 · Данияр|+77011110003 · без имени|+77011110004 · без имени|+77011110005 · Арман" && d.preview[0] === "Айгерим", JSON.stringify(d));
   d = await mkBc({ consent: false, tpl: "Promo October", from: 20, to: 10, text: "", name: "" });
   ok("создание: без согласия, с неверным названием шаблона, часами и без текста — понятные ошибки", d.ok === false && d.errors.length === 5 && /клиенты компании/.test(d.errors.join()) && /латинские/.test(d.errors.join()) && /раньше/.test(d.errors.join()), JSON.stringify(d));
   d = await mkBc({ from: 6, to: 23 });
@@ -584,13 +586,16 @@ section("рассылки");
   const id1 = d.b && d.b.id;
   ok("рассылку создаёт и сотрудник компании: готова к запуску, список сохранён", d.ok === true && d.b.status === "ready" && d.b.total === 6 && d.dup === 1 && d.bad === 2 && (S.kv.json("bcr:acme:" + id1 + ":0") || []).length === 6 && S.kv.meta.get("bc:acme:" + id1).status === "ready", JSON.stringify(d));
   ok("до запуска ничего не уходит, даже по фоновой задаче", (await S.cron(), tpls().length === 0));
+  // запускает владелец (ТЗ Winchester v2.0 §5, 31.10.2026: одобрение кампании владельцем), сотрудник — только готовит
   d = await J(await staff.post("/api/bc/act", { c: "acme", id: id1, act: "start" }));
+  ok("сотрудник рассылку не запускает — только владелец", /только владелец/.test(d.error || ""), JSON.stringify(d));
+  d = await J(await own.post("/api/bc/act", { c: "acme", id: id1, act: "start", op: "Владелец" }));
   ok("запуск: рассылка идёт, стоит в очереди фоновой отправки, её текст запомнен для ИИ и пульта", d.ok === true && d.b.status === "running" && run().length === 1 && /4 500/.test(S.kv.json("bclast:acme").text), JSON.stringify([d, run()]));
   net.reset(); await S.cron(); g = tpls();
   const b1 = bcOf(id1);
   ok("фоновая задача отправила шаблон всем, кроме попросившего не писать", g.length === 5 && !g.some(x => x.body.to === "77011110002") && g.every(x => x.url.includes("/900111/messages") && x.auth === "Bearer tok-acme"), JSON.stringify(g.map(x => x.body.to)));
   ok("подстановка: имя из списка, без имени — «уважаемый клиент»", g.find(x => x.body.to === "77011110001").body.template.components[0].parameters[0].text === "Айгерим" && g.find(x => x.body.to === "77011110003").body.template.components[0].parameters[0].text === "уважаемый клиент" && g.find(x => x.body.to === "998901234567").body.template.components[0].parameters[0].text === "Тимур", JSON.stringify(g.map(x => x.body.template.components)));
-  ok("рассылка завершена: счётчики верные, очередь пуста, итог ушёл в Telegram", b1.status === "done" && b1.sent === 5 && b1.skipped === 1 && b1.failed === 0 && b1.pos === 6 && run().length === 0 && net.tg.some(x => /Рассылка «Октябрь» завершена/.test(x.text) && /Отправлено: 5 из 6/.test(x.text) && /просили не писать\): 1/.test(x.text)), JSON.stringify([b1, net.tg]));
+  ok("рассылка завершена: счётчики верные, очередь пуста, итог ушёл в Telegram", b1.status === "done" && b1.sent === 5 && b1.skipped === 1 && b1.failed === 0 && b1.pos === 6 && run().length === 0 && net.tg.some(x => /[Рр]ассылка «Октябрь» завершена/.test(x.text) && /Отправлено: 5 из 6/.test(x.text) && /просили не писать\): 1/.test(x.text)), JSON.stringify([b1, net.tg]));
   await S.cron(); await S.cron();
   ok("повторные запуски фоновой задачи ничего не отправляют", tpls().length === 5);
   d = await J(await own.post("/api/bc/act", { c: "acme", id: id1, act: "start" }));
@@ -605,7 +610,7 @@ section("рассылки");
   await own.post("/api/bc/act", { c: "acme", id: id2, act: "start" });
   await S.cron(); const n1 = tpls().length; await S.cron(); const n2 = tpls().length; await S.cron(); await S.cron(); const n3 = tpls().length;
   let b2 = bcOf(id2);
-  ok("порциями по 20; предел 35 за сутки учитывает и прошлую рассылку (5): ушло 30, дальше ожидание", n1 === 20 && n2 === 30 && n3 === 30 && b2.status === "running" && b2.pos === 30 && /За последние 24 часа отправлено 35 — это предел \(35\)/.test(b2.waitNote || ""), JSON.stringify([n1, n2, n3, b2]));
+  ok("порциями по 20; предел 35 за сутки учитывает и прошлую рассылку (5): ушло 30, дальше ожидание", n1 === 20 && n2 === 30 && n3 === 30 && b2.status === "running" && b2.pos === 30 && /За последние 24 часа отправлено 35, это предел \(35\)/.test(b2.waitNote || ""), JSON.stringify([n1, n2, n3, b2]));
   ok("никто не получил сообщение дважды", new Set(tpls().map(x => x.body.to)).size === 30);
   const puts0 = S.kv.ops.put; await S.cron(); await S.cron();
   ok("пока ждём, фоновая задача хранилище не пишет", S.kv.ops.put === puts0 && tpls().length === 30);
@@ -637,7 +642,7 @@ section("рассылки");
   let id = await fresh("Шаблон не одобрен", 4, 300);
   failTpl(132001); await S.cron();
   let b = bcOf(id);
-  ok("шаблон не одобрен → пауза после первой же попытки, получатель остаётся в очереди, администратору — сигнал с причиной", b.status === "paused" && b.pos === 0 && b.failed === 0 && tpls().length === 1 && /шаблон не найден или не одобрен/.test(b.note) && run().length === 0 && net.tg.some(x => /Рассылка «Шаблон не одобрен» остановлена/.test(x.text) && /132001/.test(x.text)), JSON.stringify([b, net.tg]));
+  ok("шаблон не одобрен → пауза после первой же попытки, получатель остаётся в очереди, администратору — сигнал с причиной", b.status === "paused" && b.pos === 0 && b.failed === 0 && tpls().length === 1 && /шаблон не найден или не одобрен/.test(b.note) && run().length === 0 && net.tg.some(x => /[Рр]ассылка «Шаблон не одобрен» остановлена/.test(x.text) && /132001/.test(x.text)), JSON.stringify([b, net.tg]));
   net.graphReply = null; await S.cron();
   ok("на паузе ничего не уходит", tpls().length === 1);
   await own.post("/api/bc/act", { c: "acme", id, act: "start" }); await S.cron(); b = bcOf(id);
@@ -656,7 +661,7 @@ section("рассылки");
   failTpl(130429); await S.cron(); b = bcOf(id);
   ok("Meta просит помедленнее → не пауза, а ожидание 10 минут; получатель в очереди", b.status === "running" && b.pos === 0 && b.failed === 0 && b.retryAt > Date.now() + 500e3 && run().length === 1, JSON.stringify(b));
   net.graphReply = null; await S.cron(); b = bcOf(id);
-  ok("в ожидании ничего не уходит, причина показана", tpls().length === 1 && /Meta временно не принимает сообщения — повторю в 12:1/.test(b.waitNote || ""), JSON.stringify(b));
+  ok("в ожидании ничего не уходит, причина показана", tpls().length === 1 && /Meta временно не принимает сообщения\. Повторю в 12:1/.test(b.waitNote || ""), JSON.stringify(b));
   setBc(id, x => { x.retryAt = Date.now() - 1; }); await S.cron(); b = bcOf(id);
   ok("после ожидания рассылка продолжилась сама", b.status === "done" && b.sent === 3, JSON.stringify(b));
   id = await fresh("Долгий сбой", 3, 520);
@@ -946,7 +951,7 @@ section("отказ от рассылки: выключенный бот, пау
 section("рассылки: имена и номера");
 {
   const own = S.browser(); await own.go("/studio?key=" + OWNER);
-  const one = async line => { const d = await (await own.post("/api/bc/check", { c: "acme", tpl: "promo_october", lang: "ru", params: "{имя}", text: "x", recipients: line })).json(); if (d.error) console.log("check:", d.error); const x = (d.sample || [])[0] || ""; return { phone: (x.match(/^\+(\d+)/) || [])[1] || "", name: x.includes(" — без имени") ? "" : x.replace(/^\+\d+ — /, "") }; };
+  const one = async line => { const d = await (await own.post("/api/bc/check", { c: "acme", tpl: "promo_october", lang: "ru", params: "{имя}", text: "x", recipients: line })).json(); if (d.error) console.log("check:", d.error); const x = (d.sample || [])[0] || ""; return { phone: (x.match(/^\+(\d+)/) || [])[1] || "", name: x.includes(" · без имени") ? "" : x.replace(/^\+\d+ · /, "") }; };
   { // «не номер» в середине списка — непонятная строка, а не заголовок Excel (заголовок — только первая строка)
     const d = await (await own.post("/api/bc/check", { c: "acme", tpl: "promo_october", lang: "ru", params: "{имя}", text: "x", recipients: "87051110001, Данияр\nне номер\n87051110003" })).json();
     ok("рассылка: «не номер» в середине списка считается непонятной строкой", d.badN === 1 && d.valid === 2, JSON.stringify(d).slice(0, 300));
@@ -1024,7 +1029,8 @@ section("заявка: выходной, после закрытия, прошл
 // ====== Рассылки через Green-API: обычный WhatsApp клиента по QR-коду, обычный текст, по одному сообщению с паузой
 section("рассылки через Green-API");
 {
-  const S3 = mk({ GA_ID_ACME: "7105000001", GA_TOKEN_ACME: "ga-tok-acme", GA_URL_ACME: "https://7105.api.greenapi.com" });
+  // ответ из пульта со второго номера — только с отметкой отправки в D1 (аудит 31.10.2026); на Node 20 node:sqlite нет — там проверяется отказ
+  const S3 = mk({ GA_ID_ACME: "7105000001", GA_TOKEN_ACME: "ga-tok-acme", GA_URL_ACME: "https://7105.api.greenapi.com", ...(sqliteOk ? { DB: d1With("production").db } : {}) });
   const own = S3.browser(); await own.go("/studio?key=" + OWNER);
   await own.post("/api/studio/save", PASS);
   const J = async r => r.json();
@@ -1084,12 +1090,17 @@ section("рассылки через Green-API");
   d = await J(await own.go("/api/inbox/list?c=acme"));
   ok("в пульте — чат Green-API этого клиента", d.chats.some(x => x.ch === "ga" && x.id === "77012220009"), JSON.stringify(d.chats));
   net.reset();
-  d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?" }));
-  ok("ответ из пульта уходит с номера Green-API клиента", d.ok === true && sends().length === 1 && sends()[0].inst === "7105000001" && to(sends()[0]) === "77012220009", JSON.stringify([d, net.ga]));
-  net.gaReply = rec => rec.op === "sendMessage" ? new Response(JSON.stringify({ message: "Instance account is expired" }), { status: 400 }) : null;
-  d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Ещё раз" }));
-  ok("Green-API не принял ответ → администратор видит причину, в переписку ответ не записан", /оплат/i.test(d.error || "") && !S3.hist("ga", "acme", "77012220009").turns.some(t => t.text === "Ещё раз"), JSON.stringify(d));
-  net.gaReply = null;
+  if (sqliteOk) {
+    d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?", rid: "rid-acme-001" }));
+    ok("ответ из пульта уходит с номера Green-API клиента", d.ok === true && sends().length === 1 && sends()[0].inst === "7105000001" && to(sends()[0]) === "77012220009", JSON.stringify([d, net.ga]));
+    net.gaReply = rec => rec.op === "sendMessage" ? new Response(JSON.stringify({ message: "Instance account is expired" }), { status: 400 }) : null;
+    d = await J(await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Ещё раз", rid: "rid-acme-002" }));
+    ok("Green-API не принял ответ → администратор видит причину, в переписку ответ не записан", /оплат/i.test(d.error || "") && !S3.hist("ga", "acme", "77012220009").turns.some(t => t.text === "Ещё раз"), JSON.stringify(d));
+    net.gaReply = null;
+  } else {
+    const r0 = await own.post("/api/inbox/send", { c: "acme", ch: "ga", id: "77012220009", text: "Здравствуйте! Чем помочь?", rid: "rid-acme-001" }); d = await J(r0);
+    ok("без базы D1 ответ со второго номера не уходит: 503 с понятной причиной, Green-API не вызывается", r0.status === 503 && d.code === "nosetup" && sends().length === 0, JSON.stringify(d));
+  }
 
   // --- создание рассылки
   d = await J(await own.post("/api/bc/check", FORM));
@@ -1118,7 +1129,7 @@ section("рассылки через Green-API");
   net.gaState = "authorized";
   const keep = net.gaSettings["7105000001"].webhookUrl; net.gaSettings["7105000001"].webhookUrl = "";
   r = await start(id1); d = await J(r);
-  ok("вебхук не настроен → запуск отклонён: «стоп» клиентов не дойдёт до бота", r.status === 409 && /вебхук/i.test(d.error || "") && /стоп/i.test(d.error || "") && bcOf(id1).status === "ready", JSON.stringify(d));
+  ok("номер не настроен до конца (вебхук) → запуск отклонён: «стоп» клиентов не дойдёт до бота", r.status === 409 && /не настроен/i.test(d.error || "") && /стоп/i.test(d.error || "") && bcOf(id1).status === "ready", JSON.stringify(d));
   net.gaSettings["7105000001"].webhookUrl = keep;
   S3.kv.mem.set("optout:acme:77012220002", String(Date.now())); // этот клиент раньше написал «стоп»
   r = await start(id1); d = await J(r);
@@ -1135,7 +1146,7 @@ section("рассылки через Green-API");
   await all(id1);
   g = sends(); b = bcOf(id1);
   ok("остальным — по одному сообщению; попросивший не писать пропущен", g.length === 2 && !g.some(x => to(x) === "77012220002") && to(g[1]) === "77012220003" && /^Здравствуйте, Данияр!/.test(g[1].body.message) && b.status === "done" && b.sent === 2 && b.skipped === 1 && b.pos === 3, JSON.stringify([g.map(x => x.body), b]));
-  ok("рассылка завершена, итог — в Telegram, очередь пуста", run().length === 0 && net.tg.some(x => /Рассылка «Октябрь» завершена/.test(x.text) && /Отправлено: 2 из 3/.test(x.text)), JSON.stringify(net.tg));
+  ok("рассылка завершена, итог — в Telegram, очередь пуста", run().length === 0 && net.tg.some(x => /[Рр]ассылка «Октябрь» завершена/.test(x.text) && /Отправлено: 2 из 3/.test(x.text)), JSON.stringify(net.tg));
   d = await J(await own.go("/api/bc/list?c=acme"));
   ok("в списке рассылок — итог; счётчик за сутки свой у номера Green-API", d.list.some(x => x.id === id1 && x.status === "done" && x.ch === "ga") && d.ga.used === 2 && d.used === 0 && !S3.kv.mem.has("bcq:acme"), JSON.stringify([d.list, d.ga, d.used]));
 
@@ -1145,7 +1156,7 @@ section("рассылки через Green-API");
   await start(idL); await all(idL);
   b = bcOf(idL); g = sends();
   ok("без имени в списке — «уважаемый клиент»", g.length && g.every(x => /^Здравствуйте, уважаемый клиент!/.test(x.body.message)), JSON.stringify(g.map(x => x.body.message)));
-  ok("предел 4 за сутки учитывает прошлую рассылку (2): ушло 2, дальше ожидание", g.length === 2 && b.status === "running" && b.pos === 2 && /За последние 24 часа отправлено 4 — это предел \(4\)/.test(b.waitNote || ""), JSON.stringify([g.length, b]));
+  ok("предел 4 за сутки учитывает прошлую рассылку (2): ушло 2, дальше ожидание", g.length === 2 && b.status === "running" && b.pos === 2 && /За последние 24 часа отправлено 4, это предел \(4\)/.test(b.waitNote || ""), JSON.stringify([g.length, b]));
   { const q = S3.kv.json("bcq:acme:ga"), old = {}; for (const [k, v] of Object.entries(q)) old[+k - 200] = v; S3.kv.mem.set("bcq:acme:ga", JSON.stringify(old)); } // прошли сутки
   await all(idL); b = bcOf(idL);
   ok("через сутки отправка продолжилась сама и дошла до конца", b.status === "done" && b.sent === 5 && new Set(sends().map(to)).size === 5, JSON.stringify(b));
@@ -1155,7 +1166,7 @@ section("рассылки через Green-API");
   const failSend = (status, body, when = () => true) => { net.gaReply = rec => (rec.op === "sendMessage" || rec.op === "sendFileByUrl") && when(rec) ? new Response(JSON.stringify(body), { status }) : null; };
   let id = await fresh("Тариф", 3, 100);
   failSend(466, { correspondentsStatus: { description: "correspondents quota exceeded" } }); await S3.cron(); b = bcOf(id);
-  ok("466: кончился лимит тарифа Green-API → пауза, получатель в очереди, сигнал в Telegram", b.status === "paused" && b.pos === 0 && b.sent === 0 && /тариф/i.test(b.note) && run().length === 0 && net.tg.some(x => /Рассылка «Тариф» остановлена/.test(x.text)), JSON.stringify([b, net.tg]));
+  ok("466: кончился лимит тарифа Green-API → пауза, получатель в очереди, сигнал в Telegram", b.status === "paused" && b.pos === 0 && b.sent === 0 && /тариф/i.test(b.note) && run().length === 0 && net.tg.some(x => /[Рр]ассылка «Тариф» остановлена/.test(x.text)), JSON.stringify([b, net.tg]));
   net.gaReply = null; await start(id); await all(id); b = bcOf(id);
   ok("после «Продолжить» дошла до всех, никто не потерян", b.status === "done" && b.sent === 3 && b.failed === 0, JSON.stringify(b));
   id = await fresh("Токен", 2, 110);
@@ -1166,7 +1177,7 @@ section("рассылки через Green-API");
   failSend(429, { message: "Too Many Requests" }); await S3.cron(); b = bcOf(id);
   ok("429: слишком часто → ожидание 10 минут, получатель в очереди", b.status === "running" && b.pos === 0 && b.retryAt > Date.now() + 500e3, JSON.stringify(b));
   net.gaReply = null; await S3.cron();
-  ok("в ожидании ничего не уходит, причина показана", sends().length === 1 && /Green-API временно не принимает сообщения — повторю в /.test(bcOf(id).waitNote || ""), JSON.stringify(bcOf(id)));
+  ok("в ожидании ничего не уходит, причина показана", sends().length === 1 && /Green-API временно не принимает сообщения\. Повторю в /.test(bcOf(id).waitNote || ""), JSON.stringify(bcOf(id)));
   await all(id); b = bcOf(id);
   ok("после ожидания продолжила сама", b.status === "done" && b.sent === 2, JSON.stringify(b));
   id = await fresh("Номер с ошибкой", 3, 130);
@@ -1181,7 +1192,8 @@ section("рассылки через Green-API");
   id = await fresh("Связь", 2, 150);
   net.gaReply = rec => { if (rec.op === "sendMessage") throw new Error("network down"); return null; };
   await S3.cron(); b = bcOf(id);
-  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && b.failed === 1 && b.retryAt > Date.now(), JSON.stringify(b));
+  // «неизвестно, дошло ли», а не «ошибка»: сообщение могло уйти (01.11.2026, test/unit/ga-5xx.test.mjs)
+  ok("связь с Green-API оборвалась → получатель не повторяется (мог получить), ожидание 10 минут", b.status === "running" && b.pos === 1 && (b.failed || 0) === 0 && b.unsure === 1 && b.retryAt > Date.now(), JSON.stringify(b));
   net.gaReply = null; await all(id); b = bcOf(id);
   ok("после обрыва связи остальным — по одному сообщению", b.status === "done" && b.sent === 1 && sends().length === 2 && new Set(sends().map(to)).size === 2, JSON.stringify(b));
 

@@ -21,16 +21,72 @@ import type {
   ServiceKindState,
   ServiceOverview,
   ServiceQueueItem,
+  ServiceScenario,
+  CalendarDay,
+  CampaignCalendar,
+  LibraryItem,
+  MessageStats,
+  TemplateLibrary,
+  TemplatePreview,
+  TemplateVar,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
 import { ApiError } from "./errors";
 import type { CampaignSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
+// библиотека в демо — шесть тем как в настоящей (сервер: src/services/broadcast/library.js), без правки; данные вымышленные
+const DEMO_VARS: TemplateVar[] = [
+  { key: "client.first_name", label: "Имя клиента", sample: "Арман" },
+  { key: "staff.name", label: "Мастер", sample: "Айдос" },
+  { key: "service.name", label: "Услуга", sample: "мужская стрижка" },
+  { key: "visit.days_since", label: "Дней после визита", sample: "28" },
+  { key: "booking.url", label: "Ссылка на запись", sample: "winchester.kz" },
+];
+const DEMO_CATS = [
+  { id: "invite", label: "Приглашения" },
+  { id: "lapsed", label: "Давно не были" },
+  { id: "slots", label: "Свободное время" },
+  { id: "regular", label: "Постоянные клиенты" },
+  { id: "services", label: "Услуги" },
+  { id: "occasions", label: "Поводы" },
+  { id: "personal", label: "Персональные" },
+];
+const STOP = "Если такие сообщения больше не нужны, напишите «стоп».";
+const STOP_KK = "Мұндай хабарламалар қажет болмаса, «стоп» деп жазыңыз.";
+const DEMO_LIBRARY: LibraryItem[] = [
+  { id: "M01", title: "Пора обновить стрижку", cat: "invite", who: "Были 3–5 недель назад", goal: "напомнить о стрижке", seg: "pora", needs: [], check: "Ссылка на запись работает", approved: true, status: "approved", v: 2, kkChecked: false,
+    ru: `Здравствуйте, {{client.first_name}}! Если планировали обновить стрижку, удобное время можно выбрать на {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе, {{client.first_name}}! Шашты жаңартуды жоспарласаңыз, ыңғайлы уақытты {{booking.url}} сайтынан таңдай аласыз. ${STOP_KK}` },
+  { id: "M02", title: "Давно не были", cat: "lapsed", who: "Были 30–45 дней назад", goal: "мягко пригласить вернуться", seg: "davno", needs: [], check: "Клиент не записан на ближайшие дни", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `{{client.first_name}}, добрый день! Давно не виделись. Если захотите заглянуть на стрижку, будем рады. Запись: {{booking.url}}. ${STOP}`,
+    kk: `{{client.first_name}}, қайырлы күн! Көптен бері көрмедік. Шаш алдырғыңыз келсе, қуанамыз. Жазылу: {{booking.url}}. ${STOP_KK}` },
+  { id: "M05", title: "Постоянному клиенту", cat: "regular", who: "Были 3 раза и больше", goal: "поблагодарить", seg: "regular", needs: [], check: "Текст без обещаний скидок", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `Здравствуйте, {{client.first_name}}! Спасибо, что выбираете наш барбершоп. Когда понадобится стрижка, записаться можно здесь: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе, {{client.first_name}}! Біздің барбершопты таңдағаныңызға рақмет. Шаш алдыру керек болса, осы жерден жазылыңыз: {{booking.url}}. ${STOP_KK}` },
+  { id: "M08", title: "Свободное время сегодня", cat: "slots", who: "Кто был у этого мастера", goal: "предложить окно", seg: "all", needs: ["staff.name", "slot"], check: "Время у мастера действительно свободно прямо перед отправкой", approved: false, status: "facts", v: 1, kkChecked: false,
+    ru: `Здравствуйте! Сегодня у {{staff.name}} освободилось время в [время]. Хотите записаться? ${STOP}`,
+    kk: `Сәлеметсіз бе! Бүгін {{staff.name}} шеберде [уақыт] бос. Жазыласыз ба? ${STOP_KK}` },
+  { id: "M12", title: "Стрижка и борода", cat: "services", who: "Все, кому можно писать", goal: "рассказать об услуге", seg: "all", needs: [], check: "Услуга есть в прайсе", approved: false, status: "review", v: 1, kkChecked: false,
+    ru: `Здравствуйте! У нас можно записаться на стрижку и оформление бороды за один визит. Удобное время: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе! Бізде шаш алу мен сақалды бір келгенде жасатуға болады. Ыңғайлы уақыт: {{booking.url}}. ${STOP_KK}` },
+  { id: "M24", title: "Акция", cat: "occasions", who: "Все, кому можно писать", goal: "сообщить об утверждённой акции", seg: "all", needs: ["promo"], check: "Условия, срок и цена утверждены владельцем", approved: false, status: "facts", v: 1, kkChecked: false,
+    ru: `Здравствуйте! До [дата] действует [условия акции]. Записаться: {{booking.url}}. ${STOP}`,
+    kk: `Сәлеметсіз бе! [күн] дейін [акция шарттары]. Жазылу: {{booking.url}}. ${STOP_KK}` },
+];
+const fillDemo = (t: string, name: string) =>
+  t
+    .replace(/\{\{client\.first_name\}\},?\s*/g, name ? `${name}, ` : "")
+    .replace(/Здравствуйте, (\S+), !/, "Здравствуйте, $1!")
+    .replace(/\{\{staff\.name\}\}/g, "Айдоса")
+    .replace(/\{\{booking\.url\}\}/g, "winchester.kz")
+    .replace(/\{\{[^}]+\}\}/g, "")
+    .replace(/, !/g, "!")
+    .replace(/^(\p{L})/u, (m) => m.toUpperCase());
 const wait = (ms = 260) => new Promise((r) => setTimeout(r, ms + Math.random() * 160));
 const STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
 const NO_GA = "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta.";
-const GA_HOOK_WARN = "Вебхук Green-API не настроен: бот не увидит ответы клиентов, и тем, кто ответит «стоп», рассылка будет приходить дальше.";
+const GA_HOOK_WARN = "Номер не настроен до конца: ответы клиентов не приходят в пульт, и тем, кто ответит «стоп», рассылка будет приходить дальше.";
 const NO_BASE_AUTO = "У этой компании нет базы клиентов из Altegio — автосценарий недоступен.";
 
 type Person = CrmPerson & { why: "" | "stop" | "fut" | "recent" | "marketed" };
@@ -229,11 +285,34 @@ function astanaAt(now: number, day: number, hm: string): number {
   const d = new Date(now + ASTANA), [h, m] = hm.split(":").map(Number);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + day, h, m) - ASTANA;
 }
-const SERVICE_LABEL: Record<ServiceKindState["kind"], string> = {
+const SERVICE_LABEL: Partial<Record<ServiceKindState["kind"], string>> = {
   d1: "Накануне в 18:00 — напоминание о записи",
   h2: "За 2 часа — напоминание о записи",
   rv: "Через 3 часа после визита — просьба оставить отзыв",
 };
+/** Каталог сервисных сценариев — как у сервера (src/services/reminders/templates.js), коротко; тексты — на вымышленной записи. */
+const DEMO_CATALOG: ServiceScenario[] = (
+  [
+    ["S01", "Новая запись — подтверждение", "auto", "s01", "Здравствуйте, Арман! Вы записаны в «Демо Барбер» на завтра в 15:00 — Мужская стрижка · Мастер. Если нужно перенести или отменить — напишите сюда."],
+    ["S02", "Запись с сайта без WhatsApp", "auto", "", ""],
+    ["S03", "Напоминание накануне", "auto", "d1", "Напоминаем: завтра в 15:00 вас ждут в «Демо Барбер» — Мужская стрижка · Мастер. Если планы изменились, напишите сюда."],
+    ["S04", "Напоминание за 2 часа", "auto", "h2", "Ждём вас сегодня в 15:00 в «Демо Барбер» (Мужская стрижка · Мастер). Если опаздываете или не сможете прийти — напишите сюда."],
+    ["S05", "«Напомните моё время»", "reply", "", "Вы записаны на завтра в 15:00 — Мужская стрижка · Мастер."],
+    ["S06", "Перенос подтверждён", "auto", "s06", "Ваша запись в «Демо Барбер» перенесена: завтра в 15:00 — Мужская стрижка · Мастер. Если что-то не так — напишите сюда."],
+    ["S07", "Отмена по просьбе клиента", "reply", "", "Вашу запись отменили. Если захотите записаться снова — напишите."],
+    ["S08", "Мастер не выйдет", "off", "", ""],
+    ["S09", "Клиент опаздывает", "task", "", "Спасибо, что предупредили! Передали мастеру."],
+    ["S10", "Клиент подтвердил, что придёт", "reply", "", "Отлично, ждём вас!"],
+    ["S11", "Клиент не пришёл", "task", "", ""],
+    ["S12", "Просьба об отзыве", "auto", "rv", "Спасибо, что были у нас в «Демо Барбер»! Будем благодарны за отзыв: https://2gis.kz/…\nЕсли что-то не понравилось — напишите сюда, передадим администратору."],
+    ["S13", "Благодарность после визита", "off", "", ""],
+    ["S14", "Записали двух человек", "auto", "", ""],
+    ["S15", "Перенос в последний час", "task", "", ""],
+    ["S16", "Ошибка или конфликт в Altegio", "task", "", ""],
+    ["S17", "Изменились часы работы", "off", "", ""],
+    ["S18", "Сообщение не ушло", "task", "", ""],
+  ] as const
+).map(([id, title, mode, kind, ru]) => ({ id, title, trigger: "", mode, channel: "", note: "", v: 1, kind, approved: kind === "d1" || kind === "h2" || kind === "rv", approvedAt: 0, vars: [], preview: { ru, kk: "" } }));
 /** Очередь «Демо Барбера»: четыре записи через бота — накануне в 18:00, за 2 часа, отзыв через 3 часа (вечером — утром в 11:00). */
 function barberQueue(now: number): ServiceQueueItem[] {
   // после 14:00 по Астане записи — с завтрашнего дня, чтобы вся очередь была впереди
@@ -255,11 +334,11 @@ function barberQueue(now: number): ServiceQueueItem[] {
   return out.filter((x) => x.at > now).sort((a, z) => a.at - z.at);
 }
 function demoService(ws: string, now: number): Omit<ServiceOverview, "owner"> {
-  const kinds = (on: Record<ServiceKindState["kind"], boolean>, link = ""): ServiceKindState[] =>
-    (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k], on: on[k], ...(k === "rv" && link ? { link } : {}) }));
+  const kinds = (on: Partial<Record<ServiceKindState["kind"], boolean>>, link = ""): ServiceKindState[] =>
+    (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k] || "", on: !!on[k], ...(k === "rv" && link ? { link } : {}) }));
   if (ws === "demo") {
     const queue = barberQueue(now);
-    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true };
+    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true, catalog: DEMO_CATALOG };
   }
   // «Демо Сервис» и новая компания — без записи через Altegio: напоминаний и отзывов бот не шлёт (как сервер: только по своим записям в Altegio)
   return { kinds: kinds({ d1: false, h2: false, rv: false }), queue: [], total: 0, sent3d: 0, botOff: false, altegio: false };
@@ -456,7 +535,7 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
         ...[...new Set(base.map((p) => p.staff))].sort().map((m) => ({ id: `staff:${m}`, label: `Мастер: ${m}`, rule: "последний визит у мастера", n: ok.filter((p) => p.staff === m).length })),
       ];
       const info: CrmInfo | null = w.baseAt ? { at: w.baseAt, from: dayIso(w.baseAt - 90 * DAY), to: dayIso(w.baseAt + 60 * DAY), records: base.length * 2 + 9, visits: base.reduce((a, p) => a + p.v, 0), clients: base.length, masked: 3, bad: 0, att: { "1": base.reduce((a, p) => a + p.v, 0), "-1": 4, "0": 2 }, cut: false } : null;
-      return { owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, info };
+      return { owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: 0, fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, info };
     },
     async crmList(ws, spec, page = 1) {
       await wait(300);
@@ -522,6 +601,80 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       await wait(350);
       find(ws);
       return { owner: owner(), ...demoService(ws, Date.now()) };
+    },
+    async serviceDryRun(ws) {
+      await wait(300);
+      find(ws);
+      ownerOnly("Проверку по журналу запускает владелец.");
+      throw new ApiError("В демо журнала Altegio нет — проверка работает в настоящем пульте.", 409);
+    },
+    async serviceApprove(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Одобрить текст может только владелец.");
+      throw new ApiError("В демо тексты не одобряются — это делает владелец в настоящем пульте.", 409);
+    },
+    async serviceVariant(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Менять тексты может только владелец.");
+      throw new ApiError("В демо тексты не меняются.", 409);
+    },
+    async calendar(ws): Promise<CampaignCalendar> {
+      await wait(300);
+      const w = find(ws), base = !!(w.base && w.baseAt), t0 = Date.now();
+      const days = Array.from({ length: 14 }, (_, k): CalendarDay => {
+        const date = new Date(t0 + k * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10), svc = base ? [3, 5, 2, 4, 6, 1, 0][k % 7] : 0;
+        const cand = base ? [4, 2, 0, 3, 5, 1, 2][k % 7] : 0, allowed = Math.max(0, cand - 1);
+        return {
+          date,
+          service: { total: svc, kinds: svc ? { d1: Math.ceil(svc / 2), h2: Math.floor(svc / 2) } : {} },
+          marketing: base ? { candidates: cand, allowed, planned: 0, excluded: cand ? ({ noconsent: cand - allowed } as Record<string, number>) : {} } : null,
+        };
+      });
+      return { today: days[0].date, auto: base ? { on: false, days: 28, cap: 20, tpl: false } : null, baseAt: w.baseAt || 0, days };
+    },
+    async messageStats(ws, days): Promise<MessageStats> {
+      await wait(250);
+      const w = find(ws), k = days === 30 ? 4 : 1, has = !!(w.base && w.baseAt);
+      const z = { sent: 0, delivered: 0, read: 0, failed: 0, replied: 0 };
+      return {
+        available: true,
+        days,
+        by: {
+          service: has ? { sent: 18 * k, delivered: 17 * k, read: 12 * k, failed: 1 * k, replied: 4 * k } : z,
+          review: has ? { sent: 6 * k, delivered: 6 * k, read: 4 * k, failed: 0, replied: 1 * k } : z,
+          campaign: z,
+          admin: { sent: 25 * k, delivered: 24 * k, read: 20 * k, failed: 0, replied: 0 },
+        },
+      };
+    },
+    async templates(ws): Promise<TemplateLibrary> {
+      await wait(250);
+      find(ws);
+      const items = DEMO_LIBRARY.map((x) => ({ ...x }));
+      return { owner: owner(), vars: DEMO_VARS, cats: DEMO_CATS, counts: { total: items.length, approved: items.filter((x) => x.approved).length, review: items.filter((x) => !x.approved).length }, items };
+    },
+    async templateSave(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Править и одобрять тексты может только владелец.");
+      throw new ApiError("В демо тексты не сохраняются — это делает владелец в настоящем пульте.", 409);
+    },
+    async templatePreview(ws, q): Promise<TemplatePreview> {
+      await wait(200);
+      find(ws);
+      const x = q.id ? DEMO_LIBRARY.find((i) => i.id === q.id) : null;
+      const text = x ? (q.lang === "kk" ? x.kk : x.ru) : q.text || "";
+      if (!text) throw new ApiError("Нет текста.", 400);
+      const blocked = /\[[^\]]*\]/.test(text);
+      return { lang: q.lang, demo: true, list: [{ to: "пример", name: "Арман", text: fillDemo(text, "Арман") }], noName: { text: fillDemo(text, "") }, missing: blocked ? ["условия в [скобках]"] : [], blocked };
+    },
+    async templateAction(ws) {
+      await wait(200);
+      find(ws);
+      ownerOnly("Менять библиотеку может только владелец.");
+      throw new ApiError("В демо библиотека не меняется.", 409);
     },
   };
 

@@ -16,6 +16,7 @@ export function mkKV() {
   const tooFast = k => { if (!strict.on) return false; const now = performance.now(), prev = strict.last.get(k); if (prev !== undefined && now - prev < 1000) { strict.hits++; return true; } strict.last.set(k, now); return false; };
   const api = {
     get: async k => { ops.get++; if (fail.get && fail.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return mem.get(k) ?? null; },
+    getWithMetadata: async k => { ops.get++; if (fail.get && fail.get(k)) throw new Error("KV GET failed: 500 Internal Server Error"); return { value: mem.get(k) ?? null, metadata: meta.get(k) ?? null }; },
     put: async (k, v, o) => {
       ops.put++;
       if ((fail.put && fail.put(k)) || tooFast(k)) throw new Error("KV PUT failed: 429 Too Many Requests");
@@ -46,8 +47,12 @@ export const net = {
   graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
+  altClients: [],              // справочник клиентов (POST /locations/{локация}/clients/search): { id, name, surname, phone, first_visit_date, last_visit_date, visits_count, nl (разрешил рассылки), pd }
+  altCreated: [],
+  mediaReply: null,            // (url, init) → Response | null: файлы по ссылкам провайдеров (inbox-v2.test.mjs)              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
+  altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
-  ga: [],                      // запросы к Green-API: { url, inst, op, token, body }
+  ga: [],                      // запросы к Green-API: { url, host, inst, op, token, body, form } (form — поля multipart: файл как { name, size, type })
   gaState: "authorized",       // что отвечает getStateInstance
   gaSettings: {},              // настройки инстансов по номеру (getSettings/setSettings); как у настоящего инстанса, reset() их не стирает
   gaReply: null,               // функция (rec) → Response | null: свой ответ Green-API (ошибка отправки); может бросить исключение — «связь оборвалась»
@@ -55,7 +60,9 @@ export const net = {
   wzReply: null,               // функция (rec) → Response | null: свой ответ Wazzapo
   img: [],                     // запросы картинок Altegio (фото мастеров, assets.alteg.io и др.): адреса
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
-  reset() { this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; }
+  push: [],                    // запросы к службам Web Push (Apple, Google, Mozilla, Microsoft): { url, headers, body (байты) }
+  pushReply: null,             // функция (rec) → Response | null: свой ответ службы push (410 — подписки нет)
+  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altCreated = []; this.mediaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -124,6 +131,26 @@ function altStub(url, init) {
     return J({ success: true, data: t.map(x => ({ time: x, seance_length: 3600, sum_length: 3600, datetime: `${m[2]}T${x}:00+05:00` })), meta: [] });
   }
   if (path === "/auth" && method === "POST") { const b = JSON.parse(init.body || "{}"); net.altAuth.push({ login: b.login, auth: init.headers && init.headers.authorization }); return b.password === "right-pass" ? J({ success: true, data: { user_token: "usr-tok", name: "Азамат" }, meta: [] }) : J({ success: false, data: null, meta: { message: "Неверный логин или пароль" } }, 401); }
+  if ((m = path.match(/^\/clients\/(\d+)$/)) && method === "POST") { // «Добавить клиента», как Altegio: без имени и номера — 422 (30.10.2026 так ответил настоящий)
+    const b = JSON.parse(init.body || "{}");
+    net.altCreated.push(b);
+    if (!b.name || !b.phone) return J({ success: false, data: null, meta: { message: "Name and phone are required" } }, 422);
+    return J({ success: true, data: { id: 990000 + net.altCreated.length, name: b.name, phone: b.phone }, meta: [] }, 201);
+  }
+  if ((m = path.match(/^\/locations\/(\d+)\/clients\/search$/)) && method === "POST") { // справочник клиентов: страницы, поля, фильтры флагов, meta.total_count — как Altegio
+    if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
+    if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
+    const b = JSON.parse(init.body || "{}"), fields = Array.isArray(b.fields) ? b.fields : ["id"];
+    if (net.altClientsNoVisits && fields.includes("visits_count")) return J({ success: false, data: null, meta: { message: "Unknown field visits_count" } }, 400);
+    let all = [...net.altClients].sort((a, c) => a.id - c.id);
+    for (const f of b.filters || []) if (f.type === "is_newsletter_allowed") all = all.filter(x => !!x.nl === !!f.state.value); else if (f.type === "is_personal_data_processing_allowed") all = all.filter(x => !!x.pd === !!f.state.value);
+    const size = Math.min(200, +b.page_size || 25), pg = Math.max(1, +b.page || 1);
+    return J({ success: true, data: all.slice((pg - 1) * size, pg * size).map(x => Object.fromEntries(["id", ...fields].filter(k => k in x).map(k => [k, x[k]]))), meta: { total_count: all.length } });
+  }
+  if ((m = path.match(/^\/client\/(\d+)\/(\d+)$/)) && method === "GET") { // карточка клиента
+    const x = net.altClients.find(c => String(c.id) === m[2]);
+    return x ? J({ success: true, data: { id: x.id, name: x.name, phone: x.phone, sms_not: 0, sms_check: 1, is_newsletter_allowed: !!x.nl, visits: x.visits_count || 0 }, meta: [] }) : J({ success: false, data: null, meta: { message: "Not found" } }, 404);
+  }
   if ((m = path.match(/^\/records\/(\d+)/)) && method === "GET") {
     if (!/User usr-tok/.test((init.headers && init.headers.authorization) || "")) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, 401);
     if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
@@ -195,9 +222,14 @@ globalThis.fetch = async (u, init = {}) => {
     if (/\/(masters|images)\//.test(url)) return new Response(pngFace(url), { headers: { "content-type": "image/png" } });
     return new Response("not found", { status: 404 });
   }
+  if (net.mediaReply) { const own = net.mediaReply(url, init); if (own) return own; } // файлы провайдеров (ссылки Green-API на голосовые и фото)
+  // корень адреса Green-API (пульт проверяет, что адрес для файлов есть) — отвечает, как nginx Green-API: 403
+  if (/^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/?$/.test(url)) return new Response("forbidden", { status: 403 });
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
-  if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}
-    const rec = { url, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null }; net.ga.push(rec);
+  if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}; файлы (sendFileByUpload) — multipart на хосте media
+    const form = typeof FormData !== "undefined" && init.body instanceof FormData ? init.body : null;
+    const fields = form ? Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { name: v.name, size: v.size, type: v.type, blob: v }])) : null;
+    const rec = { url, host: new URL(url).host, inst: gm[1], op: gm[2], token: gm[3], method: init.method || "GET", body: form ? null : init.body ? JSON.parse(init.body) : null, ...(fields ? { form: fields } : {}) }; net.ga.push(rec);
     const own = net.gaReply && net.gaReply(rec);
     if (own) return own;
     if (rec.op === "getStateInstance") return J({ stateInstance: net.gaState });
@@ -205,6 +237,8 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.op === "getSettings") return J({ wid: "77000000077@c.us", webhookUrl: "", webhookUrlToken: "", delaySendMessagesMilliseconds: 5000, incomingWebhook: "no", outgoingWebhook: "no", outgoingMessageWebhook: "no", outgoingAPIMessageWebhook: "no", stateWebhook: "no", ...st });
     if (rec.op === "setSettings") { Object.assign(st, rec.body); return J({ saveSettings: true }); }
     if (rec.op === "sendMessage" || rec.op === "sendFileByUrl") return J({ idMessage: "GA" + net.ga.length });
+    if (rec.op === "sendFileByUpload") return J({ idMessage: "GAF" + net.ga.length, urlFile: `https://media.green-api.test/out/${net.ga.length}/${encodeURIComponent(fields && fields.fileName || "file")}` });
+    if (rec.op === "deleteMessage") return new Response("", { status: 200 }); // как в документации Green-API: удалено — 200 с пустым телом
     return J({ message: "unknown method" }, 404);
   }
   if (url.startsWith("https://wazzapo.kz/api/v2/external/")) { // Wazzapo: ключ в заголовке X-API-Key
@@ -215,6 +249,12 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.path.startsWith("/phone-numbers/")) return J({ data: { phone_number_id: rec.path.split("/")[2], display_phone_number: "+7 700 000 00 99", verified_name: "Тест", quality_rating: "GREEN", messaging_limit_tier: "TIER_250" } });
     return J({ error: "not found" }, 404);
   }
+  if (/^https:\/\/(([a-z0-9-]+\.)*push\.apple\.com|fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[a-z0-9-]+\.notify\.windows\.com)\//.test(url)) { // Web Push
+    const rec = { url, headers: { ...(init.headers || {}) }, body: init.body instanceof Uint8Array ? init.body : new Uint8Array(0) }; net.push.push(rec);
+    const own = net.pushReply && net.pushReply(rec);
+    if (own) return own;
+    return new Response(null, { status: 201 });
+  }
   net.other.push(url);
   throw new Error("unexpected fetch " + url);
 };
@@ -223,9 +263,13 @@ globalThis.fetch = async (u, init = {}) => {
 export const gaPass = (c, inst) => createHmac("sha256", inst.token).update(`ga-hook:${c}:${inst.id}`).digest("hex").slice(0, 32);
 
 // ---- один «сайт»: окружение воркера и помощники для запросов
+// CHAT_STORE_ALL=d1 — все проверки с переписками в D1 (services/chatstore, 01.11.2026): каждой копии Worker — своя D1 на node:sqlite
+// с миграциями, если проверка не дала свою; так весь набор проверок сверяет, что бот, пульт и вебхуки ведут себя так же, как на KV
+const ALL_D1 = process.env.CHAT_STORE_ALL === "d1" ? await import("./d1.mjs") : null;
 export function mk(envExtra = {}) {
   const kv = mkKV();
-  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ...envExtra };
+  const d1 = ALL_D1 && !("DB" in envExtra) && !Object.keys(envExtra).some(k => k.startsWith("CHAT_STORE")) ? { CHAT_STORE: "d1", DB: ALL_D1.d1With(envExtra.STAGE === "preview" ? "preview" : "production").db } : {};
+  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ...d1, ...envExtra };
   const pending = [], ctx = { waitUntil: p => pending.push(p) };
   const settle = async () => { while (pending.length) await Promise.allSettled(pending.splice(0)); };
   const call = async (path, init = {}) => { const r = await worker.fetch(new Request("https://bot.test" + path, init), env, ctx); await settle(); return r; };

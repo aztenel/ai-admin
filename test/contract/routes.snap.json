@@ -1108,8 +1108,12 @@
   "type": "application/json",
   "cache": "no-store",
   "json": [
+   "brand",
+   "brands",
    "c",
-   "owner"
+   "owner",
+   "site",
+   "stage"
   ]
  },
  "GET /api/inbox/me [staff]": {
@@ -1117,8 +1121,12 @@
   "type": "application/json",
   "cache": "no-store",
   "json": [
+   "brand",
+   "brands",
    "c",
-   "owner"
+   "owner",
+   "site",
+   "stage"
   ]
  },
  "GET /api/inbox/list?c=barber [anon]": {
@@ -1397,6 +1405,1026 @@
  },
  "GET /api/inbox/nope?c=barber [staff]": {
   "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=barber&v=2 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=barber&v=2 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=barber&v=2 [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "chats",
+   "client",
+   "lines",
+   "more",
+   "need",
+   "now",
+   "ops",
+   "outOnly",
+   "total"
+  ]
+ },
+ "GET /api/inbox/list?c=dent&v=2 [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=barber&ch=wa&id=77010000001 [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "records"
+  ]
+ },
+ "GET /api/inbox/booking?c=dent&ch=wa&id=77010000055 [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/push/config?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "devices",
+   "enabled",
+   "key"
+  ]
+ },
+ "GET /api/push/config?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/subscribe {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/prefs {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok"
+  ]
+ },
+ "POST /api/push/unsubscribe {\"c\":\"barber\"} [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/push/test {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/templates?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/templates?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "cats",
+   "counts",
+   "items",
+   "owner",
+   "vars"
+  ]
+ },
+ "GET /api/bc/templates?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "cats",
+   "counts",
+   "items",
+   "owner",
+   "vars"
+  ]
+ },
+ "GET /api/bc/templates?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/templates?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "cats",
+   "counts",
+   "items",
+   "owner",
+   "vars"
+  ]
+ },
+ "GET /api/bc/templates?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"barber\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"barber\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/calendar?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/calendar?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "from",
+   "month",
+   "to",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "from",
+   "month",
+   "to",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "auto",
+   "baseAt",
+   "days",
+   "from",
+   "month",
+   "to",
+   "today",
+   "weekday0"
+  ]
+ },
+ "GET /api/bc/calendar?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "by",
+   "days",
+   "from",
+   "to",
+   "why"
+  ]
+ },
+ "GET /api/bc/stats?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/dry {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/dry {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok",
+   "why"
+  ]
+ },
+ "POST /api/bc/service/dry {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/approve {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/approve {\"c\":\"barber\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/approve {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"dent\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"dent\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"dent\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"dent\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"barber\",\"id\":\"S03\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"barber\",\"id\":\"S03\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"barber\",\"id\":\"S03\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"dent\",\"id\":\"S03\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"dent\",\"id\":\"S03\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"dent\",\"id\":\"S03\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\",\"act\":\"approve\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\",\"act\":\"approve\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\",\"act\":\"approve\"} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"dent\",\"act\":\"approve\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"dent\",\"act\":\"approve\"} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"dent\",\"act\":\"approve\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\",\"ch\":\"ga\",\"segment\":\"pora\",\"tplId\":\"M01\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\",\"ch\":\"ga\",\"segment\":\"pora\",\"tplId\":\"M01\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "funnel",
+   "lang",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "samples",
+   "stopped",
+   "text",
+   "tplId",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\",\"ch\":\"ga\",\"segment\":\"pora\",\"tplId\":\"M01\"} [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "funnel",
+   "lang",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "samples",
+   "stopped",
+   "text",
+   "tplId",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"ch\":\"ga\",\"segment\":\"all\",\"tplId\":\"M01\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"ch\":\"ga\",\"segment\":\"all\",\"tplId\":\"M01\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "bad",
+   "badN",
+   "cut",
+   "dup",
+   "errors",
+   "excluded",
+   "funnel",
+   "lang",
+   "named",
+   "ok",
+   "preview",
+   "sample",
+   "samples",
+   "segment",
+   "stopped",
+   "text",
+   "tplId",
+   "valid"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"ch\":\"ga\",\"segment\":\"all\",\"tplId\":\"M01\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/catalog?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/catalog?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "why"
+  ]
+ },
+ "GET /api/inbox/catalog?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "why"
+  ]
+ },
+ "GET /api/inbox/times?c=barber&date=2026-11-02 [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/times?c=barber&date=2026-11-02 [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "why"
+  ]
+ },
+ "GET /api/inbox/times?c=barber&date=2026-11-02 [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "why"
+  ]
+ },
+ "GET /api/inbox/times?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/inbox/times?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "available",
+   "why"
+  ]
+ },
+ "GET /api/inbox/times?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [staff]": {
+  "status": 403,
   "type": "application/json",
   "cache": "no-store",
   "json": [
@@ -1890,6 +2918,7 @@
    "at",
    "client",
    "clients",
+   "consent",
    "excluded",
    "info",
    "ok",
@@ -2065,6 +3094,606 @@
    "error"
   ]
  },
+ "GET /api/chatstore/status?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/status?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "mode",
+   "pending",
+   "ready",
+   "shadow"
+  ]
+ },
+ "GET /api/chatstore/status?c=barber [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/chatstore/check?c=barber [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/import {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/export {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "done",
+   "failed",
+   "ok",
+   "pending"
+  ]
+ },
+ "POST /api/chatstore/replay {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/status?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/status?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
+   "owner",
+   "ready",
+   "stage",
+   "why"
+  ]
+ },
+ "GET /api/contacts/status?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
+   "owner",
+   "ready",
+   "stage",
+   "why"
+  ]
+ },
+ "GET /api/contacts/status?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/status?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "client",
+   "demo",
+   "demoAllowed",
+   "demoAt",
+   "owner",
+   "ready",
+   "stage",
+   "why"
+  ]
+ },
+ "GET /api/contacts/status?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/segments?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/segments?c=barber [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "GET /api/contacts/segments?c=barber [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "GET /api/contacts/list?c=barber&q=x [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/list?c=barber&q=x [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "GET /api/contacts/list?c=barber&q=x [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "GET /api/contacts/card?c=barber&id=x [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/card?c=barber&id=x [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "GET /api/contacts/card?c=barber&id=x [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"barber\",\"phone\":\"+77000000999\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"barber\",\"phone\":\"+77000000999\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"barber\",\"phone\":\"+77000000999\"} [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/consent {\"c\":\"barber\",\"id\":\"x\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/consent {\"c\":\"barber\",\"id\":\"x\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/consent {\"c\":\"barber\",\"id\":\"x\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/restrict {\"c\":\"barber\",\"id\":\"x\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/restrict {\"c\":\"barber\",\"id\":\"x\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/restrict {\"c\":\"barber\",\"id\":\"x\"} [staff]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/lift {\"c\":\"barber\",\"id\":\"x\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/lift {\"c\":\"barber\",\"id\":\"x\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/lift {\"c\":\"barber\",\"id\":\"x\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/review {\"c\":\"barber\",\"id\":\"x\",\"decision\":\"lift\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/review {\"c\":\"barber\",\"id\":\"x\",\"decision\":\"lift\"} [owner]": {
+  "status": 400,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "field"
+  ]
+ },
+ "POST /api/contacts/review {\"c\":\"barber\",\"id\":\"x\",\"decision\":\"lift\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/import {\"c\":\"barber\",\"text\":\"+77000000999\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/import {\"c\":\"barber\",\"text\":\"+77000000999\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/import {\"c\":\"barber\",\"text\":\"+77000000999\"} [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/import/confirm {\"c\":\"barber\",\"id\":\"x\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/import/confirm {\"c\":\"barber\",\"id\":\"x\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/import/confirm {\"c\":\"barber\",\"id\":\"x\"} [staff]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/sync {\"c\":\"barber\",\"mode\":\"step\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/sync {\"c\":\"barber\",\"mode\":\"step\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/sync {\"c\":\"barber\",\"mode\":\"step\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/probe {\"c\":\"barber\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/probe {\"c\":\"barber\"} [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "ok",
+   "report"
+  ]
+ },
+ "POST /api/contacts/probe {\"c\":\"barber\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/stops {\"c\":\"barber\",\"action\":\"sweep\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/stops {\"c\":\"barber\",\"action\":\"sweep\"} [owner]": {
+  "status": 502,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/stops {\"c\":\"barber\",\"action\":\"sweep\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/demo {\"c\":\"barber\",\"op\":\"clear\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"dent\",\"phone\":\"+77000000999\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"dent\",\"phone\":\"+77000000999\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error",
+   "ready"
+  ]
+ },
+ "POST /api/contacts/add {\"c\":\"dent\",\"phone\":\"+77000000999\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/nope?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/nope?c=barber [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/contacts/nope?c=barber [staff]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
  "POST /api/bc/check {\"c\":\"dent\",\"segment\":\"all\"} [anon]": {
   "status": 401,
   "type": "application/json",
@@ -2083,6 +3712,8 @@
    "cut",
    "dup",
    "errors",
+   "excluded",
+   "funnel",
    "named",
    "ok",
    "preview",
@@ -2437,6 +4068,23 @@
   "frame": "DENY"
  },
  "GET /diag [staff]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag/storage [anon]": {
+  "status": 403,
+  "type": "text/plain",
+  "text": "Forbidden: неверный ?key="
+ },
+ "GET /diag/storage [owner]": {
+  "status": 200,
+  "type": "text/html",
+  "cache": "no-store",
+  "csp": true,
+  "frame": "DENY"
+ },
+ "GET /diag/storage [staff]": {
   "status": 403,
   "type": "text/plain",
   "text": "Forbidden: неверный ?key="
@@ -3296,6 +4944,142 @@
   ]
  },
  "POST /api/inbox/act {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/dry {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/approve {\"c\":\"barber\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/templates/preview {\"c\":\"dent\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"barber\",\"id\":\"S03\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/service/variant {\"c\":\"dent\",\"id\":\"S03\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"barber\",\"act\":\"approve\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/act {\"c\":\"dent\",\"act\":\"approve\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"barber\",\"ch\":\"ga\",\"segment\":\"pora\",\"tplId\":\"M01\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/bc/check {\"c\":\"dent\",\"ch\":\"ga\",\"segment\":\"all\",\"tplId\":\"M01\"} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=ga&id=77010000001 {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=barber&ch=wa&id=77010000001 {} [owner, чужой сайт]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/inbox/send-file?c=dent&ch=wa&id=77010000055 {} [owner, чужой сайт]": {
   "status": 403,
   "type": "application/json",
   "cache": "no-store",

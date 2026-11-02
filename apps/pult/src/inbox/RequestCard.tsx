@@ -86,7 +86,7 @@ export function RequestCard({ q, since, now, canMessage, booking, onDone }: { q:
             </div>
           </div>
         )}
-        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-2 text-xs text-fg-3 md:pl-12">Написать клиенту сейчас нельзя — сообщите ему по телефону.</p>}
+        {!canMessage && q.kind !== "callback" && !edit && <p className="mt-2 text-xs text-fg-3 md:pl-12">Написать клиенту сейчас нельзя. Позвоните ему.</p>}
         {err && <p className="mt-2 text-sm text-critical md:pl-12">{err}</p>}
       </div>
     </div>

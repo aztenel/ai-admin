@@ -1,0 +1,43 @@
+diff --git a/test/unit/d1-schema.test.mjs b/test/unit/d1-schema.test.mjs
+index 16f3f63..363d66e 100644
+--- a/test/unit/d1-schema.test.mjs
++++ b/test/unit/d1-schema.test.mjs
+@@ -14,10 +14,12 @@ const NO_SQLITE = sqliteOk ? false : "node:sqlite есть только в Node
+ const jsonc = f => JSON.parse(readFileSync(new URL("../../" + f, import.meta.url), "utf8").replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*/g, (m, s) => s || ""));
+ const PROD_KV = "29debedd4b844096b1c5c55eb30dd271";
+ 
+-test("черновики не подключены к боевым данным: своё KV, своя база D1, у боевого сайта D1 нет", () => {
++test("черновики не подключены к боевым данным: своё KV, своя база D1; у боевого сайта — своя база ai-admin", () => {
+   const w = jsonc("wrangler.jsonc"), p = w.previews;
+   assert.deepEqual(w.kv_namespaces, [{ binding: "KV", id: PROD_KV }], "боевая привязка KV не менялась");
+-  assert.equal(w.d1_databases, undefined, "боевой сайт к D1 не подключён — только по решению владельца");
++  // боевая база подключена по решению владельца (docs/runbooks/winchester-go-live.md): только ai-admin, не база черновиков
++  assert.deepEqual(w.d1_databases.map(d => [d.binding, d.database_name, d.database_id]), [["DB", "ai-admin", "ea1610ed-d342-41ca-8170-40ffe81feb41"]]);
++  assert.notEqual(w.d1_databases[0].database_id, p.d1_databases[0].database_id, "у черновиков и боевого сайта — разные базы");
+   assert.equal(w.vars, undefined, "переменные боевого сайта — только в панели (keep_vars)");
+   assert.equal(p.vars.STAGE, "preview");
+   assert.equal(p.kv_namespaces.length, 1);
+diff --git a/wrangler.jsonc b/wrangler.jsonc
+index 2d3d1a1..c35309d 100644
+--- a/wrangler.jsonc
++++ b/wrangler.jsonc
+@@ -14,13 +14,18 @@
+   "kv_namespaces": [
+     { "binding": "KV", "id": "29debedd4b844096b1c5c55eb30dd271" }
+   ],
++  // Боевая база D1 ai-admin — подключена по решению владельца (docs/runbooks/winchester-go-live.md). До выкладки этой правки
++  // на ней применены миграции 0001–0006 и стоит отметка meta.stage = 'production': без отметки код базой не пользуется.
++  "d1_databases": [
++    { "binding": "DB", "database_name": "ai-admin", "database_id": "ea1610ed-d342-41ca-8170-40ffe81feb41", "migrations_dir": "migrations" }
++  ],
+   // Черновые версии (Worker Previews): у каждой ветки, кроме main, свой адрес; рабочий сайт они не трогают.
+   // Без блока previews сборка черновой ветки падает с ошибкой «missing a previews block».
+   // Черновик не наследует настройки рабочего сайта: всё, что ему нужно, указано здесь.
+   // Переменные и секреты черновиков задаются в панели Cloudflare: Settings → Previews.
+   // С 31.10.2026 у черновиков свои хранилища: KV ai-admin-dev и база D1 ai-admin-dev (до этого черновик писал в боевое
+   // KV aiai — чаты, «стоп», счётчики). Боевых id здесь быть не должно: это проверяет test/unit/d1-schema.test.mjs.
+-  // База D1 есть только у черновиков; боевая ai-admin создана, но к сайту не подключена (решение владельца — отдельно).
++  // У черновиков своя база D1 ai-admin-dev (блок previews заменяет боевую привязку DB целиком).
+   "previews": {
+     "vars": { "STAGE": "preview" },
+     "kv_namespaces": [

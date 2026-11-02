@@ -4,6 +4,12 @@
 // Полные номера клиентов базы сервер не отдаёт — здесь их нет и быть не может; ответы не пишутся ни в консоль, ни в localStorage.
 import type {
   AutoInfo,
+  CampaignCalendar,
+  CampaignResults,
+  LibraryItem,
+  MessageStats,
+  TemplateLibrary,
+  TemplatePreview,
   AutoSettings,
   BotNumberState,
   CampaignActResult,
@@ -22,20 +28,28 @@ import type {
   SegmentSpec,
   ServiceKind,
   ServiceOverview,
+  ServiceDryItem,
+  ServiceDryRun,
+  ServiceLogItem,
+  ServiceLogState,
+  ServiceScenario,
+  ServiceScenarioMode,
 } from "@/model/campaigns";
 import { ApiError } from "./errors";
 import { call, enc } from "./live";
+import { getOperator } from "@/lib/operator";
 import type { CampaignSource } from "./source";
 
 // ---------- ответы сервера ----------
 type RowRaw = {
   id: string; name?: string; status: string; total?: number; pos?: number; sent?: number; failed?: number; skipped?: number; excl?: number;
-  created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string;
+  created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string; demo?: number | boolean; approved?: number | boolean;
 };
 type BRaw = RowRaw & {
   cap?: number; from?: number; to?: number; text?: string; msg?: string; fallback?: string; img?: string; lang?: string; params?: string[];
-  segId?: string; crmAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
+  segId?: string; crmAt?: number; approvedBy?: string; approvedAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
   retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean;
+  results?: Partial<CampaignResults> | null;
 };
 type ListRaw = {
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
@@ -47,10 +61,13 @@ type ListRaw = {
 type CheckRaw = Omit<CampaignCheck, "listFilter"> & { seg?: string; segOut?: number; noDate?: number };
 type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null };
 type ServiceRaw = {
-  owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string }[];
-  queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string }[];
+  owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string; sc?: string; approved?: boolean }[];
+  queue?: { k: string; at?: number; ch?: string; phone?: string; name?: string; date?: string; time?: string; why?: string }[];
   total?: number; sent3d?: number; botOff?: boolean; altegio?: boolean; journal?: boolean; enabled?: boolean; hold?: { at?: number; why?: string } | null;
+  log?: { t?: number; k?: string; st?: string; why?: string; phone?: string; name?: string; date?: string; time?: string }[];
+  catalog?: { id: string; title?: string; trigger?: string; mode?: string; channel?: string; note?: string; v?: number; kind?: string; approved?: boolean; approvedAt?: number; vars?: string[]; preview?: { ru?: string; kk?: string }; cat?: string; catLabel?: string; variants?: { id: string; ru?: string; kk?: string; active?: boolean; approved?: boolean; v?: number; builtin?: boolean }[] }[];
 };
+type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
 
@@ -80,6 +97,8 @@ function row(r: RowRaw): CampaignRow {
     ...(r.seg ? { segment: r.seg } : {}),
     ...(r.by === "owner" || r.by === "staff" || r.by === "auto" ? { by: r.by } : {}),
     ...(r.tpl ? { template: r.tpl } : {}),
+    ...(r.demo ? { demo: true } : {}),
+    ...(r.approved ? { approved: true } : {}),
   };
 }
 
@@ -87,10 +106,15 @@ function detail(b: BRaw): CampaignDetail {
   const d: CampaignDetail = { ...row(b), cap: n(b.cap), from: n(b.from), to: n(b.to), text: b.text || "", fallback: b.fallback || "", fails: b.fails || [], stalled: !!b.stalled };
   // необязательные поля — только если сервер их прислал (пусто и 0 — «нет»)
   const extra: Partial<CampaignDetail> = {
-    message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, startedAt: b.startedAt, lastSentAt: b.last,
+    message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, approvedBy: b.approvedBy, approvedAt: b.approvedAt, startedAt: b.startedAt, lastSentAt: b.last,
     nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure,
   };
   for (const [k, v] of Object.entries(extra)) if (v) (d as Record<string, unknown>)[k] = v;
+  // итоги: сервер считает по ответам провайдера и журналу Altegio; без базы D1 — нет
+  if (b.results) {
+    const x = b.results;
+    d.results = { sent: n(x.sent), delivered: n(x.delivered), read: n(x.read), failed: n(x.failed), replied: n(x.replied), booked: n(x.booked), window: n(x.window) || 14 };
+  }
   return d;
 }
 
@@ -126,18 +150,49 @@ function overview(d: ListRaw): CampaignsOverview {
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["d1", "h2", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "rv"];
+const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
+const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
+const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];
 const isKind = (k: string): k is ServiceKind => (KINDS as string[]).includes(k);
 
 /** Сервисные сообщения: незнакомые виды (сервер новее пульта) не показываем; номер — маска сервера как есть. */
 function service(d: ServiceRaw): ServiceOverview {
-  const kinds = (d.kinds || []).flatMap((x) => (isKind(x.k) ? [{ kind: x.k, label: x.label || "", on: !!x.on, ...(x.link ? { link: x.link } : {}) }] : []));
-  const queue = (d.queue || []).flatMap((x) =>
-    isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }] : [],
+  const kinds = (d.kinds || []).flatMap((x) =>
+    isKind(x.k) ? [{ kind: x.k, label: x.label || "", on: !!x.on, ...(x.link ? { link: x.link } : {}), ...(typeof x.approved === "boolean" ? { approved: x.approved } : {}), ...(x.sc ? { scenario: x.sc } : {}) }] : [],
   );
+  const queue = (d.queue || []).flatMap((x) =>
+    isKind(x.k) ? [{ kind: x.k, at: n(x.at), channel: x.ch === "ga" ? ("bot" as const) : ("main" as const), phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "", ...(x.why ? { why: x.why } : {}) }] : [],
+  );
+  const log: ServiceLogItem[] = (d.log || []).flatMap((x) =>
+    (isKind(x.k || "") || x.k === "noshow") && (LOG_STATES as string[]).includes(x.st || "")
+      ? [{ at: n(x.t), kind: x.k as ServiceLogItem["kind"], state: x.st as ServiceLogState, why: x.why || "", phone: x.phone || "", name: x.name || "", date: x.date || "", time: x.time || "" }]
+      : [],
+  );
+  const catalog: ServiceScenario[] = (d.catalog || []).map((x) => ({
+    id: x.id, title: x.title || x.id, trigger: x.trigger || "", mode: (MODES as string[]).includes(x.mode || "") ? (x.mode as ServiceScenarioMode) : "off", channel: x.channel || "",
+    note: x.note || "", v: n(x.v), kind: isKind(x.kind || "") ? (x.kind as ServiceKind) : "", approved: !!x.approved, approvedAt: n(x.approvedAt), vars: x.vars || [],
+    preview: { ru: (x.preview && x.preview.ru) || "", kk: (x.preview && x.preview.kk) || "" },
+    ...(x.catLabel || x.cat ? { cat: x.catLabel || x.cat } : {}),
+    ...(Array.isArray(x.variants) ? { variants: x.variants.map((v) => ({ id: String(v.id), ru: v.ru || "", kk: v.kk || "", active: !!v.active, approved: !!v.approved, v: n(v.v), builtin: !!v.builtin })) } : {}),
+  }));
   // altegio нет (сервер старше пульта) — как раньше: виды показываем, как прислал сервер
   return { owner: !!d.owner, kinds, queue, total: Math.max(n(d.total), queue.length), sent3d: n(d.sent3d), botOff: !!d.botOff, altegio: d.altegio !== false,
-    ...(d.journal ? { journal: true, enabled: d.enabled !== false, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null } : {}) };
+    ...(d.journal ? { journal: true, enabled: d.enabled !== false, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null } : {}),
+    ...(d.log ? { log } : {}), ...(d.catalog ? { catalog } : {}) };
+}
+
+/** Проверка по журналу: незнакомые виды и состояния не показываем. */
+function dryRun(d: DryRaw): ServiceDryRun {
+  const items: ServiceDryItem[] = (d.items || []).flatMap((x) =>
+    isKind(x.k) && (DRY as string[]).includes(x.status || "")
+      ? [{ kind: x.k, scenario: x.sc || "", at: n(x.at), status: x.status as ServiceDryItem["status"], why: x.why || "", name: x.name || "", phone: x.phone || "", date: x.date || "",
+          time: x.time || "", staff: x.staff || "", service: x.svc || "", text: x.text || "", lang: x.lang || "ru" }]
+      : [],
+  );
+  return { ok: d.ok !== false, ...(d.why ? { why: d.why } : {}), at: n(d.at), from: d.from || "", to: d.to || "", records: n(d.records), cut: !!d.cut, enabled: !!d.enabled, ga: !!d.ga,
+    quiet: !!d.quiet, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null, total: Math.max(n(d.total), items.length), items,
+    skipped: (d.skipped || []).filter((x) => x && x.why).map((x) => ({ why: x.why, n: n(x.n) })) };
 }
 
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */
@@ -156,6 +211,7 @@ export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown>
     consent: d.consent === true,
   };
   if (!bot) Object.assign(b, { tpl: (d.tpl || "").trim(), lang: (d.lang || "ru").trim(), params: d.params || [] });
+  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", ...(d.tplId ? { tplId: d.tplId } : {}) });
   if (d.source === "segment") b.segment = d.segment ? segBody(d.segment) : { id: "" };
   else {
     b.recipients = d.recipients || "";
@@ -170,15 +226,17 @@ export const liveCampaigns: CampaignSource = {
     return overview(await call<ListRaw>(`/api/bc/list?c=${enc(ws)}`));
   },
   async campaign(ws, id) {
-    return detail((await call<{ b: BRaw }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}`)).b);
+    // итоги (results) сервер кладёт рядом с b, а не внутри
+    const d = await call<{ b: BRaw; results?: BRaw["results"] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}`);
+    return detail({ ...d.b, results: d.results ?? d.b.results });
   },
   async campaignBad(ws, id) {
-    const d = await call<{ b: BRaw; bad?: string[] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}&bad=1`);
-    return { campaign: detail(d.b), lines: d.bad || [] };
+    const d = await call<{ b: BRaw; results?: BRaw["results"]; bad?: string[] }>(`/api/bc/get?c=${enc(ws)}&id=${enc(id)}&bad=1`);
+    return { campaign: detail({ ...d.b, results: d.results ?? d.b.results }), lines: d.bad || [] };
   },
   async checkCampaign(ws, draft) {
     const { seg, segOut, noDate, ...r } = await call<CheckRaw>("/api/bc/check", draftBody(ws, draft));
-    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
+    return { ...r, errors: r.errors || [], sample: r.sample || [], preview: r.preview || [], bad: r.bad || [], samples: r.samples || [], excluded: Array.isArray(r.excluded) ? r.excluded : [], ...(seg ? { listFilter: { label: seg, out: n(segOut), noDate: n(noDate) } } : {}) };
   },
   async createCampaign(ws, draft) {
     const d = await call<{ b: BRaw; dup: number; bad: number; cut: number }>("/api/bc/create", draftBody(ws, draft));
@@ -186,7 +244,7 @@ export const liveCampaigns: CampaignSource = {
   },
   async campaignAct(ws, id, act, force): Promise<CampaignActResult> {
     try {
-      const d = await call<{ b?: BRaw; gone?: boolean }>("/api/bc/act", { c: ws, id, act, ...(force ? { force: true } : {}) });
+      const d = await call<{ b?: BRaw; gone?: boolean }>("/api/bc/act", { c: ws, id, act, op: getOperator(), ...(force ? { force: true } : {}) });
       return d.gone || !d.b ? { kind: "deleted" } : { kind: "done", campaign: detail(d.b) };
     } catch (e) {
       if (e instanceof ApiError && e.confirm) return { kind: "confirm", question: e.confirm };
@@ -210,7 +268,8 @@ export const liveCampaigns: CampaignSource = {
       clients: n(d.clients),
       ok: n(d.ok),
       segments: d.segments || [],
-      excluded: d.excluded || { stop: 0, fut: 0, recent: 0, marketed: 0 },
+      excluded: { ...{ stop: 0, noconsent: 0, fut: 0, recent: 0, marketed: 0 }, ...(d.excluded || {}) },
+      consent: d.consent,
       info: d.info || null,
       ...(d.error ? { error: d.error, errorAt: n(d.errorAt) } : {}),
     };
@@ -248,5 +307,32 @@ export const liveCampaigns: CampaignSource = {
   },
   async serviceMessages(ws) {
     return service(await call<ServiceRaw>(`/api/bc/service?c=${enc(ws)}`));
+  },
+  async serviceDryRun(ws) {
+    return dryRun(await call<DryRaw>("/api/bc/service/dry", { c: ws }));
+  },
+  async serviceApprove(ws, id, v, on) {
+    await call<{ ok: true }>("/api/bc/service/approve", { c: ws, id, v, on });
+  },
+  async serviceVariant(ws, id, q) {
+    await call<{ ok: true }>("/api/bc/service/variant", { c: ws, id, ...q, op: getOperator() });
+  },
+  async calendar(ws) {
+    return call<CampaignCalendar>(`/api/bc/calendar?c=${enc(ws)}`);
+  },
+  async messageStats(ws, days) {
+    return call<MessageStats>(`/api/bc/stats?c=${enc(ws)}&days=${days}`);
+  },
+  async templates(ws) {
+    return call<TemplateLibrary>(`/api/bc/templates?c=${enc(ws)}`);
+  },
+  async templateSave(ws, item) {
+    return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates", { c: ws, ...item, op: getOperator() })).item;
+  },
+  async templatePreview(ws, q) {
+    return call<TemplatePreview>("/api/bc/templates/preview", { c: ws, lang: q.lang, ...(q.id ? { id: q.id } : {}), ...(q.text ? { text: q.text } : {}), ...(q.segment ? { segment: segBody(q.segment) } : {}) });
+  },
+  async templateAction(ws, id, action) {
+    return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates/action", { c: ws, id, action, op: getOperator() })).item;
   },
 };

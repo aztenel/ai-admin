@@ -4,6 +4,7 @@
 import { clean } from "../../../lib/text.js";
 import { GRAPH } from "../../../config/constants.js";
 import { waCreds } from "./client.js";
+import { isPreview, PREVIEW_SEND } from "../../../lib/stage.js";
 
 /** @param {any} t @param {any} [name] @param {any} [fallback] @returns {string} */
 export const bcParam = (t, name, fallback) => clean(String(t).replace(/\{\s*(имя|name)\s*\}/gi, name || fallback || "клиент").replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   "), 300) || "—"; // Meta не принимает пустые подстановки, переводы строк, табуляцию и больше четырёх пробелов подряд
@@ -16,6 +17,7 @@ export const bcParam = (t, name, fallback) => clean(String(t).replace(/\{\s*(и�
  * @returns {Promise<{ ok: boolean, status?: number, code?: number, error?: string }>}
  */
 export async function sendTemplate(env, to, b, name, route) {
+  if (isPreview(env)) return { ok: false, status: 409, code: 409, error: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const cr = waCreds(env, route), params = (b.params || []).map(/** @param {any} t */ t => ({ type: "text", text: bcParam(t, name, b.fallback) }));
   const comps = /** @type {any[]} */ ([]).concat(b.img ? [{ type: "header", parameters: [{ type: "image", image: { link: b.img } }] }] : [], params.length ? [{ type: "body", parameters: params }] : []);
   let r;

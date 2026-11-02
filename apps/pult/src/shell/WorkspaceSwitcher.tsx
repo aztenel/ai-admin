@@ -16,7 +16,7 @@ export function Monogram({ name, className }: { name: string; className?: string
   );
 }
 
-export function WorkspaceSwitcher({ className }: { className?: string }) {
+export function WorkspaceSwitcher({ className, compact }: { className?: string; compact?: boolean }) {
   const ws = useStore((s) => s.workspace);
   const list = useStore((s) => s.workspaces);
   const wsId = useStore((s) => s.wsId);
@@ -31,11 +31,12 @@ export function WorkspaceSwitcher({ className }: { className?: string }) {
 
   const label = (
     <>
-      <span className="truncate text-[1.625rem] font-bold leading-8 tracking-[-0.022em] md:text-xl md:font-semibold md:leading-7 md:tracking-[-0.015em]">{name}</span>
-      {can && <ChevronDown aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg-3" strokeWidth={2.25} />}
+      <span className={cn("truncate", compact ? "text-ui font-medium text-fg-2" : "text-[1.625rem] font-bold leading-8 tracking-[-0.022em] md:text-xl md:font-semibold md:leading-7 md:tracking-[-0.015em]")}>{name}</span>
+      {can && <ChevronDown aria-hidden className={cn("shrink-0 text-fg-3", compact ? "size-4" : "mt-0.5 size-[1.125rem]")} strokeWidth={2.25} />}
     </>
   );
-  const nameCls = cn("relative -ml-1 flex max-w-full items-center gap-1 rounded-lg px-1 text-left text-fg after:absolute after:inset-x-0 after:-inset-y-2", can && "hover:bg-surface-2");
+  // компактная строка: без отрицательного отступа — он уменьшает расчётную ширину на 4 px, и название обрезалось («Winches…»)
+  const nameCls = cn("relative flex max-w-full items-center gap-1 rounded-lg text-left text-fg after:absolute after:inset-x-0 after:-inset-y-2", compact ? "" : "-ml-1 px-1", can && "hover:bg-surface-2");
   let nameEl: ReactNode = (
     <div className={nameCls} title={name}>
       {label}
@@ -74,7 +75,8 @@ export function WorkspaceSwitcher({ className }: { className?: string }) {
 
   return (
     <div className={cn("flex min-w-0 items-center", className)}>
-      <div className="min-w-0 flex-1">{nameEl}</div>
+      {/* в строке под заголовком (compact) без flex-1: иначе ширина считается от нуля и название обрезается («Winches…») */}
+      <div className={cn("min-w-0", !compact && "flex-1")}>{nameEl}</div>
       {can && !wide && (
         <Sheet open={open} onOpenChange={setOpen} title="Компании">
           <div className="pb-2">

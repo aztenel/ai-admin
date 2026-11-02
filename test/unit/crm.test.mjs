@@ -4,7 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
-import { crmBuild, crmFold, crmRun } from "../../src/services/crm/snapshot.js";
+import { crmBuild as crmBuild0, crmFold, crmRun } from "../../src/services/crm/snapshot.js";
+import { grantSnap, consentSkip } from "../consent.mjs";
+// рассылки по базе — только с подтверждённым согласием (31.10.2026): в проверках согласие выдаётся всем клиентам снимка (test/consent.mjs)
+const crmBuild = async (env, c, at) => { const r = await crmBuild0(env, c, at); await grantSnap(env, c.id); return r; };
 import { crmSegments, crmPick, crmView, daysSince } from "../../src/services/crm/segments.js";
 import { altRecordsRange } from "../../src/services/integrations/altegio/records-api.js";
 import { bcmAdd } from "../../src/db/kv/crm.js";
@@ -28,7 +31,7 @@ async function login(s, key) {
   return b;
 }
 
-test("снимок: визиты, неявки, удалённые, будущие записи, скрытые и неверные номера, несколько страниц", async () => {
+test("снимок: визиты, неявки, удалённые, будущие записи, скрытые и неверные номера, несколько страниц", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = [
     rec(ph(101), 50, { name: "Арман", staff: "Тони" }), rec(ph(101), 25, { name: "Арман К.", staff: "Азамат", svc: "Premium" }),   // 2 визита, последний — у Азамата
@@ -62,7 +65,7 @@ test("снимок: визиты, неявки, удалённые, будущи
   assert.ok(!JSON.stringify(snap).includes("XXX"), "скрытые номера в список не попали");
 });
 
-test("журнал длиннее предела страниц — cut: true; без ключа журнала — понятная ошибка и ни одного запроса", async () => {
+test("журнал длиннее предела страниц — cut: true; без ключа журнала — понятная ошибка и ни одного запроса", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = Array.from({ length: 450 }, (_, i) => rec(ph(2000 + i), 3));
   const s = mk(ENV);
@@ -74,7 +77,7 @@ test("журнал длиннее предела страниц — cut: true; �
   assert.equal(net.alt.length, 0);
 });
 
-test("Altegio не пускает ключ — текст для владельца, ошибка видна в сегментах, прежняя база остаётся", async () => {
+test("Altegio не пускает ключ — текст для владельца, ошибка видна в сегментах, прежняя база остаётся", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = [rec(ph(101), 25)];
   const s = mk(ENV);
@@ -99,7 +102,7 @@ async function segBase() {
     rec(ph(106), 30), rec(ph(106), -2),                       // записан на послезавтра
     rec(ph(107), 10),                                         // был 10 дней назад
     rec(ph(108), 33),                                         // писали маркетинг 5 дней назад
-    rec(ph(109), 33),                                         // писали 20 дней назад — уже можно
+    rec(ph(109), 33),                                         // писали 20 дней назад — ещё нельзя (30 дней с 31.10.2026)
     rec(ph(110), 45, { staff: "Азамат" })                     // давно, у Азамата
   ];
   const s = mk(ENV);
@@ -110,22 +113,22 @@ async function segBase() {
   return s;
 }
 
-test("сегменты: числа по правилам и исключения (стоп, будущая запись, меньше 14 дней, маркетинг за 14 дней)", async () => {
+test("сегменты: числа по правилам и исключения (стоп, нет согласия, будущая запись, меньше 14 дней, маркетинг за 30 дней)", { skip: consentSkip }, async () => {
   const s = await segBase();
   const sg = await crmSegments(s.env, W, NOW);
   const n = Object.fromEntries(sg.segments.map(x => [x.id, x.n]));
-  assert.deepEqual(n, { pora: 3, davno: 2, uhodyat: 1, novye: 5, postoyannye: 1, "staff:Азамат": 1, "staff:Тони": 5 }, JSON.stringify(sg.segments));
-  assert.deepEqual(sg.excluded, { stop: 1, fut: 1, recent: 1, marketed: 1 });
-  assert.equal(sg.clients, 10); assert.equal(sg.ok, 6);
+  assert.deepEqual(n, { pora: 2, davno: 2, uhodyat: 1, novye: 4, postoyannye: 1, "staff:Азамат": 1, "staff:Тони": 4 }, JSON.stringify(sg.segments));
+  assert.deepEqual(sg.excluded, { stop: 1, noconsent: 0, fut: 1, recent: 1, marketed: 2 });
+  assert.equal(sg.clients, 10); assert.equal(sg.ok, 5);
   assert.equal(sg.info.clients, 10); assert.ok(!("list" in sg.info));
-  assert.equal(s.kv.ttl.get(`bcm:winchester:${day(5)}`), 15 * 86400);
+  assert.equal(s.kv.ttl.get(`bcm:winchester:${day(5)}`), 31 * 86400, "отметка живёт 31 день: между рекламой 30 дней");
   assert.deepEqual(s.kv.json(`bcm:winchester:${day(5)}`), [dg(108)], "отметка — цифры без «+»");
 });
 
-test("crmPick: полные номера на сервере, ровно N дней, фильтры, неизвестный сегмент", async () => {
+test("crmPick: полные номера на сервере, ровно N дней, фильтры, неизвестный сегмент", { skip: consentSkip }, async () => {
   const s = await segBase();
   const pora = await crmPick(s.env, W, "pora", NOW);
-  assert.deepEqual(pora.map(x => x.phone), [dg(104), dg(101), dg(109)], "свежие визиты первыми; номера — цифры без «+»");
+  assert.deepEqual(pora.map(x => x.phone), [dg(104), dg(101)], "свежие визиты первыми; номера — цифры без «+»; писали 20 дней назад — нельзя");
   assert.deepEqual(Object.keys(pora[0]).sort(), ["d", "last", "name", "phone", "staff", "svc", "v"]);
   assert.deepEqual((await crmPick(s.env, W, "all", NOW, { days: 25 })).map(x => x.phone), [dg(101)]);
   assert.deepEqual((await crmPick(s.env, W, "all", NOW, { days: 28 })), [], "28 дней — только «стоп»");
@@ -147,7 +150,7 @@ test("дни с визита — от полуночи по Астане", () =>
   assert.equal(crmFold([rec(ph(101), 0, { t: "11:00" }), rec(ph(102), 0, { t: "18:00" })], NOW).list.length, 1, "сегодня позже — будущая запись, а не визит");
 });
 
-test("API: сегменты — владелец и сотрудник своей компании, чужой — 403, гость — 401; список — номера маской, по 50", async () => {
+test("API: сегменты — владелец и сотрудник своей компании, чужой — 403, гость — 401; список — номера маской, по 50", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = Array.from({ length: 120 }, (_, i) => rec(ph(300 + i), 25, { name: "Гость " + i }));
   const s = mk(ENV);
@@ -208,7 +211,7 @@ test("ночью в 04:00 — снимок Winchester раз в день; в д�
 });
 
 // находка проверки 19.10.2026: администраторы пишут в Altegio номер вместо имени — в списке людей сегмента он только маской
-test("номер в поле «имя» клиента Altegio — в /api/crm/list только маской", async () => {
+test("номер в поле «имя» клиента Altegio — в /api/crm/list только маской", { skip: consentSkip }, async () => {
   net.reset();
   net.altJournal = [rec(ph(301), 25, { name: "87000004455" }), rec(ph(302), 26, { name: "Арман +7 700 000 66 77" })];
   const s = mk(ENV);
@@ -216,4 +219,29 @@ test("номер в поле «имя» клиента Altegio — в /api/crm/l
   const own = await login(s, OWNER), t = await (await own.go("/api/crm/list?c=winchester&seg=all")).text();
   assert.ok(!t.includes("87000004455") && !t.includes("7000006677") && !/\+7 700 000 66 77/.test(t), t);
   assert.ok(/\*\*\*/.test(JSON.parse(t).list.map(x => x.name).join(" ")), t);
+});
+
+test("реклама по базе — только с подтверждённым согласием: нет базы согласий — никому; без согласия, «да» из файла, запрет — исключены (31.10.2026)", { skip: consentSkip }, async () => {
+  net.reset();
+  net.altJournal = [rec(ph(201), 25), rec(ph(202), 26), rec(ph(203), 27), rec(ph(204), 28)];
+  const s = mk(ENV);
+  await crmBuild0(s.env, W, NOW); // без выдачи согласий
+  let sg = await crmSegments(s.env, W, NOW);
+  assert.equal(sg.ok, 0, "базы согласий нет — рекламы нет ни для кого");
+  assert.equal(sg.excluded.noconsent, 4); assert.equal(sg.consent.ready, false); assert.match(sg.consent.why, /подтверждённое согласие/);
+  assert.deepEqual(await crmPick(s.env, W, "pora", NOW), []);
+  await grantSnap(s.env, "winchester", [dg(201)]);
+  const { contactAdd } = await import("../../src/db/d1/contacts.js");
+  const { consentAdd, restrictionAdd } = await import("../../src/db/d1/rights.js");
+  // «да» из файла — не подтверждено
+  const r2 = await contactAdd(s.env.DB, "winchester", { id: "x202", phone: dg(202), name: "", search: dg(202), at: 1, actor: "owner" });
+  await consentAdd(s.env.DB, "winchester", { contactId: r2.id, purpose: "marketing", state: "granted", basis: "файл", source: "import", actor: "owner", at: 1, evidence: "import", confirmed: false });
+  // подтверждённое согласие, но действует запрет
+  await grantSnap(s.env, "winchester", [dg(203)]);
+  const id3 = String((await s.env.DB.prepare("select id from contacts where ws = ? and phone = ?").bind("winchester", dg(203)).first()).id);
+  await restrictionAdd(s.env.DB, "winchester", { contactId: id3, kind: "marketing_optout", source: "admin", reason: "попросил подождать", actor: "owner", at: 1 });
+  sg = await crmSegments(s.env, W, NOW);
+  assert.equal(sg.consent.ready, true);
+  assert.equal(sg.ok, 1); assert.equal(sg.excluded.noconsent, 3);
+  assert.deepEqual((await crmPick(s.env, W, "pora", NOW)).map(x => x.phone), [dg(201)]);
 });

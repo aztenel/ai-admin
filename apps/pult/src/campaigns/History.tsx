@@ -130,13 +130,18 @@ const TONE: Record<Tone, string> = {
 };
 
 /** Статус словами. Рассылку с номера бота в пульте не запускают — «готова к запуску» ей не пишем. */
-export function statusOf(c: Pick<CampaignRow, "status" | "channel">): { label: string; tone: Tone } {
-  if (c.channel === "bot" && c.status === "ready") return { label: "Не запущена", tone: "muted" };
+export function statusOf(c: Pick<CampaignRow, "status" | "channel" | "approved">): { label: string; tone: Tone } {
+  if (c.channel === "bot" && c.status === "ready") return c.approved ? { label: "Одобрена", tone: "ok" } : { label: "Черновик", tone: "muted" };
   return STATUS[c.status] || { label: c.status, tone: "muted" };
 }
 
 function kindOf(c: Shown): { icon: LucideIcon; label: string } {
-  if (c.channel === "bot") return { icon: Bot, label: "номер бота, обычный текст" };
+  const k = kindBase(c);
+  // демо-база: вымышленные клиенты, видно прямо в строке (название уже со словом «демо» — второй раз не пишем)
+  return c.demo && !/демо/i.test(c.name) ? { ...k, label: `демо · ${k.label}` } : k;
+}
+function kindBase(c: Shown): { icon: LucideIcon; label: string } {
+  if (c.channel === "bot") return { icon: Bot, label: "второй WhatsApp" };
   if (c.by === "auto") return { icon: Repeat, label: "автосценарий" };
   if (c.source === "crm") return { icon: UsersRound, label: c.segment ? `база: ${c.segment}` : "база клиентов" };
   return { icon: c.source === "list" ? List : Megaphone, label: c.segment ? `список: ${c.segment}` : "по списку" };
@@ -144,7 +149,7 @@ function kindOf(c: Shown): { icon: LucideIcon; label: string } {
 
 /** Почему стоит или чего ждёт — одной строкой под ходом (полная фраза — в листе рассылки). */
 function noteOf(c: Shown): { text: string; critical: boolean } | null {
-  if (c.status === "running" && c.stalled) return { text: "Фоновая отправка молчит больше двух минут — откройте, чтобы отправить порцию.", critical: true };
+  if (c.status === "running" && c.stalled) return { text: "Отправка остановилась больше двух минут назад. Откройте, чтобы отправить порцию вручную.", critical: true };
   if (c.status === "running" && c.waitNote) return { text: c.waitNote, critical: false };
   if ((c.status === "paused" || c.status === "stopped") && c.note) return { text: c.note, critical: c.status === "paused" && c.note !== "Остановлена вручную." };
   return null;

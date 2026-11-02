@@ -16,7 +16,7 @@ export const leadsKey = env => env.LEADS_KEY || env.VERIFY_TOKEN;
 export async function sha256Hex(s) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", enc8.encode(String(s))))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 // отпечаток ключа сотрудника: ключ сменили — прежние сессии перестают действовать
 /** @param {Env} env @param {string} cid @returns {Promise<string>} */
-async function staffMark(env, cid) {
+export async function staffMark(env, cid) {
   if (!hasClient(cid)) return "";
   const ek = env["KEY_" + cid.toUpperCase()], kh = CLIENTS[cid].keyHash;
   // заданы оба ключа (секрет KEY_<ID> и ключ со страницы «Мои боты»): отпечаток от обоих — смена любого закрывает прежние сессии.
@@ -29,7 +29,7 @@ export async function sessionMake(env, role, cid) {
   const body = [role, cid, Date.now() + SESSION_MS, role === "staff" ? await staffMark(env, cid) : "o"].join(".");
   return body + "." + await hmacB64("session:" + leadsKey(env), body);
 }
-/** @param {Env} env @param {Request} request @returns {Promise<{ role: string, cid: string } | null>} */
+/** @param {Env} env @param {Request} request @returns {Promise<{ role: string, cid: string, exp?: number } | null>} */
 export async function sessionRead(env, request) {
   if (!leadsKey(env)) return null;
   const m = new RegExp("(?:^|;\\s*)" + COOKIE + "=([^;]+)").exec(request.headers.get("cookie") || "");
@@ -38,8 +38,8 @@ export async function sessionRead(env, request) {
   if (p.length !== 5) return null;
   const [role, cid, exp, mark, sig] = p, body = [role, cid, exp, mark].join(".");
   if (!(+exp > Date.now()) || !safeEq(sig, await hmacB64("session:" + leadsKey(env), body))) return null;
-  if (role === "owner") return { role, cid: "*" };
-  if (role === "staff" && hasClient(cid)) { const cur = await staffMark(env, cid); return cur && safeEq(cur, mark) ? { role, cid } : null; }
+  if (role === "owner") return { role, cid: "*", exp: +exp };
+  if (role === "staff" && hasClient(cid)) { const cur = await staffMark(env, cid); return cur && safeEq(cur, mark) ? { role, cid, exp: +exp } : null; }
   return null;
 }
 /** @param {string} token @param {number=} maxAge @returns {string} */

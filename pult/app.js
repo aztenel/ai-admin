@@ -69,8 +69,8 @@ var enc = encodeURIComponent;
 var API = DEMO ? window.__DEMO_API : {
   list: function (f, ch) { return jf("/api/inbox/list?c=" + enc(S.C) + "&f=" + (ch === "web" ? "all" : f) + "&ch=" + ch); },
   chat: function (ch, id) { return jf("/api/inbox/chat?c=" + enc(S.C) + "&ch=" + ch + "&id=" + enc(id)); },
-  send: function (ch, id, text) { return jf("/api/inbox/send", { c: S.C, ch: ch, id: id, text: text }); },
-  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; } return jf("/api/inbox/act", b); },
+  send: function (ch, id, text, rid) { return jf("/api/inbox/send", { c: S.C, ch: ch, id: id, text: text, rid: rid }); },
+  act: function (ch, id, act, x) { var b = { c: S.C, ch: ch, id: id, act: act }; if (x) { b.lead = x.lead; b.text = x.text; if (x.text) b.rid = doneRid(x.lead, x.text); if (x.force) b.force = true; } return jf("/api/inbox/act", b); },
   me: function () { return jf("/api/inbox/me"); },
   leads: function () { return jf("/api/inbox/leads?c=" + enc(S.C)); },
   report: function () { return jf("/api/inbox/report?c=" + enc(S.C)); },
@@ -128,7 +128,8 @@ function ask(title, text, yes, fn) {
   b1.onclick = function () { closeSheet(); fn(); }; b2.onclick = closeSheet;
   sheet(title, h("div", "note", text), h("div", "", [b2, b1], { style: "display:flex;gap:10px;padding:8px 16px 0" }));
 }
-function oops(e) { S.busy = false; if (e === 0) return; netErr(true); notice("Нет связи", "Действие не выполнено, ничего не отправлено. Проверьте интернет и повторите."); }
+// связь оборвалась: запрос мог дойти до сервера — «ничего не отправлено» здесь было бы неправдой (ревью PR №2, F4, 01.11.2026)
+function oops(e) { S.busy = false; if (e === 0) return; netErr(true); notice("Нет связи", "Связь оборвалась, и неизвестно, выполнилось ли действие. Обновите чат и проверьте, прежде чем повторять."); }
 function telHref(p) { return DEMO ? "#demo-call" : "tel:" + p; } // в демо номера вымышленные: звонок не набираем, чтобы не позвонить чужому человеку
 document.addEventListener("click", function (e) { var l = e.target && e.target.closest && e.target.closest('a[href="#demo-call"]'); if (l) { e.preventDefault(); toast("В демо звонок не набирается"); } });
 function netErr(on) { $("net").hidden = !on; }
@@ -484,7 +485,10 @@ function swFlush(key) {
   p.sent = true; clearTimeout(p.t);
   if (SW.tOn) { clearTimeout(toastT); $("toast").hidden = true; SW.tOn = false; }
   function back() { if (SW.pend === p) SW.pend = null; }
-  p.p = API.act(p.ch, p.id, p.a).then(function (d) {
+  // «Готово» жестом на чате, где клиент ждёт ответа: сервер спрашивает «Закрыть чат без ответа?» (ТЗ v2.0 §2.5). У жеста свой
+  // ответ на этот вопрос — окно «Отменить», а при уходе со страницы спросить уже нельзя: отправляем сразу с подтверждением.
+  // Раньше вопрос сервера пульт не понимал, и чат молча возвращался в «Ждут ответа» (проверка 01.11.2026)
+  p.p = API.act(p.ch, p.id, p.a, p.a === "resolve" ? { force: true } : null).then(function (d) {
     back();
     if (d && d.error) { swUnpatch(p); swRepaint(); toast(d.error, { ms: 7000 }); return; } // сервер не разрешил: строка на месте, причина словами сервера
     loadList();
@@ -603,7 +607,7 @@ function renderChat(d, scroll) {
   }
   var comp = $("comp"), wl = $("warn");
   comp.hidden = !d.canSend; wl.className = "warnl";
-  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? "Отправка не настроена: WhatsApp этой компании ещё не подключён." : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым." : "";
+  var w = d.ch === "web" ? "Это чат с сайта: ответить в него нельзя. Позвоните клиенту, если он оставил номер." : !d.canSend ? (d.sendOff || "Отправка не настроена: WhatsApp этой компании ещё не подключён.") : !d.open ? "Клиент писал больше 24 часов назад — WhatsApp не даст написать первым." : "";
   wl.textContent = w;
   $("txt").disabled = !d.open; fit();
   renderCard(d);
@@ -640,19 +644,44 @@ function done(d, tgt) {
   if (d.warn) notice("Обратите внимание", d.warn);
   if (tgt && !same(S.cur, tgt)) { loadList(); return; }
   if (d.erased) { closeChat(); notice("Данные удалены", "Переписка, заявки и согласие этого клиента удалены. Отметка «стоп», если была, осталась."); return; }
+  if (!d.chat) { loadChat(false); loadList(); return; } // ответ без переписки — перечитать, а не падать с «Нет связи»
   clear($("cards")); renderChat(d.chat, true); loadList();
 }
-function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) { done(d, tgt); }).catch(oops); }
+// сервер просит подтвердить («Клиент ждёт ответа. Закрыть чат без ответа?», ТЗ v2.0 §2.5) — спрашиваем и повторяем с подтверждением.
+// Раньше ответ без переписки ронял renderChat: сотрудник видел ложное «Нет связи», а чат оставался в «Ждут ответа» (проверка 01.11.2026)
+function doAct(a, x) { if (S.busy || !S.cur) return; S.busy = true; var tgt = S.cur; API.act(tgt.ch, tgt.id, a, x).then(function (d) {
+  if (d && d.confirm && !(x && x.force)) { S.busy = false; ask("Готово", d.confirm, "Закрыть", function () { doAct(a, Object.assign({}, x, { force: true })); }); return; }
+  done(d, tgt);
+}).catch(oops); }
+// номер отправки (rid): одно нажатие — одно сообщение клиенту. Связь оборвалась — запрос мог дойти: тот же текст в тот же чат
+// уходит с тем же номером, и сервер второй раз не отправит (аудит 31.10.2026; без номера второй номер не отправляет вовсе)
+// rid для «Отправить клиенту и закрыть»: одна заявка и один текст — одно сообщение, сколько бы раз ни нажали
+function doneRid(lead, t) {
+  var h = 5381; for (var i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return "dn-" + (String(lead || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "x") + "-" + h.toString(36);
+}
+function ridFor(tgt, t) {
+  var k = keyOf(tgt) + "\n" + t;
+  if (S.ridLost && S.ridLost.k === k) return S.ridLost.rid;
+  return "o" + Math.floor(Date.now()).toString(36) + Math.random().toString(36).slice(2, 10); // только буквы и цифры: такой rid принимает сервер
+}
 function sendMsg() {
   var ta = $("txt"), t = ta.value.trim(); if (!t || S.busy || !S.cur) return;
-  S.busy = true; var tgt = S.cur, M = $("msgs");
+  S.busy = true; var tgt = S.cur, M = $("msgs"), rid = ridFor(tgt, t);
   S.justSent = t;
   var pend = h("div", "m adm pend new", [h("span", "tx", t), h("span", "ts", hm(Date.now()))]); M.appendChild(pend); M.scrollTop = M.scrollHeight;
   ta.value = ""; fit();
-  API.send(tgt.ch, tgt.id, t).then(function (d) {
-    if (d.error) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
-    delete S.drafts[keyOf(tgt)]; done(d, tgt);
-  }).catch(function (e) { pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } oops(e); });
+  API.send(tgt.ch, tgt.id, t, rid).then(function (d) {
+    // не ушло наверняка или неизвестно («уже отправляется», база не ответила) — номер отправки остаётся за этим текстом в этом чате:
+    // следующее нажатие уйдёт с тем же rid, и сервер решит (отказ Green-API — отправит снова, «уже отправляется» или ушло — второй раз
+    // не отправит). Раньше ответ «уже отправляется» сбрасывал номер, и третье нажатие уходило вторым сообщением (ревью PR №2, F4)
+    if (d.error) { S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); } done(d, tgt); return; }
+    S.ridLost = null; delete S.drafts[keyOf(tgt)]; done(d, tgt);
+  }).catch(function (e) {
+    S.ridLost = { k: keyOf(tgt) + "\n" + t, rid: rid }; pend.remove(); if (same(S.cur, tgt)) { ta.value = t; fit(); }
+    S.busy = false; if (e === 0) return; netErr(true);
+    notice("Нет связи", "Связь оборвалась: сообщение могло уйти. Проверьте переписку. Если нажмёте «Отправить» с тем же текстом, второй раз оно не уйдёт.");
+  });
 }
 function fit() {
   var t = $("txt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px";

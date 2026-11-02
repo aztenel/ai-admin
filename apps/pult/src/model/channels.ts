@@ -8,8 +8,8 @@ export const channelKind = (code: string): ChannelKind => (code === "wa" ? "wa_c
 export const KIND_SHORT: Record<ChannelKind, string> = { wa_cloud: "WhatsApp API", green_api: "WhatsApp", web: "Сайт" };
 /** Вид подключения — для настроек: как этот номер работает. */
 export const KIND_LONG: Record<ChannelKind, string> = {
-  wa_cloud: "Официальный номер WhatsApp Business через Meta",
-  green_api: "Обычный WhatsApp, привязан по QR-коду через Green-API",
+  wa_cloud: "Официальный WhatsApp Business",
+  green_api: "WhatsApp, привязан по QR-коду",
   web: "Чат на сайте компании",
 };
 

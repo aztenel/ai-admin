@@ -23,6 +23,8 @@
 //   Бот берёт из Altegio услуги, мастеров и свободное время и сам создаёт запись (API онлайн-записи).
 //   Отмена и перенос: по умолчанию бот в расписании ничего не удаляет, а передаёт просьбу клиента администратору (заявка + Telegram).
 //   Text ALTEGIO_SELF_CANCEL = 1 (или ALTEGIO_SELF_CANCEL_<ID>, или altegio.selfCancel в блоке клиента) — бот отменяет и переносит сам
+// PUSH пульта /app/ (необязательно): Text VAPID_PUBLIC_KEY · Secret VAPID_PRIVATE_KEY · Text VAPID_SUBJECT (mailto: или https:) —
+//   без них ключи создаются сами и лежат в KV (push:vapid); src/services/notifications/push.js
 // ЛИМИТЫ:       Text SESSIONS_PER_IP — новых диалогов в сутки с одного IP (по умолчанию 8 для демо и 40 для клиента с расписанием Altegio)
 //
 // Ссылки:

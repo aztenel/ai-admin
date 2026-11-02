@@ -18,6 +18,22 @@ export async function askNotify(): Promise<NotifyState> {
   return notifyState();
 }
 
+// push на этом устройстве включён (lib/push.ts): уведомления приходят от сервера — эта вкладка их не дублирует
+let pushHere = false;
+export const setPushHere = (on: boolean) => {
+  pushHere = on;
+};
+/** Число на значке приложения (iPhone с экрана «Домой», установленный пульт на компьютере) — сколько ждут ответа. */
+function badge(n: number) {
+  const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+  try {
+    if (n > 0) nav.setAppBadge?.(n)?.catch(() => {});
+    else nav.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    /* значок не поддерживается */
+  }
+}
+
 let seen: Map<string, string> | null = null;
 /** Сравнить ждущих с прошлой проверкой и сообщить о новых. Открытый перед глазами чат не уведомляет. */
 export function notifyWaiting(list: ConversationSummary[], openKey: string | null, onOpen: (key: string) => void) {
@@ -25,13 +41,14 @@ export function notifyWaiting(list: ConversationSummary[], openKey: string | nul
   for (const c of list) if (c.attention) cur.set(c.key, `${c.lastInboundAt || c.lastAt}|${c.attention.reason}`);
   const prev = seen;
   seen = cur;
-  if (!prev || notifyState() !== "on") return;
+  badge(cur.size);
+  if (!prev || pushHere || notifyState() !== "on") return;
   const looking = (k: string) => !document.hidden && document.hasFocus() && k === openKey;
   const fresh = list.filter((c) => c.attention && prev.get(c.key) !== cur.get(c.key) && !looking(c.key));
   if (!fresh.length) return;
   const who = (c: ConversationSummary) => c.contact.name || c.contact.phone || "Гость сайта";
   const title = fresh.length > 1 ? `Ждут ответа: ${fresh.length}` : "Клиент ждёт ответа";
-  const body = fresh.length > 1 ? fresh.slice(0, 4).map(who).join(", ") : `${who(fresh[0])} — ${fresh[0].attention!.label}`;
+  const body = fresh.length > 1 ? fresh.slice(0, 4).map(who).join(", ") : `${who(fresh[0])}: ${fresh[0].attention!.label}`;
   const t = tauri();
   if (t?.notification) {
     try {

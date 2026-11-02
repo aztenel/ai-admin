@@ -10,7 +10,7 @@ import { CLIENTS, DEMO_IDS } from "../config/builtin-clients.js";
 const TOOLS = [
   ["Работа с клиентами", [["/inbox", "Пульт чатов", "переписка, ответ клиенту, «Сделано»", 1], ["/leads", "Заявки", "все заявки за 30 дней", 1], ["/broadcast", "Рассылки", "шаблоны Meta, список из Excel", 1]]],
   ["Настройка", [["/studio", "Мои боты", "паспорта, ключи сотрудников, удаление", 0], ["/launch", "Проверка запуска", "что подключено, номер Wazzapo, экзамен бота", 1], ["/altegio", "Расписание Altegio", "свободные окна, пробная запись", 1], ["/altegio/user", "Ключ журнала Altegio", "получить ALTEGIO_USER_<ID>", 0]]],
-  ["Проверки", [["/diag", "Диагностика", "ключи, модели ИИ, расходы за 7 дней", 0], ["/selftest", "Автотест бота", "сценарии без настоящих клиентов", 0], ["/", "Веб-чат бота", "проверка без WhatsApp", 1]]],
+  ["Проверки", [["/diag", "Диагностика", "ключи, модели ИИ, расходы за 7 дней", 0], ["/diag/storage", "Хранилища", "KV и база D1 этого адреса: чьи, сколько ключей, миграции", 0], ["/selftest", "Автотест бота", "сценарии без настоящих клиентов", 0], ["/", "Веб-чат бота", "проверка без WhatsApp", 1]]],
   ["Для клиентов и Meta", [["/privacy", "Политика конфиденциальности", "ссылка для Meta и клиентов", 0], ["/demo", "Демо пульта", "вымышленные данные, для показа", 0]]]
 ];
 
@@ -39,7 +39,7 @@ S.onchange=go;go();
 </script></body></html>`;
 }
 
-// /diag в рамке панели: тот же текст, что раньше, но с шапкой и ссылкой назад
-/** @param {string} body */
-export const diagPage = body => `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Диагностика — AI-администратор</title><style>${PANEL_CSS}</style></head><body>
-<div class="top"><b>Диагностика</b><a href="/admin">Панель</a><a href="/logout">Выйти</a></div><div class="w"><pre>${body.replace(/[&<>]/g, ch => ch === "&" ? "&amp;" : ch === "<" ? "&lt;" : "&gt;")}</pre></div></body></html>`;
+// /diag (и /diag/storage) в рамке панели: тот же текст, что раньше, но с шапкой и ссылкой назад
+/** @param {string} body @param {string} [title] */
+export const diagPage = (body, title = "Диагностика") => `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — AI-администратор</title><style>${PANEL_CSS}</style></head><body>
+<div class="top"><b>${esc(title)}</b><a href="/admin">Панель</a><a href="/logout">Выйти</a></div><div class="w"><pre>${body.replace(/[&<>]/g, ch => ch === "&" ? "&amp;" : ch === "<" ? "&lt;" : "&gt;")}</pre></div></body></html>`;

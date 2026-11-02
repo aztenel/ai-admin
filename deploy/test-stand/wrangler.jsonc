@@ -1,0 +1,34 @@
+// Тестовый стенд «ai-admin-test» (01.11.2026, docs/runbooks/winchester-go-live.md §6): живая проверка второго номера Winchester на
+// запасном номере владельца, пока нет телефона Кайрата. Отдельный Worker с тем же кодом и своими KV и D1 — данных боевого сайта и
+// черновиков он не видит. Без cron: ни напоминаний, ни рассылок, ни синхронизации, ни сводок. Переменные задаются в панели
+// Cloudflare (не здесь): только Green-API тестового инстанса и свой LEADS_KEY — Altegio, Telegram, ИИ и Meta на стенде нет.
+// Собирает Cloudflare Workers Builds: отдельный Worker «ai-admin-test», корень сборки — эта папка (имя Worker в панели должно
+// совпасть с name, иначе сборка падает). Боевой wrangler.jsonc в корне репозитория стенд не трогает.
+// KV и D1 стенда созданы 01.11.2026 по слову владельца «делай стенд»; на D1 — миграции 0001–0005 и отметка production (0006 «переписки в D1» — тоже 01.11.2026) (у этой
+// изолированной базы своя отметка: боевой сайт и черновики к ней не привязаны).
+// Проверка — test/unit/test-stand.test.mjs.
+{
+  "name": "ai-admin-test",
+  "main": "../../worker.js",
+  "compatibility_date": "2026-09-28",
+  "keep_vars": true,
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "triggers": { "crons": [] },
+  // Переписки Winchester на стенде — в D1 (docs/chat-storage-d1.md; 01.11.2026, после замера «до» владельца): единственная переменная
+  // здесь, ключей и токенов в этом файле нет. Откат на KV — пульт → Настройки → Диагностика → «Переписки» → «Выгрузить в KV», затем
+  // убрать этот блок (тень в KV и так получает каждую запись). Боевого сайта не касается: у него свой wrangler.jsonc.
+  "vars": { "CHAT_STORE_WINCHESTER": "d1" },
+  "kv_namespaces": [
+    { "binding": "KV", "id": "af23120d8dd1492392d447249af6ae1c" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-admin-test",
+      "database_id": "f0bb3060-1d69-41dd-8fed-ab6dff642041",
+      "migrations_dir": "../../migrations"
+    }
+  ]
+}

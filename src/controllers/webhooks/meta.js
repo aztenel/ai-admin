@@ -6,14 +6,20 @@ import { normPhone, redact, maskPhones } from "../../lib/phone.js";
 import { snip } from "../../lib/text.js";
 import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
-import { fixedOf, nicheOf, seenBefore, waCoex, markOptout, botOff } from "../../services/channels/index.js";
+import { fixedOf, nicheOf, seenBefore, seenForget, waCoex, markOptout, botOff } from "../../services/channels/index.js";
+import { inboundNeed } from "../../services/inbox/queue.js";
+import { inboundPush } from "../../services/inbox/notify.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
 import { thinkSafe, dropAsk, STOP } from "../../services/conversation/orchestrator.js";
+import { stopKind } from "../../services/conversation/stop-words.js";
+import { stopSeen } from "../../services/contacts/stops.js";
 import { consentText, fallbackText, mediaReply } from "../../services/conversation/fallbacks.js";
 import { detectLang } from "../../services/conversation/language.js";
 import { readHist, putHist, logTurns, waErr, notify } from "../../services/channels/deps.js";
+import { walOpen, walClose, walHandle, walKick, waPart } from "../../services/chatstore/wal.js";
+import { chatMode, chatStats } from "../../services/chatstore/index.js";
 /** @import { Env } from "../../lib/types.js" */
 
 export { consentText }; // текст согласия на трёх языках — services/conversation/fallbacks.js
@@ -31,6 +37,9 @@ export const MENU_TEXT = "Это демо AI-администратора. Вы�
   MENU.map((c, i) => `${i + 1} — ${c.name} (${c.kind})`).join("\n") + "\n\nНапишите цифру. Сменить бизнес: «меню».";
 
 // Общая логика WhatsApp: channel = "wa" (Meta) или "ga" (Green-API). send(text) — отправка ответа.
+// wx.replay — событие из журнала вебхуков (services/chatstore/wal.js): клиент свой ответ (или «спасибо за сообщение» при сбое) уже получил
+// при первой обработке, поэтому проигрыш только записывает сообщение для администратора — без ИИ, без ответа клиенту и без записи в Altegio.
+// wx.ids — переписки компании в D1: у реплик Meta номер сообщения у провайдера (mid), по нему строка в D1 одна при любом повторе.
 
 // Ответ бота не дошёл до клиента: сигнал в Telegram уходит раз в 10 минут на бизнес, поэтому каждый такой чат ещё и помечается в пульте —
 // иначе клиенты, которым ответ не дошёл после первого сигнала, остались бы без ответа и без пометки
@@ -56,7 +65,13 @@ export async function handleWAText(env, channel, fromDigits, text, send, wx) {
   try { return await waText(env, channel, fromDigits, text, say, phone, wx); }
   catch (/** @type {any} */ e) {
     console.log("wa text", String((e && e.stack) || e));
-    if (!sent) { try { await send(fallbackText(detectLang(text, ""))); } catch (e2) { console.log("wa send", String(e2)); } }
+    // проигрыш журнала не прошёл (база ещё не отвечает): событие остаётся в журнале, клиенту не пишем — иначе каждая попытка (раз
+    // в минуту) слала бы ему «спасибо за сообщение»; администратор знает о сбое с первой обработки
+    if (wx && wx.replay) throw e;
+    // бот компании на этом номере выключен (Winchester: waOff, gaOff) — клиенту не пишем ничего и при сбое: он писал администратору,
+    // а не боту (выпуск 02.11.2026, условие владельца «никаких сообщений клиентам даже при сбое D1»); сигнал администратору — ниже
+    const own = wx && wx.client && hasClient(wx.client) ? CLIENTS[wx.client] : null;
+    if (!sent && !(own && botOff(env, own, channel))) { try { await send(fallbackText(detectLang(text, ""))); } catch (e2) { console.log("wa send", String(e2)); } }
     try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }
@@ -68,13 +83,27 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   let niche = await nicheOf(env, channel, fromDigits, wx);
   const histKey = () => `h:${channel}:${niche}:${fromDigits}`;
 
-  if (niche && CLIENTS[niche] && botOff(env, CLIENTS[niche], channel)) { // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего
+  const c0 = niche ? CLIENTS[niche] : null, off = !!c0 && botOff(env, c0, channel), late = !!c0 && !off && !!(wx && wx.replay);
+  // бот выключен владельцем: сообщение ложится в пульт чатов, отвечает администратор; до «меню» и согласия — бот не пишет ничего.
+  // late — событие из журнала вебхуков при включённом боте: при первой обработке клиент уже получил ответ или «спасибо за сообщение»,
+  // поэтому бот второй раз не отвечает, а сообщение ждёт администратора («Сбой бота» в пульте)
+  if (niche && c0 && (off || late)) {
     const now = Date.now();
-    if (STOP.test(text)) await markOptout(env, niche, fromDigits); // «стоп» на рассылку записываем и при выключенном боте
-    await logTurns(env.KV, histKey(), [{ role: "user", text: maskPhones(redact(String(text).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "off" }; if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40); });
-    try { await notifyOnce(env, "off:" + niche + ":" + fromDigits, `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${CLIENTS[niche].name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche); } catch (e) {}
+    await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
+    const said = maskPhones(redact(String(text).slice(0, MAX_LEN)));
+    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => {
+      const why = off ? "off" : +(p.pausedUntil || 0) > now ? "human" : "ai"; // чат ведёт человек — как у бота на паузе; иначе «Сбой бота»
+      p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why, at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
+      if (late && STOP.test(String(text).trim())) { p.stop = true; p.pausedUntil = Math.max(+(p.pausedUntil || 0), now + 30 * 86400e3); } // «стоп» — как его записал бы бот: 30 дней без автоответов
+    });
+    try {
+      await notifyOnce(env, (off ? "off:" : "late:") + niche + ":" + fromDigits, off ? `✉️ Бот выключен, клиент пишет в WhatsApp — ответьте ему в пульте чатов — ${c0.name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`
+        : `⚠️ База переписок не отвечала: сообщение клиента записано с опозданием, бот на него не ответил — ответьте ему в пульте чатов — ${c0.name}\n${phone}\nСообщение: «${redact(String(text)).slice(0, 300)}»`, niche);
+    } catch (e) {}
     return;
   }
+  if (wx && wx.replay) return; // проигрыш журнала без компании (меню общего номера): записывать некуда, отвечать — нельзя
+  if (niche && hasClient(niche) && stopKind(text) === "review") await stopSeen(env, niche, fromDigits, text); // ясный «стоп» при включённом боте пишет think()
   if (/^(меню|menu|сброс|reset|\/start)$/i.test(text)) {
     if (niche) {
       // разговор начинается заново, но то, что уже сделано, бот помнит: записи, заявки и ограничения. Паузу и «стоп» эта команда клиента снимает
@@ -98,7 +127,8 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
   }
   /** @type {any[]} */ const later = [];
   // без подписи Meta бот сам в расписание не записывает; в официальном WhatsApp переписки на телефоне нет — сообщения клиента, пока бот молчит, пересылаются администратору
-  const r = /** @type {any} */ (await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: /** @param {any} f */ f => later.push(f) }));
+  const r = /** @type {any} */ (await thinkSafe(env, env.KV, niche, histKey(), text, channel === "ga" ? "WhatsApp" : "WhatsApp API", { channel: "wa", phone, untrusted: channel === "wa" && !(wx && wx.client ? wx.signed : env.APP_SECRET), forward: channel === "wa", waName: (wx && wx.name) || "", pnid: (wx && wx.pnid) || "", origin: (wx && wx.origin) || "", defer: /** @param {any} f */ f => later.push(f),
+    ...(wx && wx.msgId ? { mid: wx.msgId } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) })); // номер сообщения Green-API (на него отвечают цитатой), подпись к файлу и цитата клиента
   try {
     if (r.paused) return; // клиентом занимается администратор — бот молчит
     if (r.isNew) {
@@ -117,38 +147,45 @@ export const MEDIA_LABEL = { audio: "🎤 Голосовое", image: "🖼 Фо
 export const MEDIA_WORD = { audio: "голосовое сообщение", image: "фото", video: "видео", document: "файл", location: "геолокацию", contact: "контакт" };
 /** @param {Env} env @param {any} channel @param {any} fromDigits @param {any} kind @param {any} link @param {any} caption @param {any} send @param {any} wx @param {any} media */
 export async function handleWAMedia(env, channel, fromDigits, kind, link, caption, send, wx, media) {
-  const niche = await nicheOf(env, channel, fromDigits, wx);
-  if (!niche) return send(MENU_TEXT);
+  const niche = await nicheOf(env, channel, fromDigits, wx), replay = !!(wx && wx.replay);
+  if (!niche) return replay ? undefined : send(MENU_TEXT);
   const c = CLIENTS[niche];
   const hk = `h:${channel}:${niche}:${fromDigits}`;
   let h = null; try { h = await readHist(env, hk); } catch (e) { console.log("history read", String(e)); }
   const paused = h?.profile?.pausedUntil > Date.now();
-  if (kind !== "sticker" && (!paused || h.profile.stop || channel === "wa")) { // на паузе администратор сам видит чат — кроме «стоп» и официального WhatsApp, где переписки на телефоне нет
+  // проигрыш журнала: сигнал о файле ушёл при первой обработке (до записи) — второй раз не тревожим
+  if (kind !== "sticker" && !replay && (!paused || h.profile.stop || channel === "wa")) { // на паузе администратор сам видит чат — кроме «стоп» и официального WhatsApp, где переписки на телефоне нет
     try {
       const tk = `nt:${channel}:${fromDigits}`; // не чаще раза в 2 минуты на чат
       if (!(await env.KV.get(tk))) {
         await env.KV.put(tk, "1", { expirationTtl: 120 });
         const phone = normPhone(fromDigits) || "+" + fromDigits;
-        await notify(env, `${MEDIA_LABEL[kind] || "Сообщение"} от клиента — ${c.name}\n${phone}${caption ? `\nПодпись: «${caption.slice(0, 200)}»` : ""}${link ? `\n${link}` : ""}`, c.id);
+        // без ссылки на сам файл: это закрытая ссылка провайдера на личный файл клиента — файл открывается в пульте (ТЗ v2.0 §2.4)
+        await notify(env, `${MEDIA_LABEL[kind] || "Сообщение"} от клиента — ${c.name}\n${phone}${caption ? `\nПодпись: «${caption.slice(0, 200)}»` : ""}\nОткрыть — в пульте чатов.`, c.id);
       }
     } catch (e) { console.log("media note", String(e)); }
   }
   // что прислал клиент, остаётся в истории чата: администратор видит это в пульте (и может открыть файл), а ИИ знает, что клиент что-то присылал
-  const now = Date.now(), m = { k: kind, ...(media && media.id ? { id: String(media.id).slice(0, 120) } : {}), ...(media && media.mime ? { mime: String(media.mime).slice(0, 60) } : {}), ...(link ? { url: String(link).slice(0, 500) } : {}) };
-  const inTurn = kind === "sticker" ? null : { role: "user", text: `[клиент прислал ${MEDIA_WORD[kind] || "сообщение"}]`, t: now, m };
+  const now = Date.now(), m = { k: kind, ...(media && media.id ? { id: String(media.id).slice(0, 120) } : {}), ...(media && media.mime ? { mime: String(media.mime).slice(0, 60) } : {}), ...(media && media.name ? { name: String(media.name).slice(0, 120) } : {}), ...(link ? { url: String(link).slice(0, 500) } : {}) };
+  // у Green-API id файла — это номер сообщения: по нему же приходят правка, удаление и реакция (mid). У Meta id файла свой, номер
+  // сообщения — wx.msgId (только с переписками в D1: ключ строки сообщения); подпись к файлу — отдельная реплика со своим ключом «c:…»
+  const mid = channel === "ga" ? (media && media.id) || "" : (wx && wx.msgId) || "";
+  const inTurn = kind === "sticker" ? null : { role: "user", text: `[клиент прислал ${MEDIA_WORD[kind] || "сообщение"}]`, t: now, m, ...(mid ? { mid: String(mid).slice(0, 80) } : {}) };
   /** @param {any} reply */
   const note = async (reply) => {
     if (!inTurn) return;
     try {
-      await logTurns(env.KV, hk, reply ? [inTurn, { role: "model", text: reply, t: now }] : [inTurn], p => {
+      await logTurns(env.KV, hk, reply ? [inTurn, { role: "model", text: reply, t: now }] : [inTurn], (p, h) => {
         delete p.cxAsk; delete p.mvAsk; // бот спросил «Отменить запись …?», а клиент ответил голосовым или картинкой: вопрос снимается, следующее «ок» записи не удалит
-        p.li = now; if (!p.stop) p.need = { at: now, why: paused ? "human" : "media" };
+        p.li = now; if (!p.stop) inboundNeed(p, h.turns.slice(0, -2 + (reply ? 0 : 1)), { kind, why: paused ? "human" : "media", at: now });
         if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
       });
     } catch (e) { console.log("history", String(e)); }
   };
-  if ((paused || botOff(env, c, channel)) && !caption) return note(""); // бот выключен — файл виден в пульте, ответ не уходит
-  if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, wx); }
+  if ((paused || botOff(env, c, channel) || replay) && !caption) return note(""); // бот выключен (или проигрыш журнала) — файл виден в пульте, ответ не уходит
+  // подпись — отдельная реплика: у Meta свой номер «c:…», у Green-API тот же номер сообщения (по нему цитата, правка, удаление) и
+  // отметка cap — свой ключ строки в D1 (иначе подпись отбрасывалась как повтор файла, 02.11.2026; merge.js, capMark)
+  if (caption) { await note(""); return handleWAText(env, channel, fromDigits, caption, send, channel === "wa" && wx && wx.msgId ? { ...wx, msgId: "c:" + wx.msgId } : channel === "ga" && wx && wx.msgId ? { ...wx, cap: 1 } : wx); }
   const reply = mediaReply(kind, (h && h.profile && h.profile.lang) || "ru"); // на языке чата
   if (kind === "sticker" && (h?.profile?.cxAsk || h?.profile?.mvAsk)) { try { await dropAsk(env.KV, hk); } catch (e) { console.log("history", String(e)); } }
   await note(reply);
@@ -163,10 +200,13 @@ export async function handleWAMedia(env, channel, fromDigits, kind, link, captio
 /** @param {any} body @param {Env} env @param {any} wx */
 export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
   const jobs = [];
+  // проигрыш журнала: ошибка обработки — наверх, событие останется в журнале и проиграется снова (обычная обработка её глушит, как раньше)
+  /** @type {any} */ let failed = null;
+  const oops = (/** @type {any} */ e) => { if (wx.replay && !failed) failed = e || new Error("wa replay"); };
   for (const entry of (body && body.entry) || []) for (const ch of (entry && entry.changes) || []) {
     const val = (ch && ch.value) || {};
     if (ch && (ch.field === "smb_message_echoes" || ch.field === "history")) { // режим «сосуществование»: сообщения, написанные с телефона в приложении WhatsApp Business, и история чатов
-      if (wx.signed) { try { await waCoex(env, wx, String(ch.field), val); } catch (/** @type {any} */ e) { console.log("wa coex", String((e && e.stack) || e)); } }
+      if (wx.signed) { try { await waCoex(env, wx, String(ch.field), val); } catch (/** @type {any} */ e) { console.log("wa coex", String((e && e.stack) || e)); oops(e); } }
       continue;
     }
     if (ch && ch.field && ch.field !== "messages") { // не сообщение, а сигнал Meta: шаблон приостановлен, аккаунт ограничен, человек запретил рекламу
@@ -183,11 +223,11 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
     const pnid = (val.metadata && val.metadata.phone_number_id) || "";
     for (const msg of val.messages || []) if (msg && msg.from && msg.id) jobs.push({ msg, wx: { ...wx, pnid: wx.pnid || pnid, name: names.get(msg.from) || "" } });
   }
-  if (!jobs.length) return;
+  if (!jobs.length) { if (failed) throw failed; return; }
   const bySender = new Map();
   jobs.slice(0, WA_BATCH).forEach(j => bySender.set(j.msg.from, (bySender.get(j.msg.from) || []).concat([j])));
   await Promise.allSettled([...bySender.values()].map(async list => {
-    for (const j of list) { try { await handleWAMessage(env, j.msg, j.wx); } catch (/** @type {any} */ e) { console.log("wa msg", String((e && e.stack) || e)); } }
+    for (const j of list) { try { await handleWAMessage(env, j.msg, j.wx); } catch (/** @type {any} */ e) { console.log("wa msg", String((e && e.stack) || e)); oops(e); } }
   }));
   for (const j of jobs.slice(WA_BATCH)) { // «стоп» из хвоста пачки фиксируем у всех, даже у тех, кого бот не обрабатывает
     const m = j.msg, t = m.type === "text" ? (m.text?.body || "") : m.type === "button" ? (m.button?.text || "") : "";
@@ -197,28 +237,45 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
   if (rest.length) { // на эти сообщения бот не отвечает (лимиты одного запроса), но они не теряются: лежат в чатах и помечены для администратора
     for (const j of rest) {
       try {
-        if (await seenBefore(env, j.msg.id)) continue;
+        if (wx.replay ? await inChat(env, j.msg, j.wx, true) : await seenBefore(env, j.msg.id)) continue;
         const niche = await nicheOf(env, "wa", j.msg.from, j.wx);
         if (!niche) continue;
         const t = j.msg.type === "text" ? (j.msg.text?.body || "") : j.msg.type === "button" ? (j.msg.button?.text || "") : `[${j.msg.type}]`, now = Date.now();
-        await logTurns(env.KV, `h:wa:${niche}:${j.msg.from}`, [{ role: "user", text: maskPhones(redact(String(t).slice(0, MAX_LEN))), t: now }], p => { p.li = now; p.need = { at: now, why: "limit" }; if (j.wx.name && !p.waName) p.waName = snip(j.wx.name, 40); });
-      } catch (e) { console.log("wa rest", String(e)); }
+        await logTurns(env.KV, `h:wa:${niche}:${j.msg.from}`, [{ role: "user", text: maskPhones(redact(String(t).slice(0, MAX_LEN))), t: now, ...(wx.ids ? { mid: String(j.msg.id).slice(0, 80) } : {}) }], p => { p.li = now; p.need = { at: now, why: "limit" }; if (j.wx.name && !p.waName) p.waName = snip(j.wx.name, 40); });
+      } catch (e) { console.log("wa rest", String(e)); oops(e); }
     }
-    try { await notifyOnce(env, "waburst:" + (wx.client || ""), `⚠️ В WhatsApp пришло сразу ${jobs.length} сообщений — на ${jobs.length - WA_BATCH} бот не ответил. Они лежат в пульте чатов с пометкой — ответьте клиентам сами.`, wx.client); } catch (e) {}
+    if (!wx.replay) { try { await notifyOnce(env, "waburst:" + (wx.client || ""), `⚠️ В WhatsApp пришло сразу ${jobs.length} сообщений — на ${jobs.length - WA_BATCH} бот не ответил. Они лежат в пульте чатов с пометкой — ответьте клиентам сами.`, wx.client); } catch (e) {} } // проигрыш: сигнал ушёл при первой обработке
   }
+  if (failed) throw failed;
 }
+// проигрыш журнала: отметка «уже видели» стоит с первой, неудачной обработки — повтор отсекает сама переписка. Сообщение уже в чате
+// (запись прошла, а ответ базы потерялся; вторая доставка того же уведомления) — второй раз не пишем. Смотрим последнюю реплику
+// сообщения: у файла с подписью — подпись («c:…»); plain — сообщение сверх пачки (одна реплика)
+/** @param {Env} env @param {any} msg @param {any} wx @param {boolean} [plain] */
+async function inChat(env, msg, wx, plain) {
+  const from = String(msg.from || "").replace(/\D/g, ""), niche = from ? await nicheOf(env, "wa", from, wx) : null;
+  if (!niche) return false;
+  const h = await readHist(env, `h:wa:${niche}:${from}`), o = (msg && msg[msg.type]) || {};
+  const want = (!plain && MEDIA_KIND[msg.type] && String(o.caption || "").trim() ? "c:" + msg.id : String(msg.id)).slice(0, 80);
+  return !!h && (h.turns || []).some((/** @type {any} */ t) => t && t.role === "user" && t.mid === want);
+}
+/** @type {Record<string, string>} */
+const MEDIA_KIND = { audio: "audio", voice: "audio", image: "image", video: "video", document: "document", sticker: "sticker", location: "location", contacts: "contact" };
+/** @returns {Promise<Record<string, any>>} */
+const noSend = async () => { console.log("wa replay: ответ клиенту не отправлен"); return { ok: false, error: "replay" }; };
 /** @param {Env} env @param {any} msg @param {any} wx */
 export async function handleWAMessage(env, msg, wx) {
-  if (await seenBefore(env, msg.id)) return;
-  const from = String(msg.from).replace(/\D/g, ""), send = watchSend(env, "wa", from, wx, t => sendWA(env, from, t, wx));
+  if (wx && wx.replay ? await inChat(env, msg, wx) : await seenBefore(env, msg.id)) return;
+  if (wx && wx.ids) wx = { ...wx, msgId: String(msg.id) }; // переписки в D1: номер сообщения у Meta — в реплику (ключ строки в D1)
+  // проигрыш журнала клиенту не пишет: ответ или «спасибо за сообщение» он получил при первой обработке
+  const from = String(msg.from).replace(/\D/g, ""), send = wx && wx.replay ? noSend : watchSend(env, "wa", from, wx, t => sendWA(env, from, t, wx));
   if (!from) return;
-  if (msg.type === "text") return handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx);
+  const pushAfter = async () => { if (wx && wx.client) await inboundPush(env, "wa", wx.client, from, String(msg.id || "")); }; // push сотрудникам (ТЗ v2.0 §3)
+  if (msg.type === "text") { await handleWAText(env, "wa", from, (msg.text?.body || "").trim(), send, wx); return pushAfter(); }
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст
   const pressed = msg.type === "button" ? msg.button?.text || msg.button?.payload : msg.type === "interactive" ? msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title : "";
-  if (pressed) return handleWAText(env, "wa", from, String(pressed).trim(), send, wx);
-  /** @type {Record<string, string>} */
-  const kinds = { audio: "audio", voice: "audio", image: "image", video: "video", document: "document", sticker: "sticker", location: "location", contacts: "contact" };
-  if (kinds[msg.type]) { const o = msg[msg.type] || {}; return handleWAMedia(env, "wa", from, kinds[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "" }); }
+  if (pressed) { await handleWAText(env, "wa", from, String(pressed).trim(), send, wx); return pushAfter(); }
+  if (MEDIA_KIND[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, MEDIA_KIND[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
   // реакции и прочее — без ответа
 }
 
@@ -232,6 +289,39 @@ export async function handleWAClient(request, env, ctx, id, origin) {
   if (!secret) return new Response("APP_SECRET is not set for this client", { status: 403 });
   if (!(await metaSigOk(secret, raw, request.headers.get("x-hub-signature-256")))) return new Response("Bad signature", { status: 403 });
   let body = null; try { body = JSON.parse(raw); } catch (e) {}
-  if (body) ctx.waitUntil(handleWhatsApp(body, env, { client: id, signed: true, origin }).catch(err => console.log("wa error", err)));
+  if (body && !(await waHook(body, env, ctx, { client: id, signed: true, origin }))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Meta повторит
   return new Response("OK");
 }
+
+/** Уведомление основного номера — Meta (/wa/<id>, общий номер POST /) или Wazzapo (/wz/<id>: событие уже в формате Meta): ответ «200»
+ *  сразу, обработка — после ответа (ctx.waitUntil). У компании с переписками в D1 то, что пишется в переписку, сначала ложится в журнал
+ *  (services/chatstore/wal.js) и убирается только после удачной записи: сбой D1 не теряет сообщение — после «200» Meta и Wazzapo его
+ *  не повторят. Журнал не записался (сбой KV) — обработка сразу, «200» только после записи в базу; не записалось и там — false: провайдер
+ *  получит ошибку и повторит (Meta — до 7 дней, Wazzapo — ещё 5 раз за 8,5 часа), отметки «уже видели» сняты, иначе повтор ушёл бы как
+ *  дубль (forget — отметки Wazzapo). Переписки в KV и общий номер без подписи Meta — как раньше: без журнала, «200» сразу.
+ *  @param {any} body @param {Env} env @param {any} ctx @param {any} wx @param {{ shared?: boolean, forget?: () => Promise<any> }} [o]
+ *  @returns {Promise<boolean>} можно ли отвечать «200» */
+export async function waHook(body, env, ctx, wx, o = {}) {
+  const cid = String(wx.client || (o.shared && hasClient(env.WA_CLIENT) ? env.WA_CLIENT : "") || "");
+  if (!cid || !wx.signed || chatMode(env, cid) !== "d1") { ctx.waitUntil(handleWhatsApp(body, env, wx).catch(err => console.log("wa error", err))); return true; }
+  const w = { ...wx, ids: true }, st = chatStats(env), before = st ? st.fails : 0, src = o.shared ? "wa0" : "wa";
+  /** @type {string | null} */ let wk = null;
+  try { wk = await walOpen(env, cid, body, src); }
+  catch (e) {
+    console.log("wa wal open", String(e).slice(0, 120));
+    let threw = false;
+    try { await handleWhatsApp(body, env, w); } catch (err) { threw = true; console.log("wa error", String(err)); }
+    if (!threw && !(st && st.fails > before)) return true;
+    for (const id of (waPart(body) || { ins: [] }).ins) await seenForget(env, id); // повтор провайдера должен пройти, а не уйти «уже видели»
+    if (o.forget) { try { await o.forget(); } catch (err) { console.log("wa forget", String(err).slice(0, 120)); } }
+    return false;
+  }
+  ctx.waitUntil(handleWhatsApp(body, env, w)
+    .then(() => walClose(env, wk, before, false), err => { console.log("wa error", String(err)); return walClose(env, wk, before, true); })
+    .then(() => (wk ? walKick(env, cid) : null)) // пока здесь: то, что не записалось раньше (не чаще раза в минуту)
+    .catch(err => console.log("wa wal", String(err))));
+  return true;
+}
+// проигрыш журнала (фоновая задача, пульт стенда): то же уведомление тем же кодом — мимо отметки «уже видели», без ответов клиенту (wx.replay)
+walHandle("wa", (body, env, cid) => handleWhatsApp(body, env, { client: cid, signed: true, ids: true, replay: true }));
+walHandle("wa0", (body, env) => handleWhatsApp(body, env, { signed: true, ids: true, replay: true }));

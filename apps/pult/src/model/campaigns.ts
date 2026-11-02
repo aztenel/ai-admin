@@ -89,6 +89,10 @@ export type CampaignRow = {
   by?: "owner" | "staff" | "auto";
   /** Шаблон Meta (основной номер). */
   template?: string;
+  /** Рассылка из демо-базы (вымышленные клиенты). */
+  demo?: boolean;
+  /** Второй номер: одобрена владельцем (не запуск). */
+  approved?: boolean;
 };
 
 /** Рассылка целиком (/api/bc/get, ответы create/act/tick). */
@@ -114,6 +118,11 @@ export type CampaignDetail = CampaignRow & {
   segmentId?: string;
   /** Время снимка базы при создании. */
   crmAt?: number;
+  /** Одобрил владелец (кто и когда). Одобрение — не запуск. */
+  approvedBy?: string;
+  approvedAt?: number;
+  /** Итоги (нет базы D1 — null или нет поля). */
+  results?: CampaignResults | null;
   startedAt?: number;
   /** Последняя отправка. */
   lastSentAt?: number;
@@ -193,8 +202,11 @@ export type CrmOverview = {
   /** Из них можно писать сейчас. */
   ok: number;
   segments: CrmSegment[];
-  /** Не пишем (каждый — по первой причине): просили не писать, записаны, были меньше 14 дней назад, уже писали за 14 дней. */
-  excluded: { stop: number; fut: number; recent: number; marketed: number };
+  /** Не пишем (каждый — по первой причине): просили не писать, нет подтверждённого согласия, записаны, были меньше 14 дней назад,
+   *  уже писали рекламу за 30 дней (31.10.2026). */
+  excluded: { stop: number; noconsent: number; fut: number; recent: number; marketed: number };
+  /** База согласий: ready — отвечает; why — почему рекламу сейчас нельзя никому. */
+  consent?: { ready: boolean; why: string; n: number };
   info: CrmInfo | null;
   /** Последнее обновление не удалось (и оно новее снимка) — текст и время. */
   error?: string;
@@ -238,6 +250,8 @@ export type CampaignDraft = {
   listFilter?: { kind: "idle" | "bday"; days: number };
   /** Основной номер: название шаблона в Meta (^[a-z0-9_]+$). */
   tpl?: string;
+  /** Второй номер: текст из библиотеки (id) — сервер подставляет имя и данные каждому клиенту. */
+  tplId?: string;
   /** Основной номер: язык шаблона (ru, kk, en, en_US). */
   lang?: string;
   /** Основной номер: подстановки по порядку ({имя} — имя клиента). */
@@ -285,7 +299,28 @@ export type CampaignCheck = {
   errors: string[];
   /** Основной номер — подстановки для первого клиента с именем; номер бота — [полный текст сообщения с именем и строкой СТОП]. */
   preview: string[];
+  /** Второй номер, база: готовые тексты для 3–5 клиентов (номер маской). */
+  samples?: { to: string; text: string }[];
+  /** Кому не уйдёт и почему (текст сервера) и сколько. */
+  excluded?: { code: string; why: string; n: number }[];
+  /** Воронка аудитории (ТЗ V3): всего → с правильным номером → по сегменту → исключения (правила и разрешения) → можно отправлять. */
+  funnel?: AudienceFunnel;
 };
+
+export type FunnelReason = { code: string; why: string; n: number };
+export type AudienceFunnel = {
+  total: number;
+  valid: number;
+  segment: number;
+  /** Исключены по правилам компании: недавний визит, будущая запись, реклама за 30 дней, нет данных для текста. */
+  rules: FunnelReason[];
+  /** Исключены по разрешениям на связь: нет согласия, «стоп», запрет. */
+  consent: FunnelReason[];
+  allowed: number;
+};
+
+/** Итоги рассылки по ответам провайдера и журналу Altegio. booked — записались в течение window дней после сообщения: совпадение по времени, не доказательство. */
+export type CampaignResults = { sent: number; delivered: number; read: number; failed: number; replied: number; booked: number; window: number };
 
 export type CampaignCreated = {
   campaign: CampaignDetail;
@@ -295,7 +330,7 @@ export type CampaignCreated = {
   cut: number;
 };
 
-export type CampaignAct = "start" | "pause" | "stop" | "delete";
+export type CampaignAct = "start" | "pause" | "stop" | "delete" | "approve" | "unapprove";
 /** Ответ на действие: готово (рассылка после действия), удалена или сервер спрашивает подтверждение (сигнал Meta) — тогда повторить с force. */
 export type CampaignActResult = { kind: "done"; campaign: CampaignDetail } | { kind: "deleted" } | { kind: "confirm"; question: string };
 
@@ -342,8 +377,9 @@ export type AutoInfo = {
   skip?: { at: number; why: string };
 };
 
-/** Сервисное сообщение, которое бот шлёт сам (не рассылка): d1 — накануне в 18:00, h2 — за 2 часа, rv — просьба об отзыве через 3 часа. */
-export type ServiceKind = "d1" | "h2" | "rv";
+/** Сервисное сообщение, которое уходит само (не рассылка): d1 — накануне в 18:00, h2 — за 2 часа, rv — просьба об отзыве через 3 часа;
+ *  по журналу Altegio со второго номера ещё s01 — подтверждение новой записи и s06 — сообщение о переносе (ТЗ v2.0 §4). */
+export type ServiceKind = "d1" | "h2" | "rv" | "s01" | "s06";
 
 /** Вид сервисного сообщения: включён ли у компании. */
 export type ServiceKindState = {
@@ -354,6 +390,10 @@ export type ServiceKindState = {
   on: boolean;
   /** Ссылка на отзывы (2ГИС, Google Карты) — у просьбы об отзыве. */
   link?: string;
+  /** Текст одобрен владельцем (журнал Altegio): без одобрения сообщение не уходит. undefined — сервер старше пульта. */
+  approved?: boolean;
+  /** Сценарий из каталога: «S03». */
+  scenario?: string;
 };
 
 /** Сообщение в очереди: кому, что и когда уйдёт. Номер — только маской с сервера. */
@@ -370,6 +410,85 @@ export type ServiceQueueItem = {
   /** Запись, о которой сообщение: день ГГГГ-ММ-ДД и время ЧЧ:ММ по Астане. */
   date: string;
   time: string;
+  /** Почему ещё не ушло: «текст не одобрен владельцем», «не ушло с 1-й попытки — пробуем ещё». */
+  why?: string;
+};
+
+/** Решение по очереди (журнал Altegio): ушло, отменено (запись перенесли или удалили), пропущено и почему, задача администратору,
+ *  неизвестно — Green-API не ответил (второй раз не шлём). */
+export type ServiceLogState = "sent" | "cancelled" | "skipped" | "task" | "unknown";
+export type ServiceLogItem = {
+  at: number;
+  /** Вид сообщения; noshow — «не пришёл» (только задача администратору). */
+  kind: ServiceKind | "noshow";
+  state: ServiceLogState;
+  why: string;
+  phone: string;
+  name: string;
+  date: string;
+  time: string;
+};
+/** Как сценарий работает: auto — уходит сам после одобрения текста; reply — ответ в переписке; task — задача администратору; off — не подключено. */
+export type ServiceScenarioMode = "auto" | "reply" | "task" | "off";
+/** Сценарий из каталога S01–S18 (src/services/reminders/templates.js): тексты RU/KZ — предпросмотр на вымышленной записи. */
+export type ServiceScenario = {
+  id: string;
+  title: string;
+  trigger: string;
+  mode: ServiceScenarioMode;
+  channel: string;
+  note: string;
+  /** Версия текста: одобряют текущую. */
+  v: number;
+  /** Вид в очереди, если сценарий уходит сам. */
+  kind: ServiceKind | "";
+  approved: boolean;
+  approvedAt: number;
+  vars: string[];
+  preview: { ru: string; kk: string };
+  /** Категория для экрана: Запись, Напоминания, Изменения, Опоздания и неявки, После визита, Ошибки и задачи. */
+  cat?: string;
+  /** Варианты текста (ТЗ v3.0 §6): уходит активный и одобренный. */
+  variants?: ServiceVariant[];
+};
+export type ServiceVariant = { id: string; ru: string; kk: string; active: boolean; approved: boolean; v: number; builtin?: boolean };
+/** Что ушло бы по настоящему журналу Altegio — проверка без отправки и без записи (только владелец). */
+export type ServiceDryItem = {
+  kind: ServiceKind;
+  scenario: string;
+  at: number;
+  /** now — уйдёт сейчас, later — по расписанию, wait — ждёт отметки «пришёл», skip — не уйдёт (why). */
+  status: "now" | "later" | "wait" | "skip";
+  why: string;
+  name: string;
+  phone: string;
+  date: string;
+  time: string;
+  staff: string;
+  service: string;
+  text: string;
+  lang: string;
+};
+export type ServiceDryRun = {
+  ok: boolean;
+  /** Почему проверить нельзя (нет ключа журнала и т. п.). */
+  why?: string;
+  at: number;
+  from: string;
+  to: string;
+  records: number;
+  /** Журнал прочитан не целиком. */
+  cut: boolean;
+  /** Отправка включена на сервере (REMIND_GA_<ID> = 1). */
+  enabled: boolean;
+  /** Номер Green-API подключён. */
+  ga: boolean;
+  quiet: boolean;
+  hold: { at: number; why: string } | null;
+  total: number;
+  items: ServiceDryItem[];
+  /** Записи без сообщений: почему и сколько. */
+  skipped: { why: string; n: number }[];
 };
 
 /** Сервисные сообщения компании (/api/bc/service): что бот шлёт сам, ближайшие в очереди, сколько ушло. Владелец и сотрудник видят одно и то же. */
@@ -392,4 +511,101 @@ export type ServiceOverview = {
   enabled?: boolean;
   /** Green-API отказал (номер заблокирован или ключ не подходит) — отправка на паузе (6 часов). */
   hold?: { at: number; why: string } | null;
+  /** Последние решения по очереди (журнал Altegio), новые сверху. */
+  log?: ServiceLogItem[];
+  /** Каталог сервисных сценариев S01–S18. */
+  catalog?: ServiceScenario[];
+};
+
+// ---- Календарь, итоги доставки, библиотека текстов (ТЗ v2.0 §5, §6, §8; сервер — /api/bc/calendar, /api/bc/stats, /api/bc/templates)
+
+/** Один день календаря: сервисные (очередь бота) и реклама (автосценарий) — отдельно, только числа. */
+export type CalendarDay = {
+  /** ГГГГ-ММ-ДД по Астане. */
+  date: string;
+  service: { total: number; kinds: Partial<Record<ServiceKind, number>> };
+  /** null — у компании нет базы клиентов (реклама по базе не считается). */
+  marketing: {
+    /** Сколько клиентов в этот день дойдут до «N дней с визита». */
+    candidates: number;
+    /** Из них можно писать (согласие, нет записи, нет «стоп», 30 дней без рекламы). */
+    allowed: number;
+    /** Сколько уйдёт: автосценарий включён и есть шаблон — не больше предела в день; иначе 0. */
+    planned: number;
+    /** Почему нельзя: причина → сколько (noconsent, stop, booked, recent, marketed…). */
+    excluded: Record<string, number>;
+  } | null;
+  /** События дня: сервисные, рассылки по плану, ждут одобрения, отправлено, ошибки, изменения аудитории (стоп, согласия). */
+  events?: CalendarEvent[];
+};
+export type CalendarEventKind = "service" | "campaign" | "approval" | "sent" | "error" | "audience";
+export type CalendarEvent = { kind: CalendarEventKind; title: string; n: number; id?: string };
+export type CampaignCalendar = {
+  today: string;
+  /** Автосценарий: включён, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы. */
+  auto: { on: boolean; days: number; cap: number; tpl: boolean } | null;
+  /** Когда собрана база клиентов (мс), 0 — не собрана. */
+  baseAt: number;
+  days: CalendarDay[];
+};
+
+export type StatSource = "service" | "review" | "campaign" | "admin";
+export type StatCounts = { sent: number; delivered: number; read: number; failed: number; replied: number };
+export type MessageStats = {
+  /** false — на этом адресе нет базы D1: числа не копятся (why — почему). */
+  available: boolean;
+  why?: string;
+  days: number;
+  by: Record<StatSource, StatCounts>;
+};
+
+/** Текст из библиотеки (28 стартовых тем RU/KZ + свои). approved — одобрил владелец (это не отправка);
+ *  status: approved — готов; review — на проверке у владельца; facts — нужны данные (мастер, время, условия акции) или [скобки]. */
+export type LibraryItem = {
+  id: string;
+  title: string;
+  /** Категория (id из TemplateLibrary.cats). */
+  cat?: string;
+  /** Для кого словами: «Были 30–45 дней назад». */
+  who?: string;
+  goal: string;
+  /** Сегмент базы, для которого задуман текст (all, pora, uhodyat…). */
+  seg?: string;
+  /** Какие факты нужны перед отправкой (staff.name, slot, promo…). */
+  needs?: string[];
+  /** Что проверить перед отправкой — словами. */
+  check?: string;
+  ru: string;
+  kk: string;
+  /** Казахский текст проверен носителем языка. */
+  kkChecked?: boolean;
+  /** Что вписать перед одобрением (старое поле). */
+  need?: string;
+  custom?: boolean;
+  archived?: boolean;
+  approved: boolean;
+  status?: "approved" | "review" | "facts";
+  v?: number;
+  at?: number;
+  by?: string;
+};
+export type TemplateVar = { key: string; label: string; sample?: string };
+export type TemplateLibrary = {
+  owner: boolean;
+  /** Переменные для вставки в текст: { key: "client.first_name", label: "Имя клиента" }. */
+  vars: TemplateVar[];
+  cats?: { id: string; label: string }[];
+  counts?: { total: number; approved: number; review: number; archived?: number };
+  items: LibraryItem[];
+};
+export type TemplatePreview = {
+  lang: "ru" | "kk";
+  /** true — базы нет, пример на вымышленном клиенте. */
+  demo: boolean;
+  list: { to: string; name?: string; text: string; issues?: string[] }[];
+  /** Тот же текст для клиента без имени. */
+  noName?: { text: string };
+  /** Каких данных не хватает (мастер, время…) — отправить нельзя. */
+  missing?: string[];
+  blocked?: boolean;
 };

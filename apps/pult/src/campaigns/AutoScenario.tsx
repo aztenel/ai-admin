@@ -105,7 +105,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
   if (!d.available)
     return (
       <Group title={TITLE}>
-        <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">{d.why || "У этой компании нет базы клиентов из Altegio — автосценарий недоступен."}</p>
+        <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">{d.why || "У компании нет базы клиентов из Altegio, автосценарий недоступен."}</p>
       </Group>
     );
 
@@ -167,7 +167,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
     <>
       <Group
         title={TITLE}
-        note={`Бот пишет сам: каждый день в 11:00 по Астане берёт из базы тех, у кого ровно ${s.days} ${plural(s.days, DAYS)} с последнего визита, и шлёт им шаблон Meta с основного номера. День пропускается, если качество номера не высокое, Meta просила остановиться или база устарела, — причина придёт в Telegram.`}
+        note={`Бот пишет сам: каждый день в 11:00 по Астане берёт из базы тех, у кого ровно ${s.days} ${plural(s.days, DAYS)} с последнего визита, и шлёт им шаблон Meta с основного номера. День пропускается, если качество номера не высокое, Meta просила остановиться или база устарела. Причина придёт в Telegram.`}
       >
         <div className="flex min-h-14 items-center gap-3 py-2.5">
           <span
@@ -204,7 +204,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
         <dl className="divide-y divide-line">
           <Row label="Кому сегодня" value={d.today.total ? `${d.today.n} из ${d.today.total}` : "никому"}>
             {d.today.total
-              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать — ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел — ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
+              ? `Ровно ${s.days} ${plural(s.days, DAYS)} с визита и можно писать: ${d.today.total} ${plural(d.today.total, CLIENTS)}${d.today.n < d.today.total ? `; предел ${s.cap} в день` : ""}.${s.on ? "" : " Это если включить."}`
               : `Сейчас нет клиентов ровно с ${s.days} ${plural(s.days, DAYS)} после визита, которым можно писать.`}
           </Row>
           <QualityRow q={d.quality} now={now} />
@@ -217,7 +217,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
               ? "Без базы автосценарию некому писать."
               : d.crm.fresh
                 ? ""
-                : "Старше 36 часов — автосценарий пропустит день: по старой базе можно написать тому, кто уже записался."}
+                : "База старше 36 часов, автосценарий пропустит день: по старой базе можно написать тому, кто уже записался."}
           </Row>
         </dl>
         {d.skip && (
@@ -239,7 +239,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
               autoComplete="off"
               value={edit.days}
               onChange={(e) => set({ days: e.target.value })}
-              hint="Ровно столько — от 7 до 120. Обычно 28: месяц после стрижки."
+              hint="От 7 до 120. Обычно 28: месяц после стрижки."
             />
             <TextField
               ref={tplRef}
@@ -256,7 +256,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
                 setTplErr("");
               }}
               error={tplErr || undefined}
-              hint="Название — как в кабинете Meta / Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta. В шаблоне — одна переменная {{1}}: имя клиента."
+              hint="Название как в кабинете Meta или Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta, в нём одна подстановка: имя клиента."
             />
             <SelectField label="Язык шаблона" value={edit.lang} onChange={(e) => set({ lang: e.target.value })}>
               {langs.map((l) => (
@@ -273,7 +273,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
               autoComplete="off"
               value={edit.cap}
               onChange={(e) => set({ cap: e.target.value })}
-              hint="От 1 до 100. Постоянные клиенты — первыми."
+              hint="От 1 до 100. Постоянные клиенты первыми."
             />
             <div>
               <div className="grid grid-cols-2 gap-3">
@@ -292,16 +292,16 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
                   ))}
                 </SelectField>
               </div>
-              <p className="pb-3 pt-1.5 text-sm text-fg-3">По Астане. «До» — позже 11:00: список собирается в 11:00.</p>
+              <p className="pb-3 pt-1.5 text-sm text-fg-3">По Астане. «До» позже 11:00: список собирается в 11:00.</p>
             </div>
             <TextArea
-              label="Текст шаблона — для администратора и бота"
+              label="Текст шаблона для администратора"
               optional
               rows={3}
               maxLength={1000}
               value={edit.text}
               onChange={(e) => set({ text: e.target.value })}
-              hint="Клиент может ответить на сообщение — так бот и администратор поймут, о чём оно было."
+              hint="Клиент может ответить на сообщение. Так администратор поймёт, о чём оно было."
             />
             <div className="py-3">
               {/* ошибки сервера — рядом с «Сохранить», куда человек только что нажал */}
@@ -368,8 +368,8 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
         text={
           <>
             Каждый день в 11:00 бот сам напишет до {capN} {plural(capN, CLIENTS_DAT)} — тем, у кого ровно {daysN} {plural(daysN, DAYS)} с последнего визита.
-            Шаблон «{eff.tpl}» с основного номера{Number.isFinite(eff.from) && Number.isFinite(eff.to) ? `, с ${eff.from}:00 до ${eff.to}:00` : ""}. Оценка — до{" "}
-            {`≈\u00a0${money(costEstimate(capN))}`} в день, точная цена — в кабинете Meta.
+            Шаблон «{eff.tpl}» с основного номера{Number.isFinite(eff.from) && Number.isFinite(eff.to) ? `, с ${eff.from}:00 до ${eff.to}:00` : ""}. Оценка: до{" "}
+            {`≈\u00a0${money(costEstimate(capN))}`} в день, точная цена в кабинете Meta.
           </>
         }
         yes="Включить"
@@ -402,12 +402,12 @@ function QualityRow({ q, now }: { q: AutoInfo["quality"]; now: number }) {
   if (!q)
     return (
       <Row label="Качество номера" value="ещё не проверяли">
-        Проверка — каждый день в 10:00. Маркетинг автосценарий шлёт только при высоком качестве.
+        Проверка каждый день в 10:00. Рекламу автосценарий шлёт только при высоком качестве.
       </Row>
     );
   return (
     <Row label="Качество номера" value={QUALITY[q.level].label} tone={q.level === "green" ? "positive" : q.level === "unknown" ? undefined : "critical"}>
-      Проверено {whenText(q.at, now)}.{q.level === "green" ? "" : " Маркетинг уходит только при высоком качестве — пока так, автосценарий пропускает день."}
+      Проверено {whenText(q.at, now)}.{q.level === "green" ? "" : " Реклама уходит только при высоком качестве. Пока так, автосценарий пропускает день."}
     </Row>
   );
 }

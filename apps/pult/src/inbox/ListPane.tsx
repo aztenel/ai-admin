@@ -1,26 +1,45 @@
 // Список чатов: компания крупным заголовком, справа — какой номер показан; поиск; вкладки-фильтры; строки.
 // Главное в строке — кто и что написал. Третьей строкой, одной фразой, — кто ведёт переписку и через какой номер.
 // Клиент ждёт человека — вместо времени сообщения красным «сколько ждёт», третья строка — причина.
-import { Inbox, RefreshCw, Search, SearchX, X } from "lucide-react";
+import { ChevronDown, ClipboardList, Inbox, RefreshCw, Search, SearchX, X } from "lucide-react";
+import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/overlay";
 import { memo, useMemo, useRef, useState } from "react";
 import { Avatar, Button, CountBadge, EmptyState, IconButton, Skeleton } from "@/components/ui";
 import { channelBadge, channelOf } from "@/model/channels";
 import type { ConversationSummary, Workspace } from "@/model/types";
 import { formatPhone, rowTime, waited } from "@/lib/format";
-import { href } from "@/lib/router";
+import { href, navigate } from "@/lib/router";
 import { cn, useNow } from "@/lib/utils";
 import { store, useStore, type Filter } from "@/state/store";
 import { WorkspaceSwitcher } from "@/shell/WorkspaceSwitcher";
-import { counts, FILTER_TEST, inScope, search } from "./derive";
+import { ModeBadge } from "@/components/ui";
+import { counts, filterTest, inScope, search } from "./derive";
+import { Ticks } from "./Ticks";
+import { getOperator } from "@/lib/operator";
 import { handling } from "./handling";
 import { ScopePicker } from "./ScopePicker";
 
-const FILTERS: { id: Filter; label: string }[] = [
+// разделы (решение владельца 02.11.2026): «Все» — первым и по умолчанию, «Нужен ответ» — вторым, с красным счётчиком, «Готово» —
+// третьим; «Записи», «Ответы», «Мои» — в меню «Ещё» (отбор чатов прежний — derive.ts). «Мои» — только если на устройстве указано имя
+const MAIN: { id: Filter; label: string }[] = [
   { id: "all", label: "Все" },
-  { id: "waiting", label: "Ждут ответа" },
-  { id: "operator", label: "Ведёте вы" },
-  { id: "unread", label: "Новые" },
+  { id: "waiting", label: "Нужен ответ" },
+  { id: "done", label: "Готово" },
 ];
+const MORE: { id: Filter; label: string }[] = [
+  { id: "booking", label: "Записи" },
+  { id: "replies", label: "Ответы" },
+  { id: "mine", label: "Мои" },
+];
+// на телефоне четыре капсулы («Все», «Нужен ответ» со счётчиком, «Готово», «Ещё») помещаются в 390 px без прокрутки: 14 px, поля по 12 px
+const chipCls = (on: boolean) =>
+  cn(
+    "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-sm font-medium transition-colors pointer-coarse:h-10 md:h-8 md:px-3",
+    on ? "bg-selected text-selected-fg" : "bg-surface text-fg-2 hover:text-fg md:bg-surface-2",
+  );
+const Count = ({ n, hot }: { n: number; hot?: boolean }) => (
+  <span className={cn("tnum min-w-5 rounded-full px-1.5 text-center text-xs font-semibold leading-5", hot ? "bg-critical text-surface" : "bg-surface-3 text-fg-2")}>{n}</span>
+);
 
 export function ListPane({ openKey, onOpen, className, inert }: { openKey?: string; onOpen: (key: string) => void; className?: string; inert?: boolean }) {
   const phase = useStore((s) => s.phase);
@@ -36,19 +55,35 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
   const now = useNow();
 
   const scoped = useMemo(() => (ws ? inScope(ws, scope, all) : []), [ws, scope, all]);
-  const n = useMemo(() => counts(scoped), [scoped]);
-  const rows = useMemo(() => (q.trim() ? search(scoped, q) : scoped.filter(FILTER_TEST[filter])), [scoped, q, filter]);
+  const me = getOperator();
+  const outOnly = useStore((s) => s.outOnly);
+  const n = useMemo(() => counts(scoped, me), [scoped, me]);
+  const rows = useMemo(() => (q.trim() ? search(scoped, q) : scoped.filter(filterTest(me)[filter])), [scoped, q, filter, me]);
   const multi = !!ws && ws.channels.length > 1 && scope.kind !== "channel";
 
   return (
     <section aria-label="Чаты" inert={inert} className={cn("flex min-h-0 flex-col bg-surface", className)}>
-      <header className="shrink-0 pt-safe">
-        {/* демо — строкой над названием, а не меткой рядом: название компании не обрезается на узком iPhone */}
-        {mode === "demo" && <p className="-mb-1.5 px-4 pt-2 text-2xs font-semibold uppercase tracking-[0.06em] text-fg-3">Демо · данные вымышленные</p>}
-        {/* крупный шрифт: капсула номера уходит строкой ниже, а не съедает название компании */}
-        <div className="flex min-h-[3.25rem] flex-wrap items-center gap-x-2 gap-y-1 pl-4 pr-3 pt-1.5 md:min-h-14 md:pr-2 md:pt-2">
-          <WorkspaceSwitcher className="min-w-0 flex-[1_1_10rem]" />
-          {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
+      <header className="shrink-0 pt-safe max-md:bg-canvas">
+        {/* ТЗ v3.0 §2.1: заголовок раздела «Чаты», компания и метка режима («Тестовая версия», «Демо») — строкой ниже;
+            крупный шрифт: капсула номера уходит строкой ниже, а не съедает заголовок */}
+        <div className="pl-4 pr-3 pt-2 md:pr-2 md:pt-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h1 className="title-display min-w-0 flex-1 text-[1.75rem] font-bold leading-9 tracking-[-0.022em] md:text-2xl md:font-semibold md:leading-8">Чаты</h1>
+            {ws && (ws.channels.length > 1 || ws.branches.length > 1) && <ScopePicker ws={ws} list={all} scope={scope} onChange={(s) => store.setScope(s)} />}
+            {/* телефон: «Заявки» — здесь, внизу только четыре раздела; на компьютере они в левой колонке */}
+            <a
+              href={href({ name: "requests" })}
+              onClick={(e) => (e.preventDefault(), navigate({ name: "requests" }))}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-surface-2 px-3 text-sm font-medium text-fg-2 hover:text-fg md:hidden"
+            >
+              <ClipboardList aria-hidden className="size-4" strokeWidth={1.75} />
+              Заявки
+            </a>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <WorkspaceSwitcher compact className="min-w-0" />
+            <ModeBadge />
+          </div>
         </div>
         <div className="mx-4 mt-1.5 flex items-center gap-1 md:mr-2 md:mt-2">
           <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[0.625rem] bg-surface-2 px-2.5 text-fg-3 focus-within:outline-2 focus-within:outline-ring pointer-coarse:h-10">
@@ -60,7 +95,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Escape" && setQ("")}
-              placeholder="Поиск"
+              placeholder="Имя, номер или текст"
               aria-label="Поиск по имени, номеру или тексту"
               className="min-w-0 flex-1 bg-transparent text-md text-fg outline-none [&::-webkit-search-cancel-button]:hidden md:text-ui pointer-coarse:text-md"
             />
@@ -74,28 +109,22 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
           <IconButton icon={RefreshCw} label="Обновить" onClick={() => store.poll(true)} className={cn("max-md:hidden", refreshing && "[&>svg]:animate-spin")} />
         </div>
         {ws && !q && all.length > 0 ? (
-          <div role="radiogroup" aria-label="Фильтр" className="no-scrollbar mt-1 flex gap-4 overflow-x-auto border-b border-line px-4 md:gap-3.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
-            {FILTERS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                role="radio"
-                aria-checked={filter === f.id}
-                onClick={() => store.setFilter(f.id)}
-                className={cn(
-                  "relative inline-flex h-10 shrink-0 items-center gap-1 text-ui font-medium transition-colors pointer-coarse:h-11 md:text-sm lg:text-ui after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full md:h-9",
-                  filter === f.id ? "text-fg after:bg-accent" : "text-fg-3 hover:text-fg-2",
-                )}
-              >
-                {f.label}
-                {f.id !== "all" && n[f.id] > 0 && <span className={cn("tnum text-sm", f.id === "waiting" ? "font-semibold text-critical" : "font-normal text-fg-3")}>{n[f.id]}</span>}
-              </button>
-            ))}
+          // ТЗ v3.0, макет Figma «Чаты»: фильтры — капсулы, выбранная залита, счётчик «Нужен ответ» — красная плашка
+          <div className="no-scrollbar mt-2.5 flex gap-1.5 overflow-x-auto px-4 pb-3 md:mt-2 md:gap-2 md:border-b md:border-line md:pb-2.5 [mask-image:linear-gradient(to_right,#000_calc(100%-1rem),transparent)]">
+            <div role="radiogroup" aria-label="Фильтр" className="flex shrink-0 gap-1.5 md:gap-2">
+              {MAIN.map((f) => (
+                <button key={f.id} type="button" role="radio" aria-checked={filter === f.id} onClick={() => store.setFilter(f.id)} className={chipCls(filter === f.id)}>
+                  {f.label}
+                  {f.id === "waiting" && n.waiting > 0 && <Count n={n.waiting} hot />}
+                </button>
+              ))}
+            </div>
+            <MoreFilters filter={filter} n={n} me={me} />
           </div>
         ) : q ? (
-          <p className="mt-1 border-b border-line px-4 pb-2 pt-1.5 text-sm text-fg-3">{rows.length ? `Найдено: ${rows.length}` : "\u00a0"}</p>
+          <p className="mt-1 px-4 pb-2 pt-1.5 text-sm text-fg-3 md:border-b md:border-line">{rows.length ? `Найдено: ${rows.length}` : "\u00a0"}</p>
         ) : (
-          <div className="mt-2.5 border-b border-line" />
+          <div className="mt-2.5 md:border-b md:border-line" />
         )}
       </header>
 
@@ -113,11 +142,46 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
         )}
         {truncated && phase === "ready" && !q && (
           <p className="px-4 py-4 text-center text-xs text-fg-3">
-            Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа — все.
+            Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа показаны все.
+          </p>
+        )}
+        {/* чаты, где писали только мы (напоминание, ответ с телефона), — не переписки: в списке их нет, по кнопке — в «Все» */}
+        {phase === "ready" && !q && filter === "all" && !!outOnly && (
+          <p className="px-4 py-4 text-center text-xs text-fg-3">
+            Ещё {outOnly}: писали только мы, клиент не отвечал.{" "}
+            <button type="button" className="font-medium text-accent underline-offset-2 hover:underline" onClick={() => store.loadOutbound()}>
+              Показать
+            </button>
           </p>
         )}
       </div>
     </section>
+  );
+}
+
+/** «Ещё»: Записи, Ответы, Мои. Выбран один из них — на кнопке его название и счётчик, иначе «Ещё». */
+function MoreFilters({ filter, n, me }: { filter: Filter; n: Record<Filter, number>; me: string }) {
+  const list = MORE.filter((f) => f.id !== "mine" || me), cur = list.find((f) => f.id === filter);
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <button type="button" aria-label={cur ? `Раздел ${cur.label}. Другие разделы` : "Другие разделы: записи, ответы, мои"} className={chipCls(!!cur)}>
+          {cur ? cur.label : "Ещё"}
+          {cur && n[cur.id] > 0 && <Count n={n[cur.id]} />}
+          <ChevronDown aria-hidden className="-mr-1 size-4 opacity-70" strokeWidth={2} />
+        </button>
+      </MenuTrigger>
+      <MenuContent align="end" className="min-w-[13rem]">
+        <MenuRadioGroup value={cur ? cur.id : ""} onValueChange={(v) => store.setFilter(v as Filter)}>
+          {list.map((f) => (
+            <MenuRadioItem key={f.id} value={f.id}>
+              <span className="flex-1">{f.label}</span>
+              {n[f.id] > 0 && <Count n={n[f.id]} />}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -130,7 +194,9 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
   const h = handling(c.attention, c.bot, now);
   const badge = showChannel ? channelBadge(ch) : "";
   // одна фраза вместо двух обрезанных колонок: «Просит человека · ИИ-администратор», «Человек · Основной WhatsApp»
-  const state = c.attention ? c.attention.label : c.bot.state === "active" ? (badge ? "" : h.short) : c.bot.state === "paused" ? "Человек" : h.short;
+  // третья строка — одна фраза: что нужно, кто ведёт, на какой номер. «Бот выключен» в каждой строке не повторяем (ТЗ v2.0 §2.2)
+  const state = c.attention ? c.attention.label : c.assignee ? `Ведёт ${c.assignee}` : c.done ? "Готово" : c.bot.state === "paused" ? "Человек" : c.bot.state === "off" ? "" : c.bot.state === "active" ? (badge ? "" : h.short) : h.short;
+  const ours = c.previewFrom === "operator" || c.previewFrom === "bot";
   return (
     <li>
       <a
@@ -153,7 +219,7 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
           <span className="flex items-baseline gap-2">
             <span className="min-w-0 flex-1 truncate text-md font-semibold tracking-[-0.01em] md:text-base">{title}</span>
             {c.attention?.since ? (
-              <span className="tnum shrink-0 text-sm font-semibold text-critical md:text-xs" title={`Ждёт ответа ${waited(c.attention.since, now)}, последнее сообщение — ${rowTime(c.lastAt, now)}`}>
+              <span className="tnum shrink-0 text-sm font-semibold text-critical md:text-xs" title={`Ждёт ответа ${waited(c.attention.since, now)}, последнее сообщение ${rowTime(c.lastAt, now)}`}>
                 {waited(c.attention.since, now)}
               </span>
             ) : (
@@ -161,13 +227,18 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
             )}
           </span>
           <span className="mt-px flex items-center gap-2">
-            <span className={cn("line-clamp-1 min-w-0 flex-1 text-[0.9375rem] leading-5 md:text-ui", unread ? "text-fg" : "text-fg-2")}>{c.preview || "\u00a0"}</span>
+            <span className={cn("line-clamp-1 min-w-0 flex-1 text-[0.9375rem] leading-5 md:text-ui", unread ? "text-fg" : "text-fg-2")}>
+              {ours && c.lastStatus && <Ticks status={c.lastStatus} className="mr-1" />}
+              {c.preview || "\u00a0"}
+            </span>
             {c.unreadCount ? <CountBadge n={c.unreadCount} /> : unread ? <span aria-label="новое" className="mr-1 size-2.5 shrink-0 rounded-full bg-accent" /> : null}
           </span>
           <span className={cn("mt-0.5 flex min-w-0 items-center gap-1.5 text-sm md:text-xs", c.attention ? "text-critical" : "text-fg-3")} title={[h.text, badge].filter(Boolean).join(" · ")}>
-            {c.attention ? <span aria-hidden className="mx-[3px] size-2 shrink-0 rounded-full bg-critical" /> : h.icon ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
+            {c.attention ? null : h.icon && c.bot.state !== "off" && !c.assignee ? <h.icon aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} /> : null}
             <span className="min-w-0 truncate">
               {state && <span className={cn(c.attention && "font-medium")}>{state}</span>}
+              {/* ждёт ответа и уже взят сотрудником — видно оба состояния (02.11.2026) */}
+              {c.attention && c.assignee && <span className="text-fg-3"> · ведёт {c.assignee}</span>}
               {state && badge && <span className="text-fg-3"> · </span>}
               {badge && <span className="text-fg-3">{badge}</span>}
             </span>
@@ -179,13 +250,15 @@ const Row = memo(function Row({ c, ws, now, selected, showChannel, onOpen }: { c
 });
 
 function Empty({ filter, q, total }: { filter: Filter; q: string; total: number }) {
-  if (q) return <EmptyState icon={SearchX} title="Ничего не нашли" text="Проверьте имя или номер — поиск идёт по всем чатам выбранных номеров." />;
+  if (q) return <EmptyState icon={SearchX} title="Ничего не нашли" text="Проверьте имя или номер." />;
   if (total === 0) return <EmptyState icon={Inbox} title="Чатов пока нет" text="Они появятся, когда клиенты напишут в WhatsApp или в чат на сайте." />;
   const t: Record<Filter, [string, string]> = {
+    waiting: ["Никто не ждёт ответа", "Здесь появятся чаты, где клиент написал, а ему ещё не ответили."],
+    booking: ["Просьб о записи нет", "Здесь появятся просьбы записать, перенести или отменить запись и вопросы о времени."],
+    replies: ["Ответов на рассылки и напоминания нет", "Здесь появятся ответы клиентов на напоминания и рассылки."],
+    mine: ["Ваших чатов нет", "Здесь появятся чаты, которые вы взяли себе или вам назначили."],
     all: ["Чатов нет", ""],
-    waiting: ["Никто не ждёт ответа", "Бот справляется сам. Чаты, где нужен человек, появятся здесь."],
-    operator: ["Бот работает во всех чатах", "Здесь будут чаты, где вы ответили клиенту или забрали чат у бота."],
-    unread: ["Новых сообщений нет", "Все сообщения клиентов просмотрены на этом устройстве."],
+    done: ["Закрытых чатов нет", "Здесь будут закрытые чаты, пока клиент не напишет снова."],
   };
   return (
     <EmptyState

@@ -3,6 +3,7 @@
 /** @import { Env } from "../../../lib/types.js" */
 import { clean } from "../../../lib/text.js";
 import { ALT_API } from "../../../config/constants.js";
+import { isPreview, PREVIEW_ALT } from "../../../lib/stage.js";
 
 // названия и имена из Altegio попадают в подсказку ИИ и в служебные строки — убираем знаки, которые ломают их разбор
 /** @param {any} s @param {number} [n] */
@@ -16,15 +17,31 @@ export const altText = (s, n = 80) => clean(String(s ?? "").replace(/[\[{<]/g, "
  */
 export function altError(status, message, code) { return Object.assign(new Error(message || ("Altegio " + status)), { status, code: +code || 0 }); }
 
+// Только чтение: GET или поиск (POST …/clients/search, …/clients/visits/search). Другой запрос не отправляется: проба полей,
+// проверка без записи и синхронизация ничего не меняют в Altegio. 30.10.2026 «список клиентов» по ошибке шёл в POST
+// /clients/{локация} — это «Добавить клиента»; Altegio отказал (422: нет имени и номера), клиент не создан.
+const READ_POST = /^\/locations\/\d+\/clients\/(visits\/)?search$/;
+// POST, который ничего не меняет в журнале: проверка записи и вход сотрудника (выдаёт ключ пользователя)
+const NO_WRITE = /^\/(book_check\/\d+|auth)$/;
+/** Как altCall, но только чтение. @param {Env} env @param {string} method @param {string} path @param {any} [body] @param {any} [user] @param {boolean} [full] @returns {Promise<any>} */
+export function altRead(env, method, path, body, user, full = false) {
+  if (method !== "GET" && !READ_POST.test(path)) return Promise.reject(altError(0, `запрос ${method} не на чтение — не отправлен`));
+  return altCall(env, method, path, body, user, full);
+}
+
 /**
  * @param {Env} env
  * @param {string} method
  * @param {string} path
  * @param {any} [body]
  * @param {any} [user]
+ * @param {boolean} [full] весь ответ ({ data, meta }) — число всего в meta.total_count (список клиентов)
  * @returns {Promise<any>}
  */
-export async function altCall(env, method, path, body, user) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
+export async function altCall(env, method, path, body, user, full = false) { // user — ключ пользователя салона (журнал записей, клиенты); без него — только онлайн-запись
+  // черновик в Altegio только читает: проверка записи (book_check), поиск клиентов и вход по логину ничего не меняют; создание,
+  // перенос и удаление записей не отправляются (аудит 31.10.2026, lib/stage.js). 409 — «точно не создана», не «нет связи»
+  if (isPreview(env) && method !== "GET" && !NO_WRITE.test(path) && !READ_POST.test(path)) throw Object.assign(altError(409, PREVIEW_ALT), { preview: true });
   if (!env.ALTEGIO_PARTNER) throw altError(0, "не задан ключ ALTEGIO_PARTNER");
   for (let attempt = 0; ; attempt++) {
     const ac = new AbortController();
@@ -53,6 +70,6 @@ export async function altCall(env, method, path, body, user) { // user — кл�
       if (!er || typeof er !== "object") er = {};
       throw altError(r.status, clean(er.message || m.message || "", 200) || ("Altegio " + r.status), er.code || m.code);
     }
-    return j ? j.data : null;
+    return full ? (j || {}) : j ? j.data : null;
   }
 }

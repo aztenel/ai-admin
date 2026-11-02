@@ -1,7 +1,7 @@
 // Демо-режим: вымышленные компании для показа пульта и проверки вида. Включается только явно (VITE_PULT_DATA=demo, адрес /demo
 // или ?demo) и никогда не подменяет настоящие данные. Номера — заведомо несуществующие (+7 700 000 …), люди и переписки придуманы.
 // ?staff в адресе — вид сотрудника компании (без кнопок владельца: «Обновить базу», автосценарий, «Снять сигнал Meta»).
-// Рассылки, база клиентов и автосценарий — data/demo-campaigns.ts.
+// Рассылки, база клиентов и автосценарий — data/demo-campaigns.ts; раздел «Клиенты» (база контактов) — data/demo-contacts.ts.
 import type {
   BotState,
   Channel,
@@ -18,6 +18,7 @@ import type {
 } from "@/model/types";
 import { ApiError } from "./errors";
 import { createDemoCampaigns } from "./demo-campaigns";
+import { createDemoContacts } from "./demo-contacts";
 import type { DataSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
@@ -287,6 +288,7 @@ export function createDemoSource(): DataSource {
   const fx = build(Date.now());
   const role = () => (new URLSearchParams(location.search).has("staff") ? "staff" : "owner") as "owner" | "staff";
   const campaigns = createDemoCampaigns(role);
+  const contacts = createDemoContacts(role);
   const find = (ws: string) => {
     const f = fx.find((x) => x.ws.id === ws);
     if (!f) throw new ApiError("Нет доступа к этому клиенту.", 403);
@@ -319,6 +321,7 @@ export function createDemoSource(): DataSource {
       attention: c.attention ?? null,
       bot: bot(f, c),
       hasBooking: !!c.bookings?.length,
+      inbound: !!lastIn,
       unreadCount: c.unread || 0,
       unread: !!c.unread,
     };
@@ -343,7 +346,8 @@ export function createDemoSource(): DataSource {
     async session() {
       await wait(80);
       const q = new URLSearchParams(location.search).get("c");
-      return { role: role(), workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo" };
+      // демо — с пометкой «Демо» в шапке; первый демо-барбершоп показывает фирменное оформление
+      return { role: role(), workspaceId: fx.some((f) => f.ws.id === q) ? q : "demo", stage: "demo" as const, brands: { demo: "winchester" } };
     },
     async workspaces() {
       return fx.map((f) => ({ id: f.ws.id, name: f.ws.name, kind: f.ws.id === "demo" ? "Барбершоп" : f.ws.id === "demo-service" ? "Ремонт и продажа телефонов" : "Без чатов" }));
@@ -376,7 +380,7 @@ export function createDemoSource(): DataSource {
       delete c.attention;
       return detail(f, c);
     },
-    async act(ws, ref, act) {
+    async act(ws, ref, act, extra) {
       await wait(300);
       const f = find(ws), c = conv(ws, ref);
       if (act === "pause") c.bot = { state: "paused", until: Date.now() + 12 * HOUR };
@@ -386,12 +390,22 @@ export function createDemoSource(): DataSource {
         delete c.attention;
       } else if (act === "resolve") {
         if (c.requests?.length) throw new ApiError("В чате есть невыполненная просьба клиента (отмена, перенос, заявка или звонок). Нажмите «Сделано» в карточке — тогда чат закроется сам.", 409);
+        if (c.attention && !extra?.force) throw new ApiError("Клиент ждёт ответа. Закрыть чат без ответа?", 409, false, { confirm: "Клиент ждёт ответа. Закрыть чат без ответа?" });
         delete c.attention;
       } else if (act === "forget") {
         c.messages = [];
         c.requests = [];
         c.bookings = [];
         delete c.attention;
+      } else if (act === "hide" || act === "unhide" || act === "delete") {
+        // демо: скрыть в пульте и «удалить у всех» — как у настоящего пульта, без отправки куда-либо
+        const m = c.messages.find((x) => (extra?.mid ? x.mid === extra.mid : x.at === extra?.at));
+        if (!m) throw new ApiError("Сообщение не найдено. Обновите чат.", 404);
+        if (act === "delete") {
+          if (m.from === "contact") throw new ApiError("Сообщение клиента у него удалить нельзя. Скрыть его в пульте можно: «Удалить у меня».", 409);
+          m.deleted = true;
+          m.deletedByUs = true;
+        } else m.hidden = act === "hide";
       }
       return detail(f, c);
     },
@@ -419,6 +433,7 @@ export function createDemoSource(): DataSource {
       return [...open, ...f.done];
     },
     ...campaigns.api,
+    ...contacts,
     externalUrl() {
       return null;
     },

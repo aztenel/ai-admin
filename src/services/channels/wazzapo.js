@@ -3,6 +3,7 @@
 // вебхук Wazzapo перекладывается в формат вебхука Meta и идёт в общий обработчик — запись в Altegio, пауза бота,
 // «стоп», пульт, напоминания и рассылки работают без отдельной ветки кода.
 /** @import { Env } from "../../lib/types.js" */
+import { kvKey } from "../../lib/kv-id.js";
 import { wzOn, wzSend, wzCall, WZ_HINT, metaCode } from "../integrations/wazzapo/client.js";
 import { hash } from "../../lib/crypto.js";
 
@@ -55,17 +56,33 @@ const goneOrEdited = (m, d) => GONE_TYPE.test(String(m.type || "")) || !!(m.dele
 // Тот же текст в другое время («да» на два разных вопроса) — не повтор
 /** @type {WeakMap<object, Map<string, number>>} */
 const twinsOf = new WeakMap(); // память экземпляра Worker — отдельно для каждого хранилища (как в seenBefore)
+/** ключ отметки «то же сообщение» или "" (нет времени отправки или текста) @param {any} m @param {string} from */
+const twinKey = (m, from) => {
+  const text = typeof m.text === "string" ? m.text : (m.text && m.text.body) || "";
+  return m.timestamp && text ? `wzc:${from}:${String(m.timestamp).slice(0, 20)}:${hash(String(text))}` : "";
+};
 /** @param {Env} env @param {any} m @param {string} from @returns {Promise<boolean>} */
 async function twin(env, m, from) {
-  const text = typeof m.text === "string" ? m.text : (m.text && m.text.body) || "";
-  if (!m.timestamp || !text) return false;
-  const k = `wzc:${from}:${String(m.timestamp).slice(0, 20)}:${hash(String(text))}`, now = Date.now(), twins = twinsOf.get(env.KV) || new Map();
-  twinsOf.set(env.KV, twins);
+  const k = twinKey(m, from);
+  if (!k) return false;
+  const now = Date.now(), twins = twinsOf.get(kvKey(env.KV)) || new Map();
+  twinsOf.set(kvKey(env.KV), twins);
   if ((twins.get(k) || 0) > now - 600e3) return true;
   if (twins.size > 5000) twins.clear();
   twins.set(k, now);
   try { if (await env.KV.get(k)) return true; await env.KV.put(k, "1", { expirationTtl: 3600 }); } catch (e) { console.log("wz twin", String(e)); }
   return false;
+}
+/** Событие не записалось, Wazzapo получил ошибку (журнал вебхуков, controllers/webhooks/wazzapo.js): снять отметку «то же сообщение» —
+ *  иначе повтор доставки ушёл бы как дубль и сообщение пропало бы. @param {Env} env @param {any} body событие вебхука Wazzapo */
+export async function wzForget(env, body) {
+  const d = (body && body.data) || {}, m = d.message || {};
+  if (String((body && body.event) || "") !== "message.incoming") return;
+  const k = twinKey(m, digits(m.from || (d.contact && d.contact.phone)));
+  if (!k) return;
+  const twins = twinsOf.get(kvKey(env.KV));
+  if (twins) twins.delete(k);
+  try { await env.KV.delete(k); } catch (e) { console.log("wz twin forget", String(e).slice(0, 120)); }
 }
 
 // сообщение Wazzapo → сообщение в формате Meta (как его ждёт handleWAMessage)

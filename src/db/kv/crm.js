@@ -57,9 +57,23 @@ export async function bcmAdd(env, cid, day, phones) {
   await kvRetry(async () => { // чтение внутри повтора: вторая попытка — по свежим данным
     const had = JSON.parse((await env.KV.get(k)) || "[]");
     const all = [...new Set([...(Array.isArray(had) ? had : []).map(String), ...phones.map(p => String(p).replace(/\D/g, ""))])].filter(Boolean);
-    await env.KV.put(k, JSON.stringify(all), { expirationTtl: 15 * 86400 });
+    await env.KV.put(k, JSON.stringify(all), { expirationTtl: 31 * 86400 }); // 30 дней между рекламными сообщениями (31.10.2026)
   });
 }
+
+// убрать номера из отметки дня (демо-база черновика: настоящие номера остаются). → true, если что-то убрано
+/** @param {Env} env @param {string} cid @param {string} day @param {Set<string>} phones */
+export async function bcmDrop(env, cid, day, phones) {
+  const k = bcmKey(cid, day), v = await env.KV.get(k);
+  if (!v) return false;
+  /** @type {any[]} */ let had = []; try { had = JSON.parse(v) || []; } catch (e) {}
+  const rest = (Array.isArray(had) ? had : []).map(String).filter(p => !phones.has(p));
+  if (rest.length === had.length) return false;
+  if (rest.length) await kvRetry(() => env.KV.put(k, JSON.stringify(rest), { expirationTtl: 31 * 86400 })); else await kvRetry(() => env.KV.delete(k));
+  return true;
+}
+/** удалить снимок базы (демо-снимок при «Убрать демо-базу») @param {Env} env @param {string} cid */
+export const crmDrop = (env, cid) => kvRetry(() => env.KV.delete(crmKey(cid)));
 
 /** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
 export const autoLoad = async (env, cid) => JSON.parse((await env.KV.get(`bcauto:${cid}`)) || "null");

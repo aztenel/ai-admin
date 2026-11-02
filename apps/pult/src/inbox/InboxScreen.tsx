@@ -94,7 +94,7 @@ export function InboxScreen({ route }: { route: Extract<Route, { name: "inbox" }
           {all.length > 0 && <EmptyState
             icon={MessagesSquare}
             title="Выберите чат"
-            text={waiting ? `Ждут ответа: ${waiting}. Начните с них.` : "Слева — все переписки с клиентами."}
+            text={waiting ? `Ждут ответа: ${waiting}. Начните с них.` : "Выберите переписку слева."}
             action={
               waiting ? (
                 <Button size="sm" variant="outline" onClick={() => store.setFilter("waiting")}>

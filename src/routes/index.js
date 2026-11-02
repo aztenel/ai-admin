@@ -10,19 +10,22 @@ import { clean } from "../lib/text.js";
 import { sessionRead, keyGate, leadsKey, cookieSet, syncClients, runCase, gaShared, gaRoute, gaHook } from "../controllers/deps.js";
 import { tooManyKeys, handleLogin, enter } from "../controllers/auth.js";
 import { studioApi, studioPage } from "../controllers/studio.js";
-import { inboxApi } from "../controllers/inbox.js";
+import { inboxApi, inboxMe } from "../controllers/inbox.js";
 import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
+import { contactsApi } from "../controllers/contacts.js";
+import { chatStoreApi } from "../controllers/chatstore.js";
+import { pushApi } from "../controllers/push.js";
 import { leadsPage, privacyPage, portfolioPage, chatPage } from "../controllers/pages.js";
-import { diag } from "../controllers/diag.js";
+import { diag, storage } from "../controllers/diag.js";
 import { altDiag, altPage, altUserPage, altUserProbe } from "../controllers/altegio.js";
 import { selftestPage } from "../controllers/selftest.js";
 import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
-import { hookBurst, handleWhatsApp, handleWAClient } from "../controllers/webhooks/meta.js";
+import { hookBurst, handleWAClient, waHook } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
-import { handleGreen } from "../controllers/webhooks/greenapi.js";
+import { greenHook } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
 import { siteApi } from "../controllers/site.js";
 
@@ -89,8 +92,8 @@ export async function route(request, env, ctx, pult) {
     if (P.startsWith("/api/inbox/")) {
       const s = await sessionRead(env, request);
       if (!s) return jsonP({ error: "Войдите заново." }, 401);
-      if (M === "GET" && P === "/api/inbox/me") return jsonP({ owner: s.role === "owner", c: s.role === "staff" ? s.cid : "" });
-      return inboxApi(request, env, url, s);
+      if (M === "GET" && P === "/api/inbox/me") return jsonP(inboxMe(env, s));
+      return inboxApi(request, env, url, s, ctx);
     }
     // ---- проверка запуска (чек-лист подключений и экзамен бота)
     if (M === "GET" && P === "/launch") {
@@ -120,6 +123,21 @@ export async function route(request, env, ctx, pult) {
       const s = await sessionRead(env, request);
       return s ? crmApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
+    // ---- единая база контактов D1 (этап 1, docs/architecture-cloudflare-d1.md §6.2): клиенты, согласия, запреты, синхронизация Altegio
+    if (P.startsWith("/api/contacts/")) {
+      const s = await sessionRead(env, request);
+      return s ? contactsApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
+    // ---- переписки в D1 (01.11.2026): перенос из KV, сверка, выгрузка в KV для отката — только владелец (controllers/chatstore.js)
+    if (P.startsWith("/api/chatstore/")) {
+      const s = await sessionRead(env, request);
+      return s ? chatStoreApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
+    // ---- push-уведомления пульта /app/ на телефоны и компьютеры сотрудников (ТЗ v2.0 §3)
+    if (P.startsWith("/api/push/")) {
+      const s = await sessionRead(env, request);
+      return s ? pushApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
     // ---- WhatsApp клиента со своим номером: вебхук /wa/<id>
     const wm = /^\/wa\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (wm) return handleWAClient(request, env, ctx, wm[1], url.origin);
@@ -127,6 +145,7 @@ export async function route(request, env, ctx, pult) {
     const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? page(diagPage(await diag(env))) : a || forbid(); }
+    if (M === "GET" && P === "/diag/storage") { const a = await owner(); return a === true ? page(diagPage(await storage(env), "Хранилища")) : a || forbid(); }
     if (M === "GET" && P === "/admin") { // панель владельца: все служебные страницы в одном месте
       const a = await enter(request, env, url);
       if (a.res) return a.res;
@@ -173,14 +192,14 @@ export async function route(request, env, ctx, pult) {
       const c = hasClient(url.searchParams.get("c")) ? url.searchParams.get("c") : "dent";
       const sid = cleanSid(url.searchParams.get("sid"));
       let turns = [];
-      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns; }
+      try { const h = sid ? JSON.parse((await env.KV.get(`h:web:${c}:${sid}`)) || "null") : null; if (h && Array.isArray(h.turns)) turns = h.turns.map((/** @type {any} */ t) => { const { _i, ...x } = t || {}; return x; }); } // _i — номер строки в D1, наружу не нужен
       catch (e) { console.log("history read", String(e)); } // хранилище не отвечает — чат открывается без прежней переписки, а не с ошибкой
       return jsonP({ turns }); // переписка клиента: не кэшировать
     }
     if (M === "POST" && P === "/ga") { // Green-API, общий номер воркера
       if (!env.GA_HOOK || url.searchParams.get("t") !== env.GA_HOOK) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, gaShared(env)).catch(err => console.log("ga error", String(err))));
+      if (body && !(await greenHook(body, env, ctx, url.origin, gaShared(env)))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Green-API повторит
       return new Response("OK");
     }
     const gam = M === "POST" && /^\/ga\/([a-z][a-z0-9]{1,15})$/.exec(P);
@@ -188,7 +207,7 @@ export async function route(request, env, ctx, pult) {
       const r = /** @type {any} */ (gaRoute(env, gam[1]));
       if (!r || r.shared || !eqSafe(url.searchParams.get("t") || "", await gaHook(r))) return forbid();
       let body = null; try { body = await request.json(); } catch (e) {}
-      if (body) ctx.waitUntil(handleGreen(body, env, url.origin, r).catch(err => console.log("ga error", String(err))));
+      if (body && !(await greenHook(body, env, ctx, url.origin, r))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Green-API повторит
       return new Response("OK");
     }
     if (M === "POST" && (P === "/" || P === "/webhook")) { // WhatsApp Cloud API (Meta), общий номер воркера. Вебхуки клиентов со своим номером — /wa/<id>
@@ -197,7 +216,8 @@ export async function route(request, env, ctx, pult) {
       if (env.APP_SECRET) { if (!(await metaSigOk(env.APP_SECRET, raw, request.headers.get("x-hub-signature-256")))) return new Response("Bad signature", { status: 403 }); }
       else if (hookBurst(request)) return new Response("Too many requests", { status: 429 }); // без подписи Meta: не больше 30 запросов в минуту с одного адреса
       let body = null; try { body = JSON.parse(raw); } catch (e) {}
-      if (body) ctx.waitUntil(handleWhatsApp(body, env, { origin: url.origin, signed: !!env.APP_SECRET }).catch(err => console.log("wa error", err)));
+      // с подписью и переписками WA_CLIENT в D1 — через журнал вебхуков (controllers/webhooks/meta.js waHook); иначе — как раньше
+      if (body && !(await waHook(body, env, ctx, { origin: url.origin, signed: !!env.APP_SECRET }, { shared: true }))) return new Response("Retry later", { status: 503 }); // не записалось нигде — Meta повторит
       return new Response("OK");
     }
     if (M === "POST") return new Response("Not found", { status: 404 });

@@ -1,7 +1,7 @@
 // @ts-check
 // Altegio: журнал записей локации за период (ключ пользователя) — для базы клиентов (services/crm/snapshot.js).
 // Только HTTP и страницы: записи отдаются как пришли (id, datetime, deleted, attendance, visit_attendance, staff, client, services),
-// разбирает их слой services. Не проверено вживую: журнал Winchester за 90 дней постранично (проверено только по номеру клиента).
+// разбирает их слой services. Вживую 30.10.2026: журнал Winchester за 150 дней — 2 175 записей, 11 страниц (проверка без записи).
 /** @import { Env } from "../../../lib/types.js" */
 import { altCall } from "./client.js";
 

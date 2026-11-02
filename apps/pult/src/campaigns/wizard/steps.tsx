@@ -42,7 +42,7 @@ export function RecipientsSection({ f, set, r, errs, crm, base, owner }: P & { c
         </div>
       ) : base === "none" ? (
         <p className="mb-4 px-1 text-sm text-fg-2">
-          {crm.error && !crm.data ? `База клиентов не загрузилась: ${crm.error}` : "Базы клиентов из Altegio у компании нет — вставьте список номеров."}
+          {crm.error && !crm.data ? `База клиентов не загрузилась: ${crm.error}` : "Базы клиентов из Altegio у компании нет. Вставьте список номеров."}
           {crm.error && !crm.data && (
             <button type="button" onClick={() => void crm.reload()} className="ml-1 inline-flex items-center font-medium text-accent-ink underline-offset-2 hover:underline pointer-coarse:min-h-11">
               Повторить
@@ -73,7 +73,7 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
         <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">
           {base === "empty"
             ? owner
-              ? "Базы клиентов ещё нет. Нажмите «Обновить базу» в разделе «База клиентов» — бот прочитает журнал Altegio (до минуты)."
+              ? "Базы клиентов ещё нет. Нажмите «Обновить базу» в разделе «База клиентов»: бот прочитает журнал Altegio, это до минуты."
               : "Базы клиентов ещё нет. Её собирает владелец кнопкой «Обновить базу» в разделе «База клиентов»."
             : "Базы клиентов у компании нет. Выберите «Список номеров»."}
         </p>
@@ -86,7 +86,7 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
   return (
     <>
       {errs.segId && <ErrorList errors={[errs.segId]} title="Не выбран сегмент" className="mb-4" />}
-      <Group title="Сегмент базы" note={`База обновлена ${shortDate(crm.at, Date.now())}. Можно писать ${nf.format(crm.ok)} из ${nf.format(crm.clients)}: кто просил не писать, записан, был меньше 14 дней назад или уже получал рассылку за 14 дней — не входят.`}>
+      <Group title="Сегмент базы" note={`База обновлена ${shortDate(crm.at, Date.now())}. Можно писать ${nf.format(crm.ok)} из ${nf.format(crm.clients)}: кто просил не писать, записан, был меньше 14 дней назад или уже получал рассылку за 14 дней, сюда не входят.`}>
         <div role="radiogroup" aria-label="Сегмент базы" className="[&>*+*]:border-t [&>*+*]:border-line">
           {main.map((s) => (
             <RadioRow key={s.id} name="seg" checked={r.spec.id === s.id} onSelect={() => pick(s.id)} title={s.label} sub={segRule(s)} aside={nf.format(s.n)} />
@@ -143,7 +143,7 @@ function ListInput({ f, set, errs }: P) {
   const onFile = async (file: File | undefined) => {
     setFileErr("");
     if (!file) return;
-    if (file.size > 3 * 1024 * 1024) return setFileErr("Файл больше 3 МБ — вставьте список текстом.");
+    if (file.size > 3 * 1024 * 1024) return setFileErr("Файл больше 3 МБ. Вставьте список текстом.");
     try {
       set({ recipients: await file.text() });
     } catch {
@@ -160,7 +160,7 @@ function ListInput({ f, set, errs }: P) {
           onChange={(e) => set({ recipients: e.target.value })}
           placeholder={"+7 7XX XXX XX XX, Айгерим\n+7 7XX XXX XX XX, Арман"}
           error={errs.recipients}
-          hint="По клиенту на строке: номер и имя через запятую. Из Excel — выделите столбцы с номером и именем, скопируйте и вставьте. Повторы и тех, кто просил не писать, бот уберёт сам."
+          hint="По клиенту на строке: номер и имя через запятую. Из Excel: выделите столбцы с номером и именем, скопируйте и вставьте. Повторы и тех, кто просил не писать, бот уберёт сам."
           spellCheck={false}
         />
         <div className="py-3">
@@ -234,14 +234,14 @@ export function MessageSection({ f, set, errs }: P) {
           onChange={(e) => set({ text: e.target.value })}
           placeholder={"Например: Здравствуйте, {{1}}! Давно вас не видели…\nЧтобы не получать сообщения, ответьте СТОП"}
           error={errs.text}
-          hint="Скопируйте из кабинета Meta, вместе с {{1}}. Его увидят администратор и бот — клиент может ответить на рассылку."
+          hint="Скопируйте из кабинета Meta, вместе с {{1}}. Его увидят администратор и бот, ведь клиент может ответить на рассылку."
         />
       </Group>
       <Group
         title="Подстановки"
         note={
           <>
-            Что поставить вместо {"{{1}}"}, {"{{2}}"}… — по порядку. {"{имя}"} — имя клиента. В шаблоне нет переменных — уберите все строки.
+            Что поставить вместо {"{{1}}"}, {"{{2}}"}… по порядку. {"{имя}"} означает имя клиента. Если в шаблоне нет подстановок, уберите все строки.
           </>
         }
       >
@@ -278,12 +278,12 @@ export function MessageSection({ f, set, errs }: P) {
           {errs.params ||
             (vars === 0
               ? `В тексте шаблона нет переменных, а ${n === 1 ? "подстановка есть" : `подстановок ${n}`}. Уберите ${n === 1 ? "строку «Вместо {{1}}»" : "строки подстановок"}, иначе Meta не примет шаблон.`
-              : `В тексте шаблона ${vars} ${plural(vars, ["переменная", "переменные", "переменных"])}, а подстановок ${n}. Если число не совпадает, Meta не примет шаблон — проверьте пробной отправкой.`)}
+              : `В тексте шаблона ${vars} ${plural(vars, ["переменная", "переменные", "переменных"])}, а подстановок ${n}. Если число не совпадает, Meta не примет шаблон. Проверьте пробной отправкой.`)}
         </p>
       )}
       <Group>
         <TextField
-          label="Картинка — ссылка"
+          label="Ссылка на картинку"
           optional
           type="url"
           inputMode="url"
@@ -307,7 +307,7 @@ export function HoursSection({ f, set, errs, ov }: P & { ov: CampaignsOverview }
   const limit = m.limit === -1 ? "без ограничений" : m.limit > 0 ? `${nf.format(m.limit)} получателей за 24 часа` : "неизвестен";
   return (
     <>
-      <Group title="Часы отправки по Астане" note="Шаблоны — с 11:00 до 20:00: так меньше жалоб. Вне этих часов рассылка ждёт и продолжает сама.">
+      <Group title="Часы отправки по Астане" note="Шаблоны лучше слать с 11:00 до 20:00: так меньше жалоб. Вне этих часов рассылка ждёт и продолжает сама.">
         <div className="grid grid-cols-2 gap-3">
           <SelectField label="С" value={String(f.from)} onChange={(e) => set({ from: Number(e.target.value) })} error={errs.hours}>
             {Array.from({ length: 14 }, (_, i) => i + 8).map((h) => (
@@ -329,7 +329,7 @@ export function HoursSection({ f, set, errs, ov }: P & { ov: CampaignsOverview }
         note={
           <>
             Предел Meta для номера: {limit}. Он общий для всех рассылок с этого номера; отправлено за последние сутки: {nf.format(m.used24h)}.
-            {m.limit > 0 ? " По умолчанию — 95% предела, с запасом." : " По умолчанию — 240."}
+            {m.limit > 0 ? " По умолчанию 95% предела, с запасом." : " По умолчанию 240."}
           </>
         }
       >
@@ -378,7 +378,7 @@ export function CheckSection({
             {res ? "Проверить ещё раз" : "Проверить"}
           </Button>
           <span className="text-sm text-fg-3">
-            {!res ? "Сервер посчитает получателей и покажет, как сообщение увидит клиент. Ничего не отправляется." : stale ? "Данные изменились — проверьте ещё раз." : ""}
+            {!res ? "Сервер посчитает получателей и покажет, как сообщение увидит клиент. Ничего не отправляется." : stale ? "Данные изменились, проверьте ещё раз." : ""}
           </span>
         </div>
       )}
@@ -411,7 +411,7 @@ export function CheckSection({
                 {unfilled(f.text, res.preview) && (
                   <span className="mt-1 flex items-start gap-1.5 text-critical">
                     <TriangleAlert aria-hidden className="mt-px size-4 shrink-0" strokeWidth={2} />
-                    {`${unfilled(f.text, res.preview)} нечем заменить — добавьте подстановку в разделе «Сообщение», иначе Meta не примет шаблон.`}
+                    {`${unfilled(f.text, res.preview)} нечем заменить. Добавьте подстановку в разделе «Сообщение», иначе Meta не примет шаблон.`}
                   </span>
                 )}
               </Note>
@@ -422,7 +422,7 @@ export function CheckSection({
       )}
       {!desktop && (error || (res && !res.ok)) && (
         <div className="mb-6 px-1">
-          <p className="mb-3 text-sm text-fg-2">Исправить можно на прошлых шагах — стрелка «назад» вверху.</p>
+          <p className="mb-3 text-sm text-fg-2">Исправить можно на прошлых шагах, стрелка «назад» вверху.</p>
           <Button variant="outline" icon={RefreshCw} busy={checking} onClick={onCheck}>
             Проверить ещё раз
           </Button>
@@ -446,7 +446,7 @@ function CheckSummary({ res, r }: { res: CampaignCheck; r: Resolved }) {
   if (res.segment) rows.push(["Сегмент", res.segment.label], ["База от", shortDate(res.segment.at, Date.now())]);
   if (res.named) rows.push(["С именем", nf.format(res.named)]);
   if (res.dup) rows.push(["Повторов убрано", nf.format(res.dup)]);
-  if (res.stopped) rows.push(["Просили не писать — им не уйдёт", nf.format(res.stopped)]);
+  if (res.stopped) rows.push(["Просили не писать, им не уйдёт", nf.format(res.stopped)]);
   if (res.listFilter) rows.push([res.listFilter.label, `не подошли ${nf.format(res.listFilter.out)}${res.listFilter.noDate ? `, без даты ${nf.format(res.listFilter.noDate)}` : ""}`]);
   if (res.cut) rows.push(["Отброшено сверх 20 000", nf.format(res.cut)]);
   return (
@@ -468,7 +468,7 @@ function CheckSummary({ res, r }: { res: CampaignCheck; r: Resolved }) {
         {res.badN > 0 && (
           <div className="py-3 text-ui pointer-coarse:text-base">
             <p className="text-fg">
-              Не понял строк: <span className="tnum">{nf.format(res.badN)}</span> — им не уйдёт.
+              Не понял строк: <span className="tnum">{nf.format(res.badN)}</span>, им не уйдёт.
             </p>
             {res.bad.length > 0 && <p className="mt-1 break-words text-sm text-fg-3">Например: {res.bad.slice(0, 3).map((b) => `«${b}»`).join(", ")}</p>}
           </div>
@@ -501,8 +501,8 @@ function Cost({ n, cap }: { n: number; cap: number }) {
         </div>
       </Group>
       <Note>
-        {nf.format(n)} × {String(MARKETING_PRICE_KZT).replace(".", ",")} ₸ за шаблон «Маркетинг». Это оценка: точная цена — в кабинете Meta.
-        {days > 1 && ` В сутки уйдёт не больше ${nf.format(cap)} — на всех понадобится около ${days} ${plural(days, ["дня", "дней", "дней"])}.`}
+        {nf.format(n)} × {String(MARKETING_PRICE_KZT).replace(".", ",")} ₸ за шаблон «Маркетинг». Это оценка, точная цена в кабинете Meta.
+        {days > 1 && ` В сутки уйдёт не больше ${nf.format(cap)}, на всех понадобится около ${days} ${plural(days, ["дня", "дней", "дней"])}.`}
       </Note>
     </>
   );
@@ -538,7 +538,7 @@ function TestSend({ ws, draft }: { ws: string; draft: CampaignDraft }) {
           onChange={(e) => setTo(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void send()}
           placeholder="+7 7XX XXX XX XX"
-          hint="Шаблон придёт с основного номера; вместо имени — «Айгерим». Так видно, принимает ли Meta шаблон."
+          hint="Шаблон придёт с основного номера; вместо имени будет «Айгерим». Так видно, принимает ли Meta шаблон."
         />
         <div className="py-3">
           <Button variant="outline" busy={busy} onClick={() => void send()}>
@@ -599,7 +599,7 @@ export function LaunchSection({ f, set, r, errs, ov, res, name, errors }: P & { 
         </dl>
       </Group>
       <Group>
-        <TextField label="Название — для себя" value={name} onChange={(e) => set({ name: e.target.value, nameTouched: true })} maxLength={60} error={errs.name} />
+        <TextField label="Название для себя" value={name} onChange={(e) => set({ name: e.target.value, nameTouched: true })} maxLength={60} error={errs.name} />
       </Group>
       <Group>
         <Checkbox checked={f.consent} onChange={(v) => set({ consent: v })} error={errs.consent}>

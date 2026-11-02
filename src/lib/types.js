@@ -18,8 +18,9 @@
  */
 
 /**
- * Реплика в истории чата.
- * @typedef {{ role: string, text: string, t?: number, by?: string, m?: any }} Turn
+ * Реплика в истории чата. mid — номер сообщения у провайдера, st — статус доставки; del — удалено (клиентом или у всех),
+ * dl — удалено у всех из пульта, dlu — удаляли, но неизвестно, удалилось ли; hid — скрыто в пульте («Удалить у меня»)
+ * @typedef {{ role: string, text: string, t?: number, by?: string, m?: any, mid?: string, st?: string, del?: number, dl?: { at: number, by: string }, dlu?: { at: number, by: string }, hid?: { at: number, by: string } }} Turn
  */
 
 /**

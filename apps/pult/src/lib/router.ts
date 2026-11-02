@@ -7,12 +7,15 @@ export type Route =
   | { name: "inbox"; conv?: string; contact?: boolean }
   | { name: "requests" }
   | { name: "campaigns" }
+  | { name: "clients"; id?: string }
   | { name: "settings"; section?: string };
 
 export function parse(hash: string): Route {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (p[0] === "requests") return { name: "requests" };
   if (p[0] === "campaigns") return { name: "campaigns" };
+  // карточка клиента — своя запись истории: жест «назад» закрывает её, а не уводит из раздела
+  if (p[0] === "clients") return p[1] ? { name: "clients", id: p[1] } : { name: "clients" };
   if (p[0] === "settings") return { name: "settings", section: p[1] };
   if (p[0] === "inbox" && p[1] && p[1].includes(":")) return { name: "inbox", conv: p[1], contact: p[2] === "contact" };
   return { name: "inbox" };
@@ -21,6 +24,7 @@ export function parse(hash: string): Route {
 export function href(r: Route): string {
   if (r.name === "inbox") return "#/inbox" + (r.conv ? "/" + encodeURIComponent(r.conv) + (r.contact ? "/contact" : "") : "");
   if (r.name === "settings") return "#/settings" + (r.section ? "/" + r.section : "");
+  if (r.name === "clients") return "#/clients" + (r.id ? "/" + encodeURIComponent(r.id) : "");
   return "#/" + r.name;
 }
 

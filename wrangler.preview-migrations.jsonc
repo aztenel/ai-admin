@@ -1,0 +1,13 @@
+{
+  // Только для миграций базы черновиков (Worker Previews → документация Cloudflare «D1 migrations»):
+  //   npx wrangler d1 migrations apply PREVIEW_DB --remote --config wrangler.preview-migrations.jsonc
+  // Имя и id — те же, что в previews.d1_databases файла wrangler.jsonc. Боевую базу ai-admin этот файл не знает.
+  "d1_databases": [
+    {
+      "binding": "PREVIEW_DB",
+      "database_name": "ai-admin-dev",
+      "database_id": "ecfe6f12-469b-440b-bd40-362f83a04e26",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

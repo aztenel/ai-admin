@@ -11,6 +11,7 @@ import { altNamed, altPickServices, altPickStaff, altServiceWanted, altServicesL
 import { gridStep, durGroups, askedTimes, fitBlock, fitStarts, nearest, durStr, withDurations, withFreed, tStr } from "./fit.js";
 import { money } from "../../lib/money.js";
 import { clean } from "../../lib/text.js";
+import { isPreview } from "../../lib/stage.js";
 import { svTrim } from "../../lib/names.js";
 import { altEmailErr, ALT_EMAIL_TIP } from "../integrations/altegio/errors.js";
 import { altDateOf, dowsIn } from "../conversation/tags.js";
@@ -26,8 +27,10 @@ export const altSelfCancel = (env, c) => {
 // Режим «проверка без записи»: бот находит окно и проверяет запись через book_check, но в журнал Altegio ничего не пишет.
 // Нужен для показов на настоящих данных чужого бизнеса (Winchester, 14.10.2026), чтобы чат не занимал им живые окна.
 // Включается altegio.dry в блоке клиента; для одного клиента переопределяется Text ALTEGIO_DRY_<ID> = 1 или 0.
+// На черновике — всегда (аудит 31.10.2026): запись в настоящий Altegio с тестовой версии не уходит, даже если переменная говорит «0».
 /** @param {Env} env @param {Client} c */
 export const altDry = (env, c) => {
+  if (isPreview(env)) return true;
   const v = env["ALTEGIO_DRY_" + String(c.id).toUpperCase()];
   return v != null && String(v).trim() !== "" ? /^(1|true|yes|да)$/i.test(String(v).trim()) : !!(c.altegio && c.altegio.dry);
 };

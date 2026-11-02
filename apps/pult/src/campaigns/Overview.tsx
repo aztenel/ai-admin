@@ -141,7 +141,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
       )}
       <Group
         title="Основной номер"
-        note={m.ready ? "Отсюда уходят маркетинговые рассылки — шаблонами Meta. Тем, кто ответил «стоп», рассылки не уходят." : undefined}
+        note={m.ready ? "Отсюда уходят рассылки шаблонами Meta. Тем, кто ответил «стоп», рассылки не уходят." : undefined}
       >
         <NumberHead
           icon={Smartphone}
@@ -153,7 +153,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
         {!m.ready ? (
           <p className="flex gap-2 py-3 text-ui text-critical pointer-coarse:text-base">
             <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
-            <span>{m.why || "Основной номер не подключён — маркетинговые рассылки появятся после подключения."}</span>
+            <span>{m.why || "Основной номер не подключён к рассылкам."}</span>
           </p>
         ) : (
           <dl className="grid grid-cols-3 divide-x divide-line">
@@ -166,7 +166,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
           <p className={cn("flex gap-2 py-3 text-ui pointer-coarse:text-base", m.quality === "red" ? "text-critical" : "text-fg")}>
             <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
             <span>
-              Качество {QUALITY[m.quality].label}. Пишите реже и только тем, кто ждёт ваших сообщений, — иначе Meta может ограничить номер.
+              Качество {QUALITY[m.quality].label}. Пишите реже и только тем, кто ждёт ваших сообщений, иначе Meta может ограничить номер.
             </span>
           </p>
         )}
@@ -186,7 +186,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
               <ul className="mt-1 space-y-0.5 text-sm text-fg-2">
                 {m.failedToday.codes.map((c) => (
                   <li key={String(c.code)}>
-                    <span className="tnum">{c.n}</span> — {c.hint || `код ${c.code}`}
+                    <span className="tnum">{c.n}</span>: {c.hint || `код ${c.code}`}
                   </li>
                 ))}
               </ul>
@@ -198,7 +198,7 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
         open={ask}
         onOpenChange={setAsk}
         title="Снять сигнал Meta?"
-        text="Делайте это, только если причина устранена (например, шаблон снова одобрен). Остановленные рассылки останутся на паузе — их продолжают кнопкой «Продолжить»."
+        text="Делайте это, только если причина устранена (например, шаблон снова одобрен). Остановленные рассылки останутся на паузе, их продолжают кнопкой «Продолжить»."
         yes="Снять сигнал"
         onYes={() => void clear()}
       />
@@ -211,7 +211,7 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
   const b = ov.bot;
   if (!b)
     return (
-      <Group title="Номер бота">
+      <Group title="Второй WhatsApp">
         <NumberHead icon={Bot} phone="Не подключён" sub="Green-API · обычный WhatsApp" />
         <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Номера бота (Green-API) у компании нет. Напоминания и просьбу об отзыве бот шлёт с того номера, куда писал клиент.</p>
       </Group>
@@ -219,7 +219,7 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
   return (
     <>
       {b.hold && <HoldBox title="Сигнал от Green-API" lines={[b.hold]} foot="WhatsApp ограничил номер. Сигнал снимется сам через 14 дней." />}
-      <Group title="Номер бота" note="Маркетинговых рассылок с этого номера нет: массовые сообщения с обычного WhatsApp — главная причина блокировок.">
+      <Group title="Второй WhatsApp" note="Отсюда уходят напоминания и ответы клиентам.">
         <NumberHead
           icon={Bot}
           tone={b.ready ? "muted" : "critical"}
@@ -238,8 +238,8 @@ export function BotNumber({ ov }: { ov: CampaignsOverview }) {
               <span className="text-critical">{b.why || "Номер не на связи."}</span>
             </Field>
           )}
-          <Field label="Вебхук">
-            {b.hook ? <span className="text-positive">ведёт в бота</span> : <span className="text-critical">не настроен</span>}
+          <Field label="Входящие">
+            {b.hook ? <span className="text-positive">приходят в пульт</span> : <span className="text-critical">не приходят</span>}
           </Field>
           {!b.hook && b.warn && <p className="py-2.5 text-sm text-fg-2">{b.warn}</p>}
           <Field label="Рассылками за 24 часа">
@@ -272,6 +272,40 @@ export function NumberSkeleton() {
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+/** Карточка канала маркетинга (ТЗ v3.0 §2.2, §5.1): «Второй WhatsApp», на связи ли, можно ли запускать рассылки, главное действие.
+ *  Запуск со второго номера — отдельное решение владельца: пока он выключен на сервере, здесь так и написано. */
+export function ChannelCard({ ov, onCreate }: { ov: CampaignsOverview; onCreate: () => void }) {
+  const b = ov.bot;
+  const off = !!b?.noBroadcast;
+  return (
+    <section aria-label="Канал рассылок" className="mb-4 rounded-2xl bg-surface p-4 shadow-card">
+      <div className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent-ink">
+          <Smartphone aria-hidden className="size-5" strokeWidth={1.9} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[1.0625rem] font-semibold">Второй WhatsApp</p>
+          <p className="text-sm text-fg-2">{b?.phone ? formatPhone(b.phone) : "номер не подключён"}</p>
+        </div>
+        {b && (
+          <span className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium", b.ready ? "bg-positive-soft text-positive" : "bg-critical-soft text-critical")}>
+            {b.ready ? <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} /> : <CircleAlert aria-hidden className="size-3.5" strokeWidth={2.25} />}
+            {b.ready ? "На связи" : "Нет соединения"}
+          </span>
+        )}
+      </div>
+      {b && (
+        <p className={cn("mt-3 text-sm", off ? "text-fg-2" : "text-positive")}>
+          {off ? "Запуск рассылок выключен. Черновики, проверка и одобрение работают." : "Рассылки с этого номера можно запускать."}
+        </p>
+      )}
+      <Button variant="primary" size="lg" className="mt-3 w-full md:hidden" onClick={onCreate}>
+        Создать рассылку
+      </Button>
     </section>
   );
 }

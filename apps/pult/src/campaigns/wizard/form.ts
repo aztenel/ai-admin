@@ -147,23 +147,23 @@ export function validate(step: number, f: Form, r: Resolved): Errs {
       if (!r.spec.id) e.segId = "Выберите, кому писать.";
       if (f.filters) {
         const bad = [f.dayFrom, f.dayTo].some((s) => s.trim() !== "" && (!int(s) || Number(s) > 400));
-        if (bad) e.days = "Дни с визита — целое число от 0 до 400.";
+        if (bad) e.days = "Дни с визита: целое число от 0 до 400.";
         else if (r.spec.from !== undefined && r.spec.to !== undefined && r.spec.from > r.spec.to) e.days = "«От» должно быть не больше, чем «до».";
       }
     } else {
       if (!f.recipients.trim()) e.recipients = "Вставьте номера: по клиенту на строке.";
-      if (f.listKind && (!int(f.listDays) || Number(f.listDays) < 1 || Number(f.listDays) > 365)) e.listDays = "Число дней — от 1 до 365.";
+      if (f.listKind && (!int(f.listDays) || Number(f.listDays) < 1 || Number(f.listDays) > 365)) e.listDays = "Число дней: от 1 до 365.";
     }
   }
   if (step === 1) {
     const tpl = f.tpl.trim();
     if (!tpl) e.tpl = "Впишите название шаблона из кабинета Meta.";
-    else if (!TEMPLATE_RE.test(tpl)) e.tpl = "Только строчные латинские буквы, цифры и «_» — как в кабинете Meta (например, promo_october).";
-    if (!f.text.trim()) e.text = "Вставьте текст шаблона — его увидят администратор и бот.";
-    else if (f.text.trim().length > 1100) e.text = "Текст длиннее 1100 знаков — сократите.";
+    else if (!TEMPLATE_RE.test(tpl)) e.tpl = "Только строчные латинские буквы, цифры и «_», как в кабинете Meta (например, promo_october).";
+    if (!f.text.trim()) e.text = "Вставьте текст шаблона: его увидят администратор и бот.";
+    else if (f.text.trim().length > 1100) e.text = "Текст длиннее 1100 знаков, сократите.";
     const p = cleanParams(f.params);
     if (p.length > 10) e.params = "Не больше 10 подстановок.";
-    else if (p.some((x) => x.length > 300)) e.params = "Подстановка длиннее 300 знаков — сократите.";
+    else if (p.some((x) => x.length > 300)) e.params = "Подстановка длиннее 300 знаков, сократите.";
     if (f.img.trim() && !IMAGE_RE.test(f.img.trim())) e.img = "Ссылка на картинку должна начинаться с https://";
     if (f.fallback.trim().length > 30) e.fallback = "Не длиннее 30 знаков.";
   }
@@ -173,7 +173,7 @@ export function validate(step: number, f: Form, r: Resolved): Errs {
     if (!(f.from < f.to)) e.hours = "«С» должно быть раньше, чем «до».";
   }
   if (step === STEP_LAUNCH) {
-    if (nameOf(f, r, Date.now()).trim().length < 2) e.name = "Дайте рассылке название — для себя.";
+    if (nameOf(f, r, Date.now()).trim().length < 2) e.name = "Дайте рассылке название для себя.";
     if (!f.consent) e.consent = "Подтвердите, что это клиенты компании и они не просили им не писать.";
   }
   return e;

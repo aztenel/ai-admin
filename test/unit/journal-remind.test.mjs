@@ -8,6 +8,7 @@ import { jrPlan, jrRun } from "../../src/services/reminders/journal.js";
 import { atLocal } from "../../src/services/reminders/plan.js";
 import { botOff } from "../../src/services/channels/index.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
+import { SCENARIOS } from "../../src/services/reminders/templates.js";
 
 const W = CLIENTS.winchester, INST = { id: "7105000088", token: "ga-tok-jr" };
 const ENV = { ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, REMIND_GA_WINCHESTER: "1" };
@@ -21,6 +22,8 @@ const rec = (phone, date, time, o = {}) => ({ id: o.id || ++rid, datetime: `${da
 const ph = i => "+7700000" + String(i).padStart(4, "0");
 const dg = i => ph(i).slice(1);
 const sent = () => net.ga.filter(x => x.op === "sendMessage").map(x => ({ to: x.body.chatId.replace("@c.us", ""), text: x.body.message }));
+// тексты одобрены владельцем (svtpl:<клиент>, ТЗ v2.0 §4): без одобрения ничего не уходит — это проверяет service-scenarios.test.mjs
+const approve = s => s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }]))));
 const kinds = (items, id) => items.filter(x => x.rec === String(id)).map(x => x.k).sort();
 
 test("план: накануне в 18:00, за 2 часа (только с 10 до 21), отзыв после визита; удалённые, скрытые номера и неявки — без сообщений", () => {
@@ -56,7 +59,7 @@ test("бот на втором номере Winchester выключен по у�
 test("накануне в 18:00 напоминание уходит со второго номера, один раз; в пульте — переписка с именем из Altegio", async () => {
   net.reset();
   net.altJournal = [rec(ph(211), TOM, "15:00", { id: 11, name: "Арман", staff: "Айдос", svc: "Мужская стрижка" }), rec(ph(212), TOM, "12:30", { id: 12 })];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "17:00"));
   assert.deepEqual(sent(), [], "в 17:00 ещё рано");
   assert.ok(net.alt.some(x => /^GET \/records\/133486\?start_date=2026-10-18&end_date=2026-10-20/.test(x)), net.alt.join("\n"));
@@ -76,7 +79,7 @@ test("накануне в 18:00 напоминание уходит со вто�
 test("не больше двух сообщений в минуту: остальные — в следующие минуты", async () => {
   net.reset();
   net.altJournal = [1, 2, 3, 4, 5].map(i => rec(ph(220 + i), TOM, `1${i}:00`, { id: 20 + i }));
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "17:55"));
   await jrRun(s.env, at(TODAY, "18:00")); assert.equal(sent().length, 2);
   await jrRun(s.env, at(TODAY, "18:01")); assert.equal(sent().length, 4);
@@ -88,7 +91,7 @@ test("перед отправкой запись перечитывается: �
   net.reset();
   const a = rec(ph(231), TOM, "15:00", { id: 31 }), b = rec(ph(232), TOM, "16:00", { id: 32 }), c = rec(ph(233), TOM, "17:00", { id: 33 });
   net.altJournal = [a, b, c];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "17:50"));
   a.deleted = true; b.datetime = `${TOM}T12:00:00+05:00`; c.attendance = -1;
   await jrRun(s.env, at(TODAY, "18:00")); await jrRun(s.env, at(TODAY, "18:01"));
@@ -102,7 +105,7 @@ test("перед отправкой запись перечитывается: �
 test("«стоп» — не пишем; после 21:00 не пишем", async () => {
   net.reset();
   net.altJournal = [rec(ph(241), TOM, "15:00", { id: 41 }), rec(ph(242), TOM, "16:00", { id: 42 }), rec(ph(243), TODAY, "17:30", { id: 43, att: 1 })];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await s.kv.api.put(`optout:winchester:${dg(241)}`, "1");
   await jrRun(s.env, at(TODAY, "17:00"));
   await jrRun(s.env, at(TODAY, "18:00"));
@@ -116,7 +119,7 @@ test("отзыв: только если администратор отмети�
   net.reset();
   const v = rec(ph(251), TODAY, "12:00", { id: 51, att: 0 });
   net.altJournal = [v];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "14:00"));
   await jrRun(s.env, at(TODAY, "15:00"));
   assert.deepEqual(sent(), [], "«пришёл» не отмечен — ждём");
@@ -132,7 +135,7 @@ test("отзыв: только если администратор отмети�
 test("отзыв без отметки «пришёл» за 3 часа — не шлём вовсе", async () => {
   net.reset();
   net.altJournal = [rec(ph(261), TODAY, "11:00", { id: 61, att: 2 })];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "13:00"));
   for (const t of ["14:00", "15:00", "16:00", "17:01"]) await jrRun(s.env, at(TODAY, t));
   assert.deepEqual(sent(), []);
@@ -141,7 +144,7 @@ test("отзыв без отметки «пришёл» за 3 часа — не
 test("Green-API отказал (номер заблокирован) — пауза и сигнал в Telegram; 429 — попытка в следующую минуту", async () => {
   net.reset();
   net.altJournal = [rec(ph(271), TOM, "15:00", { id: 71 }), rec(ph(272), TOM, "16:00", { id: 72 })];
-  const s = mk(ENV);
+  const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "17:00"));
   net.gaReply = r => r.op === "sendMessage" ? new Response(JSON.stringify({ message: "Too Many Requests" }), { status: 429 }) : null;
   await jrRun(s.env, at(TODAY, "18:00"));
@@ -152,7 +155,7 @@ test("Green-API отказал (номер заблокирован) — пау�
 
   net.reset();
   net.altJournal = [rec(ph(273), TOM, "15:00", { id: 73 }), rec(ph(274), TOM, "16:00", { id: 74 }), rec(ph(275), TOM, "17:00", { id: 75 })];
-  const s2 = mk(ENV);
+  const s2 = mk(ENV); await approve(s2);
   await jrRun(s2.env, at(TODAY, "17:00"));
   net.gaReply = r => r.op === "sendMessage" ? new Response(JSON.stringify({ message: "Forbidden" }), { status: 403 }) : null;
   await jrRun(s2.env, at(TODAY, "18:00"));
@@ -168,7 +171,7 @@ test("предел в сутки: сверх него не шлём, в Telegram
   const was = W.jr.cap; W.jr.cap = 2;
   try {
     net.altJournal = [1, 2, 3].map(i => rec(ph(280 + i), TOM, `1${i}:00`, { id: 80 + i }));
-    const s = mk(ENV);
+    const s = mk(ENV); await approve(s);
     await jrRun(s.env, at(TODAY, "17:00"));
     for (const t of ["18:00", "18:01", "18:02", "18:03"]) await jrRun(s.env, at(TODAY, t));
     assert.equal(sent().length, 2);
@@ -192,13 +195,15 @@ test("пульт, вкладка «Сервисные»: очередь по ж�
   net.reset();
   const now = Date.now(), tom = new Date(now + 86400e3 + 5 * 3600e3).toISOString().slice(0, 10); // часы обвязки: «завтра» по Астане
   net.altJournal = [rec(ph(301), tom, "15:00", { id: 101, name: "Ерлан" })];
-  const s = mk({ ...ENV, KEY_WINCHESTER: "staff-key-winch-0001", KEY_BARBER: "staff-key-barber-0001" });
+  const s = mk({ ...ENV, KEY_WINCHESTER: "staff-key-winch-0001", KEY_BARBER: "staff-key-barber-0001" }); await approve(s);
   await jrRun(s.env, now); // журнал читается по «сейчас» обвязки: запись завтра — d1, h2, rv в очереди
   const login = async key => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `key=${key}&next=%2Finbox` }); return b; };
   const own = await login("owner-key-123456"), r = await own.go("/api/bc/service?c=winchester"), t = await r.text(), j = JSON.parse(t);
   assert.equal(r.status, 200);
   assert.equal(j.journal, true); assert.equal(j.botOff, false, "бот выключен, но напоминания уходят — предупреждения «не будет» нет");
-  assert.equal(j.altegio, true); assert.deepEqual(j.kinds.map(x => [x.k, x.on]), [["d1", true], ["h2", true], ["rv", true]]);
+  assert.equal(j.altegio, true);
+  assert.deepEqual(j.kinds.map(x => [x.k, x.on]), [["s01", false], ["d1", true], ["h2", true], ["s06", false], ["rv", true]], "подтверждение и «перенесли» — выключены, пока владелец не включит");
+  assert.ok(j.kinds.filter(x => x.on).every(x => x.approved), "тексты одобрены");
   assert.ok(j.queue.length >= 1 && j.queue.every(x => x.name === "Ерлан" && x.phone === "+7 700 *** ** 01" && x.ch === "ga"), JSON.stringify(j.queue));
   assert.ok(!t.includes(dg(301)), "полного номера нет");
   assert.equal(j.hold, null);
@@ -223,5 +228,5 @@ test("без REMIND_GA_WINCHESTER = 1 напоминания выключены:
   await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" });
   const j = await (await b.go("/api/bc/service?c=winchester")).json();
   assert.equal(j.journal, true); assert.equal(j.enabled, false);
-  assert.deepEqual(j.kinds.map(x => x.on), [false, false, false]);
+  assert.deepEqual(j.kinds.map(x => x.on), [false, false, false, false, false]);
 });

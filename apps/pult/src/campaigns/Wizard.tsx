@@ -134,7 +134,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
         return;
       }
       if (res.kind === "deleted") return leave(c, "Рассылки больше нет.");
-      leave(res.campaign, res.campaign.waitNote ? `Рассылка запущена. ${res.campaign.waitNote}` : "Рассылка запущена — сообщения уходят в фоне.");
+      leave(res.campaign, res.campaign.waitNote ? `Рассылка запущена. ${res.campaign.waitNote}` : "Рассылка запущена, сообщения уходят в фоне.");
     } catch (e) {
       setCreated(c);
       setBusy("");
@@ -170,7 +170,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
     const e = validate(STEP_LAUNCH, f, r);
     setShown((s) => (s.includes(STEP_LAUNCH) ? s : [...s, STEP_LAUNCH]));
     if (Object.keys(e).length) return showFirstError();
-    if (!checkOk) return setLaunchErrs(["Сначала проверьте рассылку — кнопка «Проверить» выше."]);
+    if (!checkOk) return setLaunchErrs(["Сначала проверьте рассылку кнопкой «Проверить» выше."]);
     // больше 100 получателей — второе подтверждение с суммой (ТЗ §5.3)
     if (startNow && n > CONFIRM_OVER) return setAsk({ kind: "sum" });
     void launch(startNow);
@@ -201,7 +201,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
       setStep(step + 1);
     } else if (step === STEP_CHECK && checkOk) setStep(STEP_LAUNCH);
   };
-  const close = () => (created ? leave(created, "Рассылка создана, но не запущена — она в списке рассылок.") : onClose());
+  const close = () => (created ? leave(created, "Рассылка создана, но не запущена. Она в списке рассылок.") : onClose());
   const prev = () => (step > 0 && !created ? setStep(step - 1) : close());
   // системное «назад» и Esc — как стрелка мастера; true — что-то осталось открытым (мастер на прошлом шаге или лист созданной рассылки)
   useEffect(() => {
@@ -253,7 +253,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
         open={ask?.kind === "sum"}
         onOpenChange={(v) => !v && setAsk(null)}
         title={`Отправить ${nf.format(n)} ${plural(n, ["клиенту", "клиентам", "клиентам"])}?`}
-        text={`Оценка стоимости: ≈\u00a0${money(costEstimate(n))} (${nf.format(n)} × ${String(MARKETING_PRICE_KZT).replace(".", ",")} ₸), точная цена — в кабинете Meta. Остановить можно, но отправленное не вернуть.`}
+        text={`Оценка стоимости: ≈\u00a0${money(costEstimate(n))} (${nf.format(n)} × ${String(MARKETING_PRICE_KZT).replace(".", ",")} ₸), точная цена в кабинете Meta. Остановить можно, но отправленное не вернуть.`}
         yes={`Да, запустить · ≈\u00a0${money(costEstimate(n))}`}
         onYes={() => {
           setAsk(null);
@@ -388,7 +388,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
             {launchButtons}
             {!checkOk && (
               <span className="text-sm text-fg-3">
-                {!chk ? "Сначала нажмите «Проверить» в разделе «Проверка»." : !fresh ? "Данные изменились — проверьте ещё раз." : "Исправьте то, что нашла проверка, и проверьте ещё раз."}
+                {!chk ? "Сначала нажмите «Проверить» в разделе «Проверка»." : !fresh ? "Данные изменились, проверьте ещё раз." : "Исправьте то, что нашла проверка, и проверьте ещё раз."}
               </span>
             )}
           </div>

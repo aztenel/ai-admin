@@ -3,13 +3,15 @@
 import { jsonP } from "./lib/http.js";
 import { route } from "./routes/index.js";
 import { backup, scheduled } from "./jobs/scheduled.js";
+import { chatEnv } from "./routes/middleware/chat-store.js";
 
 /** @param {any} pult { PULT_LIVE, PULT_DEMO, PULT_ICONS } из pult.gen.js и { PULT_APP } из pult-app.gen.js (новый пульт, /app/) */
 export function createWorker(pult) {
   return {
     /** @param {any} request @param {any} env @param {any} ctx */
     async fetch(request, env, ctx) {
-      try { return await route(request, env, ctx, pult); }
+      // переписки компаний с CHAT_STORE_<ID> = d1 — в D1, остальное — KV (своя обёртка на каждый запрос: services/chatstore)
+      try { return await route(request, chatEnv(env), ctx, pult); }
       catch (e) { // необработанный сбой (чаще всего — хранилище): страницы пульта и рассылок получают понятный ответ, а не пустую ошибку
         console.log("fatal", String((e && /** @type {any} */ (e).stack) || e).slice(0, 800));
         let P = ""; try { P = new URL(request.url).pathname; } catch (x) {}

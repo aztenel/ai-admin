@@ -10,6 +10,8 @@ import { createHmac } from "node:crypto";
 import { mk, net, ok, T, gaPass } from "../harness.mjs";
 import { PULT_APP } from "../../pult-app.gen.js";
 import { winchesterAlt } from "../fixtures/winchester-altegio.mjs";
+import { grantSnap, sqliteOk } from "../consent.mjs";
+import { d1With } from "../d1.mjs";
 
 const SNAP = fileURLToPath(new URL("./routes.snap.json", import.meta.url));
 const OWNER_KEY = "owner-key-123456", STAFF_KEY = "staff-key-barber-0001", OTHER_KEY = "staff-key-dent-0002";
@@ -94,16 +96,38 @@ const R = [
   ["GET", "/api/studio/list"], ["GET", "/api/studio/get?id=nope"], ["POST", "/api/studio/check", {}], ["POST", "/api/studio/save", {}], ["POST", "/api/studio/key", { id: "nope" }], ["POST", "/api/studio/remove", { id: "nope" }], ["GET", "/api/studio/nope"],
   ["GET", "/api/inbox/me"], ["GET", "/api/inbox/list?c=barber"], ["GET", "/api/inbox/list?c=dent"], ["GET", "/api/inbox/chat?c=barber&ch=web&id=nobody"], ["GET", "/api/inbox/leads?c=barber"], ["GET", "/api/inbox/leads?c=dent"],
   ["GET", "/api/inbox/media?c=barber&ch=wa&id=77010000001&m=nope"], ["POST", "/api/inbox/send", { c: "barber" }], ["POST", "/api/inbox/send", { c: "dent" }], ["POST", "/api/inbox/act", { c: "barber" }], ["POST", "/api/inbox/act", { c: "dent" }], ["GET", "/api/inbox/nope?c=barber"],
+  // ТЗ Winchester v2.0 (31.10.2026): список чатов v2, ближайшая запись Altegio, push-уведомления
+  ["GET", "/api/inbox/list?c=barber&v=2"], ["GET", "/api/inbox/list?c=dent&v=2"], ["GET", "/api/inbox/booking?c=barber&ch=wa&id=77010000001"], ["GET", "/api/inbox/booking?c=dent&ch=wa&id=77010000055"],
+  ["GET", "/api/push/config?c=barber"], ["GET", "/api/push/config?c=dent"], ["POST", "/api/push/subscribe", { c: "barber" }], ["POST", "/api/push/subscribe", { c: "dent" }],
+  ["POST", "/api/push/prefs", { c: "barber" }], ["POST", "/api/push/unsubscribe", { c: "barber" }], ["POST", "/api/push/test", { c: "barber" }],
+  ["GET", "/api/bc/templates?c=barber"], ["GET", "/api/bc/templates?c=dent"], ["POST", "/api/bc/templates", { c: "barber" }], ["POST", "/api/bc/templates/preview", { c: "barber" }], ["GET", "/api/bc/calendar?c=barber"], ["GET", "/api/bc/calendar?c=dent"], ["GET", "/api/bc/stats?c=barber"], ["GET", "/api/bc/stats?c=dent"],
+  ["POST", "/api/bc/service/dry", { c: "barber" }], ["POST", "/api/bc/service/approve", { c: "barber" }],
+  // ТЗ Winchester v3.0 (31.10.2026): копия и архив текстов, варианты сервисных текстов, одобрение рассылки — только владелец; чужая компания — 403
+  ["POST", "/api/bc/templates/action", { c: "barber", id: "M01", action: "nope" }], ["POST", "/api/bc/templates/action", { c: "dent", id: "M01", action: "nope" }],
+  ["POST", "/api/bc/templates", { c: "dent" }], ["POST", "/api/bc/templates/preview", { c: "dent" }],
+  ["POST", "/api/bc/service/variant", { c: "barber", id: "S03" }], ["POST", "/api/bc/service/variant", { c: "dent", id: "S03" }],
+  ["POST", "/api/bc/act", { c: "barber", act: "approve" }], ["POST", "/api/bc/act", { c: "dent", act: "approve" }],
+  ["POST", "/api/bc/check", { c: "barber", ch: "ga", segment: "pora", tplId: "M01" }], ["POST", "/api/bc/check", { c: "dent", ch: "ga", segment: "all", tplId: "M01" }],
+  ["GET", "/api/inbox/catalog?c=barber"], ["GET", "/api/inbox/times?c=barber&date=2026-11-02"], ["GET", "/api/inbox/times?c=dent"],
+  // «Полноценные чаты» (31.10.2026): файл клиенту со второго номера — компания и чат в адресе, тело — файл (multipart); чужая компания — 403
+  ["POST", "/api/inbox/send-file?c=barber&ch=ga&id=77010000001", {}], ["POST", "/api/inbox/send-file?c=barber&ch=wa&id=77010000001", {}], ["POST", "/api/inbox/send-file?c=dent&ch=wa&id=77010000055", {}],
   ["GET", "/api/launch/status?c=barber"], ["GET", "/api/launch/status?c=nope"], ["POST", "/api/launch/tg", { c: "barber" }], ["POST", "/api/launch/ga", { c: "barber" }], ["POST", "/api/launch/done", { c: "barber" }], ["POST", "/api/launch/case", { c: "barber", i: 999 }],
   ["GET", "/api/bc/list?c=barber"], ["GET", "/api/bc/list?c=dent"], ["GET", "/api/bc/get?c=barber&id=nope"], ["POST", "/api/bc/check", { c: "barber" }], ["POST", "/api/bc/test", { c: "barber" }], ["POST", "/api/bc/create", { c: "barber" }], ["POST", "/api/bc/act", { c: "barber" }], ["POST", "/api/bc/tick", { c: "barber" }], ["POST", "/api/bc/check", { c: "dent" }],
   ["GET", "/api/crm/segments?c=barber"], ["GET", "/api/crm/segments?c=dent"], ["GET", "/api/crm/list?c=barber&seg=pora"], ["GET", "/api/crm/list?c=dent&seg=pora"], ["GET", "/api/crm/list?c=barber&seg=nope"],
   ["POST", "/api/crm/refresh", { c: "barber" }], ["POST", "/api/crm/refresh", { c: "dent" }], ["GET", "/api/crm/nope?c=barber"],
+  // база контактов D1 (этап 1): у Worker контракта базы нет — status отвечает ready: false, остальное 503; права — как у всех /api
+  ["GET", "/api/chatstore/status?c=barber"], ["GET", "/api/chatstore/check?c=barber"], ["POST", "/api/chatstore/import", { c: "barber" }], ["POST", "/api/chatstore/export", { c: "barber" }], ["POST", "/api/chatstore/replay", { c: "barber" }],
+  ["GET", "/api/contacts/status?c=barber"], ["GET", "/api/contacts/status?c=dent"], ["GET", "/api/contacts/segments?c=barber"], ["GET", "/api/contacts/list?c=barber&q=x"],
+  ["GET", "/api/contacts/card?c=barber&id=x"], ["POST", "/api/contacts/add", { c: "barber", phone: "+77000000999" }], ["POST", "/api/contacts/consent", { c: "barber", id: "x" }],
+  ["POST", "/api/contacts/restrict", { c: "barber", id: "x" }], ["POST", "/api/contacts/lift", { c: "barber", id: "x" }], ["POST", "/api/contacts/review", { c: "barber", id: "x", decision: "lift" }],
+  ["POST", "/api/contacts/import", { c: "barber", text: "+77000000999" }], ["POST", "/api/contacts/import/confirm", { c: "barber", id: "x" }], ["POST", "/api/contacts/sync", { c: "barber", mode: "step" }],
+  ["POST", "/api/contacts/probe", { c: "barber" }], ["POST", "/api/contacts/stops", { c: "barber", action: "sweep" }], ["POST", "/api/contacts/demo", { c: "barber", op: "clear" }], ["POST", "/api/contacts/add", { c: "dent", phone: "+77000000999" }], ["GET", "/api/contacts/nope?c=barber"],
   // рассылка из сегмента базы (номера строит сервер, наружу — маской) и автосценарий «Пора на стрижку» (менять — только владелец)
   ["POST", "/api/bc/check", { c: "dent", segment: "all" }], ["POST", "/api/bc/create", { c: "barber", segment: "pora" }], ["POST", "/api/bc/create", { c: "dent", segment: "all" }],
   ["GET", "/api/bc/service?c=barber"], ["GET", "/api/bc/service?c=dent"],
   ["GET", "/api/bc/auto?c=barber"], ["GET", "/api/bc/auto?c=dent"], ["POST", "/api/bc/auto", { c: "barber" }], ["POST", "/api/bc/auto", { c: "dent", on: false }], ["POST", "/api/bc/auto", { c: "barber", days: 3 }],
   ["GET", "/wa/barber"], ["POST", "/wa/barber", META], ["POST", "/wa/barber", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/wa/nope", META],
-  ["GET", "/diag"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
+  ["GET", "/diag"], ["GET", "/diag/storage"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
   ["GET", "/selftest"], ["POST", "/api/selftest", {}], ["GET", "/api/selftest"],
   ["POST", "/api/chat", {}], ["POST", "/api/chat", { c: "barber", sid: "contract-1", text: "Здравствуйте" }], ["GET", "/api/history?c=barber&sid=contract-1"], ["GET", "/api/history?c=barber"],
   ["POST", "/ga", GREEN], ["POST", "/ga?t=wrong", GREEN], ["POST", "/ga/barber", GREEN], ["POST", "/ga/barber?t=wrong", GREEN],
@@ -126,7 +150,8 @@ const R = [
 const PROTECTED = /^\/(leads|studio|inbox|launch|broadcast|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|inbox|launch|bc|selftest|crm)\//;
 const PROTECTED_EXACT = new Set(["/api/selftest"]);
 const OWNER_ONLY = /^\/(studio|launch|diag|altegio|selftest)(\/|\?|$)|^\/api\/(studio|launch|selftest)(\/|$)|^\/api\/crm\/refresh$/; // обновить базу клиентов — только владелец
-const OWNER_POST = /^\/api\/bc\/auto$/; // смотреть автосценарий может и сотрудник, менять — только владелец
+// смотреть автосценарий, тексты и сервисные сообщения может и сотрудник, менять, одобрять, копировать и убирать в архив — только владелец
+const OWNER_POST = /^\/api\/bc\/(auto|templates|templates\/action|service\/variant|service\/approve|service\/dry)$/;
 const FOREIGN = /[?&]c=dent\b|"c":"dent"/;
 const isProtected = p => PROTECTED.test(p) || PROTECTED_EXACT.has(p.split("?")[0]);
 
@@ -171,10 +196,22 @@ for (const [path, body, hd] of [["/wa/barber", META, { "x-hub-signature-256": si
 }
 
 // проверка утечек сама работает: владелец метку видит
-for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent", "/api/crm/segments?c=dent", "/api/crm/list?c=dent&seg=all"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
-{ // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
-  const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
-  ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+for (const p of ["/api/inbox/list?c=dent", "/api/inbox/leads?c=dent", "/leads?c=dent", "/api/crm/segments?c=dent"]) { const o = await shape(await go(owner, "GET", p)); ok(`владелец видит данные клиента (метка находится): ${p}`, o.body.includes(MARK), o.body.slice(0, 200)); }
+// список людей сегмента и рассылка из сегмента — только тем, у кого подтверждённое согласие (31.10.2026): оно — в базе D1 (node:sqlite,
+// Node 22+), поэтому эти две проверки — на отдельной копии бота с базой согласий; у основной копии базы нет (снимок одинаков на Node 20)
+if (sqliteOk) {
+  S.env.DB = d1With("production").db;
+  await grantSnap(S.env, "dent");
+  { const o = await shape(await go(owner, "GET", "/api/crm/list?c=dent&seg=all")); ok("владелец видит данные клиента (метка находится): /api/crm/list?c=dent&seg=all", o.body.includes(MARK), o.body.slice(0, 200)); }
+  { // рассылка из сегмента базы: имя видно, полный номер — нет (только маской)
+    const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", segment: "all" }));
+    ok("владелец видит данные клиента (метка находится): POST /api/bc/check сегмент базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+  }
+  { // черновик со второго номера по базе (ТЗ v3.0): текст каждому собирает сервер, номера — только маской
+    const o = await shape(await go(owner, "POST", "/api/bc/check", { c: "dent", ch: "ga", segment: "all", text: "{имя}, ждём вас у мастера {мастер}! Если такие сообщения больше не нужны, напишите «стоп»." }));
+    ok("второй номер, сегмент базы: в примере имя и мастер из базы, номер маской", o.body.includes(MARK) && !o.body.includes("77010000055") && o.body.includes("+7 701 *** ** 55"), o.body.slice(0, 300));
+  }
+  delete S.env.DB;
 }
 
 // 7. изменяющие запросы с чужого сайта отклоняются даже с cookie владельца

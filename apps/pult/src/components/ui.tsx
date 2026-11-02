@@ -5,6 +5,7 @@ import { UserRound, type LucideIcon } from "lucide-react";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/state/store";
 
 type Variant = "primary" | "tinted" | "secondary" | "ghost" | "outline" | "danger";
 const VARIANT: Record<Variant, string> = {
@@ -185,5 +186,16 @@ export function InsetGroup({ title, note, children, className }: { title?: strin
       <div className="overflow-hidden rounded-[0.875rem] bg-surface px-4 [&>*+*]:border-t [&>*+*]:border-line">{children}</div>
       {note && <p className="mt-1.5 px-4 text-sm text-fg-3">{note}</p>}
     </section>
+  );
+}
+
+/** Метка режима в шапке (ТЗ v3.0 §9): «Тестовая версия» на черновике dev, «Демо» на демо-данных; в рабочем пульте её нет. */
+export function ModeBadge({ className }: { className?: string }) {
+  const stage = useStore((s) => s.session?.stage);
+  if (stage !== "preview" && stage !== "demo") return null;
+  return (
+    <span className={cn("inline-flex h-5 shrink-0 items-center rounded-full border border-brand-gold/50 px-2 text-xs font-medium text-fg-2", className)}>
+      {stage === "demo" ? "Демо" : "Тестовая версия"}
+    </span>
   );
 }

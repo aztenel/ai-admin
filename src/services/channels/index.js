@@ -1,12 +1,14 @@
 // @ts-check
 // Общие функции каналов WhatsApp: выбор клиента по номеру, повторы вебхуков, «стоп» на рассылку, ответ с телефона (coex), номер пульта.
 /** @import { Env, Profile } from "../../lib/types.js" */
+import { kvKey } from "../../lib/kv-id.js";
 import { clean } from "../../lib/text.js";
 import { redact, maskPhones } from "../../lib/phone.js";
 import { kvRetry } from "../../db/kv/retry.js";
 import { putHist, readHist } from "../../db/kv/chats.js";
 import { hasClient } from "../../config/builtin-clients.js";
 import { PAUSE_MS, HIST_KEEP } from "../../config/constants.js";
+import { stopRecord } from "../contacts/stops.js";
 
 // wx — к какому клиенту и через какой номер пришло сообщение: { client, token, pnid, name }. Пусто — прежний режим: один номер на весь воркер (WA_CLIENT) или меню демо
 /** @param {Env} env @param {string} channel @param {Record<string, any>=} wx @returns {string} */
@@ -35,8 +37,8 @@ export async function nicheOf(env, channel, fromDigits, wx) {
 const recent = new WeakMap();
 /** @param {Env} env @param {string} id @returns {Promise<boolean>} */
 export async function seenBefore(env, id) {
-  const mem = recent.get(env.KV) || new Map(), now = Date.now();
-  if (!recent.has(env.KV)) recent.set(env.KV, mem);
+  const kk = kvKey(env.KV), mem = recent.get(kk) || new Map(), now = Date.now(); // хранилище под обёрткой переписок (lib/kv-id.js)
+  if (!recent.has(kk)) recent.set(kk, mem);
   if ((mem.get(id) || 0) > now - 600e3) return true;
   if (mem.size > 5000) { for (const [k, t] of mem) if (t < now - 600e3) mem.delete(k); if (mem.size > 5000) mem.clear(); }
   mem.set(id, now);
@@ -45,6 +47,15 @@ export async function seenBefore(env, id) {
     await env.KV.put("seen:" + id, "1", { expirationTtl: 86400 });
   } catch (e) { console.log("seen", String(e)); }
   return false;
+}
+
+/** Забыть «уже видели»: вебхук не записался, а провайдеру ответили ошибкой — его повтор должен пройти (журнал Green-API, 01.11.2026).
+ *  @param {Env} env @param {string} id */
+export async function seenForget(env, id) {
+  if (!id) return;
+  const mem = recent.get(kvKey(env.KV));
+  if (mem) mem.delete(id);
+  try { await env.KV.delete("seen:" + id); } catch (e) { console.log("seen forget", String(e).slice(0, 120)); }
 }
 
 // Режим «сосуществование» (Meta): человек отвечает клиенту с телефона, а бот и пульт это видят.
@@ -65,7 +76,8 @@ export async function waCoex(env, wx, field, val) {
         if (id && seen.includes(id)) return; // Meta повторила доставку
         h.profile.echo = seen.concat(id ? [id] : []).slice(-20);
         h.profile.pausedUntil = Math.max(h.profile.pausedUntil || 0, now + PAUSE_MS); delete h.profile.need; h.profile.pn = h.profile.pn || w.pnid || h.profile.pn;
-        h.turns = (h.turns || []).concat([{ role: "model", text: coexText(m), t: now, by: "admin", m: "phone" }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
+        // переписки в D1 (wx.ids): номер сообщения — ключ строки в D1, повтор уведомления (журнал, две точки сети) её не удвоит
+        h.turns = (h.turns || []).concat([{ role: "model", text: coexText(m), t: now, by: "admin", m: "phone", ...(wx.ids && id ? { mid: id.slice(0, 80) } : {}) }]).slice(-HIST_KEEP); h.n = (h.n || 0) + 1;
         await putHist(env.KV, hk, h);
       });
     }
@@ -87,11 +99,12 @@ export async function waCoex(env, wx, field, val) {
     });
   }
 }
-// отказ от рассылок: отметка без срока, не зависит от того, включён ли бот и дошло ли дело до разговора
-/** @param {Env} env @param {string} client @param {string | number} digits @returns {Promise<void>} */
-export async function markOptout(env, client, digits) {
+// отказ от рассылок: отметка без срока, не зависит от того, включён ли бот и дошло ли дело до разговора. С 31.10.2026 — в KV и D1,
+// с повторами и следом для починки (services/contacts/stops.js): на повторную доставку вебхука не рассчитываем
+/** @param {Env} env @param {string} client @param {string | number} digits @param {{ msgId?: string, text?: string, source?: string }} [info] @returns {Promise<void>} */
+export async function markOptout(env, client, digits, info = {}) {
   if (!client || !/^\d{8,15}$/.test(String(digits))) return;
-  try { await env.KV.put(`optout:${client}:${digits}`, String(Date.now())); } catch (e) { console.log("optout", String(e)); }
+  await stopRecord(env, { ws: client, phone: String(digits), kind: "stop", source: info.source || "chat_stop", eventKey: info.msgId ? "in:" + info.msgId : "", text: info.text || "", at: Date.now() });
 }
 // через какой номер администратор пишет клиенту этого чата
 /** @param {Env} env @param {string} cid @param {Profile=} prof @returns {Record<string, any> | null} */

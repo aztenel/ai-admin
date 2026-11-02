@@ -1,7 +1,7 @@
 // Новый пульт на НАСТОЯЩЕМ коде бота, без сети: сервер бота из test/devserver.mjs (память вместо KV, заглушки Meta, Green-API,
 // Altegio, Telegram и «ИИ») + Vite с пультом по адресу /app/. Запросы /api/*, /login и т. п. Vite передаёт серверу бота — как будет на сайте.
 // Две компании, у каждой два номера: Meta Cloud API (wa, «основной номер») и Green-API (ga, «номер бота»):
-//   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов), рассылки с номера бота
+//   winchester — как настоящий Winchester: база клиентов из журнала Altegio (вымышленная, 40 клиентов; с --demo — 150), рассылки с номера бота
 //                выключены кодом (gaNoBroadcast), ключ сотрудника staff-key-winch-0001; три записи через бота на номере бота —
 //                в очереди 8 напоминаний и просьб об отзыве (вкладка «Сервисные · номер бота»), 2 ушли за 3 дня;
 //   dent       — «Демо Дент»: без базы; сервер разрешает рассылки с номера бота (вебхук Green-API настроен), но пульт их не создаёт
@@ -9,6 +9,15 @@
 //   npm run dev:live            → адреса и ключи — в выводе; владелец входит ключом owner-key-123456
 //   фоновая отправка рассылок:  curl -X POST http://127.0.0.1:<порт пульта>/_cron   (или на порт бота — «прошла минута»)
 //   ещё сообщение клиента:      curl -X POST http://127.0.0.1:<порт бота>/_wa -d '{"c":"dent","from":"77001110001","text":"Привет"}'
+// Раздел «Клиенты» (/api/contacts/*): база D1 в памяти (test/d1.mjs на node:sqlite, Node 22+; на Node 20 базы нет — раздел покажет
+// «База клиентов ещё не подключена», а второй номер не отправляет: защите от двойной отправки нужна D1).
+// Режим (аудит 31.10.2026): по умолчанию стенд — как БОЕВОЙ сайт на заглушках (STAGE нет, отметка базы production): отправка из пульта,
+// файлы, рассылки работают — наружу всё равно ничего не уходит, Meta, Green-API и Altegio здесь подменены. stage: "preview"
+// (--preview, STAGE=preview) — как черновик: отправки, вебхуки и запись в Altegio закрыты, есть «Загрузить демо-базу» у владельца
+// (scripts/e2e-contacts.mjs). Обхода BC_DEV_REAL больше нет.
+// Демо-база сразу при запуске: npm run dev:live -- --demo (или DEMO=1, или startDevLive({ demo: true })) — 150 вымышленных клиентов
+// Winchester тем же кодом, что кнопка владельца (src/services/contacts/demo.js): база D1, снимок для рассылок, «стопы», согласия,
+// три демо-рассылки с итогами и черновик; журнал заглушки Altegio — тот же (кнопка «Обновить базу» соберёт ту же базу). Нужен Node 22+.
 // Часы бота — как в проверках (test/clock.mjs): 3 октября 2026, 12:00 по Астане и дальше; даты журнала считаются от них.
 // Номера — вымышленные +7 700 000 xx xx (база) и +7 700 111 xx xx (чаты); имена придуманы.
 // Из другого скрипта (scripts/e2e-campaigns.mjs): const d = await startDevLive({ port }) → { app, bot, S, OWNER, STAFF_W, close }.
@@ -22,12 +31,18 @@ const GA = { id: "1101000001", token: "ga-token-dent" };
 const GAW = { id: "1101000002", token: "ga-token-winch" };
 export const STAFF_W = "staff-key-winch-0001";
 
-/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота. */
-export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0) } = {}) {
+/** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота, demo — демо-база на 150 клиентов
+ *  (она есть только на черновике — demo включает stage "preview"), stage — "production" (по умолчанию) или "preview". */
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production" } = {}) {
+  if (demo) stage = "preview";
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
   const { net, gaPass } = await import(new URL("../../../test/harness.mjs", import.meta.url).href);
+  const { sqliteOk, d1With } = await import(new URL("../../../test/d1.mjs", import.meta.url).href);
   const bot = await start(botPort, {
+    ...(sqliteOk ? { DB: d1With(stage).db } : {}),
+    ...(stage === "preview" ? { STAGE: "preview" } : {}),
+    ...(process.env.CHAT_STORE ? { CHAT_STORE: process.env.CHAT_STORE } : {}), // CHAT_STORE=d1 — переписки всех компаний в D1 (services/chatstore)
     WA_TOKEN_DENT: "tok-dent",
     APP_SECRET_DENT: "sec-dent",
     PHONE_NUMBER_ID_DENT: "900111",
@@ -45,8 +60,6 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   });
   const { S } = bot;
 
-  // вебхуки Green-API ведут в этого бота: без этого рассылку с номера бота не запустить (бот не увидел бы «стоп»)
-  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${bot.url}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   // сведения о номерах Meta: у Winchester качество высокое и предел 1000, у «Дента» — среднее и 250 (видно оба вида плашки)
   net.graphReply = (url, init) => {
     if ((init.method && init.method !== "GET") || !url.includes("fields=")) return null;
@@ -54,6 +67,13 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     return new Response(JSON.stringify({ display_phone_number: w ? "+7 700 000 00 99" : "+7 700 000 00 11", verified_name: w ? "Winchester" : "Демо Дент",
       quality_rating: w ? "GREEN" : "YELLOW", whatsapp_business_manager_messaging_limit: w ? "TIER_1K" : "TIER_250" }), { headers: { "content-type": "application/json" } });
   };
+
+  // журнал входящих второго номера Winchester (сверка «стопов», services/contacts/stops.js): «стоп» от тестового клиента, который не
+  // пришёл вебхуком, и обычное сообщение — кнопка «Сверить «стопы» по Green-API» находит первый
+  net.gaReply = (rec) => rec.op === "lastIncomingMessages" && rec.inst === GAW.id ? new Response(JSON.stringify([
+    { type: "incoming", idMessage: "DEV-IN-1", timestamp: Math.floor(Date.now() / 1000) - 600, typeMessage: "textMessage", chatId: "77000001012@c.us", textMessage: "стоп" },
+    { type: "incoming", idMessage: "DEV-IN-2", timestamp: Math.floor(Date.now() / 1000) - 300, typeMessage: "textMessage", chatId: "77000001013@c.us", textMessage: "А на завтра есть время?" }
+  ]), { headers: { "content-type": "application/json" } }) : null;
 
   // журнал Altegio Winchester: 40 вымышленных клиентов (≈ 70 записей), визиты 5–95 дней назад, у части — будущая запись, один скрытый номер, неявки
   const NOW = Date.now(); // часы бота (test/clock.mjs)
@@ -76,8 +96,23 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     if (i % 11 === 0) journal.push(rec(phone, name, -(2 + (i % 5)), { staff, svc, att: 0 })); // будущая запись — в рассылки не попадёт
   }
   journal.push(rec("+7 700 XXX-X0-44", "Скрытый номер", 30, { staff: "Арман" })); // ключ журнала без права видеть телефоны — номер скрыт
-  net.altJournal = journal;
-  await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+  const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
+  if (demo && sqliteOk) {
+    // демо-база: тот же код, что «Загрузить демо-базу» у владельца на черновике; журнал заглушки Altegio — тот же, что у демо-базы
+    const { demoLoad, demoPlan } = await import(new URL("../../../src/services/contacts/demo.js", import.meta.url).href);
+    net.altJournal = demoPlan(NOW).after;
+    await demoLoad(S.env, CLIENTS.winchester, NOW);
+  } else {
+    if (demo) console.log("Демо-база нужна база D1 (node:sqlite, Node 22+) — запускаю без неё.");
+    net.altJournal = journal;
+    await S.kv.api.put("optout:winchester:77000002005", "1"); // просил не писать
+    // реклама по базе — только с подтверждённым согласием (31.10.2026): у трёх из четырёх вымышленных клиентов оно есть (письменное),
+    // у каждого четвёртого — нет: он виден в «Не пишем — нет подтверждённого согласия»
+    if (sqliteOk) {
+      const { grantSnap } = await import(new URL("../../../test/consent.mjs", import.meta.url).href);
+      await grantSnap(S.env, "winchester", Array.from({ length: 40 }, (_, i) => i + 1).filter((i) => i % 4 !== 0).map((i) => "7700000" + String(2000 + i)));
+    }
+  }
 
   // Winchester, вкладка «Сервисные · номер бота»: три записи из журнала Altegio (с 30.10.2026 у Winchester напоминания — по всем записям
   // журнала со второго номера, без бота: services/reminders/journal.js). Очередь jrq:winchester строит тот же код (jrPlan) — накануне
@@ -88,7 +123,6 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const { jrPlan } = await import(new URL("../../../src/services/reminders/journal.js", import.meta.url).href);
   const { jrqSave } = await import(new URL("../../../src/db/kv/reminders.js", import.meta.url).href);
   const { putHist } = await import(new URL("../../../src/db/kv/chats.js", import.meta.url).href);
-  const { CLIENTS } = await import(new URL("../../../src/config/builtin-clients.js", import.meta.url).href);
   const madeAt = NOW - 3600e3; // записались час назад
   const booked = [
     { id: "77000001101", name: "Арман", day: -1, time: "12:00", svc: "Мужская стрижка", staff: "Данияр" },
@@ -107,6 +141,14 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
   const jrRecs = booked.map((b, i) => ({ id: 9101 + i, datetime: `${day(b.day)}T${b.time}:00+05:00`, deleted: false, attendance: 0, create_date: new Date(madeAt).toISOString(),
     staff: { id: 1, name: b.staff }, client: { id: 9101 + i, phone: "+" + b.id, name: b.name }, services: [{ id: 1, title: b.svc }] }));
   await jrqSave(S.env, "winchester", jrPlan(CLIENTS.winchester, jrRecs, NOW));
+  // тексты напоминаний и отзыва одобрены владельцем (ТЗ v2.0 §4: без одобрения сервисное сообщение не уходит); подтверждение записи
+  // и «перенесли» — нет. Журнал решений: перенос отменил старое напоминание, неявка — задача администратору (номера вымышленные)
+  const { SCENARIOS } = await import(new URL("../../../src/services/reminders/templates.js", import.meta.url).href);
+  await S.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(["S03", "S04", "S12"].map((id) => [id, { v: SCENARIOS.find((x) => x.id === id).v, at: NOW - 86400e3 }]))));
+  await S.kv.api.put("jrl:winchester", JSON.stringify([
+    { t: NOW - 3 * 3600e3, k: "h2", rec: "9001", p: "77000001104", n: "Самат", date: day(0), time: "11:00", st: "cancelled", why: "запись перенесена" },
+    { t: NOW - 2 * 3600e3, k: "noshow", rec: "9002", p: "77000001105", n: "Канат", date: day(1), time: "18:00", st: "task", why: "клиент не пришёл — задача администратору" },
+  ]), { expirationTtl: 3 * 86400 });
   for (const k of ["rms:winchester:9100:d1", "rms:winchester:9100:rv", "rmok:winchester:9100:d1", "rmok:winchester:9100:rv", "rms:winchester:9099:d1"])
     await S.kv.api.put(k, "1", { expirationTtl: 3 * 86400 });
 
@@ -131,23 +173,28 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
       port,
       strictPort: !!port,
       // /_cron — «прошла минута» (фоновая отправка рассылок), чтобы проверке хватало одного адреса
-      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/_cron"].map((p) => [p, { target: bot.url }])),
+      // /ga — вебхук Green-API: на сайте он и пульт — один адрес Worker, здесь — адрес Vite (заголовок Host прокси сохраняет)
+      proxy: Object.fromEntries(["/api", "/login", "/logout", "/studio", "/broadcast", "/launch", "/leads", "/inbox", "/ga", "/_cron"].map((p) => [p, { target: bot.url }])),
     },
   });
   await vite.listen();
   const addr = vite.httpServer?.address();
   const app = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : port}/app/`;
+  // вебхуки Green-API ведут в этого бота, и по тому адресу, который видит сервер из пульта: сервер сверяет адрес вебхука со своим
+  // (ревью PR №2, F2: вебхук на другом адресе — номер не настроен). Без этого рассылку с номера бота не запустить.
+  const site = new URL(app).origin;
+  for (const [c, inst] of [["dent", GA], ["winchester", GAW]]) net.gaSettings[inst.id] = { webhookUrl: `${site}/ga/${c}?t=${gaPass(c, inst)}`, incomingWebhook: "yes" };
   const close = async () => {
     await vite.close();
     await new Promise((r) => bot.server.close(() => r(undefined)));
   };
-  return { app, bot, S, OWNER, STAFF_W, close };
+  return { app, bot, S, OWNER, STAFF_W, close, demo: !!(demo && sqliteOk) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { app, bot, OWNER } = await startDevLive();
+  const { app, bot, OWNER, demo } = await startDevLive();
   console.log(`Бот на заглушках: ${bot.url}   (фоновая отправка рассылок: curl -X POST ${bot.url}/_cron)
 Новый пульт:
-  Winchester (база клиентов, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
+  Winchester (${demo ? "демо-база: 150 вымышленных клиентов" : "база клиентов"}, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
   Демо Дент (без базы, рассылка списком):             ${app}?c=dent   владелец: ${OWNER}`);
 }

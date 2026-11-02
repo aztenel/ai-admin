@@ -1,4 +1,4 @@
-// Одна рассылка: ход, почему стоит или чего ждёт, действия и «Не дошло — почему». Лист снизу на телефоне, панель справа на компьютере.
+// Одна рассылка: ход, почему стоит или чего ждёт, действия и «Почему не дошло». Лист снизу на телефоне, панель справа на компьютере.
 // Действия и подтверждения — как на старой странице /broadcast (её больше нет в пульте): «Запустить»/«Продолжить» — с числом получателей,
 // у шаблонов больше 100 получателей — второе подтверждение с оценкой суммы; сервер спросил про сигнал «остановиться» (409 confirm) —
 // вопрос сервера и тот же запрос с force — только владельцу: запуск при сигнале снимает сигнал для всего номера (сотруднику сервер
@@ -11,14 +11,14 @@ import { Confirm, Sheet, toast } from "@/components/overlay";
 import { Button, Field, Skeleton } from "@/components/ui";
 import { plural, shortDate, timeHM } from "@/lib/format";
 import { cn, useMedia } from "@/lib/utils";
-import type { CampaignAct, CampaignDetail, CampaignRow } from "@/model/campaigns";
+import type { CampaignAct, CampaignDetail, CampaignResults, CampaignRow } from "@/model/campaigns";
 import { store } from "@/state/store";
 import { CHANNEL_LABEL, CONFIRM_OVER, costText, errText, ownerOnly, progressPct, type Tone } from "./common";
 import { statusOf } from "./History";
 
 const nf = new Intl.NumberFormat("ru-RU");
 const TONE: Record<Tone, string> = { ok: "text-positive", run: "text-accent-ink", warn: "text-fg", critical: "text-critical", muted: "text-fg-3" };
-const DONE_TOAST: Record<CampaignAct, string> = { start: "Рассылка запущена", pause: "Рассылка на паузе", stop: "Рассылка остановлена", delete: "Рассылка удалена" };
+const DONE_TOAST: Record<CampaignAct, string> = { start: "Рассылка запущена", pause: "Рассылка на паузе", stop: "Рассылка остановлена", delete: "Рассылка удалена", approve: "Рассылка одобрена", unapprove: "Одобрение снято" };
 const TICK_TOAST: Record<string, string> = {
   running: "Порция отправлена",
   wait: "Сейчас отправлять рано: рассылка ждёт часов отправки, предела или паузы",
@@ -205,8 +205,10 @@ export function CampaignSheet({
             )
           ) : (
             <>
+              {c.demo && <p className="inline-flex rounded-full border border-brand-gold/50 px-2.5 py-0.5 text-xs font-medium text-fg-2">Демо: вымышленные клиенты</p>}
               <Progress c={c} />
               <Notes c={c} now={now} />
+              {c.results && <Results r={c.results} />}
 
               {err && (
                 <p role="alert" className="flex gap-2 text-ui text-critical pointer-coarse:text-base">
@@ -225,9 +227,16 @@ export function CampaignSheet({
               )}
 
               {isBot && !finished && (
-                <p className="text-sm text-fg-2">
-                  Это рассылка с номера бота. Запускать и продолжать такие рассылки в пульте нельзя: массовые сообщения с обычного WhatsApp — главная причина блокировок. Остановить или удалить — можно.
-                </p>
+                <div className="space-y-2 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+                  <p className="text-sm text-fg-2">
+                    {c.approvedAt ? `Одобрена${c.approvedBy ? ` (${c.approvedBy})` : ""}. ` : "Черновик. "}Запуск рассылок со второго номера пока выключен: его включает владелец отдельным решением.
+                  </p>
+                  {owner && c.status === "ready" && (
+                    <Button size="sm" variant={c.approvedAt ? "secondary" : "primary"} busy={busy === (c.approvedAt ? "unapprove" : "approve")} disabled={!!busy} onClick={() => void act(c.approvedAt ? "unapprove" : "approve")}>
+                      {c.approvedAt ? "Снять одобрение" : "Одобрить"}
+                    </Button>
+                  )}
+                </div>
               )}
 
               {(c.failed > 0 || (c.fails && c.fails.length > 0)) && (
@@ -237,7 +246,7 @@ export function CampaignSheet({
                     <ul className="space-y-1 text-ui pointer-coarse:text-base">
                       {c.fails.map((f) => (
                         <li key={String(f.code)}>
-                          <span className="tnum font-medium">{nf.format(f.n)}</span> — {f.hint || `ошибка ${f.code}`}
+                          <span className="tnum font-medium">{nf.format(f.n)}</span>: {f.hint || `ошибка ${f.code}`}
                         </li>
                       ))}
                     </ul>
@@ -256,7 +265,7 @@ export function CampaignSheet({
                     ) : (
                       <>
                         <Button variant="outline" icon={ListX} className="mt-2" busy={bad?.loading} onClick={() => void loadBad()}>
-                          Не дошло — почему
+                          Почему не дошло
                         </Button>
                         {bad?.error && <p className="mt-2 text-sm text-critical">{bad.error}</p>}
                       </>
@@ -268,7 +277,7 @@ export function CampaignSheet({
 
               {(c.message || c.text) && (
                 <section>
-                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона — его видят администратор и бот"}</h3>
+                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона"}</h3>
                   <p className="max-w-[90%] whitespace-pre-wrap break-words rounded-[1.125rem] rounded-tl-md bg-bubble-bot px-3 py-[0.4375rem] text-md md:text-base">{c.message || c.text}</p>
                 </section>
               )}
@@ -323,7 +332,7 @@ function Progress({ c }: { c: CampaignRow & Partial<CampaignDetail> }) {
     c.failed ? `не дошло ${nf.format(c.failed)}` : "",
     c.skipped ? `просили не писать ${nf.format(c.skipped)}` : "",
     c.excluded ? `уже записались или им писали ${nf.format(c.excluded)}` : "",
-    c.unsure ? `неизвестно, дошло ли (сбой), — до ${nf.format(c.unsure)}` : "",
+    c.unsure ? `неизвестно, дошло ли (сбой): до ${nf.format(c.unsure)}` : "",
   ].filter(Boolean);
   return (
     <section className="rounded-[0.875rem] bg-surface-2 px-4 py-3">
@@ -352,12 +361,12 @@ function Notes({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: numb
     if (c.retryAt)
       out.push(
         <p key="retry" className="text-ui pointer-coarse:text-base">
-          Временный отказ{c.retryWhy ? `: ${c.retryWhy}` : ""} — повторю в {timeHM(c.retryAt)}.
+          Временный отказ{c.retryWhy ? `: ${c.retryWhy}` : ""} Повторю в {timeHM(c.retryAt)}.
         </p>,
       );
     out.push(
       <p key="bg" className="text-sm text-fg-2">
-        Отправка идёт в фоне — {c.channel === "bot" ? "по одному сообщению раз в 1–3 минуты" : "по порции в минуту"}. Лист можно закрыть: итог придёт в Telegram.
+        Отправка идёт в фоне, {c.channel === "bot" ? "по одному сообщению раз в 1–3 минуты" : "порциями раз в минуту"}. Лист можно закрыть: итог придёт в Telegram.
         {c.lastSentAt ? ` Последняя отправка: ${shortDate(c.lastSentAt, now)}.` : ""}
       </p>,
     );
@@ -411,6 +420,26 @@ function Details({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: nu
         {!!c.lastSentAt && c.status !== "running" && <Field label="Последняя отправка">{shortDate(c.lastSentAt, now)}</Field>}
         {!!c.doneAt && <Field label="Завершена">{shortDate(c.doneAt, now)}</Field>}
       </dl>
+    </section>
+  );
+}
+
+/** Итоги рассылки (ТЗ V3): что ответил провайдер и кто записался в Altegio после сообщения. «Записались после» — совпадение по
+ *  времени, а не доказательство, что записались из-за рассылки: так и пишем. */
+function Results({ r }: { r: CampaignResults }) {
+  const items: [string, number][] = [["Отправлено", r.sent], ["Доставлено", r.delivered], ["Прочитано", r.read], ["Не дошло", r.failed], ["Ответили", r.replied], ["Записались", r.booked]];
+  return (
+    <section aria-label="Итоги рассылки">
+      <h3 className="mb-1.5 text-sm font-medium text-fg-3">Итоги</h3>
+      <dl className="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+        {items.map(([label, v]) => (
+          <div key={label} className="min-w-0">
+            <dt className="truncate text-xs text-fg-3">{label}</dt>
+            <dd className="tnum text-lg font-semibold">{v.toLocaleString("ru-RU")}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-1.5 text-xs text-fg-3">«Записались»: клиенты, у которых в течение {r.window} дней после сообщения появилась запись в Altegio. Это совпадение по времени, а не доказательство, что записались из-за рассылки.</p>
     </section>
   );
 }

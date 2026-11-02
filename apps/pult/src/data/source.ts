@@ -1,20 +1,17 @@
 // Откуда пульт берёт данные. Два источника с одним интерфейсом:
-//   live — настоящий API бота (/api/inbox/*, /api/bc/*, /api/crm/*, /api/studio/list), см. data/live.ts (рассылки — live-campaigns.ts);
+//   live — настоящий API бота (/api/inbox/*, /api/bc/*, /api/crm/*, /api/contacts/*, /api/studio/list), см. data/live.ts
+//          (рассылки — live-campaigns.ts, клиенты — live-contacts.ts);
 //   demo — вымышленные компании для показа и проверки вида, см. data/demo.ts.
 // Режим выбирается явно (сборка с VITE_PULT_DATA=demo или адрес /demo). Если сервер не ответил, пульт показывает ошибку —
 // подставлять демо вместо настоящих данных нельзя.
-import type {
-  ChannelReport,
-  ChatAction,
-  ConversationDetail,
-  ConversationRef,
-  InboxSnapshot,
-  Lead,
-  Session,
-  WorkspaceOption,
-} from "@/model/types";
+import type { BookingCard, ChannelReport, ChatAction, ConversationDetail, ConversationRef, InboxSnapshot, Lead, Session, WorkspaceOption, ChatActionExtra, ConversationSummary } from "@/model/types";
 import type {
   AutoInfo,
+  CampaignCalendar,
+  LibraryItem,
+  MessageStats,
+  TemplateLibrary,
+  TemplatePreview,
   AutoSettings,
   CampaignAct,
   CampaignActResult,
@@ -30,10 +27,30 @@ import type {
   CrmPage,
   SegmentSpec,
   ServiceOverview,
+  ServiceDryRun,
 } from "@/model/campaigns";
+import type {
+  ConsentInput,
+  ContactCard,
+  ContactPage,
+  ContactSegments,
+  DemoOp,
+  ContactsStatus,
+  ImportDone,
+  ImportInput,
+  ImportPreview,
+  Report,
+  ReviewDecision,
+  StopsAction,
+  SyncMode,
+  SyncResult,
+} from "@/model/contacts";
 import { createLiveSource } from "./live";
 
 export { ApiError } from "./errors";
+
+/** Отправка из пульта: rid — защита от двойной отправки, quote — номер сообщения, на которое ответ. */
+export type SendOpts = { rid?: string; quote?: string };
 
 /**
  * Раздел «Рассылки»: номера, рассылки, база клиентов из Altegio, автосценарий (model/campaigns.ts). ws — id компании (c=).
@@ -71,19 +88,89 @@ export interface CampaignSource {
   clearMetaHold(ws: string): Promise<void>;
   /** Сервисные сообщения (вкладка «Сервисные · номер бота»): что бот шлёт сам, очередь (номера маской), сколько ушло за 3 дня. Только чтение. */
   serviceMessages(ws: string): Promise<ServiceOverview>;
+  /** Проверка по настоящему журналу Altegio без отправки и без записи (только владелец). */
+  serviceDryRun(ws: string): Promise<ServiceDryRun>;
+  /** Одобрить текст сценария (или снять одобрение) — только владелец; v — версия, которую он видел. */
+  serviceApprove(ws: string, id: string, v: number, on: boolean): Promise<void>;
+  /** Вариант текста сценария: новый (без variant), правка или выбор активного — только владелец. */
+  serviceVariant(ws: string, id: string, q: { variant?: string; ru?: string; kk?: string; active?: boolean }): Promise<void>;
+  /** Календарь на 14 дней: сервисные и реклама отдельно, только числа. */
+  calendar(ws: string): Promise<CampaignCalendar>;
+  /** Итоги доставки за 7 или 30 дней: напоминания, отзывы, рассылки, ответы сотрудников. */
+  messageStats(ws: string, days: 7 | 30): Promise<MessageStats>;
+  /** Библиотека рекламных текстов. */
+  templates(ws: string): Promise<TemplateLibrary>;
+  /** Сохранить текст (и одобрить или снять одобрение) — только владелец. Ошибка — ApiError с текстом сервера. */
+  templateSave(ws: string, item: { id?: string; title: string; goal?: string; ru: string; kk: string; approved: boolean }): Promise<LibraryItem>;
+  /** Как текст увидят 3–5 клиентов (номера маской); нет базы — на примере. По id из библиотеки или по своему тексту. */
+  templatePreview(ws: string, q: { id?: string; text?: string; lang: "ru" | "kk"; segment?: SegmentSpec }): Promise<TemplatePreview>;
+  /** Дублировать, убрать в архив или вернуть (только владелец). */
+  templateAction(ws: string, id: string, action: "duplicate" | "archive" | "restore"): Promise<LibraryItem>;
 }
 
-export interface DataSource extends CampaignSource {
+/**
+ * Раздел «Клиенты» (model/contacts.ts): база контактов компании в D1. Ошибки — ApiError с текстом сервера; поле формы с ошибкой
+ * (add) — ApiError.field. Роль проверяет сервер: сотруднику lift (и review «lift»), sync, probe и stops отвечают 403.
+ */
+export interface ContactSource {
+  contactsStatus(ws: string): Promise<ContactsStatus>;
+  contactSegments(ws: string): Promise<ContactSegments>;
+  /** По 50 (page с 1); номера — маской. seg — id сегмента («» — все), q — имя или номер. */
+  contactList(ws: string, opts: { q?: string; seg?: string; page?: number }): Promise<ContactPage>;
+  /** Карточка одного клиента: номер полностью. */
+  contactCard(ws: string, id: string): Promise<ContactCard>;
+  /** Добавить вручную; такой номер уже есть — created: false и id существующего. */
+  addContact(ws: string, phone: string, name: string): Promise<{ id: string; created: boolean }>;
+  /** Согласие с доказательством (ConsentInput). Ошибки: 400 { field: evidence | evidenceRef | givenAt | basis }, 409 — нельзя (отказ клиента). */
+  setConsent(ws: string, id: string, input: ConsentInput): Promise<void>;
+  addRestriction(ws: string, id: string, kind: "marketing_optout" | "full_block", reason: string): Promise<void>;
+  liftRestriction(ws: string, id: string, rid: string, reason: string): Promise<void>;
+  reviewRestriction(ws: string, id: string, rid: string, decision: ReviewDecision, reason?: string): Promise<void>;
+  importPreview(ws: string, input: ImportInput): Promise<ImportPreview>;
+  importConfirm(ws: string, id: string, consentBasis?: string): Promise<ImportDone>;
+  importDiscard(ws: string, id: string): Promise<void>;
+  /** Только владелец: step — синхронизировать сейчас (порция), dry — проверка без записи, test — тестовые клиенты (черновик). */
+  syncContacts(ws: string, mode: SyncMode): Promise<SyncResult>;
+  /** Только владелец и только черновик: демо-база из вымышленных клиентов — загрузить или убрать. Итог — строки отчёта. */
+  demoBase(ws: string, op: DemoOp): Promise<string[]>;
+  /** Только владелец: какие поля отдаёт журнал Altegio (только чтение, без персональных данных в ответе). */
+  probeAltegio(ws: string): Promise<Report>;
+  /** Только владелец: сверка «стопов» по журналу Green-API, проверка и перенос старого списка «стоп» из KV. */
+  stopsAction(ws: string, action: StopsAction): Promise<string[]>;
+}
+
+/** Где хранятся переписки компании (01.11.2026, переписки в D1) и что дал перенос: только числа. */
+export type ChatStoreStatus = { mode: "kv" | "d1"; ready: boolean; shadow: boolean; imported?: number; pending?: number; counts?: Record<string, { threads: number; fromKv: number; messages: number }> };
+export type ChatStoreAct = "import" | "check" | "export" | "replay";
+
+export interface DataSource extends CampaignSource, ContactSource {
   readonly mode: "live" | "demo";
+  /** Переписки в D1 — только владелец (в демо нет). */
+  chatStore?(ws: string): Promise<ChatStoreStatus>;
+  chatStoreRun?(ws: string, act: ChatStoreAct): Promise<Record<string, unknown>>;
   session(): Promise<Session>;
   /** Компании, между которыми может переключаться пользователь (владелец сервиса — все, сотрудник — своя). */
   workspaces(): Promise<WorkspaceOption[]>;
-  inbox(ws: string): Promise<InboxSnapshot>;
+  /** since — версия прошлого списка (переписки в D1): null — с тех пор ничего не изменилось. */
+  inbox(ws: string, since?: string): Promise<InboxSnapshot | null>;
   /** Сведения о номерах и рассылках. Медленнее списка (сервер спрашивает Meta и Green-API) — грузится вторым. */
   channelReport(ws: string): Promise<ChannelReport>;
-  conversation(ws: string, ref: ConversationRef): Promise<ConversationDetail>;
-  send(ws: string, ref: ConversationRef, text: string): Promise<ConversationDetail>;
-  act(ws: string, ref: ConversationRef, act: ChatAction): Promise<ConversationDetail>;
+  /** since — ревизия открытого чата (переписки в D1): null — с тех пор ничего не изменилось. */
+  conversation(ws: string, ref: ConversationRef, since?: number): Promise<ConversationDetail | null>;
+  /** Ответ клиенту. opts.rid — свой номер у каждого сообщения: повтор того же запроса сервер второй раз не отправит;
+   *  opts.quote — номер сообщения, на которое это ответ (только второй номер). */
+  send(ws: string, ref: ConversationRef, text: string, opts?: SendOpts): Promise<ConversationDetail>;
+  /** Файл клиенту (только второй номер, detail.canFiles). Ответа на отправку нет — сообщение со статусом unknown и warning. */
+  /** voice — голосовое, записанное в пульте; dur — длина в секундах. */
+  sendFile?(ws: string, ref: ConversationRef, file: File, opts: SendOpts & { caption?: string; voice?: boolean; dur?: number }): Promise<ConversationDetail>;
+  act(ws: string, ref: ConversationRef, act: ChatAction, extra?: ChatActionExtra): Promise<ConversationDetail>;
+  /** Сотрудник открыл чат и видел сообщения клиента до at: «новое» снимается у всех сотрудников (переписки в D1), «Ждёт ответа» —
+   *  нет. → до какого времени чат теперь прочитан. Без D1 — только на этом устройстве. */
+  markRead?(ws: string, ref: ConversationRef, at: number): Promise<number>;
+  /** Чаты, где писали только мы (клиент не отвечал): в общем списке их нет, показываются по кнопке. */
+  outboundOnly?(ws: string): Promise<ConversationSummary[]>;
+  /** Ближайшие записи клиента в Altegio (available: false — журнал не подключён). */
+  bookingCard?(ws: string, ref: ConversationRef): Promise<{ available: boolean; records: BookingCard[] }>;
   /** Просьба выполнена; text — сообщение клиенту (пусто — закрыть без сообщения). */
   complete(ws: string, ref: ConversationRef, leadId: string, text: string): Promise<ConversationDetail>;
   leads(ws: string): Promise<Lead[]>;

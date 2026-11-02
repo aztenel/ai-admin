@@ -11,12 +11,17 @@ export function inScope(ws: Workspace, scope: Scope, list: ConversationSummary[]
   return ids ? list.filter((c) => ids.has(c.ref.channelId)) : list;
 }
 
-export const FILTER_TEST: Record<Filter, (c: ConversationSummary) => boolean> = {
-  all: () => true,
+const BOOKING_TOPICS = new Set(["book", "move", "cancel", "late", "time"]);
+const REQUESTS = new Set(["req", "lead", "call"]);
+/** Разделы чатов (ТЗ v2.0 §2.1). «Мои» — по имени сотрудника на этом устройстве (lib/operator.ts). */
+export const filterTest = (me: string): Record<Filter, (c: ConversationSummary) => boolean> => ({
   waiting: (c) => !!c.attention,
-  operator: (c) => c.bot.state === "paused",
-  unread: (c) => c.unread || !!c.unreadCount,
-};
+  booking: (c) => !!c.attention && (BOOKING_TOPICS.has(c.attention.topic || "") || REQUESTS.has(c.attention.reason)),
+  replies: (c) => !!c.attention?.source || (!!c.attention && c.attention.reason === "reply"),
+  mine: (c) => !!me && c.assignee === me && (!c.done || !!c.attention),
+  all: (c) => c.inbound,
+  done: (c) => !!c.done && !c.attention,
+});
 
 /** Поиск — по имени, номеру и последнему сообщению; во всех чатах выбранной области, без учёта фильтра. */
 export function search(list: ConversationSummary[], q: string) {
@@ -26,8 +31,9 @@ export function search(list: ConversationSummary[], q: string) {
   return list.filter((c) => norm(`${c.contact.name || ""}${c.contact.phone || ""}${c.preview}`).includes(n) || (d.length >= 3 && (c.contact.phone || "").replace(/\D/g, "").includes(d)));
 }
 
-export function counts(list: ConversationSummary[]): Record<Filter, number> {
-  return { all: list.length, waiting: list.filter(FILTER_TEST.waiting).length, operator: list.filter(FILTER_TEST.operator).length, unread: list.filter(FILTER_TEST.unread).length };
+export function counts(list: ConversationSummary[], me: string): Record<Filter, number> {
+  const t = filterTest(me), n = (f: Filter) => list.filter(t[f]).length;
+  return { waiting: n("waiting"), booking: n("booking"), replies: n("replies"), mine: n("mine"), all: n("all"), done: n("done") };
 }
 
 /** Другие чаты того же клиента — через другие номера компании. Переписки не сливаем: у каждого номера своя. */

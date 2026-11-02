@@ -4,6 +4,7 @@
 // из списка клиента (CORS). Без блока site клиента API для него нет вовсе: иначе любой посетитель мог бы читать Altegio других клиентов.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { altLoc } from "../booking/book.js";
+import { isPreview } from "../../lib/stage.js";
 
 // Ключ услуги — нормализованное название: одна и та же услуга у шеф-барбера и у барберов (две строки прайса Altegio, две категории
 // «Мужские стрижки и бритьё») для клиента одна; строку прайса мастера выбирает сервер. Смена мастера в виджете Altegio сбрасывала
@@ -47,6 +48,7 @@ export function siteConf(env, c) {
   let mode = modeOf(v != null && String(v).trim() !== "" ? v : s.booking);
   const loc = altLoc(env, c);
   if (!env.ALTEGIO_PARTNER || loc <= 0 || !env.LEADS_KEY) mode = "off";
+  if (mode === "live" && isPreview(env)) mode = "dry"; // черновик в журнал Altegio не пишет: время проверяется, запись — заявкой (аудит 31.10.2026)
   const n = /** @param {any} x @param {number} d @param {number} lo @param {number} hi */ (x, d, lo, hi) => +x >= lo && +x <= hi ? Math.round(+x) : d;
   return {
     mode, origins: siteOrigins(env, c), loc, id: String(c.id), name: String(c.name || ""),
