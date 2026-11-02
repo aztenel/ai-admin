@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { sqliteOk, d1With } from "../d1.mjs";
 import { sendOnceReset } from "../../src/services/inbox/send.js";
-import { gaMediaProbeReset } from "../../src/services/integrations/greenapi/client.js";
+import { gaMediaProbeReset, edgeMiss } from "../../src/services/integrations/greenapi/client.js";
 
 const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
 const INST = { id: "7107000077", token: "ga-tok-media" };
@@ -29,6 +29,16 @@ const uploads = () => net.ga.filter(x => x.op === "sendFileByUpload");
 /** адреса, которых нет (как 7107.media.greenapi.com 02.11.2026): соединение не устанавливается */
 const gone = hosts => (url) => (hosts.some(h => url.startsWith("https://" + h + "/")) ? Promise.reject(new TypeError("Network connection lost.")) : null);
 const fresh = () => { net.reset(); sendOnceReset(); gaMediaProbeReset(); };
+/** Так адрес без записи в DNS видит Worker на Cloudflare: не обрыв, а ответ самого Cloudflare — 530, «error code: 1016» (документация
+ *  Cloudflare, Workers «Known Issues»; живая проверка владельца 02.11.2026, вторая попытка: «Green-API ответил 530»). rootOk — адрес ещё
+ *  отвечал, когда его проверяли, и пропал к отправке. hits — какие запросы ушли на эти адреса. */
+const cfMiss = (hosts, { rootOk = false, hits = [] } = {}) => (url) => {
+  const h = hosts.find(x => url.startsWith("https://" + x + "/"));
+  if (!h) return null;
+  hits.push(url.replace(/\/[^/]*$/, "/…"));
+  if (rootOk && url === "https://" + h + "/") return new Response("forbidden", { status: 403 });
+  return new Response("error code: 1016", { status: 530, headers: { "content-type": "text/plain" } });
+};
 
 test("адреса для файлов нет (группа 7107) — файл уходит через общий media.greenapi.com", { skip }, async () => {
   fresh();
@@ -83,4 +93,59 @@ test("Green-API не ответил — «не знаем, ушло ли» с п
   r = await sendFile(b, { rid: "file-media-200" });
   assert.equal(r.status, 200, "отказ — тот же номер отправки уходит снова");
   assert.equal(s.hist("ga", "winchester", A).turns.at(-1).st, "sent");
+});
+
+test("ответы Cloudflare «до адреса не дошёл» — 530, 521, 523, 525, 526; 522, 524 и сбои Green-API (500, 502, 503) — нет: там запрос мог уйти", () => {
+  for (const c of [530, 521, 523, 525, 526]) assert.equal(edgeMiss(c), true, String(c));
+  for (const c of [0, 200, 403, 404, 500, 502, 503, 522, 524]) assert.equal(edgeMiss(c), false, String(c));
+});
+
+test("адреса для файлов нет, а Worker получает не обрыв, а ответ Cloudflare 530 — проверка это видит: файл сразу через общий адрес", { skip }, async () => {
+  fresh();
+  const hits = [];
+  net.mediaReply = cfMiss(["7107.media.greenapi.com"], { hits });
+  const s = mk(env({ GA_URL_WINCHESTER: "https://7107.api.greenapi.com" })), b = await login(s);
+  await s.gaText("winchester", INST, A, "Здравствуйте");
+  const r = await sendFile(b);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).warn, undefined, "без «не знаем, ушло ли»");
+  assert.deepEqual(uploads().map(x => x.host), ["media.greenapi.com"], "один файл — через общий адрес");
+  assert.deepEqual(hits, ["https://7107.media.greenapi.com/…"], "на вычисленный адрес — только проверка, отправки туда нет: " + JSON.stringify(hits));
+  const t = s.hist("ga", "winchester", A).turns.at(-1);
+  assert.equal(t.st, "sent");
+  assert.equal(t.se, undefined);
+});
+
+test("адрес отвечал при проверке и пропал к отправке (530) — тот же файл сразу через общий адрес, клиент получает его один раз", { skip }, async () => {
+  fresh();
+  const hits = [];
+  net.mediaReply = cfMiss(["7107.media.greenapi.com"], { rootOk: true, hits });
+  const s = mk(env({ GA_URL_WINCHESTER: "https://7107.api.greenapi.com" })), b = await login(s);
+  await s.gaText("winchester", INST, A, "Здравствуйте");
+  const r = await sendFile(b);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).warn, undefined);
+  assert.deepEqual(uploads().map(x => x.host), ["media.greenapi.com"], "до Green-API дошла одна отправка");
+  assert.equal(hits.length, 2, "проверка и одна неудачная отправка на вычисленный адрес: " + JSON.stringify(hits));
+  assert.equal(s.hist("ga", "winchester", A).turns.at(-1).st, "sent");
+  assert.equal((await sendFile(b)).status, 200);
+  assert.equal(hits.length, 2, "следующий файл — сразу на общий адрес, без новой проверки");
+  assert.deepEqual(uploads().map(x => x.host), ["media.greenapi.com", "media.greenapi.com"]);
+});
+
+test("и общий адрес не нашёлся (530) — «Файл не ушёл», а не «не знаем, ушло ли»: тот же номер отправки можно повторить", { skip }, async () => {
+  fresh();
+  net.mediaReply = cfMiss(["7107.media.greenapi.com", "media.greenapi.com"]);
+  const s = mk(env({ GA_URL_WINCHESTER: "https://7107.api.greenapi.com" })), b = await login(s);
+  await s.gaText("winchester", INST, A, "Здравствуйте");
+  let r = await sendFile(b, { rid: "file-media-530" });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /Файл не ушёл.*530/);
+  assert.equal(uploads().length, 0, "до Green-API ничего не дошло");
+  assert.ok(!s.hist("ga", "winchester", A).turns.some(x => x.st === "unknown"), "в переписке нет «не знаем, ушло ли»");
+  net.mediaReply = null;
+  r = await sendFile(b, { rid: "file-media-530" });
+  assert.equal(r.status, 200, "отказ — тот же номер отправки уходит снова");
+  assert.equal(s.hist("ga", "winchester", A).turns.at(-1).st, "sent");
+  assert.equal(uploads().length, 1);
 });

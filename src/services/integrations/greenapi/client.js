@@ -38,7 +38,16 @@ export async function gaCall(r, op, body, ms = 15000, query = "") {
 // файл из пульта не уходил (запрос до Green-API не доходил, пульт писал «не знаем, ушло ли»). Порядок (mediaHost): mediaUrl из настроек
 // (GA_MEDIA_URL_<ID>) → вычисленный адрес, если он вообще отвечает (проверка корня без ключей, раз в час на экземпляр Worker) → общий
 // https://media.greenapi.com (документация Green-API «Using GREEN-API Hosts»: общий адрес годится, пока у инстанса нет своего).
+// Несуществующий адрес Worker видит не обрывом, а ответом самого Cloudflare: 530 (ошибка 1016 — имя не нашлось в DNS; документация
+// Cloudflare, Workers «Known Issues»). Живая проверка владельца 02.11.2026, вторая попытка: проверка приняла 530 за «адрес есть», и
+// голосовое снова ушло на 7107.media.greenapi.com — «Green-API ответил 530». Такие ответы (edgeMiss) — «адреса нет»: запрос до Green-API
+// не дошёл, файл точно не ушёл — и тот же файл сразу уходит через общий адрес (второй раз клиент его не получит: первого не было).
 export const GA_MEDIA_ANY = "https://media.greenapi.com";
+/** Ответ самого Cloudflare «до адреса не дошёл»: 530 — имя не нашлось в DNS (1016) или туннель (1033), 521 — соединение отклонено,
+ *  523 — адрес недостижим, 525–526 — шифрование не договорилось. Запрос до Green-API не дошёл. 522 и 524 сюда не входят: там запрос
+ *  мог уйти и остаться без ответа. @param {number} s */
+export const edgeMiss = s => s === 530 || s === 521 || s === 523 || s === 525 || s === 526;
+const hostOf = (/** @type {string} */ b) => String(b).replace(/^https?:\/\//, "");
 /** вычисленный адрес для файлов: apiUrl с «api.» → «media.» @param {string} [base] @returns {string} */
 export function gaMediaBase(base) {
   try { const u = new URL(String(base || GA_BASE)); u.hostname = u.hostname.replace(/(^|\.)api\./, "$1media."); return u.origin; }
@@ -55,8 +64,12 @@ export async function mediaHost(r) {
   if (seen && now - seen.at < 3600e3) return seen.ok ? guess : GA_MEDIA_ANY;
   let ok = false;
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
-  try { const res = await fetch(guess + "/", { signal: ac.signal }); ok = true; try { await res.body?.cancel(); } catch (e) {} } // любой ответ (403, 404) — адрес есть
-  catch (e) { ok = false; console.log("ga media host", guess.replace(/^https:\/\//, ""), "не отвечает — общий адрес"); }
+  try { // ответ самого адреса (403, 404) — адрес есть; ответ Cloudflare «не дошёл» (530 и т. п.) — нет
+    const res = await fetch(guess + "/", { signal: ac.signal });
+    ok = !edgeMiss(res.status);
+    if (!ok) console.log("ga media host", hostOf(guess), "не найден (" + res.status + ") — общий адрес");
+    try { await res.body?.cancel(); } catch (e) {}
+  } catch (e) { ok = false; console.log("ga media host", hostOf(guess), "не отвечает — общий адрес"); }
   finally { clearTimeout(timer); }
   probed.set(guess, { ok, at: now });
   return ok ? guess : GA_MEDIA_ANY;
@@ -66,7 +79,16 @@ export async function mediaHost(r) {
 /** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string, preview?: boolean, err?: string }>} */
 export async function gaUpload(r, op, form, ms = 60000) {
   if (blocked(r, op)) return PREVIEW_RES();
-  const base = await mediaHost(r);
+  const base = await mediaHost(r), x = await uploadTo(base, r, op, form, ms);
+  if (!edgeMiss(x.status) || base === GA_MEDIA_ANY) return x;
+  // адрес для файлов пропал (или в настройках неверный): запрос до Green-API не дошёл — тот же файл через общий адрес, один раз
+  if (!(r && r.media)) probed.set(gaMediaBase(r && r.base), { ok: false, at: Date.now() });
+  console.log("ga media host", hostOf(base), "не найден (" + x.status + ") при отправке — общий адрес");
+  return uploadTo(GA_MEDIA_ANY, r, op, form, ms);
+}
+/** @param {string} base @param {any} r @param {string} op @param {FormData} form @param {number} ms
+ *  @returns {Promise<{ ok: boolean, status: number, j: any, text: string, err?: string }>} */
+async function uploadTo(base, r, op, form, ms) {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
     const res = await fetch(`${base}/waInstance${r.id}/${op}/${r.token}`, { method: "POST", body: form, signal: ac.signal });

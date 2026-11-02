@@ -8,7 +8,7 @@
 import { clean, snip } from "../../lib/text.js";
 import { logSafe } from "../../lib/phone.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
-import { gaUpload, gaCode, gaWhy, gaUnsure } from "../integrations/greenapi/client.js";
+import { gaUpload, gaCode, gaWhy, gaUnsure, edgeMiss } from "../integrations/greenapi/client.js";
 import { sendMarkGet, sendMarkPut, sendMarkDrop } from "../../db/kv/inbox.js";
 import { d1Ready, d1Status } from "../../db/d1/status.js";
 import { claimSend, finishSend, releaseSend, sendTableReady } from "../../db/d1/sends.js";
@@ -120,6 +120,9 @@ export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   if (x.ok && mid) return { ok: true, id: mid.slice(0, 80), ...(/^https:\/\//.test(url) ? { url: url.slice(0, 500) } : {}) };
   // 200 без номера сообщения, но с текстом ошибки: по документации Green-API так приходит «failed to upload file» — файл не ушёл, «Повторить» можно
   if (x.ok && said) { console.log("GA file 200", logSafe(said)); return { ok: false, error: `Green-API не принял файл: ${logSafe(said)}.` }; }
+  // Cloudflare не нашёл адрес Green-API для файлов или не смог к нему подключиться (530 и т. п., edgeMiss) — и через общий адрес тоже:
+  // запрос до Green-API не дошёл, файл точно не ушёл — отказ, «Повторить» можно (это не «не знаем, ушло ли»)
+  if (edgeMiss(x.status)) { console.log("GA file edge", x.status); return { ok: false, error: `Файл не ушёл: адрес Green-API для файлов не отвечает (ошибка ${x.status}). Повторите через минуту.` }; }
   if (x.ok || gaUnsure(x)) { // ответа нет, обрыв, срок или сбой у них: файл мог уйти — сам не повторяется; причина — в переписку и в журнал
     const se = fileUnsure(x);
     console.log("GA file unsure", x.status, se);
