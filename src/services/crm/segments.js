@@ -13,7 +13,7 @@ import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number }, reasons?: Map<string, string> }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number }, reasons?: Map<string, string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -70,7 +70,41 @@ export async function crmView(env, c, now) {
     return { ...x, d, why: stop.has(x.p) ? "stop" : !gate.phones.has(x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, reasons: gate.reasons, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+  return { snap, rows, marked, stop, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, reasons: gate.reasons, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+}
+
+// Статусы клиента базы (задание владельца 02.11.2026: «0 доступных» не значит «0 клиентов» — показываем всех, а писать рекламу можно только
+// с подтверждённым согласием). Каждый статус — отдельно, а не первая причина: «есть запись», «сервисные можно» (нет «стопа» и запрета),
+// «реклама можно» (подтверждённое согласие, нет «стопа», запрета, отказа и паузы), «отказался» («стоп», полный запрет, «стоп» ждёт решения),
+// «отказ от рекламы» (в согласии или в Altegio). ready — получит рекламу прямо сейчас (ещё и не был недавно, не записан, без рекламы 30 дней)
+const STOPPED = new Set(["block", "stop", "review"]);
+/** @param {CrmView} view @param {{ p: string, fut?: number, why?: string }} x */
+export function crmStatus(view, x) {
+  const r = (view.reasons && view.reasons.get(x.p)) || "", stopped = x.why === "stop" || !!(view.stop && view.stop.has(x.p)) || STOPPED.has(r);
+  return { booked: !!x.fut, service: !stopped, marketing: !stopped && !!(view.allow && view.allow.has(x.p)), stopped, refused: r === "denied", ready: !x.why };
+}
+/** сводка статусов: строки базы и записанные без визита за 90 дней (futOnly) @param {CrmView} view @param {CrmRow[]} rows @param {boolean} [withFut] */
+export function crmStatusCount(view, rows, withFut = false) {
+  const out = { valid: 0, booked: 0, service: 0, marketing: 0, stopped: 0, refused: 0, ready: 0 };
+  const add = (/** @type {any} */ st) => { out.valid++; for (const k of /** @type {const} */ (["booked", "service", "marketing", "stopped", "refused", "ready"])) if (st[k]) out[k]++; };
+  for (const x of rows) add(crmStatus(view, x));
+  if (withFut) for (const p of view.futOnly || []) add({ ...crmStatus(view, { p, fut: 1, why: "fut" }), ready: false });
+  return out;
+}
+/** @type {Record<string, string>} */
+const WHY_TEXT = { stop: "просил не писать («стоп»)", block: "запрет: не писать вообще", review: "«стоп» ждёт решения", denied: "отказался от рекламы",
+  unconfirmed: "согласие не подтверждено", noconsent: "нет согласия на рекламу", cooldown: "пауза после отменённой записи", fut: "уже записан",
+  recent: "был меньше 14 дней назад", marketed: "реклама уже была за 30 дней" };
+/** почему этому клиенту сейчас не уйдёт реклама — словами; "" — уйдёт @param {{ why?: string, reason?: string }} x */
+export const crmWhyText = x => !x.why ? "" : x.why === "noconsent" ? WHY_TEXT[x.reason || "noconsent"] || WHY_TEXT.noconsent : WHY_TEXT[x.why] || x.why;
+/** все клиенты сегмента (и те, кому сейчас нельзя рекламу) — для списка и предпросмотра: свежие визиты первыми
+ *  @param {CrmView} view @param {string} seg @param {{ days?: number, from?: number, to?: number, staff?: string }} [o] */
+export function crmPeople(view, seg, o = {}) {
+  const test = crmSegTest(seg);
+  if (!test) return null;
+  return view.rows.filter(x => test(x) && (o.days == null || x.d === o.days) && (o.from == null || x.d >= o.from) && (o.to == null || x.d <= o.to) && (!o.staff || x.staff === o.staff))
+    .sort((a, b) => a.d - b.d || b.v - a.v || a.p.localeCompare(b.p))
+    .map(x => ({ phone: x.p, name: x.n, last: x.last, d: x.d, v: x.v, staff: x.staff, svc: x.svc, why: x.why, reason: (view.reasons && view.reasons.get(x.p)) || "", st: crmStatus(view, x) }));
 }
 
 // воронка рассылки по сегменту (ТЗ v3.0 P0): сколько всего, с правильным номером, в сегменте и почему не все получат. Кто получит,
@@ -103,10 +137,14 @@ export async function crmSegments(env, c, now) {
   /** @type {any} */ let err = null; try { err = await crmErrLoad(env, c.id); } catch (e) {}
   const ok = rows.filter(x => !x.why), cnt = (/** @type {string} */ w) => rows.filter(x => x.why === w).length;
   const staff = [...new Set(rows.map(x => x.staff).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
-  const segments = CRM_SEGS.map(s => ({ id: s.id, label: s.label, rule: s.rule, n: ok.filter(s.test).length }))
-    .concat(staff.map(n => ({ id: "staff:" + n, label: "Мастер: " + n, rule: "последний визит у мастера", n: ok.filter(x => x.staff === n).length })));
+  // n — получат рекламу прямо сейчас; total и st — все клиенты сегмента и их статусы (02.11.2026: сегменты не «пустые», если согласий нет)
+  const seg = (/** @type {(x: CrmRow) => boolean} */ test) => { const all = rows.filter(test); return { n: all.filter(x => !x.why).length, total: all.length, st: crmStatusCount(view, all) }; };
+  const segments = CRM_SEGS.map(s => ({ id: s.id, label: s.label, rule: s.rule, ...seg(s.test) }))
+    .concat(staff.map(n => ({ id: "staff:" + n, label: "Мастер: " + n, rule: "последний визит у мастера", ...seg(x => x.staff === n) })));
   const { list, futOnly, ...info } = snap || {}; // номера — только на сервере
+  const st = crmStatusCount(view, rows, true), invalid = (+(snap && snap.masked) || 0) + (+(snap && snap.bad) || 0);
   return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, consent: view.gate,
+    statuses: snap ? { base: st.valid + invalid, ...st, invalid } : null,
     info: snap ? info : null, ...(err && err.at > ((snap && snap.at) || 0) ? { error: err.error, errorAt: err.at } : {}) };
 }
 

@@ -2,7 +2,7 @@
 // Рассылки (/broadcast, /api/bc/*): создание, проверка, пуск, пауза, отчёт.
 import { clean } from "../lib/text.js";
 import { isPreview } from "../lib/stage.js";
-import { normPhone, maskPhone } from "../lib/phone.js";
+import { normPhone, maskPhone, fmtPhone } from "../lib/phone.js";
 import { isoDay } from "../lib/time.js";
 import { jsonP, sameOrigin } from "../lib/http.js";
 import { ADMIN_CSS } from "../lib/css.js";
@@ -23,6 +23,8 @@ import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
 import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, bcGaOff, GA_CAP, GA_OFF } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
+import { autoSet as msgSettings } from "../services/automsg/index.js";
+import { sendOnceAuto } from "../services/reminders/journal.js";
 /** @import { Env } from "../lib/types.js" */
 
 const BUSY = "Сервер сейчас не отвечает. Попробуйте через минуту.";
@@ -141,7 +143,31 @@ export async function bcApi(request, env, url, s) {
   }
   // разбор списка без сохранения: сколько номеров, сколько повторов, кого пропустим. segment — сегмент базы Altegio: номера строит сервер
   if (P === "/api/bc/check") { try { return jsonP(await bcCheck(env, c, body, now)); } catch (e) { console.log("bc check", String(e)); return jsonP({ error: BUSY }, 503); } }
-  if (P === "/api/bc/test") { // пробная отправка на один номер (себе)
+  if (P === "/api/bc/test" && ga) { // проверка рассылки со второго номера (02.11.2026): только владелец и только на его номер для проверки
+    // («Автоматические сообщения» → «Номер для проверки»), любой другой номер не принимаем. Запрет запуска рассылок (gaNoBroadcast) её не
+    // держит: это одно сообщение владельцу, не рассылка. С тестовой версии не уходит; не больше 20 за час; текст — на вымышленном клиенте
+    const gt = await bcGaTestText(env, c, body);
+    if (gt.errors.length) return jsonP({ error: gt.errors.join(". "), issues: gt.errors, preview: gt.text }, 400);
+    if (s.role !== "owner") return jsonP({ error: "Проверку со второго номера отправляет владелец — на свой номер.", preview: gt.text }, 403);
+    const set = await msgSettings(env, c), gr = gaRoute(env, cid), test = set.test;
+    if (!test) return jsonP({ error: "Сначала укажите номер для проверки: «Рассылки» → «Автоматические» → «Номер для проверки».", code: "notest", preview: gt.text }, 409);
+    if (!gr) return jsonP({ error: "Второй номер (Green-API) не подключён.", code: "nosender", preview: gt.text }, 409);
+    if (isPreview(env)) return jsonP({ error: "Это тестовая версия: пробное сообщение отсюда не отправляется. Текст пробы показан ниже.", code: "preview", preview: gt.text }, 409);
+    const tk = `bct:${cid}:${Math.floor(now / 3600e3)}`, tn = +((await env.KV.get(tk)) || 0);
+    if (tn >= 20) return jsonP({ error: "Слишком много пробных отправок за час. Подождите немного." }, 429);
+    try { await env.KV.put(tk, String(tn + 1), { expirationTtl: 3700 }); } catch (e) {}
+    /** @type {any} */ let r = { ok: false };
+    const ridOk = /^[A-Za-z0-9_-]{6,40}$/.test(String(body.rid || ""));
+    const once = await sendOnceAuto(env, cid, test.p, "bt-" + (ridOk ? body.rid : now.toString(36)), async () => {
+      r = await bcSendGa(env, test.p, gt.f, "Айгерим", gr, gt.text);
+      return r.ok ? { ok: true } : { ok: false };
+    });
+    if (once && "dup" in once) return jsonP({ ok: true, dup: true, text: `Проверка уже отправлена на ${fmtPhone(test.p)}.`, preview: gt.text });
+    if (once && "blocked" in once) return jsonP({ error: once.blocked.error, code: once.blocked.code, preview: gt.text }, once.blocked.status);
+    return r.ok ? jsonP({ ok: true, text: `Сообщение отправлено на ваш номер ${fmtPhone(test.p)} со второго номера. Проверьте WhatsApp.`, preview: gt.text })
+      : jsonP({ error: `Green-API не принял сообщение (${gaWhy(r, gr)}).`, preview: gt.text }, 409);
+  }
+  if (P === "/api/bc/test") { // пробная отправка шаблона Meta на один номер (себе)
     const to = normPhone(body.to) || (/^\s*\+/.test(String(body.to || "")) && /^[1-9]\d{9,14}$/.test(String(body.to).replace(/\D/g, "")) ? "+" + String(body.to).replace(/\D/g, "") : "");
     // второй номер: текст собирается так же, как клиенту (вставки — на вымышленном клиенте), и виден, даже если отправка выключена
     const gt = ga ? await bcGaTestText(env, c, body) : null, f = gt ? gt.f : bcFields(body);

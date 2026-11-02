@@ -111,13 +111,15 @@ export async function recompute(db, ws, now, which) {
 // k — контакт с вычисленными полями: lastv — последний визит (журнал или справочник Altegio — что позже), d — дней с него (по
 // календарю Астаны), booked — запись впереди, blocked — действующий запрет маркетинга или полный (или «стоп» в старом хранилище KV, ?3),
 // review — ждёт решения, cooled — пауза после отменённой записи, consent и cconf — последнее согласие на маркетинг и подтверждено ли,
+// altno — в Altegio у клиента выключены массовые уведомления (отказ от рекламы из Altegio, 02.11.2026: раньше не учитывался; сервисных не касается),
 // v90 — визитов за 90 дней, recent — маркетинг за последние ?4 мс. ?1 — компания, ?2 — сейчас
 const LASTV = "nullif(max(coalesce(c.last_visit_at, 0), coalesce(c.alt_last_visit_at, 0)), 0)";
 const K = `with k as (select c.id, c.name, c.phone, c.search, c.visits, c.first_visit_at, c.last_visit_at, c.next_booking_at, c.last_staff, c.created_at,
   c.alt_visits as altv, ${LASTV} as lastv,
   case when ${LASTV} is null then null else cast(julianday(date(?2 / 1000 + ${TZS}, 'unixepoch')) - julianday(date(${LASTV} / 1000 + ${TZS}, 'unixepoch')) as integer) end as d,
   case when c.next_booking_at > ?2 then 1 else 0 end as booked,
-  case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind in ('marketing_optout', 'full_block')) or c.phone in (select value from json_each(?3)) then 1 else 0 end as blocked,
+  case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind in ('marketing_optout', 'full_block') and r.source <> 'altegio') or c.phone in (select value from json_each(?3)) then 1 else 0 end as blocked,
+  case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind = 'marketing_optout' and r.source = 'altegio') then 1 else 0 end as altno,
   case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind = 'full_block') then 1 else 0 end as full,
   case when exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.needs_review = 1) then 1 else 0 end as review,
   coalesce((select s.state from consents s where s.ws = c.ws and s.contact_id = c.id and s.purpose = 'marketing' order by s.id desc limit 1), 'unknown') as consent,
@@ -131,13 +133,13 @@ const K = `with k as (select c.id, c.name, c.phone, c.search, c.visits, c.first_
 /** Номера, которым можно рекламу по согласию и запретам (подтверждённое «да», нет запрета, решения не ждёт, нет паузы после
  *  отмены) — для рассылок по базе Altegio (services/crm, ТЗ v2.0 §5). @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs */
 export async function consentReadyPhones(db, ws, now, kvStops, gapMs) {
-  const r = await db.prepare(`${K} select phone from k where consent = 'granted' and cconf = 1 and blocked = 0 and review = 0 and cooled = 0`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
+  const r = await db.prepare(`${K} select phone from k where consent = 'granted' and cconf = 1 and blocked = 0 and altno = 0 and review = 0 and cooled = 0`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
   return new Set((r.results || []).map((/** @type {any} */ x) => String(x.phone)));
 }
 // почему реклама закрыта — первая причина по порядку: полный запрет, неоднозначный «стоп» (ждёт решения; его запрет тоже в blocked),
 // «стоп» (D1 или KV), отказ в согласии, согласие не подтверждено, согласия нет, пауза после отменённой записи; '' — можно (ровно
 // условие consentReadyPhones)
-const GATE_WHY = `case when full = 1 then 'block' when review = 1 then 'review' when blocked = 1 then 'stop' when consent = 'denied' then 'denied'
+const GATE_WHY = `case when full = 1 then 'block' when review = 1 then 'review' when blocked = 1 then 'stop' when consent = 'denied' or altno = 1 then 'denied'
   when consent = 'granted' and cconf <> 1 then 'unconfirmed' when consent <> 'granted' then 'noconsent' when cooled = 1 then 'cooldown' else '' end`;
 /**
  * То же, что consentReadyPhones, и причина для остальных (воронка рассылки показывает, почему человек не получит; ТЗ v3.0 P0).
@@ -157,7 +159,7 @@ export async function consentGate(db, ws, now, kvStops, gapMs) {
  */
 export async function contactKpi(db, ws, now, kvStops, gapMs, seg) {
   const r = await db.prepare(`${K} select count(*) total, coalesce(sum(booked), 0) booked,
-    coalesce(sum(case when blocked = 1 or review = 1 or consent = 'denied' then 1 else 0 end), 0) forbidden,
+    coalesce(sum(case when blocked = 1 or altno = 1 or review = 1 or consent = 'denied' then 1 else 0 end), 0) forbidden,
     ${seg ? `coalesce(sum(case when (${seg.where}) then 1 else 0 end), 0)` : "null"} seg from k`)
     .bind(ws, now, JSON.stringify(kvStops), gapMs, ...(seg && seg.where.includes("?5") ? [seg.staff || ""] : [])).first(); // ?5 — только у «Мастер: …»
   return { total: +((r && r.total) || 0), withBooking: +((r && r.booked) || 0), segment: seg ? +((r && r.seg) || 0) : null, forbidden: +((r && r.forbidden) || 0) };
@@ -262,13 +264,23 @@ export async function eventPut(db, ws, key, kind, details, at, actor = "sync") {
  * news — проход «разрешил рассылки» (флаг Altegio, не подтверждённое согласие): reset — перед первой страницей флаги сбрасываются
  * (клиент мог запретить рассылки в Altegio). extra — отметка курсора в той же пачке.
  * @param {any} db @param {string} ws @param {any[]} rows [{ id, p, n, s, cr, fv, lv, vc }] или [{ p }] для news @param {number} stamp @param {any[]} extra
- * @param {{ news?: boolean, reset?: boolean }} [mode]
+ * @param {{ news?: boolean, nomass?: boolean, reset?: boolean }} [mode]
  */
 export async function directoryApply(db, ws, rows, stamp, extra, mode = {}) {
   const list = [];
   if (mode.news && mode.reset) list.push(db.prepare("update contacts set alt_newsletter = null where ws = ? and alt_newsletter is not null").bind(ws));
+  // в Altegio «не получать массовые уведомления» — отказ от рекламы (запрет marketing_optout с источником altegio; сервисные он не закрывает).
+  // Новый проход справочника снимает прежние такие запреты и ставит снова тем, у кого флаг остался (02.11.2026)
+  if (mode.nomass && mode.reset) list.push(db.prepare("update restrictions set lifted_at = ?2, lifted_by = 'sync', lift_reason = 'Altegio: массовые уведомления снова включены' where ws = ?1 and source = 'altegio' and kind = 'marketing_optout' and lifted_at is null").bind(ws, stamp));
   for (const part of chunks(rows)) {
     const j = JSON.stringify(part);
+    if (mode.nomass) {
+      list.push(db.prepare(`insert into restrictions (ws, contact_id, kind, channel, reason, source, actor, legacy_key, created_at)
+        select ?1, c.id, 'marketing_optout', '', 'Altegio: клиент не получает массовые уведомления', 'altegio', 'sync', 'altegio_nomass:' || c.phone, ?2
+        from json_each(?3) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where true
+        on conflict (ws, legacy_key) where legacy_key is not null do update set lifted_at = null, lifted_by = null, lift_reason = null`).bind(ws, stamp, j));
+      continue;
+    }
     if (mode.news) { list.push(db.prepare(`update contacts set alt_newsletter = 1 from json_each(?2) j where contacts.ws = ?1 and contacts.phone = j.value ->> '$.p'`).bind(ws, j)); continue; }
     list.push(db.prepare(`insert into contacts (id, ws, phone, name, altegio_client_id, search, alt_first_visit_at, alt_last_visit_at, alt_visits, created_at, updated_at, synced_at)
       select j.value ->> '$.id', ?1, j.value ->> '$.p', nullif(j.value ->> '$.n', ''), j.value ->> '$.cr', j.value ->> '$.s', j.value ->> '$.fv', j.value ->> '$.lv', j.value ->> '$.vc', ?2, ?2, ?2

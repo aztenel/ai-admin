@@ -8,7 +8,7 @@ import { CLIENTS, hasClient } from "../config/builtin-clients.js";
 import { CRM_PAGE } from "../config/constants.js";
 import { canSee } from "../services/auth/access.js";
 import { crmBuild, crmWhy } from "../services/crm/snapshot.js";
-import { crmSegments, crmPick, crmSegTest } from "../services/crm/segments.js";
+import { crmSegments, crmPick, crmSegTest, crmView, crmPeople, crmWhyText } from "../services/crm/segments.js";
 /** @import { Env } from "../lib/types.js" */
 
 const BUSY = "Хранилище не отвечает — попробуйте через минуту.";
@@ -25,17 +25,20 @@ export async function crmApi(request, env, url, s) {
     try { return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", why: crmWhy(env, c), ...(await crmSegments(env, c, now)) }); }
     catch (e) { console.log("crm segments", String(e)); return jsonP({ error: BUSY }, 503); }
   }
-  if (M === "GET" && P === "/api/crm/list") { // ?seg=&page=&from=&to=&staff= — по 50 человек
+  if (M === "GET" && P === "/api/crm/list") { // ?seg=&page=&from=&to=&staff=&all= — по 50 человек; all=1 — все клиенты сегмента со статусами
     const seg = clean(q.get("seg") || "", 80), page = Math.min(1000, Math.max(1, Math.round(+(q.get("page") || 1)) || 1));
     const num = (/** @type {string} */ k) => { const v = q.get(k); return v === null || v.trim() === "" ? undefined : Math.round(+v); };
     const from = num("from"), to = num("to"), staff = clean(q.get("staff") || "", 60) || undefined;
     if (!crmSegTest(seg)) return jsonP({ error: "Неизвестный сегмент." }, 400);
     if ([from, to].some(v => v !== undefined && !(v >= 0 && v <= 400))) return jsonP({ error: "Дни с визита — число от 0 до 400." }, 400);
-    let all;
-    try { all = (await crmPick(env, c, seg, now, { from, to, staff })) || []; } catch (e) { console.log("crm list", String(e)); return jsonP({ error: BUSY }, 503); }
+    /** @type {any[]} */ let all;
+    // все клиенты сегмента со статусами (02.11.2026): «нет согласия» — не повод скрывать клиента из списка, писать рекламу ему всё равно нельзя
+    const every = q.get("all") === "1";
+    try { all = (every ? crmPeople(await crmView(env, c, now), seg, { from, to, staff }) : await crmPick(env, c, seg, now, { from, to, staff })) || []; } catch (e) { console.log("crm list", String(e)); return jsonP({ error: BUSY }, 503); }
     // имя — через logSafe: администраторы нередко пишут в Altegio номер вместо имени («87071234567»), а полные номера базы браузеру не уходят
-    const rows = all.slice((page - 1) * CRM_PAGE, page * CRM_PAGE).map(x => ({ name: logSafe(x.name), phone: maskPhone(x.phone), last: x.last, d: x.d, v: x.v, staff: x.staff, svc: x.svc }));
-    return jsonP({ seg, total: all.length, page, pages: Math.max(1, Math.ceil(all.length / CRM_PAGE)), per: CRM_PAGE, list: rows });
+    const rows = all.slice((page - 1) * CRM_PAGE, page * CRM_PAGE).map(x => ({ name: logSafe(x.name), phone: maskPhone(x.phone), last: x.last, d: x.d, v: x.v, staff: x.staff, svc: x.svc,
+      ...(every ? { st: x.st, why: crmWhyText(x) } : {}) }));
+    return jsonP({ seg, total: all.length, page, pages: Math.max(1, Math.ceil(all.length / CRM_PAGE)), per: CRM_PAGE, list: rows, ...(every ? { all: true } : {}) });
   }
   if (M === "POST" && P === "/api/crm/refresh") { // собрать снимок сейчас: у черновиков фоновой задачи нет, а владелец хочет видеть свежие числа
     if (s.role !== "owner") return jsonP({ error: "Обновить базу может только владелец." }, 403);

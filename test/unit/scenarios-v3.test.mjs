@@ -13,6 +13,7 @@ import { syncStep } from "../../src/services/contacts/sync.js";
 import { contactsSegments, contactsCard } from "../../src/services/contacts/index.js";
 import { demoLoad } from "../../src/services/contacts/demo.js";
 import { jrRun } from "../../src/services/reminders/journal.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
 import { jrqLoad } from "../../src/db/kv/reminders.js";
 import { consentAdd } from "../../src/db/d1/rights.js";
 import { contactsByPhones } from "../../src/db/d1/contacts.js";
@@ -66,6 +67,7 @@ test("(5) клиент записался: после обновления ба�
   assert.equal(seg.segments.find(x => x.id === "pora").ready, 1); assert.equal(seg.segments.find(x => x.id === "zapis").count, 1);
   assert.ok(d.raw.prepare("select next_booking_at from contacts where phone = ?").get(dg(801)).next_booking_at > Date.now());
   // напоминания по журналу Altegio со второго номера: новая запись — накануне и за 2 часа
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   await jrRun(s.env, Date.now());
   const q = (await jrqLoad(s.env, "winchester")).filter(x => x.rec === "8901");
   assert.deepEqual(q.map(x => x.k).sort(), ["d1", "h2", "rv"].filter(k => q.some(x => x.k === k)).sort());

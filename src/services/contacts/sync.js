@@ -189,7 +189,8 @@ export async function syncDry(env, c, now) {
   else summary.splice(summary.length - 1, 0,
     `Справочник клиентов Altegio: всего ${dir.total}; прочитано ${dir.read}${dir.read < dir.total ? " (не всё — не хватило времени)" : ""}`,
     `В справочнике: с номером ${dir.ok}, скрытых ${dir.masked}, неверных ${dir.bad}, пустых ${dir.empty}; без визитов ${dir.never}; последний визит больше 2 лет назад — ${dir.old2y}`,
-    `Разрешили рассылки (флаг Altegio, не подтверждённое согласие): ${dir.news ?? "не прочитано"}${dir.newsNote ? " — " + dir.newsNote : ""}`);
+    `Разрешили рассылки (флаг Altegio, не подтверждённое согласие): ${dir.news ?? "не прочитано"}${dir.newsNote ? " — " + dir.newsNote : ""}`,
+    `Не получают массовые уведомления (Altegio, учитываем как отказ от рекламы): ${dir.nomass ?? "не прочитано"}${dir.nomassNote ? " — " + dir.nomassNote : ""}`);
   const report = { at: now, ok: true, summary, numbers: { ...f.count, contacts: f.contacts.length, future, known, cut: r.cut, pages: r.pages, directory: "error" in dir ? null : dir } };
   if (db) { try { await eventPut(db, c.id, `dry:${now}`, "altegio_dry", report, now, "owner"); } catch (e) {} }
   return report;
@@ -213,6 +214,10 @@ export async function contactsRun(env, now) {
 // последний визит, число визитов по Altegio; «разрешил рассылки» — отдельным поиском с фильтром is_newsletter_allowed (это флаг
 // Altegio, а не подтверждённое согласие). Курсор — номер страницы в sync_state (scope 'clients'); полный проход — раз в неделю.
 export const DIR = { pageSize: 200, everyMs: 7 * 86400e3, fields: ["id", "name", "surname", "phone", "first_visit_date", "last_visit_date", "visits_count"] };
+// флаги Altegio: «разрешил рассылки» (не подтверждённое согласие) и «не получает массовые уведомления» (отказ от рекламы: 30.10.2026
+// такой был у 1 из 18 935 клиентов Winchester, а синхронизация его не читала — отказ терялся; учтён 02.11.2026)
+const NEWS = [{ type: "is_newsletter_allowed", state: { value: true } }];
+const NOMASS = [{ type: "is_mass_notification_allowed", state: { value: false } }];
 let noVisitsCount = false; // Altegio не принял поле visits_count (400) — дальше без него
 
 /** Страница справочника: { list, total }. filters — фильтры Altegio. @param {Env} env @param {Client} c @param {number} page @param {any[]} [filters] @param {string[]} [fields] */
@@ -255,18 +260,19 @@ async function dirStep(env, c, db, now, t0, force) {
   let page = +cur.page || 1, phase = cur.phase || "all", read = 0;
   const st = { masked: +cur.masked || 0, bad: +cur.bad || 0 };
   while (Date.now() - t0 < SYNC.budgetMs) {
-    const r = await dirPage(env, c, page, phase === "news" ? [{ type: "is_newsletter_allowed", state: { value: true } }] : undefined, phase === "news" ? ["id", "phone"] : undefined);
+    const flag = phase === "news" || phase === "nomass";
+    const r = await dirPage(env, c, page, phase === "news" ? NEWS : phase === "nomass" ? NOMASS : undefined, flag ? ["id", "phone"] : undefined);
     const rows = [];
     for (const x of r.list) {
       const d = dirRow(x);
       if (!d.row) { if (phase === "all" && (d.kind === "masked" || d.kind === "bad")) st[d.kind]++; continue; }
-      rows.push(phase === "news" ? { p: d.row.p } : d.row);
+      rows.push(flag ? { p: d.row.p } : d.row);
     }
     const last = r.list.length < DIR.pageSize;
-    const next = last ? (phase === "all" ? { phase: "news", page: 1 } : { phase: "done", page: 1 }) : { phase, page: page + 1 };
+    const next = last ? (phase === "all" ? { phase: "news", page: 1 } : phase === "news" ? { phase: "nomass", page: 1 } : { phase: "done", page: 1 }) : { phase, page: page + 1 };
     const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done" };
     const extra = curNext.done ? [syncOkStmt(db, ws, SRC, "clients", now, JSON.stringify(curNext), null), syncClearStmt(db, ws, SRC, "clients")] : [syncCursorStmt(db, ws, SRC, "clients", JSON.stringify(curNext))];
-    await directoryApply(db, ws, rows, now, extra, { news: phase === "news", reset: phase === "news" && page === 1 });
+    await directoryApply(db, ws, rows, now, extra, { news: phase === "news", nomass: phase === "nomass", reset: flag && page === 1 });
     read += r.list.length; cur = curNext; page = next.page; phase = next.phase;
     if (cur.done) break;
   }
@@ -275,7 +281,7 @@ async function dirStep(env, c, db, now, t0, force) {
 
 /** Справочник без записи: страницы до срока, только числа. @param {Env} env @param {Client} c @param {number} now @param {number} until */
 async function dirDry(env, c, now, until) {
-  const out = { total: 0, read: 0, ok: 0, masked: 0, bad: 0, empty: 0, never: 0, old2y: 0, news: /** @type {number|null} */ (null), newsNote: "" };
+  const out = { total: 0, read: 0, ok: 0, masked: 0, bad: 0, empty: 0, never: 0, old2y: 0, news: /** @type {number|null} */ (null), newsNote: "", nomass: /** @type {number|null} */ (null), nomassNote: "" };
   for (let page = 1; Date.now() < until; page++) {
     const r = await dirPage(env, c, page);
     if (page === 1) out.total = r.total;
@@ -288,7 +294,9 @@ async function dirDry(env, c, now, until) {
     }
     if (r.list.length < DIR.pageSize) break;
   }
-  try { out.news = (await dirPage(env, c, 1, [{ type: "is_newsletter_allowed", state: { value: true } }], ["id"])).total; }
+  try { out.news = (await dirPage(env, c, 1, NEWS, ["id"])).total; }
   catch (/** @type {any} */ e) { out.newsNote = e && e.message ? String(e.message) : "фильтр не принят"; }
+  try { out.nomass = (await dirPage(env, c, 1, NOMASS, ["id"])).total; }
+  catch (/** @type {any} */ e) { out.nomassNote = e && e.message ? String(e.message) : "фильтр не принят"; }
   return out;
 }

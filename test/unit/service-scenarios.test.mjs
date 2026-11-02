@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
+import { autoOn, legacyOn } from "../automsg.mjs";
 import { jrRun, jrPlan } from "../../src/services/reminders/journal.js";
 import { SCENARIOS, SV_CATS, svText, render } from "../../src/services/reminders/templates.js";
 import { atLocal, remindText } from "../../src/services/reminders/plan.js";
@@ -23,8 +24,11 @@ const ph = i => "+7700000" + String(i).padStart(4, "0");
 const dg = i => ph(i).slice(1);
 const sent = () => net.ga.filter(x => x.op === "sendMessage").map(x => ({ to: x.body.chatId.replace("@c.us", ""), text: x.body.message }));
 // владелец одобрил тексты (svtpl:<клиент>): без одобрения ничего не уходит
-const approve = async (s, ids = SCENARIOS.filter(x => x.auto).map(x => x.id)) =>
-  s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(ids.map(id => [id, { v: SCENARIOS.find(x => x.id === id).v, at: 1 }]))));
+// и включил сценарии в разделе «Автоматические сообщения» (02.11.2026: по умолчанию всё выключено)
+const approve = async (s, ids = SCENARIOS.filter(x => x.auto).map(x => x.id)) => {
+  await s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(ids.map(id => [id, { v: SCENARIOS.find(x => x.id === id).v, at: 1 }]))));
+  await autoOn(s, legacyOn(W));
+};
 const login = async (s, key) => { const b = s.browser(); await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `key=${key}&next=%2Finbox` }); return b; };
 const post = (b, path, body) => b.post(path, body);
 const log = s => s.kv.json("jrl:winchester") || [];
@@ -153,7 +157,7 @@ test("исходящее в переписке — с номером сообщ�
 test("текст не одобрен владельцем — не уходит; одобрение старой версии не подходит", async () => {
   net.reset();
   net.altJournal = [rec(ph(361), TOM, "15:00", { id: 3061 })];
-  const s = mk(ENV);
+  const s = mk(ENV); await autoOn(s, legacyOn(W)); // сценарии включены, а тексты не одобрены
   await jrRun(s.env, at(TODAY, "17:50")); await jrRun(s.env, at(TODAY, "18:00"));
   assert.deepEqual(sent(), []);
   assert.ok(log(s).some(x => x.rec === "3061" && /не одобрен/.test(x.why)), JSON.stringify(log(s)));
@@ -193,6 +197,7 @@ test("проверка по журналу без отправки: только
   net.altJournal = [rec(ph(381), tom, "15:00", { id: 3081, name: "Арман Каримов", made }), rec(ph(382), tom, "16:00", { id: 3082, made }), rec("+7 700 XXX-X1-05", tom, "17:00", { id: 3083, made })];
   const { REMIND_GA_WINCHESTER, ...off } = ENV; // отправка выключена — проверка всё равно работает
   const s = mk({ ...off, KEY_WINCHESTER: "staff-key-winch-0001" });
+  await autoOn(s, legacyOn(W)); // проверка показывает то, что уйдёт по включённым сценариям
   await s.kv.api.put(`optout:winchester:${dg(382)}`, "1");
   const own = await login(s, "owner-key-123456"), staff = await login(s, "staff-key-winch-0001");
   assert.equal((await post(staff, "/api/bc/service/dry", { c: "winchester" })).status, 403);

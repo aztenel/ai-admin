@@ -18,6 +18,8 @@ import { jrRun } from "../../src/services/reminders/journal.js";
 import { atLocal } from "../../src/services/reminders/plan.js";
 import { SCENARIOS } from "../../src/services/reminders/templates.js";
 import { gaRoute } from "../../src/services/integrations/greenapi/webhook.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
+import { CLIENTS } from "../../src/config/builtin-clients.js";
 
 const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
 const INST = { id: "7105000077", token: "ga-tok-w" };
@@ -225,6 +227,7 @@ test("F3 напоминание по журналу: Green-API ответил 40
     staff: { id: 1, name: "Тони" }, client: { id: 1, phone: "+77000009408", name: "Клиент" }, services: [{ id: 1, title: "Мужская стрижка" }] }];
   const s = mk(W);
   await s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }]))));
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в разделе «Автоматические сообщения» (по умолчанию выключены)
   await jrRun(s.env, atLocal("2026-10-19", "17:00"));
   net.gaReply = r => r.op === "sendMessage" ? new Response(JSON.stringify({ message: "Request Timeout" }), { status: 408 }) : null;
   await jrRun(s.env, atLocal("2026-10-19", "18:00"));

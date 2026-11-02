@@ -9,6 +9,7 @@ import { atLocal } from "../../src/services/reminders/plan.js";
 import { botOff } from "../../src/services/channels/index.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { SCENARIOS } from "../../src/services/reminders/templates.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
 
 const W = CLIENTS.winchester, INST = { id: "7105000088", token: "ga-tok-jr" };
 const ENV = { ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token, REMIND_GA_WINCHESTER: "1" };
@@ -23,7 +24,8 @@ const ph = i => "+7700000" + String(i).padStart(4, "0");
 const dg = i => ph(i).slice(1);
 const sent = () => net.ga.filter(x => x.op === "sendMessage").map(x => ({ to: x.body.chatId.replace("@c.us", ""), text: x.body.message }));
 // тексты одобрены владельцем (svtpl:<клиент>, ТЗ v2.0 §4): без одобрения ничего не уходит — это проверяет service-scenarios.test.mjs
-const approve = s => s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }]))));
+// и включил сценарии в разделе «Автоматические сообщения» (02.11.2026: по умолчанию всё выключено) — как было: накануне в 18:00, за 2 часа, отзыв
+const approve = async s => { await s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }])))); await autoOn(s, legacyOn(W)); };
 const kinds = (items, id) => items.filter(x => x.rec === String(id)).map(x => x.k).sort();
 
 test("план: накануне в 18:00, за 2 часа (только с 10 до 21), отзыв после визита; удалённые, скрытые номера и неявки — без сообщений", () => {
@@ -62,7 +64,7 @@ test("накануне в 18:00 напоминание уходит со вто�
   const s = mk(ENV); await approve(s);
   await jrRun(s.env, at(TODAY, "17:00"));
   assert.deepEqual(sent(), [], "в 17:00 ещё рано");
-  assert.ok(net.alt.some(x => /^GET \/records\/133486\?start_date=2026-10-18&end_date=2026-10-20/.test(x)), net.alt.join("\n"));
+  assert.ok(net.alt.some(x => /^GET \/records\/133486\?start_date=2026-10-18&end_date=2026-11-02/.test(x)), net.alt.join("\n"));
   await jrRun(s.env, at(TODAY, "18:00"));
   const out = sent();
   assert.equal(out.length, 2, JSON.stringify(out));

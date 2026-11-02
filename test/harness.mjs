@@ -143,7 +143,12 @@ function altStub(url, init) {
     const b = JSON.parse(init.body || "{}"), fields = Array.isArray(b.fields) ? b.fields : ["id"];
     if (net.altClientsNoVisits && fields.includes("visits_count")) return J({ success: false, data: null, meta: { message: "Unknown field visits_count" } }, 400);
     let all = [...net.altClients].sort((a, c) => a.id - c.id);
+    // nomass — в Altegio выключены массовые уведомления; bd — день рождения «ГГГГ-ММ-ДД» (фильтр birthday сравнивает месяц и день, год не важен)
+    const md = (/** @type {string} */ d) => String(d || "").slice(5, 10);
     for (const f of b.filters || []) if (f.type === "is_newsletter_allowed") all = all.filter(x => !!x.nl === !!f.state.value); else if (f.type === "is_personal_data_processing_allowed") all = all.filter(x => !!x.pd === !!f.state.value);
+      else if (f.type === "is_mass_notification_allowed") all = all.filter(x => !x.nomass === !!f.state.value);
+      else if (f.type === "birthday") all = all.filter(x => x.bd && md(x.bd) >= md(f.state.from) && md(x.bd) <= md(f.state.to));
+      else return J({ success: false, data: null, meta: { message: "Unknown filter type" } }, 400);
     const size = Math.min(200, +b.page_size || 25), pg = Math.max(1, +b.page || 1);
     return J({ success: true, data: all.slice((pg - 1) * size, pg * size).map(x => Object.fromEntries(["id", ...fields].filter(k => k in x).map(k => [k, x[k]]))), meta: { total_count: all.length } });
   }

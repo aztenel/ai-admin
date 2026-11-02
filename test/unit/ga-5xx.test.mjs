@@ -15,6 +15,7 @@ import { bcCreate } from "../../src/services/broadcast/create.js";
 import { bcTick } from "../../src/services/broadcast/sender.js";
 import { gaKind, gaCode, gaUnsure } from "../../src/services/integrations/greenapi/client.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
 
 const W = CLIENTS.winchester, INST = { id: "7105000099", token: "ga-tok-5xx" };
 const GA = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
@@ -36,6 +37,7 @@ async function remind(reply) {
     staff: { id: 1, name: "Тони" }, client: { id: 1, phone: P, name: "Арман" }, services: [{ id: 1, title: "Мужская стрижка" }] }];
   const s = mk(JR);
   await s.kv.api.put("svtpl:winchester", JSON.stringify(Object.fromEntries(SCENARIOS.filter(x => x.auto).map(x => [x.id, { v: x.v, at: 1 }]))));
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в разделе «Автоматические сообщения» (по умолчанию выключены)
   await jrRun(s.env, atLocal("2026-10-19", "17:00"));
   firstSend(reply);
   for (const t of ["18:00", "18:01", "18:02", "18:15", "18:30", "20:00"]) await jrRun(s.env, atLocal("2026-10-19", t));

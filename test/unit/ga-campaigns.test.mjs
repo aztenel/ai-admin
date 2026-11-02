@@ -101,15 +101,22 @@ test("черновик создаётся (и сотрудником), одоб�
   assert.equal((await (await pown.post("/api/bc/act", { c: "winchester", id: pc.b.id, act: "start" })).json()).code, "ga_off");
 });
 
-test("проба себе со второго номера: текст на вымышленном клиенте; у Winchester отправка выключена, текст виден; у барбершопа — уходит", { skip: consentSkip }, async () => {
+// 02.11.2026 (задание владельца): проба со второго номера — только владельцу и только на его номер для проверки («Автоматические
+// сообщения» → «Номер для проверки»); номер из запроса не слушаем. Запрет запуска рассылок (gaNoBroadcast) пробу не держит: это не рассылка
+test("проба себе со второго номера: текст на вымышленном клиенте; без номера для проверки — не уходит, текст виден; с ним — только на него", { skip: consentSkip }, async () => {
   const s = await base(), own = await login(s, OWNER);
   const r = await own.post("/api/bc/test", { ...DRAFT, to: "+7 700 000 09 99" }), j = await r.json();
-  assert.equal(r.status, 409); assert.equal(j.code, "ga_off");
+  assert.equal(r.status, 409); assert.equal(j.code, "notest");
   assert.match(j.preview, /^Здравствуйте, Айгерим! С последней стрижки прошло 28 дней\./); assert.deepEqual(gaSent(), []);
+  assert.equal((await own.post("/api/msg/auto", { c: "winchester", testPhone: "+7 700 000 09 97" })).status, 200);
+  const ok = await (await own.post("/api/bc/test", { ...DRAFT, to: "+7 700 000 09 99", rid: "rid-probe-0001" })).json();
+  assert.equal(ok.ok, true, JSON.stringify(ok)); assert.deepEqual(gaSent().map(x => x.to), ["77000000997"], "только на номер для проверки, Winchester — несмотря на запрет рассылок");
+  net.reset();
   const bad = await (await own.post("/api/bc/test", { ...DRAFT, tplId: "M06", to: "+7 700 000 09 99" })).json();
   assert.match(bad.error, /впишите условия вместо \[скобок\]/i);
   net.reset();
   // у барбершопа нет ссылки на запись: текст со ссылкой не собрать — не отправляем, говорим почему
+  assert.equal((await own.post("/api/msg/auto", { c: "barber", testPhone: "+7 700 000 09 98" })).status, 200);
   const nl = await own.post("/api/bc/test", { c: "barber", ch: "ga", tplId: "M13", to: "+7 700 000 09 98" });
   assert.equal(nl.status, 400); assert.match((await nl.json()).error, /Нет ссылки на запись/); assert.deepEqual(gaSent(), []);
   const t = await (await own.post("/api/bc/test", { c: "barber", ch: "ga", tplId: "M13", text: "Здравствуйте, {имя}! Мастер {мастер} ждёт вас. " + "Если такие сообщения больше не нужны, напишите «стоп».", to: "+7 700 000 09 98" })).json();

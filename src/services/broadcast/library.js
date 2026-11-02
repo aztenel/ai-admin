@@ -14,7 +14,7 @@ import { clean, snip } from "../../lib/text.js";
 import { maskPhone } from "../../lib/phone.js";
 import { libRead, libSave } from "../../db/kv/library.js";
 import { VARS, cleanText, toCanonical, textIssues, render, dataFor, normName, BRACKETS_ISSUE } from "./render.js";
-import { crmPick, crmSegSpec } from "../crm/segments.js";
+import { crmSegSpec, crmView, crmPeople, crmWhyText } from "../crm/segments.js";
 
 /** @typedef {{ id: string, title: string, cat: string, seg: string, who: string, goal: string, needs: string[], check: string, ru: string, kk: string,
  *   kkChecked: boolean, custom?: boolean, archived?: boolean, approved?: boolean, approvedAt?: number, approvedBy?: string, from?: string,
@@ -241,11 +241,19 @@ export async function libraryPreview(env, c, b, now) {
   if (!text) return { ok: false, error: "Нет текста.", status: 400 };
   let sp = crmSegSpec(b.segment || (item && item.seg !== "staff" ? item.seg : "all"));
   if (sp.errors.length) sp = crmSegSpec("all");
+  // пример — на клиентах сегмента, и на тех, кому реклама сейчас не уйдёт (нет согласия, был недавно): у каждого — уйдёт ли и почему
+  // (02.11.2026: при нуле согласий предпросмотр был только на вымышленном клиенте). Сначала — те, кому уйдёт. Отказавшихся («стоп»,
+  // запрет, отказ от рекламы) в примере нет: их имя в рекламном тексте не показываем (в списке клиентов они видны со статусом)
   /** @type {any[]} */ let people = [];
-  try { people = ((await crmPick(env, c, sp.id, now, { days: sp.days, from: sp.from, to: sp.to, staff: sp.staff })) || []).slice(0, 5); } catch (e) { console.log("lib preview", String(e).slice(0, 100)); }
+  try {
+    const all = (crmPeople(await crmView(env, c, now), sp.id, { days: sp.days, from: sp.from, to: sp.to, staff: sp.staff }) || []).filter(x => !x.st.stopped && !x.st.refused);
+    people = [...all.filter(x => !x.why), ...all.filter(x => x.why)].slice(0, 5);
+  }
+  catch (e) { console.log("lib preview", String(e).slice(0, 100)); }
   const demo = !people.length, co = companyOf(c), sample = demo ? [DEMO] : people;
   const one = (/** @type {any} */ x, /** @type {any} */ name) => render(text, dataFor({ name, staff: x.staff, svc: x.svc, d: x.d }, co));
-  const list = sample.map(x => { const r = one(x, x.name); return { to: x.phone ? maskPhone(x.phone) : "пример", name: normName(x.name), text: r.text, issues: r.issues }; });
+  const list = sample.map(x => { const r = one(x, x.name); return { to: x.phone ? maskPhone(x.phone) : "пример", name: normName(x.name), text: r.text, issues: r.issues,
+    ...(demo ? {} : { allowed: !x.why, why: crmWhyText(x) }) }; });
   const top = one(sample[0], sample[0].name);
   return { ok: true, lang, demo, list, noName: { text: one(sample[0], "").text }, missing: top.missing, blocked: top.blocked, issues: top.issues };
 }
