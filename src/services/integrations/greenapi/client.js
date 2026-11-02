@@ -33,25 +33,50 @@ export async function gaCall(r, op, body, ms = 15000, query = "") {
   } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
   finally { clearTimeout(timer); }
 }
-// Файлы Green-API принимает на отдельном хосте media: apiUrl https://1103.api.green-api.com → https://1103.media.green-api.com,
-// https://api.green-api.com → https://media.green-api.com (кабинет Green-API показывает оба адреса рядом; вживую не проверено)
-/** @param {string} [base] @returns {string} */
+// Файлы Green-API принимает на своём адресе — mediaUrl инстанса, он виден в кабинете рядом с apiUrl. Угадывать его по apiUrl (api → media)
+// нельзя: живая проверка 02.11.2026 — у группы инстансов 7107 адрес 7107.api.greenapi.com есть, а 7107.media.greenapi.com нет, и ни один
+// файл из пульта не уходил (запрос до Green-API не доходил, пульт писал «не знаем, ушло ли»). Порядок (mediaHost): mediaUrl из настроек
+// (GA_MEDIA_URL_<ID>) → вычисленный адрес, если он вообще отвечает (проверка корня без ключей, раз в час на экземпляр Worker) → общий
+// https://media.greenapi.com (документация Green-API «Using GREEN-API Hosts»: общий адрес годится, пока у инстанса нет своего).
+export const GA_MEDIA_ANY = "https://media.greenapi.com";
+/** вычисленный адрес для файлов: apiUrl с «api.» → «media.» @param {string} [base] @returns {string} */
 export function gaMediaBase(base) {
   try { const u = new URL(String(base || GA_BASE)); u.hostname = u.hostname.replace(/(^|\.)api\./, "$1media."); return u.origin; }
   catch (e) { return GA_BASE.replace("//api.", "//media."); }
 }
+/** @type {Map<string, { ok: boolean, at: number }>} */
+const probed = new Map();
+/** Для проверок: забыть, какие адреса отвечали (как новый экземпляр Worker). */
+export const gaMediaProbeReset = () => probed.clear();
+/** Куда слать файл этого номера. @param {any} r @returns {Promise<string>} */
+export async function mediaHost(r) {
+  if (r && r.media) return String(r.media);
+  const guess = gaMediaBase(r && r.base), now = Date.now(), seen = probed.get(guess);
+  if (seen && now - seen.at < 3600e3) return seen.ok ? guess : GA_MEDIA_ANY;
+  let ok = false;
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
+  try { const res = await fetch(guess + "/", { signal: ac.signal }); ok = true; try { await res.body?.cancel(); } catch (e) {} } // любой ответ (403, 404) — адрес есть
+  catch (e) { ok = false; console.log("ga media host", guess.replace(/^https:\/\//, ""), "не отвечает — общий адрес"); }
+  finally { clearTimeout(timer); }
+  probed.set(guess, { ok, at: now });
+  return ok ? guess : GA_MEDIA_ANY;
+}
 // запрос к Green-API с файлом (multipart/form-data, например sendFileByUpload) → как у gaCall. Сам не повторяется: файл мог уйти,
-// а второй раз клиент получил бы его дважды (CLAUDE.md §5.2). status 0 — Green-API не ответил (обрыв, срок вышел)
-/** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string, preview?: boolean }>} */
+// а второй раз клиент получил бы его дважды (CLAUDE.md §5.2). status 0 — Green-API не ответил (обрыв, срок вышел); err — что сказал fetch
+/** @param {any} r @param {string} op @param {FormData} form @param {number} [ms] @returns {Promise<{ ok: boolean, status: number, j: any, text: string, preview?: boolean, err?: string }>} */
 export async function gaUpload(r, op, form, ms = 60000) {
   if (blocked(r, op)) return PREVIEW_RES();
+  const base = await mediaHost(r);
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
   try {
-    const res = await fetch(`${gaMediaBase(r.base)}/waInstance${r.id}/${op}/${r.token}`, { method: "POST", body: form, signal: ac.signal });
+    const res = await fetch(`${base}/waInstance${r.id}/${op}/${r.token}`, { method: "POST", body: form, signal: ac.signal });
     const text = await res.text().catch(() => "");
     let j = {}; try { j = JSON.parse(text) || {}; } catch (e) {}
     return { ok: res.ok, status: res.status, j: typeof j === "object" ? j : {}, text };
-  } catch (e) { return { ok: false, status: 0, j: {}, text: "" }; }
+  } catch (e) {
+    const err = ac.signal.aborted ? `нет ответа за ${Math.round(ms / 1000)} с` : String((e && /** @type {any} */ (e).message) || e).split(String(r.token)).join("…").slice(0, 120);
+    return { ok: false, status: 0, j: {}, text: "", err };
+  }
   finally { clearTimeout(timer); }
 }
 // Неизвестно, ушло ли сообщение: ответа нет, обрыв (499), срок (408), сбой у них (5xx), а ещё любой отказ, в котором Green-API вернул

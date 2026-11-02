@@ -358,8 +358,9 @@ Bindings — `DB → ai-admin`; `/diag/storage` — «боевой сайт — 
 
 ### 9.5. Переменные номера А на боевом сайте (В)
 
-Production → Variables and Secrets: `GA_ID_WINCHESTER` (Text), `GA_URL_WINCHESTER` (Text), `GA_TOKEN_WINCHESTER` (Secret) — те же
-значения инстанса, что на стенде; значения никуда, кроме панели. **Не ставить:** `BOT_GA_WINCHESTER`, `REMIND_GA_WINCHESTER`,
+Production → Variables and Secrets: `GA_ID_WINCHESTER` (Text), `GA_URL_WINCHESTER` (Text — apiUrl), `GA_MEDIA_URL_WINCHESTER` (Text —
+mediaUrl, адрес для файлов: в кабинете Green-API рядом с apiUrl; без неё код проверит вычисленный адрес и при его отсутствии возьмёт общий
+`https://media.greenapi.com`), `GA_TOKEN_WINCHESTER` (Secret) — те же значения инстанса, что на стенде; значения никуда, кроме панели. **Не ставить:** `BOT_GA_WINCHESTER`, `REMIND_GA_WINCHESTER`,
 `MSG_V2_WINCHESTER`. Deploy. Проверка: `/launch?c=winchester` — «WhatsApp (Green-API)»: номер привязан; «Green-API: вебхук» —
 «ведёт на другой адрес (ai-admin-test.azikonps4.workers.dev)» — так и должно быть до 9.6.
 

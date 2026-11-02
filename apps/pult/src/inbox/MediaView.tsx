@@ -3,7 +3,7 @@
 // Файл отдаёт наш сервер (/api/inbox/media, вход обязателен), ключей и ссылок провайдера в браузере нет.
 // Голосовые WhatsApp — Ogg Opus: Safari на iPhone (до iOS 18.4) их не играет — тогда файл расшифровывается здесь же
 // (ogg-opus-decoder, грузится только когда нужен) и играется как WAV. Не открылось — понятная причина, сообщение остаётся.
-import { Download, FileText, Image as ImageIcon, MapPin, Maximize2, Pause, Phone, Play, Video, X } from "lucide-react";
+import { Download, FileText, Image as ImageIcon, MapPin, Maximize2, Mic, Pause, Phone, Play, Video, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "@/model/types";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,8 @@ async function why(url: string) {
  *  mine — файл отправили мы (подпись картинки для читалок). */
 export function MediaView({ media, onDark, onOpen, mine }: { media: Media; onDark: boolean; onOpen?: (v: Viewer) => void; mine?: boolean }) {
   // файл не сохранился (например, не знаем, ушёл ли он): имя видно, открыть нельзя
+  // голосовое без файла на сервере (не знаем, ушло ли): «Голосовое · 0:03», а не «voice-20261102….ogg» карточкой документа
+  if (!media.url && media.kind === "audio" && media.voice) return <VoiceStub dur={media.dur} />;
   if (!media.url) return media.name && media.kind !== "location" && media.kind !== "contact" ? <DocView media={media} /> : <Unavailable kind={media.kind} text="Файл не сохранился в переписке." />;
   if (media.kind === "image" || media.kind === "sticker") return <ImageView url={media.url} onOpen={onOpen} mine={mine} />;
   if (media.kind === "audio") return <VoicePlayer url={media.url} onDark={onDark} mime={media.mime} name={media.name} dur={media.dur} />;
@@ -43,6 +45,17 @@ export function openMedia(media: Media, onOpen: (v: Viewer) => void) {
   if (media.kind === "image" || media.kind === "sticker") return onOpen({ kind: "image", url: media.url, name: media.name });
   if (media.kind === "video") return onOpen({ kind: "video", url: media.url, name: media.name });
   window.open(media.url, "_blank", "noopener");
+}
+
+/** Голосовое, которое нечем проиграть (файла на сервере нет): значок микрофона и длина записи. */
+function VoiceStub({ dur }: { dur?: number }) {
+  return (
+    <span className="mb-1 flex min-w-40 items-center gap-2.5 text-sm">
+      <Mic aria-hidden className="size-5 shrink-0 opacity-80" strokeWidth={1.75} />
+      <span className="font-medium">Голосовое</span>
+      {!!dur && <span className="tnum opacity-75">{fmtDur(dur)}</span>}
+    </span>
+  );
 }
 
 function Unavailable({ kind, text }: { kind: Media["kind"]; text: string }) {

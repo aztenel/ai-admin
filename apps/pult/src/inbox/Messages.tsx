@@ -362,7 +362,8 @@ function Bubble({ m, first, last, label, onReply, onOpen, onJump, contactName, n
       </div>
       {out && m.status === "failed" && <span className="mt-1 max-w-[36ch] text-right text-xs text-critical">Не доставлено{m.statusError ? `: ${m.statusError}` : ""}</span>}
       {/* ответа на отправку не было: сообщение могло уйти, само не повторяется (CLAUDE.md §5.2) */}
-      {out && m.status === "unknown" && !m.delivery && <span className="mt-1 max-w-[36ch] text-right text-xs text-fg-2">{UNKNOWN_NOTE}</span>}
+      {/* причина (02.11.2026): «нет связи с Green-API…», «Green-API ответил 500…» — чтобы было понятно, что проверять */}
+      {out && m.status === "unknown" && !m.delivery && <span className="mt-1 max-w-[36ch] text-right text-xs text-fg-2">{UNKNOWN_NOTE}{m.statusError ? ` Причина: ${m.statusError}.` : ""}</span>}
       {out && m.deleteUnknown && !m.deleted && <span className="mt-1 max-w-[36ch] text-right text-xs text-fg-2">{DEL_UNKNOWN_NOTE}</span>}
     </div>
   );

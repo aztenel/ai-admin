@@ -214,7 +214,8 @@ export async function inboxApi(request, env, url, s, ctx) {
   const msg = clean(String(b.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " "), 2000);
   const op = opName(b.op), who = opWho(s, op);
   /** реплика сотрудника с номером сообщения у провайдера и статусом (галочки, ТЗ v2.0 §2.3) @param {string} text @param {any} r */
-  const adminTurn = (text, r) => ({ role: "model", text, t: now, by: "admin", ...(op ? { op } : {}), ...(r && r.id ? { mid: String(r.id).slice(0, 80), st: "sent" } : r && r.unknown ? { st: "unknown" } : {}) });
+  // se — почему неизвестно, ушло ли (файл: «нет связи с Green-API…», «Green-API ответил 500…»): пульт показывает под сообщением
+  const adminTurn = (text, r) => ({ role: "model", text, t: now, by: "admin", ...(op ? { op } : {}), ...(r && r.id ? { mid: String(r.id).slice(0, 80), st: "sent" } : r && r.unknown ? { st: "unknown", ...(r.se ? { se: String(r.se).slice(0, 140) } : {}) } : {}) });
   if (M === "POST") await chatTouchOp(env, cid, op, now);
   // ответ остаётся в истории (его увидит и ИИ, когда бот вернётся), бот в этом чате молчит 2 часа, пометка «ждёт ответа» снимается
   /** @param {any} turn @param {{ unknown?: boolean }} r */

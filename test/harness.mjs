@@ -223,6 +223,8 @@ globalThis.fetch = async (u, init = {}) => {
     return new Response("not found", { status: 404 });
   }
   if (net.mediaReply) { const own = net.mediaReply(url, init); if (own) return own; } // файлы провайдеров (ссылки Green-API на голосовые и фото)
+  // корень адреса Green-API (пульт проверяет, что адрес для файлов есть) — отвечает, как nginx Green-API: 403
+  if (/^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/?$/.test(url)) return new Response("forbidden", { status: 403 });
   const gm = /^https:\/\/[^/]*(?:green-api\.com|greenapi\.com)\/waInstance(\d+)\/(\w+)\/([^/?#]+)/.exec(url);
   if (gm) { // Green-API: {apiUrl}/waInstance{id}/{метод}/{token}; файлы (sendFileByUpload) — multipart на хосте media
     const form = typeof FormData !== "undefined" && init.body instanceof FormData ? init.body : null;

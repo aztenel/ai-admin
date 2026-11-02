@@ -104,7 +104,7 @@ export function quoteView(turns, t) {
 /**
  * Файл клиенту со второго номера (Green-API, sendFileByUpload на хосте media).
  * @param {Env} env @param {string} cid @param {string} chatDigits @param {{ blob: Blob, name: string }} f @param {string} caption @param {string} [quote] номер сообщения, на которое ответ
- * @returns {Promise<{ ok: true, id?: string, url?: string, unknown?: boolean } | { ok: false, error: string }>}
+ * @returns {Promise<{ ok: true, id?: string, url?: string, unknown?: boolean, se?: string } | { ok: false, error: string }>}
  */
 export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   const gr = gaRoute(env, cid); // только свой номер компании или общий, закреплённый за ней (аудит 31.10.2026)
@@ -116,11 +116,25 @@ export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   if (caption) form.set("caption", caption);
   if (quote) form.set("quotedMessageId", quote);
   const x = await gaUpload(gr, "sendFileByUpload", form);
-  const mid = String((x.j && x.j.idMessage) || ""), url = String((x.j && x.j.urlFile) || "");
+  const mid = String((x.j && x.j.idMessage) || ""), url = String((x.j && x.j.urlFile) || ""), said = clean(String((x.j && x.j.message) || ""), 160);
   if (x.ok && mid) return { ok: true, id: mid.slice(0, 80), ...(/^https:\/\//.test(url) ? { url: url.slice(0, 500) } : {}) };
-  if (x.ok || gaUnsure(x)) return { ok: true, unknown: true }; // ответа нет, обрыв, срок или сбой у них: файл мог уйти — сам не повторяется
+  // 200 без номера сообщения, но с текстом ошибки: по документации Green-API так приходит «failed to upload file» — файл не ушёл, «Повторить» можно
+  if (x.ok && said) { console.log("GA file 200", logSafe(said)); return { ok: false, error: `Green-API не принял файл: ${logSafe(said)}.` }; }
+  if (x.ok || gaUnsure(x)) { // ответа нет, обрыв, срок или сбой у них: файл мог уйти — сам не повторяется; причина — в переписку и в журнал
+    const se = fileUnsure(x);
+    console.log("GA file unsure", x.status, se);
+    return { ok: true, unknown: true, se };
+  }
   console.log("GA file", x.status, logSafe(x.text.slice(0, 300)));
   return { ok: false, error: `Green-API не принял файл: ${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 160) }, gr)}.` };
+}
+
+/** Почему неизвестно, ушёл ли файл, — коротко и без номеров (видна в пульте под сообщением). @param {{ ok?: boolean, status: number, j?: any, err?: string }} x */
+export function fileUnsure(x) {
+  const said = clean(String((x.j && x.j.message) || ""), 80);
+  const why = !x.status ? `нет связи с Green-API${x.err ? " (" + x.err + ")" : ""}` : x.ok ? "Green-API ответил без номера сообщения"
+    : `Green-API ответил ${x.status}${said ? ": " + said : ""}`;
+  return logSafe(why).slice(0, 140);
 }
 
 // ---- одна отправка на rid
