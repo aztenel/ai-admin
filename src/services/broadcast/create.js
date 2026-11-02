@@ -72,7 +72,7 @@ async function gaText(env, c, body) {
   const stop = body.stop === true;
   if (stop && text.trim() && !/(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(text)) text = text.replace(/\s+$/, "") + "\n\n" + (lang === "kk" ? STOP_KK : STOP_RU);
   if (text.trim()) for (const x of textIssues(text)) errors.push(x.charAt(0).toLowerCase() + x.slice(1));
-  return { body: /** @type {Record<string, any>} */ ({ ...body, text, lang, stopMode: "none" }), errors, tplId, lang, stop };
+  return { body: /** @type {Record<string, any>} */ ({ ...body, text, lang }), errors, tplId, lang, stop };
 }
 
 // пробная отправка себе со второго номера: текст на вымышленном клиенте («Айгерим»). Рассылка по базе или текст из библиотеки —
@@ -80,7 +80,7 @@ async function gaText(env, c, body) {
 // f — поля сообщения (картинка, текст) для отправки
 /** @param {Env} env @param {Client} c @param {Record<string, any>} body0 @returns {Promise<{ text: string, errors: string[], f: ReturnType<typeof bcFields> }>} */
 export async function bcGaTestText(env, c, body0) {
-  const g = gaCrm(body0) || body0.tplId ? await gaText(env, c, body0) : null, body = g ? g.body : body0, f = bcFields(body);
+  const g = gaCrm(body0) || body0.tplId ? await gaText(env, c, body0) : null, body = g ? g.body : body0, f = bcFields(body, g ? "none" : "auto");
   const errors = f.errors.concat(g ? g.errors : []);
   if (errors.length) return { text: "", errors, f };
   if (!g) return { text: bcGaText(f, "Айгерим"), errors: [], f };
@@ -88,12 +88,14 @@ export async function bcGaTestText(env, c, body0) {
   return { text: r.text, errors: r.issues, f };
 }
 
-// поля сообщения из формы: Green-API — обычный текст как написан (переводы строк сохраняются, в конце — «ответьте СТОП»), Meta — шаблон
-/** @param {Record<string, any>} body */
-export function bcFields(body) {
+// поля сообщения из формы: Green-API — обычный текст как написан (переводы строк сохраняются, в конце — «ответьте СТОП»), Meta — шаблон.
+// stopMode — от сервера, не из запроса: "none" — рассылка по базе или текст библиотеки (строку отказа добавил владелец, если выбрал,
+// gaText); "auto" — список из Excel, строка «ответьте СТОП» обязательна (находка проверки 02.11.2026: её убирали полем запроса)
+/** @param {Record<string, any>} body @param {string} [stopMode] */
+export function bcFields(body, stopMode = "auto") {
   const errors = /** @type {string[]} */ ([]), img = String(body.img || "").trim(), fallback = clean(body.fallback || "", 30);
   if (body.ch === "ga") {
-    const msg = bcGaMsg(body.text, body.stopMode);
+    const msg = bcGaMsg(body.text, stopMode);
     if (!msg) errors.push("напишите текст сообщения");
     else if (img ? msg.replace(/\{\s*(имя|name)\s*\}/gi, "x".repeat(30)).length > 1024 : msg.length > GA_MSG_MAX) errors.push(img ? `текст с картинкой не длиннее ${GA_CAPTION_MAX} знаков: это подпись к картинке, у WhatsApp она короче обычного сообщения` : `текст сообщения не длиннее ${GA_MSG_MAX} знаков`); // подпись к картинке — до 1024 знаков вместе с самым длинным именем
     if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка: ссылка, которая начинается с https://");
@@ -159,7 +161,7 @@ function gaRows(msg, rows, c) {
 /** @param {Env} env @param {Client} c @param {Record<string, any>} body0 @param {number} now */
 export async function bcCheck(env, c, body0, now) {
   const g = gaCrm(body0) ? await gaText(env, c, body0) : null, body = g ? g.body : body0;
-  const f = bcFields(body), rc = await bcRecipients(env, c, body, now), errors = f.errors.concat(g ? g.errors : [], rc.errors, rc.crm && rc.empty ? [rc.empty] : []);
+  const f = bcFields(body, g ? "none" : "auto"), rc = await bcRecipients(env, c, body, now), errors = f.errors.concat(g ? g.errors : [], rc.errors, rc.crm && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных (смотрите причины ниже)");
   const list = gr ? gr.list : rc.list, first = (list.find(x => x[1]) || [])[1] || "";
@@ -181,7 +183,7 @@ export async function bcCheck(env, c, body0, now) {
  */
 export async function bcCreate(env, c, body0, now, by, o = {}) {
   const g = gaCrm(body0) ? await gaText(env, c, body0) : null, body = g ? g.body : body0;
-  const f = bcFields(body), ga = f.ch === "ga", rc = await bcRecipients(env, c, body, now, o), errors = f.errors.concat(g ? g.errors : [], rc.errors, !rc.errors.length && rc.empty ? [rc.empty] : []);
+  const f = bcFields(body, g ? "none" : "auto"), ga = f.ch === "ga", rc = await bcRecipients(env, c, body, now, o), errors = f.errors.concat(g ? g.errors : [], rc.errors, !rc.errors.length && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных");
   const list = gr ? gr.list : rc.list;

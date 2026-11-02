@@ -38,7 +38,12 @@ export const bcSentRead = async (env, cid, id) => { try { const v = JSON.parse((
 /** @param {Env} env @param {string} cid @param {string} id @param {any[][]} add */
 export async function bcSentAdd(env, cid, id, add) {
   if (!add.length) return;
-  await kvRetry(async () => { const cur = await bcSentRead(env, cid, id); await env.KV.put(`bcs:${cid}:${id}`, JSON.stringify(cur.concat(add).slice(-5000)), { expirationTtl: 180 * 86400 }); });
+  // чтение не прочиталось или не разобралось — ошибка, а не пустой список: иначе запись поверх стёрла бы, кому уже ушло (находка проверки 02.11.2026)
+  await kvRetry(async () => {
+    const raw = await env.KV.get(`bcs:${cid}:${id}`), cur = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(cur)) throw new Error("bcs: не список");
+    await env.KV.put(`bcs:${cid}:${id}`, JSON.stringify(cur.concat(add).slice(-5000)), { expirationTtl: 180 * 86400 });
+  });
 }
 // удалить рассылку вместе со списком получателей (демо-база черновика: «Убрать демо-базу»)
 /** @param {Env} env @param {string} cid @param {string} id @param {number} total */

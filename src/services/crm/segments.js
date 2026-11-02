@@ -136,13 +136,19 @@ export function crmFunnel(view, seg, o = {}) {
 /** @param {CrmView} view @param {ReturnType<typeof crmStatusCount>} st @param {number} invalid */
 function crmMetrics(view, st, invalid) {
   const rows = view.rows;
-  let noperm = 0, refused = 0;
-  const one = (/** @type {any} */ s2) => { if (s2.stopped || s2.refused) refused++; else if (!s2.marketing) noperm++; };
-  for (const x of rows) one(crmStatus(view, x));
-  for (const p of view.futOnly || []) one(crmStatus(view, { p, fut: 1, why: "fut" }));
+  // «разрешили рекламу» — подтверждённое согласие; пауза после отменённой записи (cooldown) — временная, согласие у клиента есть
+  // (находка проверки 02.11.2026: такие попадали в «без подтверждённого разрешения»)
+  let noperm = 0, refused = 0, marketing = 0;
+  const one = (/** @type {string} */ p, /** @type {any} */ s2) => {
+    if (s2.stopped || s2.refused) refused++;
+    else if (s2.marketing || (view.reasons && view.reasons.get(p) === "cooldown")) marketing++;
+    else noperm++;
+  };
+  for (const x of rows) one(x.p, crmStatus(view, x));
+  for (const p of view.futOnly || []) one(p, crmStatus(view, { p, fut: 1, why: "fut" }));
   return { total: st.valid + invalid, valid: st.valid, invalid, regular: rows.filter(x => x.v >= 3).length, once: rows.filter(x => x.v === 1).length,
     d30_60: rows.filter(x => x.d >= 30 && x.d <= 60).length, d61_90: rows.filter(x => x.d >= 61 && x.d <= 90).length, booked: st.booked,
-    marketing: st.marketing, refused, noperm };
+    marketing, refused, noperm };
 }
 
 // кнопки с числами и сведения о снимке (для пульта)

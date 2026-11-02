@@ -21,7 +21,7 @@ import { bcResults } from "../services/broadcast/results.js";
 import { statsOf } from "../services/inbox/stats.js";
 import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
-import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, bcGaOff, bcFinal, bcTestLog, gaOnHow, GA_CAP, GA_OFF } from "../services/broadcast/sender.js";
+import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, bcGaOff, gaOffWhy, bcFinal, bcTestLog, gaOnHow, GA_CAP, GA_OFF } from "../services/broadcast/sender.js";
 import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo, gaKind } from "../services/broadcast/deps.js";
 import { autoSet as msgSettings } from "../services/automsg/index.js";
 import { sendOnceAuto } from "../services/reminders/journal.js";
@@ -207,10 +207,10 @@ export async function bcApi(request, env, url, s) {
       // кампанию запускает владелец (ТЗ v2.0 §5: одобрение владельцем); сотрудник готовит и проверяет. Черновик (dev) рассылки не шлёт.
       // Второй номер с запретом (Winchester) — 409 ga_off: черновик готов и одобрен, а запуск — отдельное решение владельца (ТЗ v3.0)
       if (s.role !== "owner") return jsonP({ error: "Запустить рассылку может только владелец. Сотрудник готовит и проверяет, владелец решает." }, 403);
-      if (cur.ch === "ga" && bcGaOff(cid, env)) return jsonP({ error: GA_OFF, code: "ga_off", ...(s.role === "owner" ? { how: gaOnHow(cid) } : {}) }, 409);
+      if (cur.ch === "ga" && bcGaOff(cid, env, cur)) return jsonP({ error: gaOffWhy(cid, env), code: "ga_off", ...(s.role === "owner" && bcGaOff(cid, env) ? { how: gaOnHow(cid) } : {}) }, 409);
       // черновик рассылки не запускает (аудит 31.10.2026: обхода BC_DEV_REAL больше нет; стенд на заглушках работает как боевой сайт)
       if (isPreview(env)) return jsonP({ error: "Это тестовая версия: рассылки отсюда не отправляются. Проверка и пример работают.", code: "preview" }, 409);
-      const rt = bcRoute(env, cid, cur.ch);
+      const rt = bcRoute(env, cid, cur.ch, cur);
       if (rt.error) return jsonP({ error: rt.error, ...(rt.code ? { code: rt.code } : {}) }, 409);
       if (!["ready", "paused"].includes(cur.status)) return jsonP({ error: "Эту рассылку уже нельзя запустить." }, 409);
       // рассылка автосценария — только в день создания (bcTick): вчерашнюю не продолжаем, а сигнал Meta снять даём — иначе автосценарий
@@ -224,18 +224,12 @@ export async function bcApi(request, env, url, s) {
         if (g.state !== "authorized") return jsonP({ error: `${GA_STATE_TEXT[g.state] || `Green-API: номер в состоянии «${clean(g.state, 30)}»`}. ${GA_STATE_BAD[g.state] ? "Пока ограничение не снято, рассылку запускать нельзя." : "Запустите рассылку, когда номер будет на связи."}` }, 409);
         if (!g.hook) return jsonP({ error: gaHookWarn(g) }, 409);
       }
-      // запуск на время: at — не раньше чем через 5 минут и не позже чем через 30 дней (иначе — сразу)
-      const at = Math.round(+body.at || 0), plan = at > now + 5 * 60e3 && at < now + 30 * 86400e3 ? at : 0;
-      if (body.at != null && body.at !== "" && +body.at && !plan) return jsonP({ error: "Время запуска: не раньше чем через 5 минут и не позже чем через 30 дней." }, 400);
-      // рассылка по базе со второго номера: перед запуском — итоговая аудитория и точный текст, и только после подтверждения владельца
-      // (sure и n — то самое число, которое он видел; старая страница /broadcast подтверждает текстом вопроса — force)
-      if (cur.ch === "ga" && cur.src === "crm" && cur.status === "ready" && !past) {
-        const fin = await bcFinal(env, cid, cur, now);
-        if (!fin.n) return jsonP({ error: "Некому отправить: " + fin.why, code: "empty" }, 409);
-        const plain = `Сообщение получат ${fin.n} из ${fin.rest}: остальным сейчас нельзя (нет подтверждённого согласия, просили не писать, записаны, были недавно или реклама уже была). Не больше ${cur.cap} в сутки, с ${cur.from}:00 до ${cur.to}:00.`;
-        if (!((body.sure === true && +body.n === fin.n) || body.force === true))
-          return jsonP({ confirm: plain + " Запустить?", final: { n: fin.n, rest: fin.rest, cap: cur.cap, from: cur.from, to: cur.to, days: Math.ceil(fin.n / Math.max(1, cur.cap)), text: cur.msg, sample: fin.sample, ...(plan ? { at: plan } : {}) } }, 409);
-      }
+      // запуск на время (at — миллисекунды): не раньше чем через 5 минут и не позже чем через 30 дней. Передано, но не время — отказ,
+      // а не запуск сразу (находка проверки 02.11.2026: строка с датой давала NaN и рассылка уходила немедленно)
+      const atIn = body.at, hasAt = atIn != null && atIn !== "" && atIn !== 0 && atIn !== false;
+      const atN = typeof atIn === "number" ? atIn : typeof atIn === "string" && /^\d{12,14}$/.test(atIn.trim()) ? +atIn : NaN;
+      const plan = hasAt && Number.isFinite(atN) && atN > now + 5 * 60e3 && atN < now + 30 * 86400e3 ? Math.round(atN) : 0;
+      if (hasAt && !plan) return jsonP({ error: "Время запуска: не раньше чем через 5 минут и не позже чем через 30 дней." }, 400);
       const holds = await bcHold(env, cid), hold = bcHoldFor(holds, cur);
       if (past && !hold) return jsonP({ error: PAST }, 409);
       // запуск при сигнале снимает сигнал (ниже) — для всего номера и автосценария; это решение владельца, как и «Снять сигнал Meta»:
@@ -243,6 +237,16 @@ export async function bcApi(request, env, url, s) {
       if (hold && s.role !== "owner") return jsonP({ error: `Сигнал от ${bcFrom(cur)}: ${hold.why}. Запустить рассылку, несмотря на сигнал, может только владелец.` }, 403);
       const scope = cur.ch === "ga" ? "сигнал снимется для всех рассылок с номера бота" : holds && holds.all ? "сигнал снимется для всех рассылок с основного номера и для автосценария" : `сигнал снимется для шаблона «${cur.tpl}» — во всех рассылках с ним (и в автосценарии, если он шлёт этот шаблон)`;
       if (hold && body.force !== true) return jsonP({ confirm: past ? `Сигнал от ${bcFrom(cur)}: ${hold.why}. Снять сигнал, если причина устранена? ${PAST}` : `Сигнал от ${bcFrom(cur)}: ${hold.why}. Продолжать отправку опасно для номера. Если продолжить, ${scope}. Всё равно продолжить?` }, 409);
+      // рассылка по базе со второго номера: перед запуском — итоговая аудитория и точный текст, и только после подтверждения владельца:
+      // sure и n — то самое число, которое он видел. Вопрос о сигнале (выше, force) его не заменяет: одно «ОК» на сигнал не подтверждает
+      // аудиторию, а подтверждение аудитории не снимает сигнал (находка проверки 02.11.2026)
+      if (cur.ch === "ga" && cur.src === "crm" && cur.status === "ready" && !past) {
+        const fin = await bcFinal(env, cid, cur, now);
+        if (!fin.n) return jsonP({ error: "Некому отправить: " + fin.why, code: "empty" }, 409);
+        const plain = `Сообщение получат ${fin.n} из ${fin.rest}: остальным сейчас нельзя (нет подтверждённого согласия, просили не писать, записаны, были недавно или реклама уже была). Не больше ${cur.cap} в сутки, с ${cur.from}:00 до ${cur.to}:00.`;
+        if (!(body.sure === true && +body.n === fin.n))
+          return jsonP({ confirm: plain + " Запустить?", final: { n: fin.n, rest: fin.rest, cap: cur.cap, from: cur.from, to: cur.to, days: Math.ceil(fin.n / Math.max(1, cur.cap)), text: cur.msg, sample: fin.sample, ...(plan ? { at: plan } : {}) } }, 409);
+      }
       if (hold) await bcHoldEdit(env, cid, h => { if (cur.ch === "ga") delete h.ga; else { delete h.all; if (h.tpl) delete h.tpl[cur.tpl]; } });
       if (past) { cur.status = "stopped"; cur.note = "Сигнал снят. " + PAST; await bcPut(env, cid, cur); await bcRun(env, cid, id, false); return jsonP({ ok: true, b: pub(cur) }); }
       cur.approvedBy = opWho(s, body.op); cur.approvedAt = now;
@@ -340,13 +344,13 @@ function fillCard(c,b){c.textContent='';if(b.status==='running')live[b.id]=1;els
  if(b.status==='running'&&b.stalled){c.appendChild(el('div','msg w','Фоновая отправка молчит больше двух минут. Можно отправить порцию вручную.'));btn('Отправить порцию сейчас','tick',1)}
  if(b.status!=='done'&&b.status!=='stopped')btn('Остановить совсем','stop');if(b.failed)btn('Номера с ошибками','bad');if(b.status!=='running')btn('Удалить','delete').className='btn d';
  c.appendChild(r);if(b.status==='running'&&!b.stalled&&!b.waitNote)c.appendChild(el('div','mut',(b.ch==='ga'?'Отправка идёт в фоне: по одному сообщению раз в 1–3 минуты.':'Отправка идёт в фоне: по порции в минуту.')+' Страницу можно закрыть: итог придёт в Telegram.'+(b.last?' Последняя отправка: '+tm(b.last)+'.':'')))}
-function act(id,a,btn,force,b){var o=$('o'+id);
+function act(id,a,btn,force,b,fin){var o=$('o'+id);
  if(a==='start'&&!force&&b&&!confirm((b.status==='paused'?'Продолжить':'Запустить')+' рассылку «'+b.name+'»? Сообщение получат до '+(b.total-(b.pos||0))+' человек. Остановить можно, но уже отправленное не вернуть.'))return;
  if(a==='stop'&&!confirm('Остановить рассылку совсем? Продолжить её будет нельзя.'))return;if(a==='delete'&&!confirm('Удалить рассылку вместе со списком номеров?'))return;
  if(a==='bad'){api('/api/bc/get?c='+C+'&id='+id+'&bad=1').then(function(d){o.textContent='';var p=el('pre','',(d.bad||[]).join(String.fromCharCode(10))||'нет');o.appendChild(p)}).catch(function(e){fail(e,o)});return}
  btn.disabled=true;
- var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',{c:C,id:id,act:a,force:!!force});
- call.then(function(d){btn.disabled=false;if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(e){btn.disabled=false;fail(e,o)})}
+ var q={c:C,id:id,act:a,force:!!force};if(fin){q.sure=true;q.n=fin.n}var call=a==='tick'?api('/api/bc/tick',{c:C,id:id}):api('/api/bc/act',q);
+ call.then(function(d){btn.disabled=false;var NL=String.fromCharCode(10);if(d.final){if(confirm(d.confirm+NL+NL+'Текст сообщения:'+NL+(d.final.sample||d.final.text)))act(id,a,btn,force,null,d.final);return}if(d.confirm){if(confirm(d.confirm))act(id,a,btn,1,null,fin);return}if(d.error){msg(o,'e',[d.error]);return}if(d.gone){load();return}fillCard($('bc'+id),d.b);watch()}).catch(function(e){btn.disabled=false;fail(e,o)})}
 function body(){return{c:C,ch:CH,name:$('f_name').value,tpl:$('f_tpl').value.trim(),lang:$('f_lang').value.trim(),img:$('f_img').value.trim(),text:$('f_text').value,params:$('f_params').value,fallback:$('f_fb').value,recipients:$('f_rec').value,seg:$('f_seg').value,segDays:$('f_segd').value,cap:$('f_cap').value,from:$('f_from').value,to:$('f_to').value,consent:$('f_ok').checked}}
 $('b_new').onclick=function(){$('form').hidden=false;$('b_new').hidden=true;$('form').scrollIntoView()};$('b_cancel').onclick=function(){$('form').hidden=true;$('b_new').hidden=false};
 $('f_file').onchange=function(){var f=this.files&&this.files[0];if(!f)return;if(f.size>3e6){msg($('fout'),'e',['Файл слишком большой. Нужен текстовый файл или CSV со списком номеров.']);return}var r=new FileReader();r.onload=function(){$('f_rec').value=String(r.result||'')};r.readAsText(f)};

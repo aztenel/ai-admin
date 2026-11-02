@@ -49,14 +49,20 @@ export const GA_OFF = "Запуск рассылок со второго ном�
 export const gaOnHow = cid => `Включить запуск может только владелец: переменная GA_BROADCAST_${cid.toUpperCase()} = 1 в Cloudflare (Production). Реклама и тогда уйдёт только клиентам с подтверждённым согласием, не больше предела в сутки и после вашего подтверждения запуска.`;
 /** владелец разрешил рассылки со второго номера (GA_BROADCAST_<ID> = 1) @param {any} env @param {string} cid */
 export const gaBcAllowed = (env, cid) => String((env && env["GA_BROADCAST_" + cid.toUpperCase()]) || "").trim() === "1";
-/** запуск рассылок с номера Green-API выключен у компании @param {string} cid @param {any} env */
-export const bcGaOff = (cid, env) => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) && !gaBcAllowed(env, cid);
+// со снятым запретом — только рассылка по базе клиентов (src: crm): ей пишем только с подтверждённым согласием и после подтверждения
+// итоговой аудитории. Список из Excel со второго номера такой компании не запускается и не отправляется (находка проверки 02.11.2026:
+// разрешение открывало и его — без согласия и без итоговой аудитории)
+export const GA_LIST_OFF = "Со второго номера запускаются только рассылки по базе клиентов: им пишем только тем, кто дал подтверждённое согласие. Рассылку по списку со второго номера не запустить.";
+/** запуск рассылок с номера Green-API выключен у компании; b — рассылка (без неё — «можно ли вообще») @param {string} cid @param {any} env @param {any} [b] */
+export const bcGaOff = (cid, env, b) => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) && (!gaBcAllowed(env, cid) || !!(b && b.src !== "crm"));
+/** почему выключен: запрет не снят или это не рассылка по базе @param {string} cid @param {any} env */
+export const gaOffWhy = (cid, env) => gaBcAllowed(env, cid) ? GA_LIST_OFF : GA_OFF;
 /** с какого номера и каким токеном уходят сообщения рассылки (ch = "ga" — номер Green-API клиента). Для запуска и отправки:
- *  у второго номера с запретом — { error: GA_OFF, code: "ga_off" }. Черновики маршрут не спрашивают
- *  @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
-export const bcRoute = (env, cid, ch) => {
+ *  у второго номера с запретом — { error: GA_OFF, code: "ga_off" }. Черновики маршрут не спрашивают. b — рассылка (запрет её вида)
+ *  @param {Env} env @param {string} cid @param {any} ch @param {any} [b] @returns {Record<string, any>} */
+export const bcRoute = (env, cid, ch, b) => {
   const up = cid.toUpperCase();
-  if (ch === "ga" && bcGaOff(cid, env)) return { error: GA_OFF, code: "ga_off" };
+  if (ch === "ga" && bcGaOff(cid, env, b)) return { error: gaOffWhy(cid, env), code: "ga_off" };
   if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Второй номер (Green-API) у этой компании не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} из кабинета Green-API.` }; }
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID», без него рассылку не отправить. Откройте «Мои боты», затем «Изменить»." }; }
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
@@ -228,8 +234,8 @@ export async function bcTick(env, cid, id, gaBusy) {
   };
   const w = bcWait(b, now); if (w) return waitFor(w);
   if (ga && b.nextAt > now) return { b, state: "wait" }; // пауза между сообщениями Green-API: хранилище не пишем
-  const route = bcRoute(env, cid, b.ch);
-  if (route.error) return stopFor(route.error); // в том числе запуск со второго номера выключен (GA_OFF)
+  const route = bcRoute(env, cid, b.ch, b);
+  if (route.error) return stopFor(route.error); // в том числе запуск со второго номера выключен (GA_OFF) или это не рассылка по базе
   const hold = bcHoldFor(await bcHold(env, cid), b);
   if (hold) return stopFor(`Сигнал от ${bcFrom(b)}: ${hold.why}. Рассылка остановлена, чтобы не навредить номеру.`);
   // предел на 24 часа — общий для всех рассылок клиента с этого номера: Meta считает получателей за скользящие сутки; у номера Green-API свой счётчик

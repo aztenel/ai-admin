@@ -279,3 +279,88 @@ test("цифры базы за 90 дней: всего, номера корре�
   const m = (await (await own.go("/api/crm/segments?c=winchester")).json()).metrics;
   assert.deepEqual(m, { total: 7, valid: 6, invalid: 1, regular: 1, once: 5, d30_60: 3, d61_90: 1, booked: 1, marketing: 2, refused: 2, noperm: 2 }, JSON.stringify(m));
 });
+
+// Находки независимой проверки 02.11.2026 (сначала — сценарии, которые их повторяют)
+test("находка 1: сигнал Green-API о спаме не снимается подтверждением аудитории — два отдельных вопроса, сначала о сигнале", { skip: consentSkip }, async () => {
+  const s = await base(ON), own = await login(s, OWNER);
+  const c = await (await own.post("/api/bc/create", DRAFT)).json();
+  await s.kv.api.put("bchold:winchester", JSON.stringify({ ga: { at: Date.now(), why: "WhatsApp временно ограничил номер (жалобы на спам)" } }));
+  // старая страница: после любого вопроса повторяет с force — сигнал подтверждён, но аудитория — нет
+  let r = await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start" }), j = await r.json();
+  assert.equal(r.status, 409); assert.match(j.confirm, /Сигнал от Green-API/); assert.equal(j.final, undefined, "сначала вопрос о сигнале");
+  r = await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", force: true }); j = await r.json();
+  assert.equal(r.status, 409); assert.equal(j.final.n, 2, "force не подтверждает аудиторию");
+  assert.ok(s.kv.json("bchold:winchester").ga, "сигнал не снят, пока аудитория не подтверждена");
+  // подтверждение аудитории без ответа на вопрос о сигнале — снова вопрос о сигнале
+  j = await (await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", sure: true, n: 2 })).json();
+  assert.match(j.confirm, /Сигнал от Green-API/); assert.equal(s.kv.json("bc:winchester:" + c.b.id).status, "ready");
+  r = await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", force: true, sure: true, n: 2 });
+  assert.equal(r.status, 200, await r.clone().text()); assert.equal(s.kv.json("bc:winchester:" + c.b.id).status, "running");
+});
+
+test("находка 2: разрешение владельца открывает только рассылку по базе с согласием — список из Excel со второго номера не запускается и не отправляется", { skip: consentSkip }, async () => {
+  const s = await base(ON), own = await login(s, OWNER);
+  const c = await (await own.post("/api/bc/create", { c: "winchester", ch: "ga", name: "Список", text: "Скидка всем!", recipients: "+7 700 000 08 01, Арман\n+7 700 000 08 02, Данияр", cap: 50, from: 10, to: 20, consent: true })).json();
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const r = await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", sure: true, n: 2 }), j = await r.json();
+  assert.equal(r.status, 409); assert.equal(j.code, "ga_off"); assert.match(j.error, /по базе клиентов/);
+  // даже если рассылка как-то оказалась «идёт» — отправка её останавливает, ничего не уходит
+  const b = s.kv.json("bc:winchester:" + c.b.id); b.status = "running"; s.kv.mem.set("bc:winchester:" + c.b.id, JSON.stringify(b));
+  await bcTick(s.env, "winchester", c.b.id);
+  assert.deepEqual(gaSent(), []); assert.equal(s.kv.json("bc:winchester:" + c.b.id).status, "paused");
+});
+
+test("находки 3 и 9: время запуска не числом — отказ, а не запуск сразу; stopMode из запроса не убирает строку «СТОП» у списка из Excel", { skip: consentSkip }, async () => {
+  const s = await base(ON), own = await login(s, OWNER);
+  const c = await (await own.post("/api/bc/create", DRAFT)).json();
+  for (const at of ["2026-11-04T10:00:00Z", { t: 1 }, "завтра"]) {
+    const r = await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", sure: true, n: 2, at });
+    assert.equal(r.status, 400, JSON.stringify(at)); assert.match((await r.json()).error, /Время запуска/);
+  }
+  assert.equal(s.kv.json("bc:winchester:" + c.b.id).status, "ready"); assert.deepEqual(gaSent(), []);
+  const k = await (await own.post("/api/bc/check", { c: "winchester", ch: "ga", name: "Список", text: "Ждём вас!", recipients: "+7 700 000 08 01, Арман", cap: 50, from: 10, to: 20, consent: true, stopMode: "none" })).json();
+  assert.match(k.preview[0], /ответьте СТОП$/, JSON.stringify(k));
+});
+
+test("находки 4, 6, 7: «записались после» видит запись клиента, который выпал из 90 дней; сбой чтения «кому ушло» не стирает список; без данных «отказались» — нет данных", { skip: consentSkip }, async () => {
+  const { bcSentAdd, bcSentRead } = await import("../../src/db/kv/broadcasts.js");
+  const { bcResults } = await import("../../src/services/broadcast/results.js");
+  net.reset();
+  net.gaSettings[INST.id] = { webhookUrl: `https://bot.test/ga/winchester?t=${gaPass("winchester", INST)}`, incomingWebhook: "yes", outgoingWebhook: "yes" };
+  net.altJournal = [rec(ph(921), 85, { name: "Тимур" })];
+  const s = mk(ON), own = await login(s, OWNER);
+  await crmBuild(s.env, W, NOW);
+  const c = await (await own.post("/api/bc/create", { ...DRAFT, segment: "uhodyat", tplId: "W09" })).json();
+  assert.equal(c.ok, true, JSON.stringify(c));
+  assert.equal((await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "start", sure: true, n: 1 })).status, 200);
+  await tickAll(s, c.b.id);
+  assert.equal(gaSent().length, 1);
+  // через 8 дней визит уже старше 90 дней (в базе его нет), а будущая запись есть
+  net.altJournal.push(rec(ph(921), -10, { name: "Тимур" }));
+  await crmBuild(s.env, W, NOW + 8 * 86400e3, []);
+  let g = await (await own.go(`/api/bc/get?c=winchester&id=${c.b.id}`)).json();
+  assert.equal(g.results.booked, 1, JSON.stringify(g.results));
+  // сбой чтения KV при дописывании — прежний список цел
+  await bcSentAdd(s.env, "winchester", "x1", [["77000000001", 1, "m1", "sent"], ["77000000002", 2, "m2", "sent"]]);
+  const get = s.env.KV.get;
+  s.env.KV.get = async (k, ...a) => { if (String(k).startsWith("bcs:")) throw new Error("KV GET failed: 500"); return get.call(s.env.KV, k, ...a); };
+  await assert.rejects(() => bcSentAdd(s.env, "winchester", "x1", [["77000000003", 3, "m3", "sent"]]));
+  s.env.KV.get = get;
+  assert.equal((await bcSentRead(s.env, "winchester", "x1")).length, 2, "список не стёрт");
+  // без базы и без D1 — «нет данных», а не 0
+  const e = mk({ ...ENV, DB: undefined });
+  const res = await bcResults(e.env, "winchester", { id: "z1", ch: "ga", src: "crm", total: 5, sent: 5 }, Date.now());
+  assert.equal(res.booked, null); assert.equal(res.refused, null); assert.equal(res.delivered, null);
+});
+
+test("находка 8: пауза после отменённой записи — согласие есть: «разрешили рекламу», а не «без подтверждённого разрешения»", { skip: consentSkip }, async () => {
+  net.reset();
+  net.altJournal = [rec(ph(931), 40, { name: "Арман" })];
+  const s = mk(ENV), own = await login(s, OWNER);
+  await crmBuild(s.env, W, NOW, [dg(931)]);
+  const row = await s.env.DB.prepare("select id from contacts where ws = 'winchester' and phone = ?").bind(dg(931)).first();
+  await s.env.DB.prepare("insert into restrictions (ws, contact_id, kind, channel, until_at, reason, source, actor, created_at) values ('winchester', ?, 'cooldown', '', ?, 'отмена', 'altegio', 'sync', ?)")
+    .bind(row.id, Date.now() + 10 * 86400e3, Date.now()).run();
+  const m = (await (await own.go("/api/crm/segments?c=winchester")).json()).metrics;
+  assert.equal(m.marketing, 1, JSON.stringify(m)); assert.equal(m.noperm, 0);
+});
