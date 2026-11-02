@@ -10,6 +10,8 @@ import { altUserKey } from "../booking/journal.js";
 import { isoDay } from "../../lib/time.js";
 import { jrqLoad, jrHold, jrLogLoad, svApprovals, svApprove, svVariants, svVariantsEdit } from "../../db/kv/reminders.js";
 import { jrOn } from "./journal.js";
+import { autoSettings } from "../automsg/catalog.js";
+import { autoLoad } from "../../db/kv/automsg.js";
 import { remindLive } from "./plan.js";
 import { KIND_SC, SV_CATS, SV_VARS, scenario, svCatalog, variantsOf, activeOf, approvedVariant, approvalFits } from "./templates.js";
 import { cleanText } from "../broadcast/render.js";
@@ -26,15 +28,18 @@ const CHAT_READS = 50;
 // журнал решений (ушло, отменено — запись перенесена, пропущено и почему, задача администратору) — номера маской
 /** @param {Env} env @param {Client} c @param {number} now */
 async function journalInfo(env, c, now) {
-  const o = { from: 10, to: 21, eve: "18:00", h2: true, rv: true, s01: false, s06: false, ...c.jr }, altegio = altLoc(env, c) > 0 && !!altUserKey(env, c), enabled = jrOn(env, c);
-  const go = altegio && enabled, rv = go && o.rv && !!c.review, ap = await svApprovals(env, c.id), own = await svVariants(env, c.id);
+  // включено ли — по выключателям раздела «Автоматические сообщения» (02.11.2026), время — оттуда же. Отмены (cx) здесь нет: прежний
+  // пульт этого вида не знает — новый раздел берёт всё из /api/msg/auto
+  const set = autoSettings(c, await autoLoad(env, c.id)), S = set.s, w = set.win;
+  const altegio = altLoc(env, c) > 0 && !!altUserKey(env, c), enabled = jrOn(env, c);
+  const go = altegio && enabled, rv = go && S.review.on && !!c.review, ap = await svApprovals(env, c.id), own = await svVariants(env, c.id);
   const ok = (/** @type {string} */ k) => { const sc = scenario(KIND_SC[k]); return !!(sc && approvedVariant(sc, ap, own)); };
   const kinds = [
-    { k: "s01", label: "Подтверждение сразу после новой записи (кроме записей через бота)", on: go && !!o.s01 },
-    { k: "d1", label: `Напоминание накануне в ${o.eve}`, on: go && !!o.eve },
-    { k: "h2", label: `Напоминание за 2 часа (только с ${o.from}:00 до ${o.to}:00)`, on: go && !!o.h2 },
-    { k: "s06", label: "Новое время после переноса в Altegio", on: go && !!o.s06 },
-    { k: "rv", label: "Просьба об отзыве через 3 часа после визита с отметкой «пришёл» (одному клиенту раз в 60 дней)", on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "s01", label: "Подтверждение сразу после новой записи (кроме записей через бота)", on: go && S.confirm.on },
+    { k: "d1", label: S.remind24.t.mode === "eve" ? `Напоминание накануне в ${S.remind24.t.eve}` : "Напоминание за 24 часа до визита", on: go && S.remind24.on },
+    { k: "h2", label: `Напоминание за ${S.remind3.t.hours} ч (только с ${w.from}:00 до ${w.to}:00)`, on: go && S.remind3.on },
+    { k: "s06", label: "Новое время после переноса в Altegio", on: go && S.move.on },
+    { k: "rv", label: `Просьба об отзыве через ${S.review.t.hours} ч после визита с отметкой «пришёл» (одному клиенту раз в 60 дней)`, on: rv, ...(c.review ? { link: String(c.review) } : {}) },
   ].map(x => ({ ...x, sc: KIND_SC[x.k], approved: ok(x.k) }));
   const on = /** @type {Record<string, boolean>} */ (Object.fromEntries(kinds.map(x => [x.k, x.on])));
   const soon = (await jrqLoad(env, c.id)).filter(x => x && on[x.k] && x.at > now - 3600e3).sort((a, b) => a.at - b.at);

@@ -12,6 +12,7 @@ import { contactAdd } from "../../src/db/d1/contacts.js";
 import { consentAdd, restrictionAdd } from "../../src/db/d1/rights.js";
 import { bcmAdd } from "../../src/db/kv/crm.js";
 import { isoDay } from "../../src/lib/time.js";
+import { OWN } from "../texts.mjs";
 
 const skip = sqliteOk ? false : "node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, OWNER = "owner-key-123456";
@@ -30,7 +31,7 @@ async function login(s) {
   return b;
 }
 const META = { c: "winchester", name: "Пора", tpl: "promo_pora", lang: "ru", text: "Здравствуйте, {{1}}!", params: ["{имя}"], segment: "pora", cap: 100, from: 10, to: 20, consent: true };
-const GA = { c: "winchester", ch: "ga", name: "Пора", tplId: "M03", lang: "ru", segment: "pora", cap: 50, from: 10, to: 20, consent: true };
+const GA = { c: "winchester", ch: "ga", name: "Пора", text: OWN.staff, lang: "ru", segment: "pora", cap: 50, from: 10, to: 20, consent: true };
 
 // база: у каждого в «Пора на стрижку» (21–35 дней) своя причина; 708 — две причины («стоп» и будущая запись) — считается один раз
 async function base(withD1 = true) {

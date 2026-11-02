@@ -76,25 +76,30 @@ export async function call<T>(path: string, body?: Record<string, unknown>): Pro
 }
 /** Ответ сервера → данные или ApiError (общая часть call и запросов с файлом, data/live-contacts.ts). */
 export async function parse<T>(r: Response): Promise<T> {
-  let j: (T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown; code?: unknown; preview?: unknown }) | null = null;
+  type Raw = T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown; code?: unknown; preview?: unknown; how?: unknown; final?: unknown };
+  let j: Raw | null = null;
   try {
-    j = (await r.json()) as T & { error?: string; errors?: unknown; confirm?: unknown; field?: unknown; code?: unknown; preview?: unknown };
+    j = (await r.json()) as Raw;
   } catch {
     /* не JSON — ниже общая ошибка */
   }
   if (!j) throw new ApiError(`Сервер ответил ошибкой ${r.status}. Попробуйте ещё раз через минуту.`, r.status);
-  // раздел «Клиенты»: 400 { error, field } — к какому полю формы относится ошибка
+  // раздел «Клиенты»: 400 { error, field } — к какому полю формы относится ошибка; рассылки: 409 { error, code: "ga_off", how } —
+  // запуск со второго номера выключен, how — как включить (только владельцу)
   if (j.error)
     throw new ApiError(j.error, r.status, false, {
       ...(typeof j.field === "string" && j.field ? { field: j.field } : {}),
       ...(typeof j.code === "string" && j.code ? { code: j.code } : {}),
       ...(typeof j.preview === "string" && j.preview ? { preview: j.preview } : {}),
+      ...(typeof j.how === "string" && j.how ? { how: j.how } : {}),
     });
   if (!r.ok) {
-    // рассылки: 400 { ok: false, errors: [...] } — ошибки формы списком; 409 { confirm } — вопрос перед запуском при сигнале Meta
+    // рассылки: 400 { ok: false, errors: [...] } — ошибки формы списком; 409 { confirm } — вопрос перед запуском при сигнале Meta;
+    // 409 { confirm, final } — итоговая аудитория перед запуском рассылки со второго номера
     const errors = Array.isArray(j.errors) ? j.errors.map(String).filter(Boolean) : [];
     if (errors.length) throw new ApiError(errors.join("; "), r.status, false, { errors });
-    if (typeof j.confirm === "string" && j.confirm) throw new ApiError(j.confirm, r.status, false, { confirm: j.confirm });
+    const final = j.final && typeof j.final === "object" ? (j.final as Record<string, unknown>) : undefined;
+    if (typeof j.confirm === "string" && j.confirm) throw new ApiError(j.confirm, r.status, false, { confirm: j.confirm, ...(final ? { final } : {}) });
     throw new ApiError(`Сервер ответил ошибкой ${r.status}.`, r.status);
   }
   return j;
@@ -408,6 +413,8 @@ export function createLiveSource(): DataSource {
     campaignAct: campaignsApi("campaignAct"),
     campaignTick: campaignsApi("campaignTick"),
     testSend: campaignsApi("testSend"),
+    gaTest: campaignsApi("gaTest"),
+    campaignLaunch: campaignsApi("campaignLaunch"),
     crmSegments: campaignsApi("crmSegments"),
     crmList: campaignsApi("crmList"),
     crmRefresh: campaignsApi("crmRefresh"),
@@ -424,6 +431,10 @@ export function createLiveSource(): DataSource {
     templateSave: campaignsApi("templateSave"),
     templatePreview: campaignsApi("templatePreview"),
     templateAction: campaignsApi("templateAction"),
+    autoMessages: campaignsApi("autoMessages"),
+    autoMessageSet: campaignsApi("autoMessageSet"),
+    autoMessageTest: campaignsApi("autoMessageTest"),
+    autoMessageAudience: campaignsApi("autoMessageAudience"),
     contactsStatus: contactsApi("contactsStatus"),
     contactSegments: contactsApi("contactSegments"),
     contactList: contactsApi("contactList"),

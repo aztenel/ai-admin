@@ -24,6 +24,7 @@ import { jrPlan } from "../../src/services/reminders/journal.js";
 import { jrqSave } from "../../src/db/kv/reminders.js";
 import { msgEventAdd } from "../../src/db/d1/stats.js";
 import { syncStep } from "../../src/services/contacts/sync.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
 
 const skip = sqliteOk ? false : "node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, OWNER = "owner-key-123456", STAFF_W = "staff-key-winch-0001";
@@ -260,6 +261,7 @@ test("календарь: рассылка идёт (с окном) и одоб�
   const recs = [1, 2].map(k => ({ id: 9500 + k, datetime: `${tomorrow}T${k === 1 ? "14" : "16"}:00:00+05:00`, deleted: false, attendance: 0, create_date: new Date(now - 86400e3).toISOString(),
     staff: { id: 1, name: "Дамир" }, client: { id: k, phone: "+770000007" + (50 + k), name: "Арман" }, services: [{ id: 1, title: "Мужская стрижка" }] }));
   await jrqSave(s.env, "winchester", jrPlan(W, recs, now));
+  await autoOn(s, legacyOn(W)); // календарь показывает очередь только включённых сценариев («Автоматические сообщения», 02.11.2026)
   await msgEventAdd(d.db, "winchester", "msg:winchester:ga:A1:sent", "msg_sent", { ch: "ga", src: "service" }, now - 60e3);
   await msgEventAdd(d.db, "winchester", "msg:winchester:ga:A2:sent", "msg_sent", { ch: "ga", src: "admin" }, now - 60e3);
   await msgEventAdd(d.db, "winchester", "msg:winchester:ga:A3:failed", "msg_failed", { ch: "ga", src: "review" }, now - 60e3);

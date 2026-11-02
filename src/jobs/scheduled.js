@@ -4,6 +4,7 @@ import { backupRun } from "../services/notifications/telegram.js";
 import { digestRun, dayStatsRun } from "../services/digest.js";
 import { remindRun } from "../services/reminders/send.js";
 import { jrRun } from "../services/reminders/journal.js";
+import { mkRun } from "../services/automsg/marketing.js";
 import { cronRun } from "./cron.js";
 import { qualityRun } from "../services/broadcast/quality.js";
 import { crmRun } from "../services/crm/snapshot.js";
@@ -24,6 +25,6 @@ export async function scheduled(controller, env, ctx) {
   const at = (controller && controller.scheduledTime) || Date.now();
   // у каждой задачи своя обёртка хранилища переписок (services/chatstore): копии чатов, прочитанные одной задачей, не смешиваются с другой
   const E = () => chatEnv(env);
-  ctx.waitUntil(Promise.all([cronRun(E()), backupRun(E()), digestRun(E(), at), remindRun(E(), at), jrRun(E(), at), qualityRun(E(), at), dayStatsRun(E(), at), crmRun(E(), at), autoRun(E(), at), contactsRun(E(), at), stopSweep(E(), at), syncFix(E(), at),
+  ctx.waitUntil(Promise.all([cronRun(E()), backupRun(E()), digestRun(E(), at), remindRun(E(), at), jrRun(E(), at), mkRun(E(), at), qualityRun(E(), at), dayStatsRun(E(), at), crmRun(E(), at), autoRun(E(), at), contactsRun(E(), at), stopSweep(E(), at), syncFix(E(), at),
     chatPurgeRun(env, at), walCron(env, at)]).catch(e => console.log("cron", String((e && e.stack) || e))));
 }

@@ -4,7 +4,16 @@
 // Полные номера клиентов базы сервер не отдаёт — здесь их нет и быть не может; ответы не пишутся ни в консоль, ни в localStorage.
 import type {
   AutoInfo,
+  AutoMessages,
+  AutoMsgAudience,
+  AutoMsgCounts,
+  AutoMsgField,
+  AutoMsgLogItem,
+  AutoMsgScenario,
+  AutoMsgTestResult,
   CampaignCalendar,
+  CrmPersonStatus,
+  CrmStatusCounts,
   CampaignResults,
   LibraryItem,
   MessageStats,
@@ -21,8 +30,11 @@ import type {
   CampaignStatus,
   CampaignsOverview,
   CrmInfo,
+  CrmMetrics,
   CrmOverview,
   CrmPage,
+  LaunchFinal,
+  LaunchResult,
   MainNumberState,
   NumberQuality,
   SegmentSpec,
@@ -44,21 +56,24 @@ import type { CampaignSource } from "./source";
 type RowRaw = {
   id: string; name?: string; status: string; total?: number; pos?: number; sent?: number; failed?: number; skipped?: number; excl?: number;
   created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string; demo?: number | boolean; approved?: number | boolean;
+  at?: number; tplId?: string;
 };
+type ResultsRaw = { [K in keyof CampaignResults]?: CampaignResults[K] | null } & { stop?: number };
 type BRaw = RowRaw & {
   cap?: number; from?: number; to?: number; text?: string; msg?: string; fallback?: string; img?: string; lang?: string; params?: string[];
   segId?: string; crmAt?: number; approvedBy?: string; approvedAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
-  retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean;
-  results?: Partial<CampaignResults> | null;
+  retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean; stop?: number | boolean; sel?: number;
+  results?: ResultsRaw | null;
 };
 type ListRaw = {
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
   fail: { n: number; codes: CampaignFail[] } | null; used: number;
   health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string } | null;
-  ga: { ready: boolean; state: string; phone: string; hook: boolean; why: string; warn: string; used: number; cap: [number, number]; hold: string; bcOff?: string } | null;
+  ga: { ready: boolean; state: string; phone: string; hook: boolean; why: string; warn: string; used: number; cap: [number, number]; hold: string; bcOff?: string; bcHow?: string; bcOn?: boolean } | null;
   list: RowRaw[]; now: number;
 };
 type CheckRaw = Omit<CampaignCheck, "listFilter"> & { seg?: string; segOut?: number; noDate?: number };
+type FinalRaw = { n?: number; rest?: number; cap?: number; from?: number; to?: number; days?: number; text?: string; sample?: string; at?: number };
 type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null };
 type ServiceRaw = {
   owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string; sc?: string; approved?: boolean }[];
@@ -70,6 +85,19 @@ type ServiceRaw = {
 type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
+type CountsRaw = { sent?: number; failed?: number; skipped?: number };
+type MsgScenarioRaw = {
+  id: string; group?: string; title?: string; who?: string; on?: boolean; live?: boolean; why?: string; locked?: string; at?: number; by?: string;
+  timing?: Record<string, string | number>; fields?: AutoMsgField[]; timingText?: string;
+  text?: { ru?: string; kk?: string; v?: number; variant?: string; own?: boolean; approved?: boolean; vars?: string[] } | null; preview?: string;
+  counts?: { today?: CountsRaw; week?: CountsRaw }; log?: { t?: number; st?: string; why?: string; name?: string; phone?: string; date?: string; time?: string }[];
+  audience?: { total?: number; allowed?: number; why?: Record<string, number>; base?: boolean } | null;
+};
+type MsgRaw = {
+  client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string };
+  altegio?: { ready?: boolean; why?: string }; db?: string; hold?: { at?: number; why?: string } | null; window?: { from?: number; to?: number }; cap?: number;
+  marketing?: { allowed?: boolean; why?: string }; test?: { phone?: string } | null; scenarios?: MsgScenarioRaw[];
+};
 
 // ---------- перевод в понятия пульта ----------
 const n = (x: unknown) => (typeof x === "number" && isFinite(x) ? x : 0);
@@ -99,6 +127,33 @@ function row(r: RowRaw): CampaignRow {
     ...(r.tpl ? { template: r.tpl } : {}),
     ...(r.demo ? { demo: true } : {}),
     ...(r.approved ? { approved: true } : {}),
+    ...(n(r.at) ? { at: n(r.at) } : {}),
+    ...(r.tplId ? { tplId: r.tplId } : {}),
+  };
+}
+
+/** Число или «данных нет»: null у сервера — не ноль (нет базы отметок D1 или свежей базы клиентов); поля нет — тоже «нет данных». */
+const orNull = (x: unknown): number | null => (typeof x === "number" && isFinite(x) ? x : null);
+/** Итоги рассылки: числа как есть, null — «нет данных» (финальное ТЗ: не показывать 0 там, где данных нет). У старых рассылок
+ *  (шаблон Meta, демо) отказавшихся сервер присылает как stop. */
+function results(x: ResultsRaw): CampaignResults {
+  const opt = (k: "selected" | "admitted" | "unsure" | "skipped") => (typeof x[k] === "number" ? { [k]: n(x[k]) } : {});
+  return {
+    ...opt("selected"),
+    ...opt("admitted"),
+    sent: n(x.sent),
+    ...opt("unsure"),
+    failed: n(x.failed),
+    ...opt("skipped"),
+    delivered: orNull(x.delivered),
+    read: orNull(x.read),
+    replied: orNull(x.replied),
+    ...("want" in x ? { want: orNull(x.want) } : {}),
+    booked: orNull(x.booked),
+    // отказавшиеся: null — «нет данных» (как booked); у старых рассылок сервер присылает их как stop
+    ...("refused" in x ? { refused: orNull(x.refused) } : typeof x.stop === "number" ? { refused: x.stop } : {}),
+    window: n(x.window) || 14,
+    ...(typeof x.reports === "boolean" ? { reports: x.reports } : {}),
   };
 }
 
@@ -107,16 +162,29 @@ function detail(b: BRaw): CampaignDetail {
   // необязательные поля — только если сервер их прислал (пусто и 0 — «нет»)
   const extra: Partial<CampaignDetail> = {
     message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, approvedBy: b.approvedBy, approvedAt: b.approvedAt, startedAt: b.startedAt, lastSentAt: b.last,
-    nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure,
+    nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure, selected: b.sel,
   };
   for (const [k, v] of Object.entries(extra)) if (v) (d as Record<string, unknown>)[k] = v;
-  // итоги: сервер считает по ответам провайдера и журналу Altegio; без базы D1 — нет
-  if (b.results) {
-    const x = b.results;
-    d.results = { sent: n(x.sent), delivered: n(x.delivered), read: n(x.read), failed: n(x.failed), replied: n(x.replied), booked: n(x.booked), window: n(x.window) || 14 };
-  }
+  if (b.stop) d.stop = true;
+  // одобрено ли — по самой рассылке: строка списка могла отстать (одобрение сняли, а список не перечитан)
+  d.approved = !!b.approvedAt;
+  // итоги: сервер считает по ответам провайдера, журналу Altegio и отказам; без данных — null
+  if (b.results) d.results = results(b.results);
   return d;
 }
+
+/** Итоговая аудитория перед запуском — как прислал сервер (409 { confirm, final }). */
+const finalOf = (f: FinalRaw): LaunchFinal => ({
+  n: n(f.n),
+  rest: n(f.rest),
+  cap: n(f.cap),
+  from: n(f.from),
+  to: n(f.to),
+  days: n(f.days),
+  text: String(f.text || ""),
+  sample: String(f.sample || ""),
+  ...(n(f.at) ? { at: n(f.at) } : {}),
+});
 
 function overview(d: ListRaw): CampaignsOverview {
   const h = d.health;
@@ -144,13 +212,15 @@ function overview(d: ListRaw): CampaignsOverview {
         cap: { def: n(g.cap?.[0]) || 50, max: n(g.cap?.[1]) || 300 },
         hold: g.hold || "",
         noBroadcast: g.bcOff || "",
+        ...(g.bcHow ? { how: g.bcHow } : {}),
+        ...(g.bcOn ? { launchOn: true } : {}),
         ...(g.phone ? { phone: g.phone } : {}),
       }
     : null;
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv"];
 const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
 const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
 const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];
@@ -195,6 +265,59 @@ function dryRun(d: DryRaw): ServiceDryRun {
     skipped: (d.skipped || []).filter((x) => x && x.why).map((x) => ({ why: x.why, n: n(x.n) })) };
 }
 
+// ---------- «Автоматические сообщения» (/api/msg/*) ----------
+const counts = (x: CountsRaw | undefined): AutoMsgCounts => ({ sent: n(x?.sent), failed: n(x?.failed), skipped: n(x?.skipped) });
+const FIELD_KINDS: AutoMsgField["kind"][] = ["minutes", "hours", "days", "time", "choice", "count"];
+/** Сценарий: незнакомые виды полей (сервер новее пульта) не показываем — их значение сервер оставит как было. */
+function msgScenario(x: MsgScenarioRaw): AutoMsgScenario {
+  const t = x.text;
+  const log: AutoMsgLogItem[] = (x.log || []).map((l) => ({ at: n(l.t), state: String(l.st || ""), why: l.why || "", name: l.name || "", phone: l.phone || "", date: l.date || "", time: l.time || "" }));
+  return {
+    id: String(x.id),
+    group: x.group === "marketing" ? "marketing" : "service",
+    title: x.title || x.id,
+    who: x.who || "",
+    on: !!x.on,
+    live: !!x.live,
+    why: x.why || "",
+    locked: x.locked || "",
+    at: n(x.at),
+    by: x.by || "",
+    timing: x.timing && typeof x.timing === "object" ? x.timing : {},
+    fields: (x.fields || []).filter((f) => f && typeof f.key === "string" && FIELD_KINDS.includes(f.kind)),
+    timingText: x.timingText || "",
+    text: t ? { ru: t.ru || "", kk: t.kk || "", v: n(t.v), ...(t.variant ? { variant: t.variant } : {}), own: !!t.own, approved: !!t.approved, vars: Array.isArray(t.vars) ? t.vars.map(String) : [] } : null,
+    preview: x.preview || "",
+    counts: { today: counts(x.counts?.today), week: counts(x.counts?.week) },
+    log,
+    ...(x.audience !== undefined ? { audience: x.audience ? { total: n(x.audience.total), allowed: n(x.audience.allowed), why: x.audience.why || {}, base: !!x.audience.base } : null } : {}),
+  };
+}
+function autoMessages(d: MsgRaw): AutoMessages {
+  return {
+    workspace: d.client || { id: "", name: "" },
+    owner: !!d.owner,
+    stage: d.stage === "preview" ? "preview" : "production",
+    now: n(d.now) || Date.now(),
+    master: { on: !!d.master?.on, why: d.master?.why || "" },
+    sender: { ready: !!d.sender?.ready, phone: d.sender?.phone || "", why: d.sender?.why || "" },
+    altegio: { ready: d.altegio?.ready !== false, why: d.altegio?.why || "" },
+    db: d.db || "",
+    hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null,
+    window: { from: n(d.window?.from) || 10, to: n(d.window?.to) || 21 },
+    cap: n(d.cap),
+    marketing: { allowed: !!d.marketing?.allowed, why: d.marketing?.why || "" },
+    test: d.test && d.test.phone ? { phone: d.test.phone } : null,
+    scenarios: (d.scenarios || []).filter((x) => x && x.id).map(msgScenario),
+  };
+}
+const ST_KEYS = ["valid", "booked", "service", "marketing", "stopped", "refused", "ready"] as const;
+const METRIC_KEYS = ["total", "valid", "invalid", "regular", "once", "d30_60", "d61_90", "booked", "marketing", "refused", "noperm"] as const;
+const stCounts = (x: Partial<CrmStatusCounts> | undefined): CrmStatusCounts | undefined =>
+  x && typeof x === "object" ? (Object.fromEntries(ST_KEYS.map((k) => [k, n(x[k])])) as CrmStatusCounts) : undefined;
+const personSt = (x: Partial<CrmPersonStatus> | undefined): CrmPersonStatus | undefined =>
+  x && typeof x === "object" ? { booked: !!x.booked, service: !!x.service, marketing: !!x.marketing, stopped: !!x.stopped, refused: !!x.refused, ready: !!x.ready } : undefined;
+
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */
 export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown> {
   const bot = d.channel === "bot";
@@ -211,7 +334,8 @@ export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown>
     consent: d.consent === true,
   };
   if (!bot) Object.assign(b, { tpl: (d.tpl || "").trim(), lang: (d.lang || "ru").trim(), params: d.params || [] });
-  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", ...(d.tplId ? { tplId: d.tplId } : {}) });
+  // stop — выбор владельца: строка отказа в конце (её добавляет сервер, текст на пульте не меняем)
+  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", stop: d.stop === true, ...(d.tplId ? { tplId: d.tplId } : {}) });
   if (d.source === "segment") b.segment = d.segment ? segBody(d.segment) : { id: "" };
   else {
     b.recipients = d.recipients || "";
@@ -255,11 +379,36 @@ export const liveCampaigns: CampaignSource = {
     const d = await call<{ b: BRaw; state: string }>("/api/bc/tick", { c: ws, id });
     return { campaign: detail(d.b), state: d.state || "" };
   },
-  async testSend(ws, draft, to) {
-    return (await call<{ text: string }>("/api/bc/test", { ...draftBody(ws, draft), to })).text;
+  async testSend(ws, draft, to, rid) {
+    // второй номер: to сервер не слушает (только номер для проверки владельца), rid — номер нажатия
+    return (await call<{ text: string }>("/api/bc/test", { ...draftBody(ws, draft), to, ...(rid ? { rid } : {}) })).text;
+  },
+  async gaTest(ws, draft, rid) {
+    const d = await call<{ text?: string; preview?: string; dup?: boolean }>("/api/bc/test", { ...draftBody(ws, { ...draft, channel: "bot" }), rid });
+    return { text: d.text || "", preview: d.preview || "", ...(d.dup ? { dup: true } : {}) };
+  },
+  async campaignLaunch(ws, id, opts = {}): Promise<LaunchResult> {
+    try {
+      const d = await call<{ b: BRaw }>("/api/bc/act", {
+        c: ws,
+        id,
+        act: "start",
+        op: getOperator(),
+        ...(opts.sure ? { sure: true, n: opts.n } : {}),
+        ...(opts.at ? { at: Math.round(opts.at) } : {}),
+        // force — только после «Всё равно запустить» на вопрос о сигнале Green-API (и только вместе с подтверждённой аудиторией)
+        ...(opts.force ? { force: true } : {}),
+      });
+      return { kind: "done", campaign: detail(d.b) };
+    } catch (e) {
+      // 409 { confirm, final } — итоговая аудитория: подтвердить тем же запросом с sure и n; без final — вопрос о сигнале Green-API
+      if (e instanceof ApiError && e.confirm) return e.final ? { kind: "final", question: e.confirm, final: finalOf(e.final as FinalRaw) } : { kind: "confirm", question: e.confirm };
+      throw e;
+    }
   },
   async crmSegments(ws) {
     const d = await call<SegRaw>(`/api/crm/segments?c=${enc(ws)}`);
+    const st = d.statuses ? stCounts(d.statuses) : undefined;
     return {
       owner: !!d.owner,
       why: d.why || "",
@@ -267,19 +416,37 @@ export const liveCampaigns: CampaignSource = {
       at: n(d.at),
       clients: n(d.clients),
       ok: n(d.ok),
-      segments: d.segments || [],
+      segments: (d.segments || []).map((s) => ({
+        id: s.id,
+        label: s.label,
+        rule: s.rule,
+        n: n(s.n),
+        ...(typeof s.total === "number" ? { total: s.total } : {}),
+        ...(s.st ? { st: stCounts(s.st) } : {}),
+      })),
       excluded: { ...{ stop: 0, noconsent: 0, fut: 0, recent: 0, marketed: 0 }, ...(d.excluded || {}) },
       consent: d.consent,
+      ...(d.statuses !== undefined ? { statuses: d.statuses && st ? { ...st, base: n(d.statuses.base), invalid: n(d.statuses.invalid) } : null } : {}),
+      ...(d.metrics !== undefined ? { metrics: d.metrics ? (Object.fromEntries(METRIC_KEYS.map((k) => [k, n(d.metrics![k])])) as CrmMetrics) : null } : {}),
       info: d.info || null,
       ...(d.error ? { error: d.error, errorAt: n(d.errorAt) } : {}),
     };
   },
-  async crmList(ws, spec, page = 1) {
+  async crmList(ws, spec, page = 1, opts) {
     const q = new URLSearchParams({ c: ws, seg: spec.id, page: String(page) });
     if (spec.from !== undefined) q.set("from", String(spec.from));
     if (spec.to !== undefined) q.set("to", String(spec.to));
     if (spec.staff) q.set("staff", spec.staff);
-    return call<CrmPage>(`/api/crm/list?${q}`);
+    if (opts?.all) q.set("all", "1");
+    const d = await call<CrmPage>(`/api/crm/list?${q}`);
+    // номер — маска сервера как есть; статусы — только у списка всех клиентов
+    return {
+      ...d,
+      list: (d.list || []).map((p) => {
+        const st = personSt(p.st);
+        return { ...p, ...(st ? { st } : {}), ...(typeof p.why === "string" ? { why: p.why } : {}) };
+      }),
+    };
   },
   async crmRefresh(ws) {
     const { ok: _ok, ...info } = await call<CrmInfo & { ok: true }>("/api/crm/refresh", { c: ws });
@@ -334,5 +501,20 @@ export const liveCampaigns: CampaignSource = {
   },
   async templateAction(ws, id, action) {
     return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates/action", { c: ws, id, action, op: getOperator() })).item;
+  },
+  async autoMessages(ws) {
+    return autoMessages(await call<MsgRaw>(`/api/msg/auto?c=${enc(ws)}`));
+  },
+  async autoMessageSet(ws, patch) {
+    // op — имя сотрудника на устройстве: сервер пишет его в журнал сценария («включил Азамат»)
+    await call<{ ok: true }>("/api/msg/auto", { c: ws, ...patch, op: getOperator() });
+  },
+  async autoMessageTest(ws, id, lang, rid): Promise<AutoMsgTestResult> {
+    const d = await call<{ text?: string; to?: string; dup?: boolean; unknown?: boolean }>("/api/msg/test", { c: ws, id, lang, rid, op: getOperator() });
+    return { text: d.text || "", to: d.to || "", ...(d.dup ? { dup: true } : {}), ...(d.unknown ? { unknown: true } : {}) };
+  },
+  async autoMessageAudience(ws, id): Promise<AutoMsgAudience> {
+    const d = await call<{ id?: string; total?: number; allowed?: number; day?: string; at?: number }>("/api/msg/audience", { c: ws, id });
+    return { id: d.id || id, ...(typeof d.total === "number" ? { total: d.total } : {}), allowed: n(d.allowed), day: d.day || "", at: n(d.at) };
   },
 };

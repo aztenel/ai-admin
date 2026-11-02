@@ -1,7 +1,10 @@
-// База клиентов из Altegio (этап 3 Winchester, ТЗ §5.1–§5.2): сколько клиентов за 90 дней, скольким можно писать сейчас, когда
+// База клиентов из Altegio (этап 3 Winchester, ТЗ §5.1–§5.2): сколько клиентов за 90 дней, скольким реклама уйдёт сейчас, когда
 // база обновлена (по Астане), скрытые номера, исключения, отметки визитов в журнале (для проверки владельцем — что ставят
 // администраторы, не проверено), сегменты с числами. Нажатие на сегмент — люди сегмента с отбором и «Создать рассылку по сегменту»
 // (хаб открывает мастер с этим сегментом). «Обновить базу» — только владелец: сотруднику сервер ответит 403.
+// Статусы (02.11.2026): «0 доступных» — не «0 клиентов». Сводка базы — в базе, номер верный, есть запись, сервисные можно, реклама можно,
+// отказались; у сегмента — все его клиенты и сколько из них можно рекламу; в списке людей — все клиенты сегмента со статусами. Писать
+// рекламу можно только тем, у кого подтверждённое согласие, — это решает сервер, пульт так и пишет.
 // Всё — из /api/crm/segments и /api/crm/list; номера клиентов браузеру приходят только маской (полные — на сервере).
 // Базу не собрать (нет ключа журнала и т. п.) и снимка нет — коротко почему, без сегментов.
 import { CircleAlert, ChevronRight, DatabaseZap, RefreshCw, UserRound } from "lucide-react";
@@ -10,19 +13,24 @@ import { toast } from "@/components/overlay";
 import { Button, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
-import type { CrmOverview, CrmSegment, SegmentSpec } from "@/model/campaigns";
+import type { CrmMetrics, CrmOverview, CrmSegment, SegmentSpec } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { SegmentView } from "./base/SegmentView";
 import { CRM_REFRESHED, CRM_STALE, Layer, Notice, nf, segRule, Stats, useBackLayer, when, whenText } from "./base/shared";
 import { ATTENDANCE, errText, EXCLUDED } from "./common";
+import { ConsentHowTo } from "./consent";
 import { useLoad } from "./useLoad";
 
 const PEOPLE: [string, string, string] = ["человек", "человека", "человек"];
+const CLIENTS: [string, string, string] = ["клиент", "клиента", "клиентов"];
+/** Все клиенты сегмента (у старого сервера — только те, кому можно писать). */
+const totalOf = (s: CrmSegment) => s.total ?? s.n;
 
-type Props = { ws: string; owner: boolean; onCreate(spec: SegmentSpec): void };
+/** channel — с какого номера рассылка по сегменту: второй номер (обычное сообщение) или основной (шаблон Meta, платно). */
+type Props = { ws: string; owner: boolean; channel?: "bot" | "main"; onCreate(spec: SegmentSpec): void };
 
-export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
+export default function ClientBase({ ws, owner: ownerProp, channel = "main", onCreate }: Props) {
   const now = useNow();
   const crm = useLoad((src) => src.crmSegments(ws), [ws]);
   const d = crm.data;
@@ -96,7 +104,8 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
   const canRefresh = owner && !d.why;
   const main = d.segments.filter((s) => !s.id.startsWith("staff:"));
   const masters = d.segments.filter((s) => s.id.startsWith("staff:"));
-  const tiles: CrmSegment[] = has ? [...main, { id: "all", label: "Вся база", rule: "все, кому можно писать", n: d.ok }] : [];
+  const tiles: CrmSegment[] = has ? [...main, { id: "all", label: "Вся база", rule: "все клиенты за 90 дней", n: d.ok, total: d.clients }] : [];
+  const st = d.statuses;
 
   return (
     <>
@@ -109,10 +118,11 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
         }
       >
         {has ? (
+          // с десятью числами базы (ниже) «Клиентов» здесь не повторяем: два разных «всего» путали бы
           <Stats
             items={[
-              { label: "Клиентов", value: nf.format(d.clients), sub: "за 90 дней" },
-              { label: "Доступно", value: nf.format(d.ok), sub: "для рассылки" },
+              ...(d.metrics ? [] : [{ label: "Клиентов", value: nf.format(d.clients), sub: "за 90 дней" }]),
+              { label: "Реклама", value: nf.format(d.ok), sub: "получат сейчас" },
               { label: "Обновлена", value: upd!.time, sub: upd!.day },
             ]}
           />
@@ -126,6 +136,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
           </p>
         )}
 
+        {has && d.metrics ? <Metrics m={d.metrics} /> : has && st ? <StatusSummary st={st} /> : null}
         {d.why && has && <Notice>Обновить базу сейчас нельзя: {d.why}</Notice>}
         {info && info.masked > 0 && (
           <Notice>
@@ -148,7 +159,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
         {has && d.consent && !d.consent.ready && <Notice tone="critical">{d.consent.why || "Рекламу сейчас нельзя никому: нет базы согласий."}</Notice>}
         {has && (
           <div className="py-3">
-            <p className="text-ui text-fg pointer-coarse:text-base">Не пишем</p>
+            <p className="text-ui text-fg pointer-coarse:text-base">Рекламу сейчас не получат</p>
             <p className="mt-0.5 text-sm text-fg-2">
               {(Object.keys(EXCLUDED) as (keyof CrmOverview["excluded"])[]).map((k, i) => (
                 <span key={k}>
@@ -176,17 +187,25 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
         )}
       </Group>
 
+      {/* рекламу сейчас не получит никто — точная причина и как получить согласия (финальное ТЗ: спрашивать по одному) */}
+      {has && (d.metrics ? d.metrics.marketing === 0 : st ? st.marketing === 0 : false) && (
+        <ConsentHowTo
+          className="mb-6"
+          note={d.consent && !d.consent.ready ? d.consent.why : undefined}
+          reasons={(Object.keys(EXCLUDED) as (keyof CrmOverview["excluded"])[]).map((k) => ({ code: k, why: EXCLUDED[k], n: d.excluded[k] || 0 }))}
+        />
+      )}
       {has && (
         <section className="mb-6" aria-labelledby="crm-segs">
           <h3 id="crm-segs" className="mb-1.5 px-4 text-sm font-medium text-fg-3">
-            Кому можно писать сейчас
+            Сегменты
           </h3>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
             {tiles.map((s) => (
               <Tile key={s.id} s={s} pora={s.id === "pora"} onOpen={() => setSeg(s)} />
             ))}
           </div>
-          <p className="mt-1.5 px-4 text-sm text-fg-3">Нажмите на сегмент, чтобы увидеть людей и создать рассылку.</p>
+          <p className="mt-1.5 px-4 text-sm text-fg-3">Большое число — все клиенты сегмента; «можно рекламу» — кто получит её сейчас (с согласием). Нажмите на сегмент, чтобы увидеть людей.</p>
         </section>
       )}
 
@@ -197,14 +216,17 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
               key={s.id}
               type="button"
               onClick={() => setSeg(s)}
-              aria-label={`Мастер ${s.label.replace(/^Мастер:\s*/, "")}: ${nf.format(s.n)} ${plural(s.n, PEOPLE)}`}
+              aria-label={`Мастер ${s.label.replace(/^Мастер:\s*/, "")}: ${nf.format(totalOf(s))} ${plural(totalOf(s), PEOPLE)}, можно рекламу: ${nf.format(s.n)}`}
               className="group relative -mx-4 flex min-h-12 w-[calc(100%+2rem)] items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-2/60 active:bg-surface-2 focus-visible:-outline-offset-2"
             >
               <span className="grid size-[1.875rem] shrink-0 place-items-center rounded-lg bg-surface-2 text-fg-2">
                 <UserRound aria-hidden className="size-4" strokeWidth={1.9} />
               </span>
               <span className="min-w-0 flex-1 truncate text-md md:text-base">{s.label.replace(/^Мастер:\s*/, "")}</span>
-              <span className="tnum shrink-0 text-ui text-fg-2 pointer-coarse:text-base">{nf.format(s.n)}</span>
+              <span className="tnum shrink-0 text-right text-ui text-fg-2 pointer-coarse:text-base">
+                {nf.format(totalOf(s))}
+                <span className="block text-xs text-fg-3">реклама: {nf.format(s.n)}</span>
+              </span>
               <ChevronRight aria-hidden className="size-4 shrink-0 text-fg-3" strokeWidth={2} />
             </button>
           ))}
@@ -217,6 +239,7 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
             key={seg.id}
             ws={ws}
             seg={seg}
+            channel={channel}
             masters={masters.map((s) => s.id.slice(6))}
             // сначала закрыть слой (и его запись истории), потом хаб откроет мастер со своей записью
             onCreate={(spec) => leave(() => onCreate(spec))}
@@ -227,23 +250,86 @@ export default function ClientBase({ ws, owner: ownerProp, onCreate }: Props) {
   );
 }
 
-/** Плитка сегмента: название, число (кому можно писать сейчас), правило. Имя для читалок и проверок — «Сегмент «…»: N человек, …»
- *  (строка истории с тем же названием рассылки не путается с плиткой). */
+/** Плитка сегмента: название, все клиенты сегмента, сколько из них получат рекламу сейчас, правило. Имя для читалок и проверок —
+ *  «Сегмент «…»: N человек, можно рекламу: M, …» (строка истории с тем же названием рассылки не путается с плиткой). */
 function Tile({ s, pora, onOpen }: { s: CrmSegment; pora: boolean; onOpen: () => void }) {
+  const total = totalOf(s);
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`Сегмент «${s.label}»: ${nf.format(s.n)} ${plural(s.n, PEOPLE)}, ${segRule(s)}`}
+      aria-label={`Сегмент «${s.label}»: ${nf.format(total)} ${plural(total, PEOPLE)}, можно рекламу: ${nf.format(s.n)}, ${segRule(s)}`}
       className={cn(
-        "relative flex min-h-[6.25rem] min-w-0 flex-col items-start rounded-[0.875rem] bg-surface p-3 text-left transition-colors hover:bg-surface-2/60 active:bg-surface-2",
+        "relative flex min-h-[7rem] min-w-0 flex-col items-start rounded-[0.875rem] bg-surface p-3 text-left transition-colors hover:bg-surface-2/60 active:bg-surface-2",
         pora && "ring-1 ring-inset ring-accent/35",
       )}
     >
       <span className={cn("w-full truncate text-ui font-semibold pointer-coarse:text-base", pora && "text-accent-ink")}>{s.label}</span>
-      <span className="tnum mt-1 text-2xl font-semibold leading-8">{nf.format(s.n)}</span>
-      <span className="mt-auto line-clamp-2 text-xs text-fg-3">{segRule(s)}</span>
+      <span className="mt-1 flex items-baseline gap-1.5">
+        <span className="tnum text-2xl font-semibold leading-8">{nf.format(total)}</span>
+        <span className="text-xs text-fg-3">{plural(total, CLIENTS)}</span>
+      </span>
+      <span className={cn("tnum text-sm", s.n ? "font-medium text-positive" : "text-fg-2")}>можно рекламу: {nf.format(s.n)}</span>
+      <span className="mt-auto line-clamp-2 pt-1 text-xs text-fg-3">{segRule(s)}</span>
     </button>
+  );
+}
+
+/** Десять чисел базы за 90 дней (финальное ТЗ рассылок, 02.11.2026 §3). «Без подтверждённого разрешения» — согласия нет или оно не
+ *  подтверждено: это не отказ и не разрешение, так и подписано. */
+function Metrics({ m }: { m: CrmMetrics }) {
+  const items: { label: string; value: number; sub?: string; tone?: string }[] = [
+    { label: "Всего клиентов за 90 дней", value: m.total },
+    { label: "Номер корректный", value: m.valid, sub: m.invalid ? `с ошибкой или скрыт: ${nf.format(m.invalid)}` : undefined },
+    { label: "Постоянные", value: m.regular, sub: "3 визита и больше" },
+    { label: "Были один раз", value: m.once },
+    { label: "Не приходили 30–60 дней", value: m.d30_60 },
+    { label: "Не приходили 61–90 дней", value: m.d61_90 },
+    { label: "Есть будущая запись", value: m.booked },
+    { label: "Разрешили рекламу", value: m.marketing, tone: m.marketing ? "text-positive" : undefined },
+    { label: "Отказались", value: m.refused, tone: m.refused ? "text-critical" : undefined },
+    { label: "Без подтверждённого разрешения", value: m.noperm, sub: "не отказ и не разрешение" },
+  ];
+  return (
+    <div className="py-3">
+      <dl aria-label="Числа базы" className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-5">
+        {items.map((x) => (
+          <div key={x.label} className="min-w-0">
+            <dt className="text-xs leading-4 text-fg-3">{x.label}</dt>
+            <dd className={cn("tnum mt-0.5 text-lg font-semibold leading-6", x.tone)}>{nf.format(x.value)}</dd>
+            {x.sub && <dd className="text-xs text-fg-3">{x.sub}</dd>}
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-sm text-fg-3">Реклама уходит только тем, кто разрешил: подтверждённое согласие и нет «стопа». Сервисные сообщения о записи — всем, кроме отказавшихся.</p>
+    </div>
+  );
+}
+
+/** Статусы всей базы (сервер старше 02.11.2026): сколько всего, у скольких верный номер, кто записан, кому можно сервисные и рекламу, кто отказался. */
+function StatusSummary({ st }: { st: NonNullable<CrmOverview["statuses"]> }) {
+  const items: { label: string; value: number; tone?: string }[] = [
+    { label: "В базе", value: st.base },
+    { label: "Номер верный", value: st.valid },
+    { label: "Есть запись", value: st.booked },
+    { label: "Сервисные можно", value: st.service },
+    { label: "Реклама можно", value: st.marketing, tone: st.marketing ? "text-positive" : undefined },
+    { label: "Отказались", value: st.stopped, tone: st.stopped ? "text-critical" : undefined },
+  ];
+  return (
+    <div className="py-3">
+      <dl aria-label="Статусы клиентов" className="grid grid-cols-3 gap-x-3 gap-y-2.5">
+        {items.map((x) => (
+          <div key={x.label} className="min-w-0">
+            <dt className="truncate text-xs text-fg-3">{x.label}</dt>
+            <dd className={cn("tnum text-lg font-semibold leading-6", x.tone)}>{nf.format(x.value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-sm text-fg-3">
+        Реклама можно — у кого подтверждённое согласие и нет «стопа». Без согласия реклама не уходит никому.{st.refused ? ` Отказались от рекламы: ${nf.format(st.refused)}.` : ""}
+      </p>
+    </div>
   );
 }
 

@@ -102,12 +102,15 @@ export function Switch({
   label,
   disabled,
   busy,
+  describedBy,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   disabled?: boolean;
   busy?: boolean;
+  /** id строки с пояснением (почему выключатель недоступен, уходит ли) — читалки прочтут её вместе с выключателем. */
+  describedBy?: string;
 }) {
   return (
     <button
@@ -115,6 +118,7 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      aria-describedby={describedBy}
       aria-busy={busy || undefined}
       disabled={disabled || busy}
       onClick={() => onChange(!checked)}

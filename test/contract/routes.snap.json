@@ -2004,7 +2004,7 @@
   ]
  },
  "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
-  "status": 400,
+  "status": 404,
   "type": "application/json",
   "cache": "no-store",
   "json": [
@@ -2028,7 +2028,7 @@
   ]
  },
  "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
-  "status": 400,
+  "status": 404,
   "type": "application/json",
   "cache": "no-store",
   "json": [
@@ -2880,9 +2880,11 @@
    "clients",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",
+   "statuses",
    "why"
   ]
  },
@@ -2896,9 +2898,11 @@
    "clients",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",
+   "statuses",
    "why"
   ]
  },
@@ -2921,9 +2925,11 @@
    "consent",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",
+   "statuses",
    "why"
   ]
  },
@@ -3989,6 +3995,241 @@
  },
  "POST /api/bc/auto {\"c\":\"barber\",\"days\":3} [staff]": {
   "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/auto?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/auto?c=barber [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "altegio",
+   "cap",
+   "client",
+   "db",
+   "hold",
+   "marketing",
+   "master",
+   "now",
+   "owner",
+   "scenarios",
+   "sender",
+   "stage",
+   "test",
+   "window"
+  ]
+ },
+ "GET /api/msg/auto?c=barber [staff]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "altegio",
+   "cap",
+   "client",
+   "db",
+   "hold",
+   "marketing",
+   "master",
+   "now",
+   "owner",
+   "scenarios",
+   "sender",
+   "stage",
+   "test",
+   "window"
+  ]
+ },
+ "GET /api/msg/auto?c=dent [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/auto?c=dent [owner]": {
+  "status": 200,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "altegio",
+   "cap",
+   "client",
+   "db",
+   "hold",
+   "marketing",
+   "master",
+   "now",
+   "owner",
+   "scenarios",
+   "sender",
+   "stage",
+   "test",
+   "window"
+  ]
+ },
+ "GET /api/msg/auto?c=dent [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"barber\",\"id\":\"remind24\",\"on\":false} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"barber\",\"id\":\"remind24\",\"on\":false} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"barber\",\"id\":\"remind24\",\"on\":false} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"dent\",\"id\":\"remind24\",\"on\":false} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"dent\",\"id\":\"remind24\",\"on\":false} [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/auto {\"c\":\"dent\",\"id\":\"remind24\",\"on\":false} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"barber\",\"id\":\"remind24\",\"rid\":\"rid-contract-01\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"barber\",\"id\":\"remind24\",\"rid\":\"rid-contract-01\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "preview"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"barber\",\"id\":\"remind24\",\"rid\":\"rid-contract-01\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"dent\",\"id\":\"remind24\",\"rid\":\"rid-contract-02\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"dent\",\"id\":\"remind24\",\"rid\":\"rid-contract-02\"} [owner]": {
+  "status": 409,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "code",
+   "error",
+   "preview"
+  ]
+ },
+ "POST /api/msg/test {\"c\":\"dent\",\"id\":\"remind24\",\"rid\":\"rid-contract-02\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/audience {\"c\":\"barber\",\"id\":\"birthday\"} [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/audience {\"c\":\"barber\",\"id\":\"birthday\"} [owner]": {
+  "status": 503,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "POST /api/msg/audience {\"c\":\"barber\",\"id\":\"birthday\"} [staff]": {
+  "status": 403,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/nope?c=barber [anon]": {
+  "status": 401,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/nope?c=barber [owner]": {
+  "status": 404,
+  "type": "application/json",
+  "cache": "no-store",
+  "json": [
+   "error"
+  ]
+ },
+ "GET /api/msg/nope?c=barber [staff]": {
+  "status": 404,
   "type": "application/json",
   "cache": "no-store",
   "json": [

@@ -2,7 +2,8 @@
 // «продолжу в …», «фон молчит». Как старая страница /broadcast: для готовых, идущих и стоящих на паузе сразу берём рассылку целиком,
 // идущие опрашиваем раз в 5 с (только видимая вкладка). Рассылка перестала идти — один раз перечитываем обзор (дорогой запрос:
 // сервер спрашивает Meta и Green-API) — там пределы и «отправлено за 24 часа».
-// Старые рассылки с номера бота (ch "ga") показываются с подписью «номер бота»: создавать и запускать их в пульте нельзя (решение владельца 19.10.2026).
+// Рассылки со второго номера (ch "ga") — главный канал (финальное ТЗ рассылок, 02.11.2026): «Черновик» / «Одобрена» до запуска,
+// «Запланирована на …», пока не наступило время запуска (рассылка уже «идёт», сервер ждёт at). Шаблоны Meta — во вкладке «Meta».
 import { Bot, ChevronRight, List, Megaphone, Repeat, UsersRound, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Skeleton } from "@/components/ui";
@@ -11,7 +12,7 @@ import { cn } from "@/lib/utils";
 import type { CampaignDetail, CampaignRow, CampaignStatus } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
-import { progressPct, progressText, STATUS, type Tone } from "./common";
+import { astanaWhen, isScheduled, progressPct, progressText, STATUS, type Tone } from "./common";
 
 const POLL_MS = 5000;
 /** Не завершены: для них нужна рассылка целиком (заметка, ожидание). */
@@ -129,9 +130,10 @@ const TONE: Record<Tone, string> = {
   muted: "text-fg-3",
 };
 
-/** Статус словами. Рассылку с номера бота в пульте не запускают — «готова к запуску» ей не пишем. */
-export function statusOf(c: Pick<CampaignRow, "status" | "channel" | "approved">): { label: string; tone: Tone } {
+/** Статус словами. Второй номер: готовая — «Черновик» или «Одобрена» (запускает владелец), запущенная на время — «Запланирована на …». */
+export function statusOf(c: Pick<CampaignRow, "status" | "channel" | "approved" | "at">, now = Date.now()): { label: string; tone: Tone } {
   if (c.channel === "bot" && c.status === "ready") return c.approved ? { label: "Одобрена", tone: "ok" } : { label: "Черновик", tone: "muted" };
+  if (isScheduled(c, now)) return { label: `Запланирована на ${astanaWhen(c.at!)}`, tone: "run" };
   return STATUS[c.status] || { label: c.status, tone: "muted" };
 }
 
@@ -156,9 +158,10 @@ function noteOf(c: Shown): { text: string; critical: boolean } | null {
 }
 
 function Row({ c, now, onOpen }: { c: Shown; now: number; onOpen: () => void }) {
-  const st = statusOf(c);
+  const st = statusOf(c, now);
   const k = kindOf(c);
-  const note = noteOf(c);
+  const plan = isScheduled(c, now);
+  const note = plan ? null : noteOf(c);
   const pct = progressPct(c);
   const by = c.by === "staff" ? "сотрудник" : "";
   return (
@@ -177,12 +180,12 @@ function Row({ c, now, onOpen }: { c: Shown; now: number; onOpen: () => void }) 
           {" · "}
           {[k.label, shortDate(c.createdAt, now), by].filter(Boolean).join(" · ")}
         </span>
-        {c.status === "ready" && c.total > 0 && (
+        {(c.status === "ready" || plan) && c.total > 0 && (
           <span className="tnum mt-1 block text-xs text-fg-2">
             получателей: {c.total}
           </span>
         )}
-        {c.status !== "ready" && c.total > 0 && (
+        {c.status !== "ready" && !plan && c.total > 0 && (
           <span className="mt-2 block">
             <span className="block h-1 overflow-hidden rounded-full bg-surface-3" aria-hidden>
               <span className={cn("block h-full rounded-full", c.status === "running" || c.status === "paused" ? "bg-accent" : c.status === "done" ? "bg-positive" : "bg-fg-3/60")} style={{ width: `${pct}%` }} />

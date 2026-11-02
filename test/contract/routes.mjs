@@ -126,6 +126,10 @@ const R = [
   ["POST", "/api/bc/check", { c: "dent", segment: "all" }], ["POST", "/api/bc/create", { c: "barber", segment: "pora" }], ["POST", "/api/bc/create", { c: "dent", segment: "all" }],
   ["GET", "/api/bc/service?c=barber"], ["GET", "/api/bc/service?c=dent"],
   ["GET", "/api/bc/auto?c=barber"], ["GET", "/api/bc/auto?c=dent"], ["POST", "/api/bc/auto", { c: "barber" }], ["POST", "/api/bc/auto", { c: "dent", on: false }], ["POST", "/api/bc/auto", { c: "barber", days: 3 }],
+  // «Автоматические сообщения» (02.11.2026): смотреть — владелец и сотрудник своей компании, менять и проверять — только владелец; чужая — 403
+  ["GET", "/api/msg/auto?c=barber"], ["GET", "/api/msg/auto?c=dent"], ["POST", "/api/msg/auto", { c: "barber", id: "remind24", on: false }], ["POST", "/api/msg/auto", { c: "dent", id: "remind24", on: false }],
+  ["POST", "/api/msg/test", { c: "barber", id: "remind24", rid: "rid-contract-01" }], ["POST", "/api/msg/test", { c: "dent", id: "remind24", rid: "rid-contract-02" }],
+  ["POST", "/api/msg/audience", { c: "barber", id: "birthday" }], ["GET", "/api/msg/nope?c=barber"],
   ["GET", "/wa/barber"], ["POST", "/wa/barber", META], ["POST", "/wa/barber", META, { "x-hub-signature-256": sig("wrong-secret", META) }], ["POST", "/wa/nope", META],
   ["GET", "/diag"], ["GET", "/diag/storage"], ["GET", "/diag?key=wrong"], ["GET", "/altegio"], ["POST", "/altegio", "c=barber"], ["GET", "/altegio/user"], ["POST", "/altegio/user", "c=barber"],
   ["GET", "/selftest"], ["POST", "/api/selftest", {}], ["GET", "/api/selftest"],

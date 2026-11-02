@@ -14,6 +14,7 @@ import { inboxApi, inboxMe } from "../controllers/inbox.js";
 import { launchApi, launchPage } from "../controllers/launch.js";
 import { bcApi, bcPage } from "../controllers/broadcast.js";
 import { crmApi } from "../controllers/crm.js";
+import { automsgApi } from "../controllers/automsg.js";
 import { contactsApi } from "../controllers/contacts.js";
 import { chatStoreApi } from "../controllers/chatstore.js";
 import { pushApi } from "../controllers/push.js";
@@ -117,6 +118,11 @@ export async function route(request, env, ctx, pult) {
     if (P.startsWith("/api/bc/")) {
       const s = await sessionRead(env, request);
       return s ? bcApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
+    }
+    // ---- «Автоматические сообщения» второго номера (02.11.2026): выключатели, тексты, время, счётчики, журнал, проверка на номер владельца
+    if (P.startsWith("/api/msg/")) {
+      const s = await sessionRead(env, request);
+      return s ? automsgApi(request, env, url, s) : jsonP({ error: "Войдите заново." }, 401);
     }
     // ---- база клиентов из журнала Altegio: сегменты для рассылок (docs/tz-winchester-v2.md §5.1)
     if (P.startsWith("/api/crm/")) {

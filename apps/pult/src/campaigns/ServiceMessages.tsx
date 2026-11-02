@@ -1,59 +1,52 @@
-// Сервисные сообщения — вкладка «Сервисные · номер бота» (решение владельца 19.10.2026). Это не рассылки: бот шлёт их сам, без
-// администраторов, только по записям, которые клиент сделал в чате с ботом, и с того номера, куда клиент писал (у Winchester — номер бота).
-// Здесь: что включено (напоминание накануне в 18:00, за 2 часа, просьба об отзыве со ссылкой), ближайшие в очереди, сколько ушло за 3 дня
-// и предупреждение, если бот на номере бота выключен. Всё — из GET /api/bc/service; чего сервер не знает, не показываем.
-// Владелец и сотрудник видят одно и то же — менять здесь нечего (только пояснение про черновик сайта — владельцу). Номера — только
-// маской, как их отдаёт сервер. Время — по Астане, как у сервера (пульт могут открыть с компьютера в другом часовом поясе).
-// Тексты — по данным сервера (находка проверки 19.10.2026): не «с номера бота», а с того номера, куда писал клиент; без записи через
-// Altegio напоминаний не бывает — так и пишем, а не «включено».
-// ТЗ v2.0 §4 (31.10.2026): у вида — одобрен ли текст владельцем (без одобрения не уходит), «Последние решения» по очереди (ушло,
-// отменено — запись перенесли, пропущено и почему, задача администратору), «Проверка по журналу» без отправки (владелец) и
-// «Тексты сообщений» — каталог сценариев S01–S18 с предпросмотром RU/KZ и одобрением текста владельцем.
+// Сервисные сообщения, которые уходят сами (не рассылки), — части вкладки «Автоматические · сообщения» (02.11.2026).
+//  · ServiceMessages — компании БЕЗ журнала Altegio (например, «Демо Дент»): бот шлёт напоминания и просьбу об отзыве сам, только по
+//    записям, которые клиент сделал в чате с ботом, и с того номера, куда клиент писал. Что включено, ближайшие в очереди, сколько ушло
+//    за 3 дня. Всё — из GET /api/bc/service; менять здесь нечего (напоминания и ссылку на отзывы задают в настройках бота).
+//  · Upcoming и DryRunGroup — общие с разделом «Автоматические сообщения» (компании с журналом Altegio, Winchester): ближайшие сообщения
+//    в очереди (только включённых сценариев — так их отдаёт сервер) и «Проверка по журналу» без отправки (только владелец).
+// Номера — только маской, как их отдаёт сервер. Время — по Астане, как у сервера (пульт могут открыть из другого часового пояса).
+// Включение, тексты и журнал сценариев компании с журналом Altegio — в AutoMessages.tsx (прежние «Тексты сообщений» с одобрением и
+// «Последние решения» заменены выключателями сценариев и журналом каждого сценария).
 import { useEffect, useRef, useState } from "react";
-import { Ban, BellRing, CalendarCheck, CalendarClock, CalendarSync, CircleCheck, CircleHelp, ClipboardCheck, Inbox, RefreshCw, Star, TriangleAlert, UserX, type LucideIcon } from "lucide-react";
-import { toast } from "@/components/overlay";
+import { BellRing, CalendarCheck, CalendarClock, CalendarSync, CalendarX2, CircleCheck, Inbox, RefreshCw, Star, TriangleAlert, type LucideIcon } from "lucide-react";
 import { Button, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
-import type { ServiceDryRun, ServiceKind, ServiceKindState, ServiceLogItem, ServiceOverview, ServiceQueueItem, ServiceScenario } from "@/model/campaigns";
+import type { ServiceDryRun, ServiceKind, ServiceKindState, ServiceOverview, ServiceQueueItem } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { astanaDay, nf, Notice, Stats, visitDay, when } from "./base/shared";
 import { errorList } from "./common";
-import { useLoad } from "./useLoad";
+import { useLoad, type Loaded } from "./useLoad";
 
 const WHO = "Уходят сами с того номера, куда писал клиент, только тем, кто записался через бота. Администратору ничего делать не нужно.";
-/** Кто и кому шлёт — по данным сервера. */
-// второй номер Winchester без бота (30.10.2026): напоминания и отзыв — по всем записям журнала Altegio
-const JOURNAL = "Уходят сами со второго номера по всем записям Altegio: от администратора, с сайта и из онлайн-записи. Просьба об отзыве только тем, у кого в Altegio отмечено «пришёл». Администратору ничего делать не нужно.";
 function who(d: ServiceOverview): string {
-  if (d.journal && d.enabled === false) return "Напоминания и просьба об отзыве по журналу Altegio готовы, но выключены: включаются на сервере после согласия владельца компании.";
-  if (d.journal) return d.altegio ? JOURNAL : "Напоминания строятся по журналу Altegio, а журнал не подключён. Сообщения не уходят.";
   if (!d.altegio)
     return "Напоминания и просьбу об отзыве бот шлёт сам, но только по записям, которые он сделал в Altegio. У компании запись через Altegio не подключена, поэтому эти сообщения не уходят.";
   return `${WHO} Тем, кого администратор записал прямо в Altegio, бот не напоминает.`;
 }
 const TIME = "Время по Астане.";
 // «боевой сайт / черновик» — слова владельца (так он выкладывает бота); администраторам компании они ничего не говорят
-const LIVE_ONLY = `${TIME} Сообщения уходят только с боевого сайта: там бот раз в минуту проверяет очередь. С черновика они не отправляются.`;
+const LIVE_ONLY = `${TIME} Сообщения уходят только с боевого сайта: там очередь проверяется раз в минуту. С черновика они не отправляются.`;
 
-const ICON: Record<ServiceKind, LucideIcon> = { s01: CalendarCheck, d1: CalendarClock, h2: BellRing, s06: CalendarSync, rv: Star };
+const ICON: Record<ServiceKind, LucideIcon> = { s01: CalendarCheck, d1: CalendarClock, h2: BellRing, s06: CalendarSync, cx: CalendarX2, rv: Star };
 /** Если сервер не прислал подпись — своя, те же слова. */
 const LABEL: Record<ServiceKind, string> = {
   s01: "Сразу после новой записи: подтверждение",
   d1: "Накануне в 18:00: напоминание о записи",
   h2: "За 2 часа: напоминание о записи",
   s06: "После переноса: сообщение с новым временем",
+  cx: "После отмены: сообщение об отмене",
   rv: "Через 3 часа после визита: просьба оставить отзыв",
 };
-/** Коротко — в строке очереди. */
-const SHORT: Record<ServiceKind, string> = { s01: "Подтверждение записи", d1: "Напоминание накануне", h2: "Напоминание за 2 часа", s06: "Сообщение о переносе", rv: "Просьба об отзыве" };
+/** Коротко — в строке очереди (время напоминания в день визита владелец выбирает сам: 1–6 часов). */
+const SHORT: Record<ServiceKind, string> = { s01: "Подтверждение записи", d1: "Напоминание накануне", h2: "Напоминание в день визита", s06: "Сообщение о переносе", cx: "Сообщение об отмене", rv: "Просьба об отзыве" };
 const MESSAGES: [string, string, string] = ["сообщение", "сообщения", "сообщений"];
 // очередь меняется медленно (фон шлёт раз в минуту) — раз в минуту и перечитываем, пока вкладка открыта
-const POLL_MS = 60e3;
+export const SERVICE_POLL_MS = 60e3;
 
 /** «сегодня», «завтра», «вчера» или «5 октября» — по дню ГГГГ-ММ-ДД по Астане. */
-function dayWord(iso: string, now: number): string {
+export function dayWord(iso: string, now: number): string {
   if (iso === astanaDay(now)) return "сегодня";
   if (iso === astanaDay(now + 864e5)) return "завтра";
   if (iso === astanaDay(now - 864e5)) return "вчера";
@@ -78,20 +71,21 @@ function shortLink(url: string): string {
   }
 }
 
-export default function ServiceMessages({ ws, owner }: { ws: string; owner: boolean }) {
+/** Компания без журнала Altegio: что бот шлёт сам (только смотреть — владельцу и сотруднику одинаково). Данные — GET /api/bc/service,
+ *  их грузит вкладка (useServiceMessages): по ним же она решает, этот вид показывать или «Автоматические сообщения». */
+export default function ServiceMessages({ owner, svc: s }: { owner: boolean; svc: Loaded<ServiceOverview> }) {
   const now = useNow();
-  const svc = useLoad((src) => src.serviceMessages(ws), [ws], { pollMs: POLL_MS });
-  const d = svc.data;
+  const d = s.data;
 
-  if (svc.loading) return <ServiceSkeleton />;
+  if (s.loading) return <ServiceSkeleton />;
   if (!d)
     return (
       <Group title="Что бот отправляет сам" note={WHO}>
         <div className="pb-3">
           <Notice tone="critical" role="alert">
-            Не загрузилось: {svc.error}
+            Не загрузилось: {s.error}
           </Notice>
-          <Button variant="outline" icon={RefreshCw} className="mb-1" onClick={() => void svc.reload()}>
+          <Button variant="outline" icon={RefreshCw} className="mb-1" onClick={() => void s.reload()}>
             Повторить
           </Button>
         </div>
@@ -100,16 +94,7 @@ export default function ServiceMessages({ ws, owner }: { ws: string; owner: bool
 
   return (
     <>
-      {d.journal && d.hold && (
-        <section role="status" className="mb-4 flex gap-2.5 rounded-[0.875rem] bg-surface px-4 py-3">
-          <TriangleAlert aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg" strokeWidth={2} />
-          <div className="min-w-0">
-            <p className="text-[0.9375rem] font-semibold md:text-base">Отправка на паузе</p>
-            <p className="mt-0.5 text-ui text-fg-2 pointer-coarse:text-base">Green-API не принял сообщение: {d.hold.why}. Через 6 часов попробуем снова. Проверьте, не заблокирован ли номер.</p>
-          </div>
-        </section>
-      )}
-      {d.botOff && !d.journal && (
+      {d.botOff && (
         <section role="status" className="mb-4 flex gap-2.5 rounded-[0.875rem] bg-surface px-4 py-3">
           <TriangleAlert aria-hidden className="mt-0.5 size-[1.125rem] shrink-0 text-fg" strokeWidth={2} />
           <div className="min-w-0">
@@ -119,50 +104,23 @@ export default function ServiceMessages({ ws, owner }: { ws: string; owner: bool
         </section>
       )}
 
-      <Group title={d.journal ? "Что уходит само" : "Что бот отправляет сам"} note={who(d)}>
-        {d.kinds.length ? (
-          // по журналу Altegio выключенные подтверждение и «перенесли» не показываем строкой — они в «Текстах сообщений»
-          d.kinds.filter((k) => k.on || (k.kind !== "s01" && k.kind !== "s06")).map((k) => <KindRow key={k.kind} k={k} altegio={d.altegio} paused={d.journal && d.enabled === false} />)
-        ) : (
-          <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Сведений нет.</p>
-        )}
+      <Group title="Что бот отправляет сам" note={who(d)}>
+        {d.kinds.length ? d.kinds.map((k) => <KindRow key={k.kind} k={k} altegio={d.altegio} />) : <p className="py-3 text-ui text-fg-2 pointer-coarse:text-base">Сведений нет.</p>}
       </Group>
 
-      <Group title="Ближайшие" note={owner ? LIVE_ONLY : TIME}>
-        <Stats
-          items={[
-            { label: "В очереди", value: nf.format(d.total), sub: plural(d.total, MESSAGES) },
-            { label: "Отправлено за 3 дня", value: nf.format(d.sent3d), sub: plural(d.sent3d, MESSAGES) },
-          ]}
-        />
-        {d.queue.length ? (
-          <ul aria-label="Ближайшие сообщения" className="divide-y divide-line">
-            {d.queue.map((x, i) => (
-              <QueueRow key={`${x.kind}|${x.at}|${x.phone}|${i}`} x={x} now={now} />
-            ))}
-          </ul>
-        ) : (
-          <p className="flex items-start gap-2.5 py-4 text-ui text-fg-2 pointer-coarse:text-base">
-            <Inbox aria-hidden className="mt-px size-5 shrink-0 text-fg-3" strokeWidth={1.75} />
-            <span>Ближайших сообщений нет. Они появятся, когда клиент запишется через бота.</span>
-          </p>
-        )}
-        {d.total > d.queue.length && (
-          <p className="py-3 text-sm text-fg-3">
-            Показаны ближайшие {nf.format(d.queue.length)} из {nf.format(d.total)}.
-          </p>
-        )}
-      </Group>
-      {svc.error && (
+      <Upcoming d={d} owner={owner} now={now} empty="Ближайших сообщений нет. Они появятся, когда клиент запишется через бота." />
+      {s.error && (
         <p role="alert" className="-mt-3 mb-4 px-4 text-sm text-critical">
-          Не обновилось: {svc.error}
+          Не обновилось: {s.error}
         </p>
       )}
-      {d.journal && !!d.log?.length && <LogGroup log={d.log} now={now} />}
-      {d.journal && owner && <DryRunGroup ws={ws} now={now} />}
-      {!!d.catalog?.length && <CatalogGroup ws={ws} owner={owner} catalog={d.catalog} onChanged={() => void svc.reload()} />}
     </>
   );
+}
+
+/** Очередь сервисных сообщений (GET /api/bc/service) с опросом раз в минуту, пока вкладка открыта. */
+export function useServiceMessages(ws: string): Loaded<ServiceOverview> {
+  return useLoad((src) => src.serviceMessages(ws), [ws], { pollMs: SERVICE_POLL_MS });
 }
 
 /** Плитка со значком вида сообщения — как в настройках. */
@@ -176,11 +134,10 @@ function Tile({ kind, on = true }: { kind: ServiceKind; on?: boolean }) {
 }
 
 /** Вид сообщения: когда уходит, что это, включено ли; у отзыва — ссылка, куда бот зовёт оставить отзыв. */
-function KindRow({ k, altegio, paused }: { k: ServiceKindState; altegio: boolean; paused?: boolean }) {
+function KindRow({ k, altegio }: { k: ServiceKindState; altegio: boolean }) {
   const [head, tail] = (k.label || LABEL[k.kind]).split(/ — |: /);
   const what = tail ? tail[0].toUpperCase() + tail.slice(1) : "";
-  const waiting = k.on && k.approved === false; // включено, а текст владелец ещё не одобрил — не уходит
-  const off = waiting ? "Текст ещё не одобрен, поэтому не уходит. Одобрить можно ниже, в текстах сообщений." : k.on ? "" : paused ? "Пока выключено. Включается после согласия владельца." : !altegio ? "Только по записям через Altegio." : k.kind === "rv" ? "Нет ссылки на отзывы (2ГИС, Google Карты)." : "Выключено в настройках бота.";
+  const off = k.on ? "" : !altegio ? "Только по записям через Altegio." : k.kind === "rv" ? "Нет ссылки на отзывы (2ГИС, Google Карты)." : "Выключено в настройках бота.";
   return (
     <div className="flex min-h-14 items-start gap-3 py-2.5">
       <Tile kind={k.kind} on={k.on} />
@@ -201,16 +158,42 @@ function KindRow({ k, altegio, paused }: { k: ServiceKindState; altegio: boolean
         )}
         {off && <p className="mt-0.5 text-sm text-fg-3">{off}</p>}
       </div>
-      <span
-        className={cn(
-          "mt-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-sm font-medium",
-          k.on && !waiting ? "bg-positive-soft text-positive" : waiting ? "bg-surface-2 text-fg-2" : "bg-surface-2 text-fg-3",
-        )}
-      >
-        {k.on && !waiting && <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} />}
-        {waiting ? "ждёт одобрения" : k.on ? "включено" : "выключено"}
+      <span className={cn("mt-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-sm font-medium", k.on ? "bg-positive-soft text-positive" : "bg-surface-2 text-fg-3")}>
+        {k.on && <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} />}
+        {k.on ? "включено" : "выключено"}
       </span>
     </div>
+  );
+}
+
+/** Ближайшие сообщения: сколько в очереди и сколько ушло за 3 дня, кому (имя или номер маской), когда и о какой записи. */
+export function Upcoming({ d, owner, now, empty, title = "Ближайшие" }: { d: ServiceOverview; owner: boolean; now: number; empty: string; title?: string }) {
+  return (
+    <Group title={title} note={owner ? LIVE_ONLY : TIME}>
+      <Stats
+        items={[
+          { label: "В очереди", value: nf.format(d.total), sub: plural(d.total, MESSAGES) },
+          { label: "Отправлено за 3 дня", value: nf.format(d.sent3d), sub: plural(d.sent3d, MESSAGES) },
+        ]}
+      />
+      {d.queue.length ? (
+        <ul aria-label="Ближайшие сообщения" className="divide-y divide-line">
+          {d.queue.map((x, i) => (
+            <QueueRow key={`${x.kind}|${x.at}|${x.phone}|${i}`} x={x} now={now} />
+          ))}
+        </ul>
+      ) : (
+        <p className="flex items-start gap-2.5 py-4 text-ui text-fg-2 pointer-coarse:text-base">
+          <Inbox aria-hidden className="mt-px size-5 shrink-0 text-fg-3" strokeWidth={1.75} />
+          <span>{empty}</span>
+        </p>
+      )}
+      {d.total > d.queue.length && (
+        <p className="py-3 text-sm text-fg-3">
+          Показаны ближайшие {nf.format(d.queue.length)} из {nf.format(d.total)}.
+        </p>
+      )}
+    </Group>
   );
 }
 
@@ -235,59 +218,10 @@ function QueueRow({ x, now }: { x: ServiceQueueItem; now: number }) {
   );
 }
 
-const STATE: Record<ServiceLogItem["state"], { word: string; icon: LucideIcon; tone: string }> = {
-  sent: { word: "ушло", icon: CircleCheck, tone: "text-positive" },
-  cancelled: { word: "отменено", icon: Ban, tone: "text-fg-3" },
-  skipped: { word: "не ушло", icon: Ban, tone: "text-fg-3" },
-  task: { word: "задача администратору", icon: ClipboardCheck, tone: "text-critical" },
-  unknown: { word: "неизвестно, ушло ли", icon: CircleHelp, tone: "text-fg-2" },
-};
-const KIND_OR_NOSHOW = (k: ServiceLogItem["kind"]) => (k === "noshow" ? "Не пришёл на запись" : SHORT[k]);
-
-/** Последние решения по очереди: ушло, отменено (запись перенесли или удалили), не ушло и почему, задача администратору. Новые сверху. */
-function LogGroup({ log, now }: { log: ServiceLogItem[]; now: number }) {
-  return (
-    <Group title="Последние решения" note="Что было с сообщениями за последние 3 дня и почему. Время по Астане.">
-      <ul aria-label="Последние решения" className="divide-y divide-line">
-        {log.map((x, i) => {
-          const st = STATE[x.state], Icon = x.kind === "noshow" ? UserX : st.icon;
-          const booking = x.date ? `запись на ${dayWord(x.date, now)}${x.time ? `, ${x.time}` : ""}` : "";
-          return (
-            <li key={`${x.at}|${x.phone}|${x.kind}|${i}`} className="flex items-start gap-3 py-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-surface-2">
-                <Icon aria-hidden className={cn("size-[1.125rem]", st.tone)} strokeWidth={1.9} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <p className={cn("min-w-0 flex-1 truncate text-md font-medium md:text-base", !x.name && "tnum")}>{x.name || x.phone || "Без имени"}</p>
-                  <time dateTime={new Date(x.at).toISOString()} className="tnum shrink-0 text-sm text-fg-2">{`${dayWord(astanaDay(x.at), now)}, ${when(x.at, now).time}`}</time>
-                </div>
-                {x.name && x.phone && <p className="tnum text-ui text-fg-2 pointer-coarse:text-base">{x.phone}</p>}
-                <p className="mt-0.5 text-sm text-fg-3">{[KIND_OR_NOSHOW(x.kind), booking].filter(Boolean).join(" · ")}</p>
-                {/* у задачи и «неизвестно» причина уже называет состояние — не повторяем */}
-                <p className={cn("mt-0.5 text-sm", x.state === "task" ? "text-critical" : "text-fg-2")}>
-                  {(x.state === "task" || x.state === "unknown") && x.why ? (
-                    x.why
-                  ) : (
-                    <>
-                      <span className="font-medium">{st.word}</span>
-                      {x.why && x.state !== "sent" ? `: ${x.why}` : ""}
-                    </>
-                  )}
-                </p>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </Group>
-  );
-}
-
 const DRY_WORD: Record<ServiceDryRun["items"][number]["status"], string> = { now: "ушло бы сейчас", later: "по расписанию", wait: "ждёт", skip: "не уйдёт" };
 
 /** Проверка по настоящему журналу Altegio без отправки — только владелец. Ничего не отправляет и не сохраняет: удобно до включения. */
-function DryRunGroup({ ws, now }: { ws: string; now: number }) {
+export function DryRunGroup({ ws, now }: { ws: string; now: number }) {
   const [busy, setBusy] = useState(false), [res, setRes] = useState<ServiceDryRun | null>(null), [err, setErr] = useState<string[]>([]);
   const alive = useRef(true);
   useEffect(() => {
@@ -365,140 +299,7 @@ function DryRunGroup({ ws, now }: { ws: string; now: number }) {
   );
 }
 
-const MODE_WORD: Record<ServiceScenario["mode"], string> = { auto: "уходит само", reply: "ответ в переписке", task: "задача администратору", off: "не подключено" };
-
-/** Тексты сообщений: каталог сценариев S01–S18 с предпросмотром RU/KZ; владелец одобряет текст — без этого он сам не уходит. */
-// категории для экрана (ТЗ v3.0 §6); сервер присылает cat у каждого сценария, без него — «Другое»
-const CATS = ["Запись", "Напоминания", "Изменения", "Опоздания и неявки", "После визита", "Ошибки и задачи"];
-function CatalogGroup({ ws, owner, catalog, onChanged }: { ws: string; owner: boolean; catalog: ServiceScenario[]; onChanged: () => void }) {
-  const groups = [...CATS, "Другое"].map((c) => ({ c, list: catalog.filter((x) => (x.cat && CATS.includes(x.cat) ? x.cat : "Другое") === c) })).filter((g) => g.list.length);
-  return (
-    <>
-      <p className="mb-2 mt-6 px-4 text-sm text-fg-3">Тексты сообщений. Это не реклама: уходят только сценарии «уходит само» с текстом, который одобрил владелец. Пример показан на вымышленной записи.</p>
-      {groups.map((g) => (
-        <Group key={g.c} title={g.c}>
-          <ul aria-label={g.c === "Запись" ? "Тексты сообщений" : `Тексты: ${g.c}`} className="divide-y divide-line">
-            {g.list.map((x) => (
-              <ScenarioRow key={x.id} ws={ws} owner={owner} x={x} onChanged={onChanged} />
-            ))}
-          </ul>
-        </Group>
-      ))}
-    </>
-  );
-}
-
-/** Варианты текста сценария: какой уходит (основной), добавить свой — владелец. */
-function Variants({ ws, x, onChanged }: { ws: string; x: ServiceScenario; onChanged: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [ru, setRu] = useState(""), [kk, setKk] = useState("");
-  const [busy, setBusy] = useState("");
-  const list = x.variants || [];
-  const go = async (name: string, q: { variant?: string; ru?: string; kk?: string; active?: boolean }, done: string) => {
-    const src = store.source;
-    if (!src) return;
-    setBusy(name);
-    try {
-      await src.serviceVariant(ws, x.id, q);
-      toast(done);
-      setRu("");
-      setKk("");
-      onChanged();
-    } catch (e) {
-      toast(errorList(e)[0] || "Не получилось", "critical");
-    } finally {
-      setBusy("");
-    }
-  };
-  return (
-    <div className="mt-2">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="text-sm font-medium text-accent-ink underline-offset-2 hover:underline">
-        {open ? "Скрыть варианты" : `Варианты текста${list.length ? `: ${list.length}` : ""}`}
-      </button>
-      {open && (
-        <div className="mt-2 space-y-2">
-          {list.map((v, i) => (
-            <div key={v.id} className={cn("rounded-xl border px-3 py-2", v.active ? "border-brand-gold" : "border-line")}>
-              <p className="whitespace-pre-line text-sm">{v.ru}</p>
-              <div className="mt-1.5 flex items-center gap-2 text-xs text-fg-3">
-                <span>{v.active ? "Уходит этот вариант" : `Вариант ${i + 1}`}{v.approved ? ", одобрен" : ""}</span>
-                {!v.active && (
-                  <Button size="sm" variant="ghost" busy={busy === v.id} disabled={!!busy} onClick={() => void go(v.id, { variant: v.id, active: true }, "Вариант выбран. Его нужно одобрить")}>
-                    Сделать основным
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-          <textarea aria-label="Новый вариант на русском" rows={3} maxLength={1000} value={ru} onChange={(e) => setRu(e.target.value)} placeholder="Новый вариант на русском" className="block w-full rounded-xl border border-line-strong bg-surface px-3 py-2 text-sm outline-none focus:border-accent" />
-          <textarea aria-label="Новый вариант на казахском" rows={2} maxLength={1000} value={kk} onChange={(e) => setKk(e.target.value)} placeholder="Қазақша (необязательно)" className="block w-full rounded-xl border border-line-strong bg-surface px-3 py-2 text-sm outline-none focus:border-accent" />
-          <Button size="sm" variant="secondary" busy={busy === "add"} disabled={!!busy || !ru.trim()} onClick={() => void go("add", { ru: ru.trim(), kk: kk.trim() }, "Вариант добавлен")}>
-            Добавить вариант
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ScenarioRow({ ws, owner, x, onChanged }: { ws: string; owner: boolean; x: ServiceScenario; onChanged: () => void }) {
-  const [lang, setLang] = useState<"ru" | "kk">("ru"), [busy, setBusy] = useState(false);
-  const text = x.preview[lang] || (lang === "kk" ? "" : x.preview.ru);
-  const canApprove = owner && x.mode === "auto" && !!x.kind && !!x.preview.ru;
-  const approve = async (on: boolean) => {
-    const src = store.source;
-    if (!src) return;
-    setBusy(true);
-    try {
-      await src.serviceApprove(ws, x.id, x.v, on);
-      toast(on ? `«${x.title}» одобрен` : `Одобрение снято, сообщение не уходит`);
-      onChanged();
-    } catch (e) {
-      toast(errorList(e)[0] || "Не получилось");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <li className="py-3">
-      <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 text-[0.9375rem] font-semibold md:text-base">
-          {x.title}
-        </p>
-        <span className={cn("mt-0.5 inline-flex h-6 shrink-0 items-center rounded-full px-2 text-xs font-medium", x.mode === "auto" ? (x.approved ? "bg-positive-soft text-positive" : "bg-surface-2 text-fg-2") : "bg-surface-2 text-fg-3")}>
-          {x.mode === "auto" && x.kind ? (x.approved ? "одобрено" : "ждёт одобрения") : MODE_WORD[x.mode]}
-        </span>
-      </div>
-      {x.trigger && <p className="mt-0.5 text-sm text-fg-2">{x.trigger}</p>}
-      {x.note && <p className="mt-0.5 text-sm text-fg-3">{x.note}</p>}
-      {(x.preview.ru || x.preview.kk) && (
-        <div className="mt-2">
-          {x.preview.kk && (
-            <div role="group" aria-label={`Язык примера ${x.id}`} className="mb-1.5 inline-flex rounded-lg bg-surface-2 p-0.5 text-sm">
-              {(["ru", "kk"] as const).map((l) => (
-                <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)} className={cn("rounded-md px-2.5 py-0.5 pointer-coarse:py-1.5", lang === l ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-2")}>
-                  {l === "ru" ? "Русский" : "Қазақша"}
-                </button>
-              ))}
-            </div>
-          )}
-          <p className="whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-sm text-fg-2">{text}</p>
-        </div>
-      )}
-      {canApprove && (
-        <div className="mt-2">
-          <Button size="sm" variant={x.approved ? "secondary" : "primary"} disabled={busy} onClick={() => void approve(!x.approved)}>
-            {x.approved ? "Снять одобрение" : "Одобрить текст"}
-          </Button>
-        </div>
-      )}
-      {/* у сценария без своего текста (он собирается из других) вариантов нет */}
-      {owner && x.mode === "auto" && !!x.preview.ru && <Variants ws={ws} x={x} onChanged={onChanged} />}
-    </li>
-  );
-}
-
-function ServiceSkeleton() {
+export function ServiceSkeleton() {
   return (
     <div aria-hidden>
       {[3, 2].map((rows, g) => (

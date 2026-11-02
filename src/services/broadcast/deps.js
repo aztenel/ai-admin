@@ -4,4 +4,4 @@ export { kvRetry } from "../../db/kv/retry.js";
 export { bcKey, bcChunkKey, bcPut, bcGet } from "../../db/kv/broadcasts.js";
 export { bcParam, sendTemplate } from "../channels/templates.js";
 export { gaRoute } from "../integrations/greenapi/webhook.js";
-export { gaWhy, gaInfo } from "../integrations/greenapi/client.js";
+export { gaWhy, gaInfo, gaKind } from "../integrations/greenapi/client.js";

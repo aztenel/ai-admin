@@ -38,7 +38,36 @@ export const CAP_MAX: Record<CampaignChannel, number> = { main: 100000, bot: 300
 export const HOURS_DEFAULT: Record<CampaignChannel, { from: number; to: number }> = { main: { from: 11, to: 20 }, bot: { from: 10, to: 20 } };
 export const HOURS_RANGE = { min: 8, max: 22 } as const;
 
-export const CHANNEL_LABEL: Record<CampaignChannel, string> = { main: "Основной номер", bot: "Номер бота" };
+export const CHANNEL_LABEL: Record<CampaignChannel, string> = { main: "Основной номер (Meta)", bot: "Второй WhatsApp" };
+
+// ---------- время запуска (по Астане, как сервер: UTC+5) ----------
+const ASTANA = 5 * 3600e3;
+const MON_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const p2 = (n: number) => String(n).padStart(2, "0");
+/** «5 ноября, 11:00» — по Астане, где бы ни был открыт пульт. */
+export function astanaWhen(ms: number): string {
+  const d = new Date(ms + ASTANA);
+  return `${d.getUTCDate()} ${MON_GEN[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+}
+/** Значение поля «дата и время» (ГГГГ-ММ-ДДTЧЧ:ММ) по Астане → мс; не разобрать — 0. */
+export function fromAstanaInput(v: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(v || "");
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - ASTANA : 0;
+}
+/** Мс → значение поля «дата и время» по Астане. */
+export function toAstanaInput(ms: number): string {
+  const d = new Date(ms + ASTANA);
+  return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}T${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+}
+/** Завтра в hour:00 по Астане — первое предложение для «Запланировать». */
+export function tomorrowAt(now: number, hour: number): number {
+  const d = new Date(now + ASTANA);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, hour, 0) - ASTANA;
+}
+/** Запуск на время: сервер принимает не раньше чем через 5 минут и не позже чем через 30 дней. */
+export const AT_MIN = 5 * 60e3, AT_MAX = 30 * 86400e3;
+/** Рассылка запланирована: уже «идёт», но первое сообщение уйдёт в назначенное время. */
+export const isScheduled = (c: { status: CampaignStatus; at?: number }, now: number) => c.status === "running" && !!c.at && c.at > now;
 export const CHANNEL_HINT: Record<CampaignChannel, string> = {
   main: "Шаблон Meta. Строка «СТОП» есть в самом шаблоне.",
   bot: "Обычное сообщение. Пауза 30–150 секунд между сообщениями, строку про «стоп» добавим сами.",
@@ -58,6 +87,8 @@ export const QUALITY: Record<NumberQuality, { label: string; tone: Tone }> = {
   red: { label: "низкое, много жалоб", tone: "critical" },
   unknown: { label: "неизвестно", tone: "muted" },
 };
+/** Строка отказа, которую владелец может добавить в конец рассылки со второго номера (сервер: library.js, STOP_RU). */
+export const STOP_RU = "Если такие сообщения больше не нужны, напишите «стоп».";
 /** Почему человека нет в сегментах (CrmOverview.excluded). */
 export const EXCLUDED: Record<keyof CrmOverview["excluded"], string> = {
   stop: "просили не писать",

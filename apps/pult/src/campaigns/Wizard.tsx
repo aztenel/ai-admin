@@ -5,18 +5,19 @@
 // Основного номера нет — мастер не открывается, только объяснение. Черновик живёт в памяти вкладки: случайный жест «назад» его не стирает.
 // Системное «назад» (жест iPhone, кнопка Android) и Esc ведут себя как стрелка мастера (backRef): на телефоне — на прошлый шаг;
 // созданную, но не запущенную рассылку — в список, а не черновиком (иначе её создавали второй раз; находки проверки 19.10.2026).
-import { ChevronLeft, CircleAlert, Megaphone, RefreshCw, Rocket, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { CircleAlert, Megaphone, RefreshCw, Rocket } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Confirm, toast } from "@/components/overlay";
-import { Button, EmptyState, IconButton, Skeleton } from "@/components/ui";
+import { Button, EmptyState, Skeleton } from "@/components/ui";
 import { formatPhone, plural } from "@/lib/format";
-import { cn, useMedia } from "@/lib/utils";
+import { useMedia } from "@/lib/utils";
 import type { CampaignCheck, CampaignDetail, SegmentSpec } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { CONFIRM_OVER, costEstimate, defaultCap, errorList, errText, MARKETING_PRICE_KZT, money, ownerOnly } from "./common";
 import { useLoad } from "./useLoad";
 import { ErrorList } from "./wizard/fields";
+import { Actions, Frame } from "./wizard/frame";
 import { baseState, checkKey, initialForm, nameOf, resolve, STEP_CHECK, STEP_LAUNCH, STEPS, toDraft, validate, type Errs, type Form } from "./wizard/form";
 import { CheckSection, HoursSection, LaunchSection, MessageSection, RecipientsSection, SectionTitle } from "./wizard/steps";
 
@@ -406,6 +407,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
       backLabel={step > 0 ? "Назад" : "Закрыть"}
       onClose={step > 0 ? close : undefined}
       step={step}
+      steps={STEPS.length}
       scroller={scroller}
       footer={
         <Actions md={false}>
@@ -437,75 +439,4 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
       {confirms}
     </Frame>
   );
-}
-
-/** Рамка мастера: на телефоне — шапка со стрелкой и полосой шагов, прокрутка и кнопки внизу (над клавиатурой);
- *  на компьютере — крупный заголовок, как у других экранов, и «Закрыть». Нижние вкладки на подвиде скрывает хаб. */
-function Frame({
-  md,
-  title,
-  sub,
-  onBack,
-  backLabel = "Назад",
-  onClose,
-  step,
-  scroller,
-  footer,
-  children,
-}: {
-  md: boolean;
-  title: string;
-  sub?: string;
-  onBack: () => void;
-  backLabel?: string;
-  onClose?: () => void;
-  step?: number;
-  scroller?: RefObject<HTMLDivElement | null>;
-  footer?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-canvas" role="region" aria-label={title}>
-      <header className="shrink-0 pt-safe">
-        {!md ? (
-          <>
-            <div className="relative flex h-[3.25rem] items-center justify-between px-0.5">
-              <IconButton icon={ChevronLeft} label={backLabel} onClick={onBack} className="text-accent hover:text-accent [&>svg]:size-7 [&>svg]:stroke-[2]" />
-              <h1 className="pointer-events-none absolute inset-x-14 truncate text-center text-[1.0625rem] font-semibold">{title}</h1>
-              {onClose && <IconButton icon={X} label="Закрыть мастер" onClick={onClose} />}
-            </div>
-            {step !== undefined && (
-              <div aria-hidden className="flex gap-1 px-4 pb-2">
-                {STEPS.map((_, i) => (
-                  <span key={i} className={cn("h-1 flex-1 rounded-full transition-colors", i <= step ? "bg-accent" : "bg-surface-3")} />
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="mx-auto flex w-full max-w-3xl items-end gap-2 px-8 pb-4 pt-7">
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-2xl font-semibold tracking-[-0.02em]">{title}</h1>
-              {sub && <p className="mt-0.5 text-ui text-fg-2">{sub}</p>}
-            </div>
-            <Button variant="ghost" icon={X} onClick={onBack}>
-              Закрыть
-            </Button>
-          </div>
-        )}
-      </header>
-      <div ref={scroller} className={cn("scroll-area min-h-0 flex-1", md ? "pb-10" : "pb-4")}>
-        <div className={cn("mx-auto w-full max-w-3xl pt-1", md ? "px-8" : "px-4 pt-3")}>{children}</div>
-      </div>
-      {footer && (
-        <div className={cn("shrink-0", md ? "border-t border-line bg-surface" : "border-t border-line bg-canvas")}>
-          <div className={cn("mx-auto w-full max-w-3xl", md ? "px-8 py-3" : "pb-safe-kb px-4 pt-2.5")}>{footer}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Actions({ md, children }: { md: boolean; children: ReactNode }) {
-  return <div className={cn("flex gap-2", md ? "flex-wrap items-center" : "flex-col")}>{children}</div>;
 }

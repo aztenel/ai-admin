@@ -1,20 +1,25 @@
-// Одна рассылка: ход, почему стоит или чего ждёт, действия и «Почему не дошло». Лист снизу на телефоне, панель справа на компьютере.
-// Действия и подтверждения — как на старой странице /broadcast (её больше нет в пульте): «Запустить»/«Продолжить» — с числом получателей,
-// у шаблонов больше 100 получателей — второе подтверждение с оценкой суммы; сервер спросил про сигнал «остановиться» (409 confirm) —
-// вопрос сервера и тот же запрос с force — только владельцу: запуск при сигнале снимает сигнал для всего номера (сотруднику сервер
-// отвечает 403, а его вопрос пульт показывает как причину). «Остановить совсем» и «Удалить» — необратимы, с подтверждением.
-// Старые рассылки с номера бота (Green-API) не запускаются и не продолжаются из пульта (решение владельца 19.10.2026): их можно
-// поставить на паузу, остановить и удалить. Ход идущей рассылки опрашивает хаб (useCampaignDetails), сюда приходят свежие сведения.
+// Одна рассылка: ход, почему стоит или чего ждёт, действия, итоги и «Почему не дошло». Лист снизу на телефоне, панель справа на компьютере.
+// Шаблоны Meta (основной номер) — как на старой странице /broadcast: «Запустить»/«Продолжить» — с числом получателей, у шаблонов больше
+// 100 получателей — второе подтверждение с оценкой суммы; сервер спросил про сигнал «остановиться» (409 confirm) — вопрос сервера и тот же
+// запрос с force — только владельцу: запуск при сигнале снимает сигнал для всего номера (сотруднику сервер отвечает 403, а его вопрос
+// пульт показывает как причину). «Остановить совсем» и «Удалить» — необратимы, с подтверждением.
+// Второй номер (финальное ТЗ рассылок, 02.11.2026): черновик — «Одобрить» и «Запустить» / «Запланировать» владельцем через лист
+// итоговой аудитории (launch.tsx), запрет кода — честная плашка; запланированная — «Запланирована на …» и «Отменить запуск»; итоги —
+// ResultsGrid («нет данных» вместо нуля) и «Ответы» (в «Чаты»). Ход идущей рассылки опрашивает хаб (useCampaignDetails).
 import { CircleAlert, Clock, ListX, Pause, Play, Send, Square, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Confirm, Sheet, toast } from "@/components/overlay";
 import { Button, Field, Skeleton } from "@/components/ui";
 import { plural, shortDate, timeHM } from "@/lib/format";
 import { cn, useMedia } from "@/lib/utils";
-import type { CampaignAct, CampaignDetail, CampaignResults, CampaignRow } from "@/model/campaigns";
+import type { BotNumberState, CampaignAct, CampaignDetail, CampaignRow } from "@/model/campaigns";
 import { store } from "@/state/store";
-import { CHANNEL_LABEL, CONFIRM_OVER, costText, errText, ownerOnly, progressPct, type Tone } from "./common";
+import { astanaWhen, CHANNEL_LABEL, CONFIRM_OVER, costText, errText, isScheduled, ownerOnly, progressPct, type Tone } from "./common";
 import { statusOf } from "./History";
+import { LaunchControls } from "./launch";
+import { ResultsGrid } from "./Results";
+import { toHuman } from "./vars";
+import { WaBubble } from "./WaBubble";
 
 const nf = new Intl.NumberFormat("ru-RU");
 const TONE: Record<Tone, string> = { ok: "text-positive", run: "text-accent-ink", warn: "text-fg", critical: "text-critical", muted: "text-fg-3" };
@@ -46,6 +51,8 @@ export function CampaignSheet({
   load,
   onDeleted,
   onStarted,
+  bot,
+  onReplies,
 }: {
   ws: string;
   id: string;
@@ -65,6 +72,10 @@ export function CampaignSheet({
   onDeleted: (id: string) => void;
   /** Запуск прошёл — хаб перечитывает обзор (сигнал Meta мог сняться). */
   onStarted: () => void;
+  /** Второй номер: на связи ли, разрешён ли запуск (запрет кода — bot.noBroadcast). */
+  bot?: BotNumberState | null;
+  /** «Ответы» — в «Чаты», раздел «Ответы». */
+  onReplies?: () => void;
 }) {
   const md = useMedia("(min-width: 768px)");
   const [loadErr, setLoadErr] = useState("");
@@ -165,19 +176,26 @@ export function CampaignSheet({
     });
   };
 
-  const st = c ? statusOf(c) : null;
+  const st = c ? statusOf(c, now) : null;
   const isBot = c?.channel === "bot";
   const finished = c?.status === "done" || c?.status === "stopped";
+  const planned = !!c && isScheduled(c, now);
   const mainAction =
     c && !isBot && (c.status === "ready" || c.status === "paused") ? (
       <Button variant="primary" size="lg" icon={Play} className="w-full" busy={busy === "start"} disabled={!!busy && busy !== "start"} onClick={askStart}>
         {c.status === "paused" ? "Продолжить" : "Запустить"}
       </Button>
     ) : c?.status === "running" ? (
+      // запланированная «идёт», но ничего не ушло: пауза отменяет запуск (рассылка остаётся — её можно запустить снова)
       <Button variant="secondary" size="lg" icon={Pause} className="w-full" busy={busy === "pause"} disabled={!!busy && busy !== "pause"} onClick={() => void act("pause")}>
-        Пауза
+        {planned ? "Отменить запуск" : "Пауза"}
       </Button>
     ) : null;
+  const launched = (x: CampaignDetail) => {
+    onChange(x);
+    onStarted();
+    toast(isScheduled(x, Date.now()) && x.at ? `Рассылка запланирована на ${astanaWhen(x.at)} по Астане` : "Рассылка запущена: сообщения уходят по одному, в часы отправки.");
+  };
 
   return (
     <>
@@ -206,9 +224,15 @@ export function CampaignSheet({
           ) : (
             <>
               {c.demo && <p className="inline-flex rounded-full border border-brand-gold/50 px-2.5 py-0.5 text-xs font-medium text-fg-2">Демо: вымышленные клиенты</p>}
-              <Progress c={c} />
+              {isBot && (c.status === "ready" || planned) ? <Audience c={c} /> : <Progress c={c} />}
               <Notes c={c} now={now} />
-              {c.results && <Results r={c.results} />}
+              {/* у черновика и запланированной итогов ещё нет: сервер отдаёт нули — не показываем их как итоги */}
+              {c.results && c.status !== "ready" && !planned && <ResultsGrid r={c.results} onReplies={onReplies} />}
+              {!c.results && isBot && c.status !== "ready" && !planned && onReplies && (
+                <Button variant="tinted" className="max-md:w-full" onClick={onReplies}>
+                  Ответы
+                </Button>
+              )}
 
               {err && (
                 <p role="alert" className="flex gap-2 text-ui text-critical pointer-coarse:text-base">
@@ -226,17 +250,30 @@ export function CampaignSheet({
                 </div>
               )}
 
-              {isBot && !finished && (
-                <div className="space-y-2 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+              {isBot && (c.status === "ready" || c.status === "paused") && (
+                <section aria-label="Запуск" className="space-y-3">
                   <p className="text-sm text-fg-2">
-                    {c.approvedAt ? `Одобрена${c.approvedBy ? ` (${c.approvedBy})` : ""}. ` : "Черновик. "}Запуск рассылок со второго номера пока выключен: его включает владелец отдельным решением.
+                    {c.status === "paused"
+                      ? "Рассылка на паузе: тем, кому не ушло, можно отправить, продолжив её."
+                      : c.approvedAt
+                        ? `Одобрена${c.approvedBy ? ` (${c.approvedBy})` : ""}. Одобрение — решение о рассылке, а не отправка.`
+                        : "Черновик: клиентам ничего не уходит, пока владелец не запустит рассылку."}
                   </p>
+                  <LaunchControls
+                    ws={ws}
+                    owner={owner}
+                    bot={bot}
+                    from={c.from || 11}
+                    getId={async () => c.id}
+                    onLaunched={launched}
+                    verb={c.status === "paused" ? "Продолжить" : "Запустить"}
+                  />
                   {owner && c.status === "ready" && (
-                    <Button size="sm" variant={c.approvedAt ? "secondary" : "primary"} busy={busy === (c.approvedAt ? "unapprove" : "approve")} disabled={!!busy} onClick={() => void act(c.approvedAt ? "unapprove" : "approve")}>
+                    <Button variant={c.approvedAt ? "ghost" : bot?.noBroadcast ? "primary" : "outline"} className="max-md:w-full" busy={busy === (c.approvedAt ? "unapprove" : "approve")} disabled={!!busy} onClick={() => void act(c.approvedAt ? "unapprove" : "approve")}>
                       {c.approvedAt ? "Снять одобрение" : "Одобрить"}
                     </Button>
                   )}
-                </div>
+                </section>
               )}
 
               {(c.failed > 0 || (c.fails && c.fails.length > 0)) && (
@@ -275,11 +312,20 @@ export function CampaignSheet({
 
               <Details c={c} now={now} />
 
-              {(c.message || c.text) && (
+              {isBot && c.message ? (
                 <section>
-                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона"}</h3>
-                  <p className="max-w-[90%] whitespace-pre-wrap break-words rounded-[1.125rem] rounded-tl-md bg-bubble-bot px-3 py-[0.4375rem] text-md md:text-base">{c.message || c.text}</p>
+                  <h3 className="mb-1.5 text-sm font-medium text-fg-3">Сообщение</h3>
+                  {/* без имени: имя каждому клиенту сервер ставит в приветствие сам; вставки старых своих текстов — словами */}
+                  <WaBubble text={toHuman(c.message)} />
+                  <p className="mt-1 text-xs text-fg-3">Каждому клиенту — с его именем в приветствии; если имени нет — без имени.</p>
                 </section>
+              ) : (
+                (c.message || c.text) && (
+                  <section>
+                    <h3 className="mb-1.5 text-sm font-medium text-fg-3">{isBot ? "Сообщение" : "Текст шаблона"}</h3>
+                    <p className="max-w-[90%] whitespace-pre-wrap break-words rounded-[1.125rem] rounded-tl-md bg-bubble-bot px-3 py-[0.4375rem] text-md md:text-base">{c.message || c.text}</p>
+                  </section>
+                )
               )}
 
               <div className="flex flex-wrap gap-2 border-t border-line pt-4">
@@ -350,7 +396,16 @@ function Progress({ c }: { c: CampaignRow & Partial<CampaignDetail> }) {
 /** Почему стоит, чего ждёт, когда повтор — словами сервера. */
 function Notes({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: number }) {
   const out: ReactNode[] = [];
-  if (c.status === "running") {
+  if (isScheduled(c, now) && c.at) {
+    out.push(
+      <p key="plan" className="flex gap-2 text-ui pointer-coarse:text-base">
+        <Clock aria-hidden className="mt-0.5 size-4 shrink-0 text-fg-3" strokeWidth={2} />
+        <span>
+          Начнётся {astanaWhen(c.at)} по Астане. Дальше — по одному сообщению, только в часы отправки. Лист можно закрыть.
+        </span>
+      </p>,
+    );
+  } else if (c.status === "running") {
     if (c.waitNote)
       out.push(
         <p key="wait" className="flex gap-2 text-ui pointer-coarse:text-base">
@@ -424,22 +479,17 @@ function Details({ c, now }: { c: CampaignRow & Partial<CampaignDetail>; now: nu
   );
 }
 
-/** Итоги рассылки (ТЗ V3): что ответил провайдер и кто записался в Altegio после сообщения. «Записались после» — совпадение по
- *  времени, а не доказательство, что записались из-за рассылки: так и пишем. */
-function Results({ r }: { r: CampaignResults }) {
-  const items: [string, number][] = [["Отправлено", r.sent], ["Доставлено", r.delivered], ["Прочитано", r.read], ["Не дошло", r.failed], ["Ответили", r.replied], ["Записались", r.booked]];
+/** Черновик или запланированная рассылка второго номера: сколько получат и из скольких выбранных (ход начнётся после запуска). */
+function Audience({ c }: { c: CampaignRow & Partial<CampaignDetail> }) {
   return (
-    <section aria-label="Итоги рассылки">
-      <h3 className="mb-1.5 text-sm font-medium text-fg-3">Итоги</h3>
-      <dl className="grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-[0.875rem] bg-surface-2 px-4 py-3">
-        {items.map(([label, v]) => (
-          <div key={label} className="min-w-0">
-            <dt className="truncate text-xs text-fg-3">{label}</dt>
-            <dd className="tnum text-lg font-semibold">{v.toLocaleString("ru-RU")}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-1.5 text-xs text-fg-3">«Записались»: клиенты, у которых в течение {r.window} дней после сообщения появилась запись в Altegio. Это совпадение по времени, а не доказательство, что записались из-за рассылки.</p>
+    <section className="rounded-[0.875rem] bg-surface-2 px-4 py-3">
+      <p className="tnum text-2xl font-semibold leading-8">
+        {nf.format(c.total)} <span className="text-base font-normal text-fg-2">{plural(c.total, ["получатель", "получателя", "получателей"])}</span>
+      </p>
+      <p className="mt-1 text-sm text-fg-2">
+        {c.selected && c.selected > c.total ? `Из ${nf.format(c.selected)} в аудитории — остальным реклама не уходит (нет согласия, записаны, были недавно). ` : ""}
+        Перед запуском сервер ещё раз проверит, кому можно писать, и покажет итог.
+      </p>
     </section>
   );
 }

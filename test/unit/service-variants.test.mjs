@@ -6,6 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { jrRun } from "../../src/services/reminders/journal.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
+import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { SCENARIOS, SV_CATS, variantsOf, activeOf, approvedVariant } from "../../src/services/reminders/templates.js";
 import { atLocal } from "../../src/services/reminders/plan.js";
 
@@ -41,6 +43,7 @@ test("свой вариант: создаёт и выбирает владеле
   net.reset();
   net.altJournal = [rec(ph(401), TOM, "15:00", { id: 4401, name: "Арман", staff: "Айдос" })];
   const s = mk(ENV), own = await login(s, "owner-key-123456"), staff = await login(s, "staff-key-winch-0001"), other = await login(s, "staff-key-barber-0001");
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   let c = await cat(own, "S03");
   assert.equal(c.cat, "remind"); assert.equal(c.catLabel, "Напоминания"); assert.equal(c.active, "b1");
   assert.deepEqual(c.variants.map(x => [x.id, x.active, x.approved, x.builtin]), [["b1", true, false, true], ["b2", false, false, true]]);
@@ -71,6 +74,7 @@ test("свой вариант: создаёт и выбирает владеле
 test("свой вариант: проверки текста; встроенный не меняется; сценарий без текста; не больше пяти своих", async () => {
   net.reset();
   const s = mk(ENV), own = await login(s, "owner-key-123456");
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   const post = b => own.post("/api/bc/service/variant", { c: "winchester", id: "S03", ...b });
   let r = await post({ ru: "Ждём в {время} {погода}" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /Неизвестная вставка \{погода\}/);
   r = await post({ ru: "Ждём в [время]" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /квадратные скобки/);
@@ -89,6 +93,7 @@ test("пять своих вариантов в одну миллисекунд�
   // (1 случай из ~1300) — второй затирал первый, и шестой вариант проходил предел «не больше пяти». Здесь совпадение — всегда
   net.reset();
   const s = mk(ENV), own = await login(s, "owner-key-123456");
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   const T = Date.now(), now0 = Date.now, rnd0 = Math.random;
   Date.now = () => T; Math.random = () => 0.123456789;
   try {
@@ -105,6 +110,7 @@ test("задним числом не шлём: одобрили позже, че
   net.reset();
   net.altJournal = [rec(ph(411), TOM, "15:00", { id: 4411 }), rec(ph(412), TOM, "16:00", { id: 4412 })];
   const s = mk(ENV);
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   const S03 = SCENARIOS.find(x => x.id === "S03");
   await s.kv.api.put(`h:ga:winchester:${dg(412)}`, JSON.stringify({ n: 1, turns: [{ role: "user", text: "Сәлем", t: 1 }], profile: { lang: "kk" } }));
   await jrRun(s.env, at(TODAY, "17:50")); await jrRun(s.env, at(TODAY, "18:00")); // не одобрено — ждёт
@@ -117,6 +123,7 @@ test("задним числом не шлём: одобрили позже, че
   net.reset();
   net.altJournal = [rec(ph(414), TOM, "15:00", { id: 4414 }), rec(ph(415), TODAY, "21:00", { id: 4415 })];
   const s1 = mk(ENV);
+  await autoOn(s1, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   await s1.kv.api.put("svtpl:winchester", JSON.stringify({ S03: { v: S03.v, at: 1 }, S04: { v: SCENARIOS.find(x => x.id === "S04").v, at: 1 } }));
   await jrRun(s1.env, at(TODAY, "18:10")); // накануне в 18:00 по записи 4414 — уже прошло
   assert.ok(!sent().some(x => x.to === dg(414)), JSON.stringify(sent()));
@@ -127,6 +134,7 @@ test("задним числом не шлём: одобрили позже, че
   net.reset();
   net.altJournal = [rec(ph(413), TOM, "15:00", { id: 4413 })];
   const s2 = mk(ENV);
+  await autoOn(s2, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   await s2.kv.api.put(`h:ga:winchester:${dg(413)}`, JSON.stringify({ n: 1, turns: [{ role: "user", text: "Сәлем", t: 1 }], profile: { lang: "kk" } }));
   await s2.kv.api.put("svtpl:winchester:var", JSON.stringify({ S03: { active: "uabc", list: [{ id: "uabc", ru: "Ждём завтра в {время}.", kk: "", v: 1 }] } }));
   await s2.kv.api.put("svtpl:winchester", JSON.stringify({ S03: { v: 1, at: 1, var: "uabc" } }));

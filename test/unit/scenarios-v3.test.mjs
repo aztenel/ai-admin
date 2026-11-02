@@ -13,10 +13,12 @@ import { syncStep } from "../../src/services/contacts/sync.js";
 import { contactsSegments, contactsCard } from "../../src/services/contacts/index.js";
 import { demoLoad } from "../../src/services/contacts/demo.js";
 import { jrRun } from "../../src/services/reminders/journal.js";
+import { autoOn, legacyOn } from "../automsg.mjs";
 import { jrqLoad } from "../../src/db/kv/reminders.js";
 import { consentAdd } from "../../src/db/d1/rights.js";
 import { contactsByPhones } from "../../src/db/d1/contacts.js";
 import { autoSave } from "../../src/db/kv/crm.js";
+import { OWN } from "../texts.mjs";
 
 const skip = sqliteOk ? false : "node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, OWNER = "owner-key-123456", INST = { id: "7105000093", token: "ga-tok-w93" };
@@ -34,7 +36,7 @@ async function login(s) {
   return b;
 }
 const META = { c: "winchester", name: "Пора", tpl: "promo_pora", lang: "ru", text: "Здравствуйте, {{1}}!", params: ["{имя}"], segment: "pora", cap: 100, from: 10, to: 20, consent: true };
-const GA = { c: "winchester", ch: "ga", name: "Пора", tplId: "M01", lang: "ru", segment: "pora", cap: 50, from: 10, to: 20, consent: true };
+const GA = { c: "winchester", ch: "ga", name: "Пора", text: OWN.pora, lang: "ru", segment: "pora", cap: 50, from: 10, to: 20, consent: true };
 // база на боевом адресе (у него синхронизация журнала в D1 разрешена): клиенты «Пора на стрижку» с подтверждённым согласием
 async function base(people) {
   net.reset(); rid = 8000;
@@ -66,6 +68,7 @@ test("(5) клиент записался: после обновления ба�
   assert.equal(seg.segments.find(x => x.id === "pora").ready, 1); assert.equal(seg.segments.find(x => x.id === "zapis").count, 1);
   assert.ok(d.raw.prepare("select next_booking_at from contacts where phone = ?").get(dg(801)).next_booking_at > Date.now());
   // напоминания по журналу Altegio со второго номера: новая запись — накануне и за 2 часа
+  await autoOn(s, legacyOn(CLIENTS.winchester)); // сценарии включены в «Автоматических сообщениях» (по умолчанию выключены)
   await jrRun(s.env, Date.now());
   const q = (await jrqLoad(s.env, "winchester")).filter(x => x.rec === "8901");
   assert.deepEqual(q.map(x => x.k).sort(), ["d1", "h2", "rv"].filter(k => q.some(x => x.k === k)).sort());
@@ -92,7 +95,7 @@ test("(6) клиент написал «стоп»: запрет в D1 и KV, и
   }
   assert.equal(await inPora(s, 812), false);
   assert.equal((await (await own.go("/api/bc/auto?c=winchester")).json()).today.total, 0, "автосценарий ему не напишет");
-  const pv = await (await own.post("/api/bc/templates/preview", { c: "winchester", id: "M01", segment: "pora" })).json();
+  const pv = await (await own.post("/api/bc/templates/preview", { c: "winchester", id: "W02", segment: "pora" })).json();
   assert.equal(pv.ok, true); assert.equal(pv.demo, false); assert.equal(pv.list.length, 2, "пример — на двух других клиентах «Пора»");
   assert.ok(!pv.list.some(x => String(x.to).endsWith("** 12")), "пример текста — не на нём");
   const seg = await contactsSegments(s.env, W, Date.now());

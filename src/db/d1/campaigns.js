@@ -6,15 +6,21 @@
 
 /** @param {any} db @param {string} ws @param {string} id @param {number} windowMs */
 export async function campaignResults(db, ws, id, windowMs) {
-  const [ev, bk] = await db.batch([
+  const [ev, bk, rp] = await db.batch([
     db.prepare(`select kind, count(distinct coalesce(contact_id, event_key)) n from events where ws = ?1 and campaign_id = ?2
       and kind in ('msg_sent', 'msg_delivered', 'msg_read', 'msg_failed', 'msg_replied') group by kind`).bind(ws, id),
     db.prepare(`select count(distinct e.contact_id) n from events e join bookings b on b.ws = e.ws and b.contact_id = e.contact_id
       where e.ws = ?1 and e.campaign_id = ?2 and e.kind = 'msg_sent' and e.contact_id is not null and b.deleted = 0
-        and coalesce(b.provider_created_at, b.first_seen_at) > e.at and coalesce(b.provider_created_at, b.first_seen_at) <= e.at + ?3`).bind(ws, id, windowMs)
+        and coalesce(b.provider_created_at, b.first_seen_at) > e.at and coalesce(b.provider_created_at, b.first_seen_at) <= e.at + ?3`).bind(ws, id, windowMs),
+    // ответы: хотят записаться (тема «запись», «время», «перенос») и «стоп» (финальное ТЗ рассылок, 02.11.2026)
+    db.prepare(`select sum(case when json_extract(details, '$.topic') in ('book', 'time', 'move') then 1 else 0 end) want,
+        sum(case when json_extract(details, '$.stop') is not null then 1 else 0 end) stop
+      from events where ws = ?1 and campaign_id = ?2 and kind = 'msg_replied'`).bind(ws, id)
   ]);
+  const r0 = /** @type {any} */ ((rp.results || [])[0] || {});
   /** @type {Record<string, number>} */
   const by = {};
   for (const r of ev.results || []) by[String(r.kind).replace(/^msg_/, "")] = +r.n || 0;
-  return { sent: by.sent || 0, delivered: by.delivered || 0, read: by.read || 0, failed: by.failed || 0, replied: by.replied || 0, booked: +(((bk.results || [])[0] || {}).n || 0) };
+  return { sent: by.sent || 0, delivered: by.delivered || 0, read: by.read || 0, failed: by.failed || 0, replied: by.replied || 0, booked: +(((bk.results || [])[0] || {}).n || 0),
+    want: +r0.want || 0, stop: +r0.stop || 0 };
 }

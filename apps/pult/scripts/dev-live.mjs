@@ -32,8 +32,10 @@ const GAW = { id: "1101000002", token: "ga-token-winch" };
 export const STAFF_W = "staff-key-winch-0001";
 
 /** Поднять бота на заглушках и Vite с пультом. port — порт пульта (0 — любой свободный), botPort — порт бота, demo — демо-база на 150 клиентов
- *  (она есть только на черновике — demo включает stage "preview"), stage — "production" (по умолчанию) или "preview". */
-export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production" } = {}) {
+ *  (она есть только на черновике — demo включает stage "preview"), stage — "production" (по умолчанию) или "preview"; gaBroadcast — запуск
+ *  рассылок со второго номера Winchester разрешён (как GA_BROADCAST_WINCHESTER = 1 в Cloudflare; по умолчанию выключен, как на сайте):
+ *  npm run dev:live -- --ga-broadcast или GA_BROADCAST=1. Проверки включают его и на ходу: S.env.GA_BROADCAST_WINCHESTER = "1". */
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production", gaBroadcast = process.env.GA_BROADCAST === "1" || process.argv.includes("--ga-broadcast") } = {}) {
   if (demo) stage = "preview";
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
@@ -57,6 +59,7 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     ALTEGIO_USER_WINCHESTER: "usr-tok",
     REMIND_GA_WINCHESTER: "1", // напоминания по журналу Altegio со второго номера включены (на сервере по умолчанию выключены)
     KEY_WINCHESTER: STAFF_W,
+    ...(gaBroadcast ? { GA_BROADCAST_WINCHESTER: "1" } : {}),
   });
   const { S } = bot;
 
@@ -192,9 +195,10 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { app, bot, OWNER, demo } = await startDevLive();
+  const { app, bot, OWNER, demo, S } = await startDevLive();
+  const on = S.env.GA_BROADCAST_WINCHESTER === "1";
   console.log(`Бот на заглушках: ${bot.url}   (фоновая отправка рассылок: curl -X POST ${bot.url}/_cron)
 Новый пульт:
-  Winchester (${demo ? "демо-база: 150 вымышленных клиентов" : "база клиентов"}, номер бота без рассылок): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
+  Winchester (${demo ? "демо-база: 150 вымышленных клиентов" : "база клиентов"}, ${on ? "запуск рассылок со второго номера разрешён" : "запуск рассылок со второго номера выключен (--ga-broadcast — разрешить)"}): ${app}?c=winchester   владелец: ${OWNER}   сотрудник: ${STAFF_W}
   Демо Дент (без базы, рассылка списком):             ${app}?c=dent   владелец: ${OWNER}`);
 }

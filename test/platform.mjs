@@ -1116,9 +1116,12 @@ section("рассылки через Green-API");
   const id1 = d.b && d.b.id;
   ok("рассылка создана: через Green-API, готова к запуску", d.ok === true && d.b.ch === "ga" && d.b.status === "ready" && d.b.total === 3 && d.b.cap === 50, JSON.stringify(d));
 
-  // --- пробная отправка себе
+  // --- пробная отправка себе: со второго номера — только на номер для проверки владельца (02.11.2026), номер из запроса не слушаем
   net.reset();
   d = await J(await own.post("/api/bc/test", { ...FORM, to: "8 701 999 00 00" }));
+  ok("пробная отправка без номера для проверки — не уходит, текст виден", d.code === "notest" && /^Здравствуйте, Айгерим!/.test(d.preview || "") && !sends().length, JSON.stringify(d));
+  await own.post("/api/msg/auto", { c: "acme", testPhone: "8 701 999 00 00" });
+  d = await J(await own.post("/api/bc/test", { ...FORM, to: "8 700 000 00 01" }));
   let g = sends();
   ok("пробная отправка: сообщение уходит на свой номер с номера клиента", d.ok === true && g.length === 1 && to(g[0]) === "77019990000" && g[0].inst === "7105000001" && /^Здравствуйте, Айгерим!/.test(g[0].body.message) && /ответьте СТОП$/.test(g[0].body.message), JSON.stringify([d, g]));
 
