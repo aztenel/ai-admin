@@ -59,6 +59,10 @@ export type BotNumberState = {
   hold: string;
   /** Рассылки с этого номера выключены кодом (у Winchester) — почему. Пусто — разрешены. */
   noBroadcast: string;
+  /** Как включить запуск — текст сервера, только владельцу (bcHow). */
+  how?: string;
+  /** Владелец снял запрет кода: запуск рассылок со второго номера разрешён (bcOn, финальное ТЗ 02.11.2026). */
+  launchOn?: boolean;
 };
 
 export type CampaignFail = { code: string | number; n: number; hint: string };
@@ -93,6 +97,10 @@ export type CampaignRow = {
   demo?: boolean;
   /** Второй номер: одобрена владельцем (не запуск). */
   approved?: boolean;
+  /** Запуск на время (мс): рассылка уже «идёт», но первое сообщение уйдёт не раньше этого времени. */
+  at?: number;
+  /** Второй номер: текст из библиотеки (W01…). */
+  tplId?: string;
 };
 
 /** Рассылка целиком (/api/bc/get, ответы create/act/tick). */
@@ -121,6 +129,10 @@ export type CampaignDetail = CampaignRow & {
   /** Одобрил владелец (кто и когда). Одобрение — не запуск. */
   approvedBy?: string;
   approvedAt?: number;
+  /** Второй номер: в конце сообщения — строка «Если такие сообщения больше не нужны, напишите «стоп».» (выбор владельца в мастере). */
+  stop?: boolean;
+  /** Второй номер, база: сколько клиентов было в выбранной аудитории (и тех, кому реклама не уйдёт). */
+  selected?: number;
   /** Итоги (нет базы D1 — null или нет поля). */
   results?: CampaignResults | null;
   startedAt?: number;
@@ -180,6 +192,10 @@ export type CrmSegment = {
 export type CrmStatusCounts = { valid: number; booked: number; service: number; marketing: number; stopped: number; refused: number; ready: number };
 /** Статусы всей базы: base — всего в базе (с неверными и скрытыми номерами), invalid — неверных и скрытых номеров. */
 export type CrmStatuses = CrmStatusCounts & { base: number; invalid: number };
+/** Числа базы за 90 дней (ТЗ §3): всего (с неверными и скрытыми номерами), номер корректный, неверных и скрытых, постоянные (3+ визита),
+ *  были один раз, не приходили 30–60 и 61–90 дней, есть будущая запись, разрешили рекламу, отказались, без подтверждённого разрешения
+ *  (это не отказ и не разрешение). */
+export type CrmMetrics = { total: number; valid: number; invalid: number; regular: number; once: number; d30_60: number; d61_90: number; booked: number; marketing: number; refused: number; noperm: number };
 /** Статусы одного клиента (список сегмента с all=1). */
 export type CrmPersonStatus = { booked: boolean; service: boolean; marketing: boolean; stopped: boolean; refused: boolean; ready: boolean };
 
@@ -223,6 +239,8 @@ export type CrmOverview = {
   consent?: { ready: boolean; why: string; n: number };
   /** Статусы всей базы (02.11.2026); null — базы ещё нет; нет поля — сервер старше пульта. */
   statuses?: CrmStatuses | null;
+  /** Десять чисел базы за 90 дней (финальное ТЗ рассылок, 02.11.2026); null — базы ещё нет. */
+  metrics?: CrmMetrics | null;
   info: CrmInfo | null;
   /** Последнее обновление не удалось (и оно новее снимка) — текст и время. */
   error?: string;
@@ -289,6 +307,9 @@ export type CampaignDraft = {
   to: number;
   /** «Это наши клиенты, не просили не писать» — без этого сервер не создаст рассылку. */
   consent?: boolean;
+  /** Второй номер: добавить в конце строку «Если такие сообщения больше не нужны, напишите «стоп».» (по умолчанию нет: утверждённые
+   *  тексты не меняем). Текст со строкой собирает сервер — тот же в проверке, тесте и отправке. */
+  stop?: boolean;
 };
 
 /** Проверка черновика без сохранения (/api/bc/check). Название, предел, часы и согласие сервер здесь не проверяет. */
@@ -321,6 +342,10 @@ export type CampaignCheck = {
   preview: string[];
   /** Второй номер, база: готовые тексты для 3–5 клиентов (номер маской). */
   samples?: { to: string; text: string }[];
+  /** Второй номер: ровно тот текст, что уйдёт (со строкой «стоп», если её выбрали), без имени — имя сервер ставит каждому сам. */
+  text?: string;
+  /** Второй номер: текст библиотеки, по которому собран text. */
+  tplId?: string;
   /** Кому не уйдёт и почему (текст сервера) и сколько. */
   excluded?: { code: string; why: string; n: number }[];
   /** Воронка аудитории (ТЗ V3): всего → с правильным номером → по сегменту → исключения (правила и разрешения) → можно отправлять. */
@@ -337,10 +362,41 @@ export type AudienceFunnel = {
   /** Исключены по разрешениям на связь: нет согласия, «стоп», запрет. */
   consent: FunnelReason[];
   allowed: number;
+  /** База согласий не отвечает — почему рекламу сейчас нельзя никому. */
+  note?: string;
 };
 
-/** Итоги рассылки по ответам провайдера и журналу Altegio. booked — записались в течение window дней после сообщения: совпадение по времени, не доказательство. */
-export type CampaignResults = { sent: number; delivered: number; read: number; failed: number; replied: number; booked: number; window: number };
+/**
+ * Итоги рассылки (финальное ТЗ рассылок, 02.11.2026 §9). selected — было в выбранной аудитории; admitted — допущено (можно писать рекламу);
+ * sent — ушло; unsure — не знаем, ушло ли (сбой связи); failed — не ушло (ошибки); skipped — пропущено перед отправкой (записались, отказались…).
+ * null у delivered, read, replied, want, booked — данных нет (нет базы отметок D1 или свежей базы клиентов): это не ноль.
+ * booked — записались в течение window дней после сообщения: совпадение по времени, не доказательство. reports — отчёты о доставке есть.
+ */
+export type CampaignResults = {
+  selected?: number;
+  admitted?: number;
+  sent: number;
+  unsure?: number;
+  failed: number;
+  skipped?: number;
+  delivered: number | null;
+  read: number | null;
+  replied: number | null;
+  want?: number | null;
+  booked: number | null;
+  /** Отказались после рассылки («стоп», отказ от рекламы); null — данных нет. */
+  refused?: number | null;
+  window: number;
+  reports?: boolean;
+};
+
+/** Итоговая аудитория перед запуском (409 { confirm, final }): получат n из rest, не больше cap в сутки с from до to, примерно days дней;
+ *  text — сообщение без имени, sample — точный текст первому получателю; at — запланированный запуск. */
+export type LaunchFinal = { n: number; rest: number; cap: number; from: number; to: number; days: number; text: string; sample: string; at?: number };
+/** Запуск: запущена (или запланирована); сервер показал итоговую аудиторию — подтвердить повтором с sure и n; сигнал Green-API — вопрос. */
+export type LaunchResult = { kind: "done"; campaign: CampaignDetail } | { kind: "final"; question: string; final: LaunchFinal } | { kind: "confirm"; question: string };
+/** Тест рассылки со второго номера: text — ответ сервера («Сообщение отправлено на ваш номер…»), preview — что ушло; dup — это нажатие уже отправило. */
+export type GaTestResult = { text: string; preview: string; dup?: boolean };
 
 export type CampaignCreated = {
   campaign: CampaignDetail;
@@ -580,8 +636,9 @@ export type MessageStats = {
   by: Record<StatSource, StatCounts>;
 };
 
-/** Текст из библиотеки (28 стартовых тем RU/KZ + свои). approved — одобрил владелец (это не отправка);
- *  status: approved — готов; review — на проверке у владельца; facts — нужны данные (мастер, время, условия акции) или [скобки]. */
+/** Текст из библиотеки (у Winchester — 28 утверждённых владельцем текстов W01–W28, только русский, без вставок: имя в приветствие
+ *  ставит сервер; плюс свои). approved — одобрил владелец (это не отправка); status: approved — готов; review — ждёт одобрения
+ *  владельца; facts — нужны данные ([скобки]). Стартовый текст без правок (v = 1) — «утверждённая редакция». */
 export type LibraryItem = {
   id: string;
   title: string;
@@ -609,14 +666,19 @@ export type LibraryItem = {
   v?: number;
   at?: number;
   by?: string;
+  /** Кто и когда одобрил: у стартовых — «Владелец (утверждённая редакция)». */
+  approvedBy?: string;
+  approvedAt?: number;
 };
 export type TemplateVar = { key: string; label: string; sample?: string };
+/** Категория библиотеки: seg — сегмент базы, для которого она задумана (all, pora, davno, postoyannye, novye); who — для кого словами. */
+export type LibraryCat = { id: string; label: string; seg?: string; who?: string };
 export type TemplateLibrary = {
   owner: boolean;
   /** Переменные для вставки в текст: { key: "client.first_name", label: "Имя клиента" }. */
   vars: TemplateVar[];
-  cats?: { id: string; label: string }[];
-  counts?: { total: number; approved: number; review: number; archived?: number };
+  cats?: LibraryCat[];
+  counts?: { total: number; approved: number; review: number; facts?: number; archived?: number };
   items: LibraryItem[];
 };
 export type TemplatePreview = {

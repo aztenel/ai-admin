@@ -13,12 +13,13 @@ import { toast } from "@/components/overlay";
 import { Button, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
-import type { CrmOverview, CrmSegment, SegmentSpec } from "@/model/campaigns";
+import type { CrmMetrics, CrmOverview, CrmSegment, SegmentSpec } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { SegmentView } from "./base/SegmentView";
 import { CRM_REFRESHED, CRM_STALE, Layer, Notice, nf, segRule, Stats, useBackLayer, when, whenText } from "./base/shared";
 import { ATTENDANCE, errText, EXCLUDED } from "./common";
+import { ConsentHowTo } from "./consent";
 import { useLoad } from "./useLoad";
 
 const PEOPLE: [string, string, string] = ["человек", "человека", "человек"];
@@ -117,9 +118,10 @@ export default function ClientBase({ ws, owner: ownerProp, channel = "main", onC
         }
       >
         {has ? (
+          // с десятью числами базы (ниже) «Клиентов» здесь не повторяем: два разных «всего» путали бы
           <Stats
             items={[
-              { label: "Клиентов", value: nf.format(d.clients), sub: "за 90 дней" },
+              ...(d.metrics ? [] : [{ label: "Клиентов", value: nf.format(d.clients), sub: "за 90 дней" }]),
               { label: "Реклама", value: nf.format(d.ok), sub: "получат сейчас" },
               { label: "Обновлена", value: upd!.time, sub: upd!.day },
             ]}
@@ -134,7 +136,7 @@ export default function ClientBase({ ws, owner: ownerProp, channel = "main", onC
           </p>
         )}
 
-        {has && st && <StatusSummary st={st} />}
+        {has && d.metrics ? <Metrics m={d.metrics} /> : has && st ? <StatusSummary st={st} /> : null}
         {d.why && has && <Notice>Обновить базу сейчас нельзя: {d.why}</Notice>}
         {info && info.masked > 0 && (
           <Notice>
@@ -185,6 +187,14 @@ export default function ClientBase({ ws, owner: ownerProp, channel = "main", onC
         )}
       </Group>
 
+      {/* рекламу сейчас не получит никто — точная причина и как получить согласия (финальное ТЗ: спрашивать по одному) */}
+      {has && (d.metrics ? d.metrics.marketing === 0 : st ? st.marketing === 0 : false) && (
+        <ConsentHowTo
+          className="mb-6"
+          note={d.consent && !d.consent.ready ? d.consent.why : undefined}
+          reasons={(Object.keys(EXCLUDED) as (keyof CrmOverview["excluded"])[]).map((k) => ({ code: k, why: EXCLUDED[k], n: d.excluded[k] || 0 }))}
+        />
+      )}
       {has && (
         <section className="mb-6" aria-labelledby="crm-segs">
           <h3 id="crm-segs" className="mb-1.5 px-4 text-sm font-medium text-fg-3">
@@ -265,7 +275,38 @@ function Tile({ s, pora, onOpen }: { s: CrmSegment; pora: boolean; onOpen: () =>
   );
 }
 
-/** Статусы всей базы: сколько всего, у скольких верный номер, кто записан, кому можно сервисные и рекламу, кто отказался. */
+/** Десять чисел базы за 90 дней (финальное ТЗ рассылок, 02.11.2026 §3). «Без подтверждённого разрешения» — согласия нет или оно не
+ *  подтверждено: это не отказ и не разрешение, так и подписано. */
+function Metrics({ m }: { m: CrmMetrics }) {
+  const items: { label: string; value: number; sub?: string; tone?: string }[] = [
+    { label: "Всего клиентов за 90 дней", value: m.total },
+    { label: "Номер корректный", value: m.valid, sub: m.invalid ? `с ошибкой или скрыт: ${nf.format(m.invalid)}` : undefined },
+    { label: "Постоянные", value: m.regular, sub: "3 визита и больше" },
+    { label: "Были один раз", value: m.once },
+    { label: "Не приходили 30–60 дней", value: m.d30_60 },
+    { label: "Не приходили 61–90 дней", value: m.d61_90 },
+    { label: "Есть будущая запись", value: m.booked },
+    { label: "Разрешили рекламу", value: m.marketing, tone: m.marketing ? "text-positive" : undefined },
+    { label: "Отказались", value: m.refused, tone: m.refused ? "text-critical" : undefined },
+    { label: "Без подтверждённого разрешения", value: m.noperm, sub: "не отказ и не разрешение" },
+  ];
+  return (
+    <div className="py-3">
+      <dl aria-label="Числа базы" className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-5">
+        {items.map((x) => (
+          <div key={x.label} className="min-w-0">
+            <dt className="text-xs leading-4 text-fg-3">{x.label}</dt>
+            <dd className={cn("tnum mt-0.5 text-lg font-semibold leading-6", x.tone)}>{nf.format(x.value)}</dd>
+            {x.sub && <dd className="text-xs text-fg-3">{x.sub}</dd>}
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-sm text-fg-3">Реклама уходит только тем, кто разрешил: подтверждённое согласие и нет «стопа». Сервисные сообщения о записи — всем, кроме отказавшихся.</p>
+    </div>
+  );
+}
+
+/** Статусы всей базы (сервер старше 02.11.2026): сколько всего, у скольких верный номер, кто записан, кому можно сервисные и рекламу, кто отказался. */
 function StatusSummary({ st }: { st: NonNullable<CrmOverview["statuses"]> }) {
   const items: { label: string; value: number; tone?: string }[] = [
     { label: "В базе", value: st.base },

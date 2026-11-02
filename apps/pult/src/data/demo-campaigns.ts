@@ -1,5 +1,6 @@
 // Демо раздела «Рассылки» (часть демо-данных, data/demo.ts): вымышленные номера, база клиентов и рассылки — без сети.
-// «Демо Барбер» — как Winchester: основной номер (Meta) с базой клиентов из Altegio, номер бота (Green-API) без рассылок;
+// «Демо Барбер» — как Winchester: второй номер (Green-API) — главный канал рассылок по базе клиентов из Altegio, запуск выключен
+// (черновик, проверка, тест и одобрение работают — финальное ТЗ рассылок 02.11.2026), основной номер (Meta) — неактивный канал;
 // «Демо Сервис» — без базы, рассылки с номера бота разрешены, у основного номера — сигнал Meta (видно подтверждение «Всё равно продолжить?»).
 // Правила и тексты ошибок повторяют сервер (src/services/broadcast/create.js, crm/auto.js), чтобы мастер рассылки вёл себя одинаково.
 // Номера клиентов базы — только маской («+7 700 *** ** 44»), как их отдаёт сервер; люди и номера придуманы.
@@ -24,6 +25,11 @@ import type {
   ServiceScenario,
   CalendarDay,
   CampaignCalendar,
+  CrmMetrics,
+  GaTestResult,
+  LaunchFinal,
+  LaunchResult,
+  LibraryCat,
   LibraryItem,
   MessageStats,
   TemplateLibrary,
@@ -36,7 +42,8 @@ import { ApiError } from "./errors";
 import type { CampaignSource } from "./source";
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
-// библиотека в демо — шесть тем как в настоящей (сервер: src/services/broadcast/library.js), без правки; данные вымышленные
+// библиотека в демо — восемь из 28 утверждённых текстов Winchester (сервер: src/services/broadcast/library.js, дословно), семь категорий;
+// правки владельца живут в памяти вкладки. Данные клиентов вымышленные
 const DEMO_VARS: TemplateVar[] = [
   { key: "client.first_name", label: "Имя клиента", sample: "Арман" },
   { key: "staff.name", label: "Мастер", sample: "Айдос" },
@@ -44,55 +51,69 @@ const DEMO_VARS: TemplateVar[] = [
   { key: "visit.days_since", label: "Дней после визита", sample: "28" },
   { key: "booking.url", label: "Ссылка на запись", sample: "winchester.kz" },
 ];
-const DEMO_CATS = [
-  { id: "invite", label: "Приглашения" },
-  { id: "lapsed", label: "Давно не были" },
-  { id: "slots", label: "Свободное время" },
-  { id: "regular", label: "Постоянные клиенты" },
-  { id: "services", label: "Услуги" },
-  { id: "occasions", label: "Поводы" },
-  { id: "personal", label: "Персональные" },
+const DEMO_CATS: LibraryCat[] = [
+  { id: "warm", label: "Тёплое возвращение", seg: "all", who: "Все клиенты базы" },
+  { id: "refresh", label: "Пора обновить стрижку", seg: "pora", who: "Были 21–35 дней назад" },
+  { id: "lapsed", label: "Давно не виделись", seg: "davno", who: "Не были больше месяца" },
+  { id: "regular", label: "Постоянные клиенты", seg: "postoyannye", who: "3 визита и больше за 90 дней" },
+  { id: "first", label: "После первого визита", seg: "novye", who: "Были один раз" },
+  { id: "occasions", label: "Поводы заглянуть", seg: "all", who: "Все клиенты базы" },
+  { id: "style", label: "Стиль и настроение", seg: "all", who: "Все клиенты базы" },
 ];
 const STOP = "Если такие сообщения больше не нужны, напишите «стоп».";
-const STOP_KK = "Мұндай хабарламалар қажет болмаса, «стоп» деп жазыңыз.";
+const APPROVED_BY = "Владелец (утверждённая редакция)";
+const lib = (id: string, title: string, cat: string, ru: string): LibraryItem => {
+  const k = DEMO_CATS.find((x) => x.id === cat)!;
+  return { id, title, cat, seg: k.seg, who: k.who, goal: k.label, needs: [], check: "", ru, kk: "", kkChecked: false, approved: true, status: "approved", v: 1, at: 0, by: "", approvedBy: APPROVED_BY, approvedAt: Date.UTC(2026, 10, 2, 12) };
+};
 const DEMO_LIBRARY: LibraryItem[] = [
-  { id: "M01", title: "Пора обновить стрижку", cat: "invite", who: "Были 3–5 недель назад", goal: "напомнить о стрижке", seg: "pora", needs: [], check: "Ссылка на запись работает", approved: true, status: "approved", v: 2, kkChecked: false,
-    ru: `Здравствуйте, {{client.first_name}}! Если планировали обновить стрижку, удобное время можно выбрать на {{booking.url}}. ${STOP}`,
-    kk: `Сәлеметсіз бе, {{client.first_name}}! Шашты жаңартуды жоспарласаңыз, ыңғайлы уақытты {{booking.url}} сайтынан таңдай аласыз. ${STOP_KK}` },
-  { id: "M02", title: "Давно не были", cat: "lapsed", who: "Были 30–45 дней назад", goal: "мягко пригласить вернуться", seg: "davno", needs: [], check: "Клиент не записан на ближайшие дни", approved: false, status: "review", v: 1, kkChecked: false,
-    ru: `{{client.first_name}}, добрый день! Давно не виделись. Если захотите заглянуть на стрижку, будем рады. Запись: {{booking.url}}. ${STOP}`,
-    kk: `{{client.first_name}}, қайырлы күн! Көптен бері көрмедік. Шаш алдырғыңыз келсе, қуанамыз. Жазылу: {{booking.url}}. ${STOP_KK}` },
-  { id: "M05", title: "Постоянному клиенту", cat: "regular", who: "Были 3 раза и больше", goal: "поблагодарить", seg: "regular", needs: [], check: "Текст без обещаний скидок", approved: false, status: "review", v: 1, kkChecked: false,
-    ru: `Здравствуйте, {{client.first_name}}! Спасибо, что выбираете наш барбершоп. Когда понадобится стрижка, записаться можно здесь: {{booking.url}}. ${STOP}`,
-    kk: `Сәлеметсіз бе, {{client.first_name}}! Біздің барбершопты таңдағаныңызға рақмет. Шаш алдыру керек болса, осы жерден жазылыңыз: {{booking.url}}. ${STOP_KK}` },
-  { id: "M08", title: "Свободное время сегодня", cat: "slots", who: "Кто был у этого мастера", goal: "предложить окно", seg: "all", needs: ["staff.name", "slot"], check: "Время у мастера действительно свободно прямо перед отправкой", approved: false, status: "facts", v: 1, kkChecked: false,
-    ru: `Здравствуйте! Сегодня у {{staff.name}} освободилось время в [время]. Хотите записаться? ${STOP}`,
-    kk: `Сәлеметсіз бе! Бүгін {{staff.name}} шеберде [уақыт] бос. Жазыласыз ба? ${STOP_KK}` },
-  { id: "M12", title: "Стрижка и борода", cat: "services", who: "Все, кому можно писать", goal: "рассказать об услуге", seg: "all", needs: [], check: "Услуга есть в прайсе", approved: false, status: "review", v: 1, kkChecked: false,
-    ru: `Здравствуйте! У нас можно записаться на стрижку и оформление бороды за один визит. Удобное время: {{booking.url}}. ${STOP}`,
-    kk: `Сәлеметсіз бе! Бізде шаш алу мен сақалды бір келгенде жасатуға болады. Ыңғайлы уақыт: {{booking.url}}. ${STOP_KK}` },
-  { id: "M24", title: "Акция", cat: "occasions", who: "Все, кому можно писать", goal: "сообщить об утверждённой акции", seg: "all", needs: ["promo"], check: "Условия, срок и цена утверждены владельцем", approved: false, status: "facts", v: 1, kkChecked: false,
-    ru: `Здравствуйте! До [дата] действует [условия акции]. Записаться: {{booking.url}}. ${STOP}`,
-    kk: `Сәлеметсіз бе! [күн] дейін [акция шарттары]. Жазылу: {{booking.url}}. ${STOP_KK}` },
+  lib("W01", "Знакомые лица", "warm", "Добрый день! 👋🏻\n\nWinchester работает с 2019 года, и за это время у нас появилось много знакомых гостей. Всегда приятно видеть вас снова 🖤✂️\n\nЕсли захотите освежить стрижку, будем рады помочь с записью 😊"),
+  lib("W02", "Свои люди", "warm", "Здравствуйте! 🤝\n\nВ Winchester особенно приятно встречать знакомых гостей. Хороший барбершоп для нас не только про стрижку, но и про атмосферу, в которую хочется возвращаться 💈🖤\n\nБудем рады новой встрече! Подобрать вам удобное время? 😊"),
+  lib("W05", "Стрижка уже отросла?", "refresh", "Добрый день! 👋🏻\n\nВолосы растут незаметно, а свежая стрижка сразу меняет впечатление 😏✂️\n\nЕсли уже задумывались освежить образ, будем рады видеть вас в Winchester. Записать на удобное время? 💈"),
+  lib("W09", "Давно не виделись", "lapsed", "Добрый день! 👋🏻\n\nДавно не виделись в Winchester! Надеемся, у вас всё отлично 😊🖤\n\nЕсли захотите обновить стрижку или просто уделить немного времени себе, будем рады новой встрече. Помочь с записью? 💈"),
+  lib("W13", "Ваш привычный ритм", "regular", "Добрый день! 👋🏻\n\nХорошая стрижка со временем становится приятной привычкой. Особенно когда нашёл своего барбера и знаешь, какого результата ждать 💈🖤\n\nБудем рады вашей следующей записи. Подобрать время? 😊"),
+  lib("W17", "Как вам у нас?", "first", "Добрый день! 👋🏻\n\nСпасибо, что однажды выбрали Winchester! Надеемся, после стрижки у вас остались хорошие впечатления 😊💈\n\nЕсли захотите заглянуть снова, будем рады новой встрече. С удовольствием поможем с записью! 🖤"),
+  lib("W22", "Перед выходными", "occasions", "Здравствуйте! 🔥\n\nВыходные приятнее встречать, когда и настроение, и стрижка на высоте 😎💈\n\nЕсли собирались заглянуть к барберу, будем рады вас видеть. Помочь с записью? ✂️"),
+  lib("W25", "Маленькое обновление", "style", "Добрый день! 👋🏻\n\nНе обязательно кардинально менять образ, чтобы выглядеть по-новому. Иногда достаточно просто освежить привычную стрижку ✂️😎\n\nВ Winchester с удовольствием поможем. Подобрать время для визита? 🖤"),
 ];
+/** Имя в приветствие — как сервер (render.js, greetName): «Добрый день! 👋🏻» → «Добрый день, Арман! 👋🏻»; без имени — как есть. */
+function greet(t: string, name: string): string {
+  const m = /^(добрый\s+(?:день|вечер)|доброе\s+утро|здравствуйте|привет)(?![\p{L}\p{N}])/iu.exec(t);
+  if (!name || !m || /^,/.test(t.slice(m[0].length))) return t;
+  const rest = t.slice(m[0].length);
+  return m[0] + ", " + name + (/^[ \t]*[!.?…]/.test(rest) ? rest.replace(/^[ \t]+/, "") : rest);
+}
+/** Вставки старых своих текстов — на вымышленных данных; дальше — имя в приветствие. */
 const fillDemo = (t: string, name: string) =>
-  t
-    .replace(/\{\{client\.first_name\}\},?\s*/g, name ? `${name}, ` : "")
-    .replace(/Здравствуйте, (\S+), !/, "Здравствуйте, $1!")
-    .replace(/\{\{staff\.name\}\}/g, "Айдоса")
-    .replace(/\{\{booking\.url\}\}/g, "winchester.kz")
-    .replace(/\{\{[^}]+\}\}/g, "")
-    .replace(/, !/g, "!")
-    .replace(/^(\p{L})/u, (m) => m.toUpperCase());
+  greet(
+    t
+      .replace(/\{\{client\.first_name\}\},?\s*/g, name ? `${name}, ` : "")
+      .replace(/Здравствуйте, (\S+), !/, "Здравствуйте, $1!")
+      .replace(/\{\{staff\.name\}\}/g, "Айдоса")
+      .replace(/\{\{booking\.url\}\}/g, "winchester.kz")
+      .replace(/\{\{[^}]+\}\}/g, "")
+      .replace(/, !/g, "!")
+      .replace(/^(\p{L})/u, (m) => m.toUpperCase()),
+    /\{\{client\.first_name\}\}/.test(t) ? "" : name,
+  );
+/** Текст рассылки со второго номера, как его собирает сервер: из библиотеки или свой; stop — строка отказа в конце (выбор владельца). */
+const gaText = (t: string, stop: boolean) => {
+  const s = t.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return s && stop && !/стоп|stop/i.test(s) ? `${s}\n\n${STOP}` : s;
+};
+const DEMO_HOW = "Включает владелец сервиса отдельным решением: переменная GA_BROADCAST_<компания> = 1 в Cloudflare. В демо запуск всегда выключен.";
 const wait = (ms = 260) => new Promise((r) => setTimeout(r, ms + Math.random() * 160));
 const STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
-const NO_GA = "Рассылки с номера бота (Green-API) у этой компании выключены: номер только отвечает клиентам. Рассылки — с официального номера шаблонами Meta.";
+// как сервер (sender.js, GA_OFF): запуск со второго номера выключен, пока владелец не включит его отдельным решением
+const NO_GA = "Запуск рассылок со второго номера выключен. Его включает владелец отдельным решением.";
 const GA_HOOK_WARN = "Номер не настроен до конца: ответы клиентов не приходят в пульт, и тем, кто ответит «стоп», рассылка будет приходить дальше.";
 const NO_BASE_AUTO = "У этой компании нет базы клиентов из Altegio — автосценарий недоступен.";
 
 type Person = CrmPerson & { why: "" | "stop" | "noconsent" | "fut" | "recent" | "marketed" };
 /** Почему реклама не уйдёт — словами сервера (src/services/crm/segments.js, crmWhyText). */
 const WHY_TEXT: Record<Person["why"], string> = { "": "", stop: "просил не писать («стоп»)", noconsent: "нет согласия на рекламу", fut: "уже записан", recent: "был меньше 14 дней назад", marketed: "реклама уже была за 30 дней" };
+/** Причины в воронке рассылки — словами сервера (create.js: RULE_WHY, CONSENT_WHY). */
+const FUNNEL_WHY: Record<string, string> = { fut: "уже записаны", recent: "были меньше 14 дней назад", marketed: "реклама уже была за 30 дней", noconsent: "нет согласия на рекламу", stop: "просили не писать («стоп»)" };
 /** Статусы клиента (как crmStatus сервера): согласия нет у «noconsent» и у тех, кто просил не писать. */
 const statusOf = (p: Person) => ({ booked: p.why === "fut", service: p.why !== "stop", marketing: p.why !== "stop" && p.why !== "noconsent", stopped: p.why === "stop", refused: false, ready: !p.why });
 function statusCount(list: Person[]) {
@@ -191,6 +212,11 @@ function build(now: number): Record<string, Ws> {
     crmWhy: "",
     auto: { ...AUTO_DEF },
     camps: [
+      // второй номер: черновик сотрудника и черновик, одобренный владельцем; запустить нельзя — запуск выключен (как у Winchester)
+      camp(now, { id: "g2", name: "Стрижка уже отросла? · черновик", status: "ready", channel: "bot", total: 6, pos: 0, cap: 50, createdAt: now - 40 * MIN, source: "crm", segment: "Пора на стрижку", segmentId: "pora", by: "staff", tplId: "W05",
+        message: DEMO_LIBRARY[2].ru, text: DEMO_LIBRARY[2].ru.replace(/\s*\n\s*/g, " ⏎ "), selected: 9 }),
+      camp(now, { id: "g1", name: "Давно не виделись", status: "ready", channel: "bot", total: 5, pos: 0, cap: 50, createdAt: now - 5 * HOUR, source: "crm", segment: "Давно не были", segmentId: "davno", by: "owner", tplId: "W09",
+        message: gaText(DEMO_LIBRARY[3].ru, true), text: gaText(DEMO_LIBRARY[3].ru, true).replace(/\s*\n\s*/g, " ⏎ "), stop: true, selected: 8, approved: true, approvedAt: now - 3 * HOUR, approvedBy: "владелец" }),
       camp(now, { id: "d4", name: "Подарочные сертификаты к Новому году", status: "ready", total: 18, pos: 0, createdAt: now - 2 * HOUR, source: "crm", segment: "Постоянные", segmentId: "postoyannye", by: "owner", template: "sertifikat_ny", lang: "ru", params: ["{имя}"], text: "{{1}}, подарочный сертификат — лучший подарок к Новому году. Ответьте «да» — расскажем подробнее. Чтобы не получать сообщения, ответьте СТОП" }),
       camp(now, { id: "d3", name: "Скидка 20% в будни до 14:00", status: "paused", total: 120, pos: 64, sent: 61, failed: 2, skipped: 1, createdAt: now - 1 * DAY, by: "owner", template: "skidka_budni", lang: "ru", params: ["{имя}"], text: "{{1}}, в будни до 14:00 — скидка 20% на стрижку. Чтобы не получать сообщения, ответьте СТОП", note: "Остановлена вручную.", startedAt: now - 1 * DAY + HOUR, lastSentAt: now - 1 * DAY + 3 * HOUR, fails: [{ code: 131026, n: 2, hint: "номер не в WhatsApp или не принимает сообщения" }] }),
       camp(now, { id: "d2", name: "Пора на стрижку", status: "done", total: 42, sent: 39, failed: 1, excluded: 2, createdAt: now - 6 * DAY, source: "crm", segment: "Пора на стрижку", segmentId: "pora", by: "staff", template: "pora_na_strizhku", lang: "ru", params: ["{имя}"], text: "{{1}}, прошло около месяца с вашей стрижки — запишем вас? Чтобы не получать сообщения, ответьте СТОП", startedAt: now - 6 * DAY + 10 * MIN, doneAt: now - 6 * DAY + 50 * MIN, fails: [{ code: 131026, n: 1, hint: "номер не в WhatsApp или не принимает сообщения" }] }),
@@ -208,7 +234,9 @@ function build(now: number): Record<string, Ws> {
     auto: { ...AUTO_DEF },
     camps: [
       camp(now, { id: "s2", name: "Осенняя акция: замена стекла", status: "paused", total: 200, pos: 80, sent: 78, failed: 2, createdAt: now - 2 * DAY, by: "owner", template: "promo_autumn", lang: "ru", params: ["{имя}"], text: "{{1}}, замена защитного стекла — 3 000 ₸ до конца месяца. Чтобы не получать сообщения, ответьте СТОП", note: "Сигнал от Meta: Meta приостановила шаблон promo_autumn: клиенты жаловались на сообщения. Рассылка остановлена, чтобы не навредить номеру.", startedAt: now - 2 * DAY + HOUR }),
-      camp(now, { id: "s1", name: "Защитные стёкла −20%", status: "done", channel: "bot", total: 45, sent: 44, failed: 1, cap: 50, createdAt: now - 9 * DAY, by: "owner", text: "{имя}, на этой неделе защитные стёкла со скидкой 20%. ⏎ Чтобы не получать сообщения, ответьте СТОП", message: "{имя}, на этой неделе защитные стёкла со скидкой 20%.\n\n" + STOP_LINE, fails: [{ code: "ga:466", n: 1, hint: "Green-API: исчерпан лимит сообщений тарифа" }] }),
+      // итоги старой рассылки по списку: записались после — «нет данных» (базы клиентов у компании нет), отчёты о доставке есть
+      camp(now, { id: "s1", name: "Защитные стёкла −20%", status: "done", channel: "bot", total: 45, sent: 44, failed: 1, cap: 50, createdAt: now - 9 * DAY, by: "owner", text: "{имя}, на этой неделе защитные стёкла со скидкой 20%. ⏎ Чтобы не получать сообщения, ответьте СТОП", message: "{имя}, на этой неделе защитные стёкла со скидкой 20%.\n\n" + STOP_LINE, fails: [{ code: "ga:466", n: 1, hint: "Green-API: исчерпан лимит сообщений тарифа" }],
+        startedAt: now - 9 * DAY + HOUR, doneAt: now - 8 * DAY, results: { selected: 45, admitted: 45, sent: 44, unsure: 0, failed: 1, skipped: 0, delivered: 43, read: 30, replied: 5, want: 2, booked: null, refused: 1, window: 14, reports: true } }),
     ],
   };
   const empty: Ws = {
@@ -229,6 +257,12 @@ function build(now: number): Record<string, Ws> {
 const countUpTo = (pos: number, every: number, at: number) => (pos > at ? Math.floor((pos - 1 - at) / every) + 1 : 0);
 function advance(c: Camp, now: number) {
   if (c.status !== "running" || c.runFrom === undefined || c.posFrom === undefined) return;
+  // запланирована — до её времени ничего не уходит
+  if (c.at && c.at > now) {
+    c.waitNote = "Запланирована: начнётся в назначенное время по Астане.";
+    return;
+  }
+  delete c.waitNote;
   const step = c.channel === "bot" ? 4000 : 1500;
   c.pos = Math.min(c.total, c.posFrom + Math.floor((now - c.runFrom) / step));
   c.excluded = c.source === "crm" ? countUpTo(c.pos, 17, 5) : 0;
@@ -248,8 +282,8 @@ const pub = (c: Camp): CampaignDetail => {
   return structuredClone(d);
 };
 const rowOf = (c: Camp): CampaignRow => {
-  const { id, name, status, channel, total, pos, sent, failed, skipped, excluded, createdAt, source, segment, by, template } = c;
-  return { id, name, status, channel, total, pos, sent, failed, skipped, excluded, createdAt, source, ...(segment ? { segment } : {}), ...(by ? { by } : {}), ...(template ? { template } : {}) };
+  const { id, name, status, channel, total, pos, sent, failed, skipped, excluded, createdAt, source, segment, by, template, approved, at, tplId } = c;
+  return { id, name, status, channel, total, pos, sent, failed, skipped, excluded, createdAt, source, ...(segment ? { segment } : {}), ...(by ? { by } : {}), ...(template ? { template } : {}), ...(approved ? { approved } : {}), ...(at ? { at } : {}), ...(tplId ? { tplId } : {}) };
 };
 
 // ---------- проверка черновика — те же правила и тексты, что у сервера ----------
@@ -375,6 +409,9 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     if (!owner()) throw new ApiError(text, 403);
   };
   const auto = createDemoAutoMsg(role);
+  // библиотека текстов: правки владельца — в памяти вкладки; стартовые тексты Winchester — только у «Демо Барбера» (как сервер)
+  const libs: Record<string, LibraryItem[]> = {};
+  const libOf = (ws: string) => (libs[ws] ??= ws === "demo" ? DEMO_LIBRARY.map((x) => ({ ...x })) : []);
   const camp1 = (w: Ws, id: string) => {
     const c = w.camps.find((x) => x.id === id);
     if (!c) throw new ApiError("Рассылка не найдена.", 404);
@@ -387,8 +424,6 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     const none = { list: [], masked: true, dup: 0, bad: [], badN: 0 };
     if (d.source === "segment") {
       const s = d.segment || { id: "" };
-      const errors = d.channel === "bot" ? ["рассылка по базе клиентов Altegio — только шаблоном Meta с основного номера: массовые сообщения с обычного WhatsApp (Green-API) — главная причина блокировок"] : [];
-      if (errors.length) return { ...none, errors };
       if (!w.base || !w.baseAt) return { ...none, errors: ["базы клиентов из Altegio ещё нет — обновите базу в разделе сегментов"] };
       const people = pick(w.base, s);
       if (!people) return { ...none, errors: ["сегмент базы клиентов не найден — выберите его заново"] };
@@ -404,7 +439,48 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     return { ...r, masked: false, errors: [] };
   }
 
+  /** Рассылка со второго номера по базе — как сервер (create.js, bcCheck): текст из библиотеки или свой, строка «стоп» по выбору,
+   *  воронка (правила компании и разрешения отдельно), готовые тексты 3–5 клиентам с именем в приветствии, номера маской. */
+  function gaCheck(ws: string, d: CampaignDraft): CampaignCheck & { rec: Rec[]; msg: string; sel: number } {
+    const w = find(ws), s = d.segment || { id: "" }, errors: string[] = [];
+    const item = d.tplId ? libOf(ws).find((x) => x.id === d.tplId) : null;
+    if (d.tplId && !item) errors.push("такого текста в библиотеке нет, выберите его заново");
+    const msg = gaText((d.text || "").trim() ? d.text : item ? item.ru : "", !!d.stop);
+    if (!msg) errors.push("напишите текст сообщения");
+    if (/\[[^\]]*\]/.test(msg)) errors.push("впишите условия вместо [скобок]");
+    const empty = { ok: false, valid: 0, named: 0, dup: 0, bad: [], badN: 0, cut: 0, stopped: 0, sample: [], preview: [], samples: [], excluded: [], rec: [] as Rec[], msg, sel: 0, text: msg };
+    if (!w.base || !w.baseAt) return { ...empty, errors: [...errors, "базы клиентов из Altegio ещё нет: обновите базу в разделе «Клиенты»"] };
+    const all = pick(w.base, s, true);
+    if (!all) return { ...empty, errors: [...errors, "сегмент базы клиентов не найден — выберите его заново"] };
+    const ok = all.filter((p) => !p.why), label = segLabel(s);
+    const cnt = (k: Person["why"]) => all.filter((p) => p.why === k).length;
+    const rules = (["fut", "recent", "marketed"] as const).map((code) => ({ code, why: FUNNEL_WHY[code], n: cnt(code) })).filter((x) => x.n);
+    const consent = (["noconsent", "stop"] as const).map((code) => ({ code, why: FUNNEL_WHY[code], n: cnt(code) })).filter((x) => x.n);
+    if (msg && !ok.length) errors.push(`в сегменте «${label}» сейчас некому писать: остальные просили не писать, без согласия на рекламу, уже записаны, были меньше 14 дней назад или реклама уже была за 30 дней`);
+    const samples = msg ? ok.slice(0, 5).map((p) => ({ to: p.phone, text: greet(msg, p.name) })) : [];
+    return {
+      ...empty,
+      ok: ok.length > 0 && !errors.length,
+      valid: ok.length,
+      named: ok.filter((p) => p.name).length,
+      segment: { id: s.id, label, at: w.baseAt, total: ok.length },
+      sample: ok.slice(0, 5).map((p) => `${p.phone} · ${p.name || "без имени"}`),
+      samples,
+      preview: samples.slice(0, 1).map((x) => x.text),
+      excluded: [...rules, ...consent],
+      funnel: { total: w.base.length + 3, valid: w.base.length, segment: all.length, rules, consent, allowed: ok.length },
+      errors,
+      rec: ok.map((p) => ({ phone: p.phone, name: p.name })),
+      sel: all.length,
+      ...(item ? { tplId: item.id } : {}),
+    };
+  }
+
   async function check(ws: string, d: CampaignDraft): Promise<CampaignCheck & { rec: Rec[] }> {
+    if (d.channel === "bot" && d.source === "segment") {
+      const { msg: _m, sel: _s, ...r } = gaCheck(ws, d);
+      return r;
+    }
     const w = find(ws), rc = recipients(w, d), errors = fields(d).concat(rc.errors);
     const fb = (d.fallback || "").trim() || "уважаемый клиент";
     const first = rc.list.find((x) => x.name)?.name || "";
@@ -431,7 +507,8 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       await wait(600);
       const w = find(ws), now = Date.now();
       w.camps.forEach((c) => advance(c, now));
-      const bot = w.bot ? { ...w.bot, used24h: w.bot.used24h + used(w, "bot") } : null;
+      // как включить запуск — только владельцу (как сервер: bcHow)
+      const bot = w.bot ? { ...w.bot, used24h: w.bot.used24h + used(w, "bot"), ...(w.bot.noBroadcast && owner() ? { how: DEMO_HOW } : {}) } : null;
       return {
         workspace: { id: ws, name: ws === "demo" ? "Демо Барбер" : ws === "demo-service" ? "Демо Сервис" : "Новая компания" },
         owner: owner(),
@@ -459,6 +536,22 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     },
     async createCampaign(ws, d) {
       await wait(500);
+      if (d.channel === "bot" && d.source === "segment") {
+        // второй номер по базе: черновик (ready); текст каждому соберут при отправке — здесь хранится сообщение без имени
+        const w = find(ws), r = gaCheck(ws, d), errors = [...r.errors], name = (d.name || "").trim().slice(0, 60), cap = Math.round(+d.cap || 0);
+        if (name.length < 2) errors.push("дайте рассылке название, для себя");
+        if (!(cap >= 1 && cap <= 300)) errors.push("не больше 300 сообщений за сутки с этого номера: обычный WhatsApp блокируют за массовые рассылки");
+        if (!(d.from >= 8 && d.to <= 22 && d.to > d.from)) errors.push("часы отправки: «с» раньше, чем «до», с 8:00 до 22:00");
+        if (errors.length) throw new ApiError(errors.join("; "), 400, false, { errors });
+        const now = Date.now();
+        const c: Camp = camp(now, {
+          id: now.toString(36), name, status: "ready", channel: "bot", total: r.valid, pos: 0, cap, from: d.from, to: d.to, by: owner() ? "owner" : "staff", source: "crm",
+          segment: r.segment?.label, segmentId: r.segment?.id, crmAt: w.baseAt, message: r.msg, text: r.msg.replace(/\s*\n\s*/g, " ⏎ "), selected: r.sel,
+          ...(d.stop ? { stop: true } : {}), ...(r.tplId ? { tplId: r.tplId } : {}),
+        });
+        w.camps.unshift(c);
+        return { campaign: pub(c), dup: 0, bad: 0, cut: 0 };
+      }
       const w = find(ws), r = await check(ws, d), errors = [...r.errors];
       const name = (d.name || "").trim().slice(0, 60), cap = Math.round(+d.cap || 0), from = Math.round(+d.from), to = Math.round(+d.to), bot = d.channel === "bot";
       if (name.length < 2) errors.push("дайте рассылке название — для себя");
@@ -519,12 +612,50 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
         if (c.status === "running") throw new ApiError("Сначала остановите рассылку.", 409);
         w.camps = w.camps.filter((x) => x.id !== id);
         return { kind: "deleted" };
+      } else if (act === "approve" || act === "unapprove") {
+        // одобрение владельцем — решение о рассылке, не запуск: она остаётся «готова» (как сервер)
+        ownerOnly("Одобрить рассылку может только владелец.");
+        if (c.status !== "ready" && c.status !== "paused") throw new ApiError("Эта рассылка уже идёт или закончена.", 409);
+        if (act === "approve") Object.assign(c, { approved: true, approvedAt: now, approvedBy: "владелец" });
+        else Object.assign(c, { approved: false, approvedAt: undefined, approvedBy: undefined });
       } else throw new ApiError("Неизвестное действие.", 400);
       if (c.status !== "running") {
         delete c.runFrom;
         delete c.posFrom;
       }
       return { kind: "done", campaign: pub(c) };
+    },
+    async campaignLaunch(ws, id, opts = {}): Promise<LaunchResult> {
+      await wait(350);
+      const w = find(ws), c = camp1(w, id), now = Date.now();
+      ownerOnly("Запустить рассылку может только владелец. Сотрудник готовит и проверяет, владелец решает.");
+      if (c.channel !== "bot") throw new ApiError("Рассылку шаблоном Meta запускают из её листа.", 409);
+      if (!w.bot) throw new ApiError("Второй номер (Green-API) у этой компании не подключён.", 409);
+      if (w.bot.noBroadcast) throw new ApiError(w.bot.noBroadcast, 409, false, { code: "ga_off", how: DEMO_HOW });
+      if (c.status !== "ready" && c.status !== "paused") throw new ApiError("Эту рассылку уже нельзя запустить.", 409);
+      const at = opts.at && opts.at > now + 5 * MIN && opts.at < now + 30 * DAY ? opts.at : 0;
+      if (opts.at && !at) throw new ApiError("Время запуска: не раньше чем через 5 минут и не позже чем через 30 дней.", 400);
+      if (c.status === "ready" && c.source === "crm") {
+        // итоговая аудитория перед запуском — как сервер (bcFinal): кому реклама уйдёт сейчас и точный текст первому
+        const people = w.base ? (pick(w.base, { id: c.segmentId || "all" }) || []).slice(0, c.total) : [];
+        if (!people.length) throw new ApiError("Некому отправить: из этого списка сейчас некому писать рекламу.", 409, false, { code: "empty" });
+        const fin: LaunchFinal = { n: people.length, rest: c.total, cap: c.cap, from: c.from, to: c.to, days: Math.ceil(people.length / Math.max(1, c.cap)), text: c.message || "", sample: greet(c.message || "", people[0].name), ...(at ? { at } : {}) };
+        if (!(opts.sure && opts.n === fin.n)) return { kind: "final", question: `Сообщение получат ${fin.n} из ${fin.rest}. Запустить?`, final: fin };
+      }
+      Object.assign(c, { status: "running", startedAt: now, runFrom: at || now, posFrom: c.pos, approved: true, approvedAt: now, approvedBy: "владелец", ...(at ? { at } : {}) });
+      if (!at) delete c.at;
+      delete c.note;
+      return { kind: "done", campaign: pub(c) };
+    },
+    async gaTest(ws, d): Promise<GaTestResult> {
+      await wait(500);
+      // как сервер: только владелец и только на его номер для проверки; текст — на вымышленном клиенте «Айгерим»
+      const r = d.source === "segment" ? gaCheck(ws, d) : null;
+      const preview = r ? greet(r.msg, "Айгерим") : fillDemo(gaMsg(d.text || ""), "Айгерим");
+      if (!owner()) throw new ApiError("Проверку со второго номера отправляет владелец — на свой номер.", 403, false, { preview });
+      const test = auto.testPhone(ws);
+      if (!test) throw new ApiError("Сначала укажите номер для проверки: «Рассылки» → «Автоматические» → «Номер для проверки».", 409, false, { code: "notest", preview });
+      return { text: `Демо: на ваш номер ${test} ничего не отправлено. В рабочем пульте сообщение придёт со второго номера — проверьте WhatsApp.`, preview };
     },
     async campaignTick(ws, id) {
       await wait(400);
@@ -568,10 +699,15 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       ];
       const info: CrmInfo | null = w.baseAt ? { at: w.baseAt, from: dayIso(w.baseAt - 90 * DAY), to: dayIso(w.baseAt + 60 * DAY), records: base.length * 2 + 9, visits: base.reduce((a, p) => a + p.v, 0), clients: base.length, masked: 3, bad: 0, att: { "1": base.reduce((a, p) => a + p.v, 0), "-1": 4, "0": 2 }, cut: false } : null;
       const st = statusCount(base);
+      // десять чисел базы (как сервер: crmMetrics): «без подтверждённого разрешения» — не отказ и не разрешение
+      const metrics: CrmMetrics | null = info
+        ? { total: base.length + info.masked + info.bad, valid: base.length, invalid: info.masked + info.bad, regular: base.filter((p) => p.v >= 3).length, once: base.filter((p) => p.v === 1).length,
+            d30_60: base.filter((p) => p.d >= 30 && p.d <= 60).length, d61_90: base.filter((p) => p.d >= 61 && p.d <= 90).length, booked: st.booked, marketing: st.marketing, refused: st.stopped, noperm: cnt("noconsent") }
+        : null;
       return {
         owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments,
         excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") },
-        statuses: info ? { ...st, base: st.valid + info.masked + info.bad, invalid: info.masked + info.bad } : null, info,
+        statuses: info ? { ...st, base: st.valid + info.masked + info.bad, invalid: info.masked + info.bad } : null, metrics, info,
       };
     },
     async crmList(ws, spec, page = 1, opts) {
@@ -690,29 +826,73 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     async templates(ws): Promise<TemplateLibrary> {
       await wait(250);
       find(ws);
-      const items = DEMO_LIBRARY.map((x) => ({ ...x }));
-      return { owner: owner(), vars: DEMO_VARS, cats: DEMO_CATS, counts: { total: items.length, approved: items.filter((x) => x.approved).length, review: items.filter((x) => !x.approved).length }, items };
+      const items = libOf(ws).map((x) => ({ ...x }));
+      const live = items.filter((x) => !x.archived);
+      return {
+        owner: owner(),
+        vars: DEMO_VARS,
+        cats: DEMO_CATS,
+        counts: { total: live.length, approved: live.filter((x) => x.approved).length, review: live.filter((x) => !x.approved).length, archived: items.length - live.length },
+        items,
+      };
     },
-    async templateSave(ws) {
+    async templateSave(ws, it) {
       await wait(200);
       find(ws);
       ownerOnly("Править и одобрять тексты может только владелец.");
-      throw new ApiError("В демо тексты не сохраняются — это делает владелец в настоящем пульте.", 409);
+      // как сервер (library.js, librarySave): правка текста — новая версия, одобрение снимается; без id — свой текст
+      const list = libOf(ws), cur = it.id ? list.find((x) => x.id === it.id) : null;
+      if (it.id && !cur) throw new ApiError("Такого текста нет.", 404);
+      const ru = String(it.ru || "").trim(), title = String(it.title || "").trim();
+      if (!ru || !title) throw new ApiError("Нужны название и текст на русском.", 400);
+      const changed = !cur || ru !== cur.ru;
+      const approved = it.approved === true ? !/\[[^\]]*\]/.test(ru) : it.approved === false ? false : changed ? false : !!cur?.approved;
+      const cat = cur ? cur.cat : DEMO_CATS.some((c) => c.id === it.cat) ? it.cat : "warm";
+      const k = DEMO_CATS.find((c) => c.id === cat);
+      const item: LibraryItem = {
+        ...(cur || { id: "U" + Date.now().toString(36).toUpperCase(), custom: true, needs: [], check: "", kk: "", kkChecked: false, seg: k?.seg, who: k?.who, goal: k?.label || "" }),
+        title, ru, cat, approved, status: approved ? "approved" : /\[[^\]]*\]/.test(ru) ? "facts" : "review",
+        v: changed ? (cur?.v || 0) + 1 : cur?.v || 1, at: Date.now(), by: "владелец",
+        ...(approved ? { approvedBy: cur?.approved && !changed ? cur.approvedBy : "владелец", approvedAt: cur?.approved && !changed ? cur.approvedAt : Date.now() } : { approvedBy: undefined, approvedAt: undefined }),
+      };
+      libs[ws] = cur ? list.map((x) => (x.id === item.id ? item : x)) : [...list, item];
+      return { ...item };
     },
     async templatePreview(ws, q): Promise<TemplatePreview> {
       await wait(200);
-      find(ws);
-      const x = q.id ? DEMO_LIBRARY.find((i) => i.id === q.id) : null;
-      const text = x ? (q.lang === "kk" ? x.kk : x.ru) : q.text || "";
+      const w = find(ws);
+      const x = q.id ? libOf(ws).find((i) => i.id === q.id) : null;
+      const text = (q.text || "").trim() ? q.text || "" : x ? (q.lang === "kk" && x.kk) || x.ru : "";
       if (!text) throw new ApiError("Нет текста.", 400);
       const blocked = /\[[^\]]*\]/.test(text);
-      return { lang: q.lang, demo: true, list: [{ to: "пример", name: "Арман", text: fillDemo(text, "Арман") }], noName: { text: fillDemo(text, "") }, missing: blocked ? ["условия в [скобках]"] : [], blocked };
+      // пример — на клиентах сегмента (и тех, кому реклама сейчас не уйдёт, с причиной); отказавшихся («стоп») в примере нет
+      const seg = q.segment || { id: x?.seg && x.seg !== "staff" ? x.seg : "all" };
+      const people = w.base && w.baseAt ? (pick(w.base, seg, true) || []).filter((p) => p.why !== "stop") : [];
+      const sample = [...people.filter((p) => !p.why), ...people.filter((p) => p.why)].slice(0, 3);
+      if (!sample.length) return { lang: q.lang, demo: true, list: [{ to: "пример", name: "Арман", text: fillDemo(text, "Арман") }], noName: { text: fillDemo(text, "") }, missing: blocked ? ["условия в [скобках]"] : [], blocked };
+      return {
+        lang: q.lang,
+        demo: false,
+        list: sample.map((p) => ({ to: p.phone, name: p.name, text: fillDemo(text, p.name), allowed: !p.why, why: WHY_TEXT[p.why] })),
+        noName: { text: fillDemo(text, "") },
+        missing: blocked ? ["условия в [скобках]"] : [],
+        blocked,
+      };
     },
-    async templateAction(ws) {
+    async templateAction(ws, id, action) {
       await wait(200);
       find(ws);
-      ownerOnly("Менять библиотеку может только владелец.");
-      throw new ApiError("В демо библиотека не меняется.", 409);
+      ownerOnly("Копировать и убирать в архив тексты может только владелец.");
+      const list = libOf(ws), cur = list.find((x) => x.id === id);
+      if (!cur) throw new ApiError("Такого текста нет.", 404);
+      if (action === "duplicate") {
+        const copy: LibraryItem = { ...cur, id: "U" + Date.now().toString(36).toUpperCase(), title: `${cur.title} (копия)`, custom: true, approved: false, status: "review", v: 1, at: Date.now(), by: "владелец", approvedBy: undefined, approvedAt: undefined };
+        libs[ws] = [...list, copy];
+        return { ...copy };
+      }
+      const item = { ...cur, archived: action === "archive", at: Date.now() };
+      libs[ws] = list.map((x) => (x.id === id ? item : x));
+      return { ...item };
     },
     autoMessages: (ws) => auto.autoMessages(ws),
     autoMessageSet: (ws, patch) => auto.autoMessageSet(ws, patch),

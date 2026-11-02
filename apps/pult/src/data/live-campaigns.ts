@@ -30,8 +30,11 @@ import type {
   CampaignStatus,
   CampaignsOverview,
   CrmInfo,
+  CrmMetrics,
   CrmOverview,
   CrmPage,
+  LaunchFinal,
+  LaunchResult,
   MainNumberState,
   NumberQuality,
   SegmentSpec,
@@ -53,21 +56,24 @@ import type { CampaignSource } from "./source";
 type RowRaw = {
   id: string; name?: string; status: string; total?: number; pos?: number; sent?: number; failed?: number; skipped?: number; excl?: number;
   created?: number; ch?: string; by?: string; src?: string; seg?: string; tpl?: string; demo?: number | boolean; approved?: number | boolean;
+  at?: number; tplId?: string;
 };
+type ResultsRaw = { [K in keyof CampaignResults]?: CampaignResults[K] | null } & { stop?: number };
 type BRaw = RowRaw & {
   cap?: number; from?: number; to?: number; text?: string; msg?: string; fallback?: string; img?: string; lang?: string; params?: string[];
   segId?: string; crmAt?: number; approvedBy?: string; approvedAt?: number; startedAt?: number; last?: number; nextAt?: number; doneAt?: number; waitNote?: string; waitTill?: number;
-  retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean;
-  results?: Partial<CampaignResults> | null;
+  retryAt?: number; retryWhy?: string; note?: string; unsure?: number; fails?: CampaignFail[]; stalled?: boolean; stop?: number | boolean; sel?: number;
+  results?: ResultsRaw | null;
 };
 type ListRaw = {
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
   fail: { n: number; codes: CampaignFail[] } | null; used: number;
   health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string } | null;
-  ga: { ready: boolean; state: string; phone: string; hook: boolean; why: string; warn: string; used: number; cap: [number, number]; hold: string; bcOff?: string } | null;
+  ga: { ready: boolean; state: string; phone: string; hook: boolean; why: string; warn: string; used: number; cap: [number, number]; hold: string; bcOff?: string; bcHow?: string; bcOn?: boolean } | null;
   list: RowRaw[]; now: number;
 };
 type CheckRaw = Omit<CampaignCheck, "listFilter"> & { seg?: string; segOut?: number; noDate?: number };
+type FinalRaw = { n?: number; rest?: number; cap?: number; from?: number; to?: number; days?: number; text?: string; sample?: string; at?: number };
 type SegRaw = Omit<CrmOverview, "available" | "info"> & { info: CrmInfo | null };
 type ServiceRaw = {
   owner: boolean; kinds?: { k: string; label?: string; on?: boolean; link?: string; sc?: string; approved?: boolean }[];
@@ -121,6 +127,33 @@ function row(r: RowRaw): CampaignRow {
     ...(r.tpl ? { template: r.tpl } : {}),
     ...(r.demo ? { demo: true } : {}),
     ...(r.approved ? { approved: true } : {}),
+    ...(n(r.at) ? { at: n(r.at) } : {}),
+    ...(r.tplId ? { tplId: r.tplId } : {}),
+  };
+}
+
+/** Число или «данных нет»: null у сервера — не ноль (нет базы отметок D1 или свежей базы клиентов); поля нет — тоже «нет данных». */
+const orNull = (x: unknown): number | null => (typeof x === "number" && isFinite(x) ? x : null);
+/** Итоги рассылки: числа как есть, null — «нет данных» (финальное ТЗ: не показывать 0 там, где данных нет). У старых рассылок
+ *  (шаблон Meta, демо) отказавшихся сервер присылает как stop. */
+function results(x: ResultsRaw): CampaignResults {
+  const opt = (k: "selected" | "admitted" | "unsure" | "skipped") => (typeof x[k] === "number" ? { [k]: n(x[k]) } : {});
+  return {
+    ...opt("selected"),
+    ...opt("admitted"),
+    sent: n(x.sent),
+    ...opt("unsure"),
+    failed: n(x.failed),
+    ...opt("skipped"),
+    delivered: orNull(x.delivered),
+    read: orNull(x.read),
+    replied: orNull(x.replied),
+    ...("want" in x ? { want: orNull(x.want) } : {}),
+    booked: orNull(x.booked),
+    // отказавшиеся: null — «нет данных» (как booked); у старых рассылок сервер присылает их как stop
+    ...("refused" in x ? { refused: orNull(x.refused) } : typeof x.stop === "number" ? { refused: x.stop } : {}),
+    window: n(x.window) || 14,
+    ...(typeof x.reports === "boolean" ? { reports: x.reports } : {}),
   };
 }
 
@@ -129,16 +162,29 @@ function detail(b: BRaw): CampaignDetail {
   // необязательные поля — только если сервер их прислал (пусто и 0 — «нет»)
   const extra: Partial<CampaignDetail> = {
     message: b.msg, image: b.img, lang: b.lang, params: b.params, segmentId: b.segId, crmAt: b.crmAt, approvedBy: b.approvedBy, approvedAt: b.approvedAt, startedAt: b.startedAt, lastSentAt: b.last,
-    nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure,
+    nextAt: b.nextAt, doneAt: b.doneAt, waitNote: b.waitNote, waitTill: b.waitTill, retryAt: b.retryAt, retryWhy: b.retryWhy, note: b.note, unsure: b.unsure, selected: b.sel,
   };
   for (const [k, v] of Object.entries(extra)) if (v) (d as Record<string, unknown>)[k] = v;
-  // итоги: сервер считает по ответам провайдера и журналу Altegio; без базы D1 — нет
-  if (b.results) {
-    const x = b.results;
-    d.results = { sent: n(x.sent), delivered: n(x.delivered), read: n(x.read), failed: n(x.failed), replied: n(x.replied), booked: n(x.booked), window: n(x.window) || 14 };
-  }
+  if (b.stop) d.stop = true;
+  // одобрено ли — по самой рассылке: строка списка могла отстать (одобрение сняли, а список не перечитан)
+  d.approved = !!b.approvedAt;
+  // итоги: сервер считает по ответам провайдера, журналу Altegio и отказам; без данных — null
+  if (b.results) d.results = results(b.results);
   return d;
 }
+
+/** Итоговая аудитория перед запуском — как прислал сервер (409 { confirm, final }). */
+const finalOf = (f: FinalRaw): LaunchFinal => ({
+  n: n(f.n),
+  rest: n(f.rest),
+  cap: n(f.cap),
+  from: n(f.from),
+  to: n(f.to),
+  days: n(f.days),
+  text: String(f.text || ""),
+  sample: String(f.sample || ""),
+  ...(n(f.at) ? { at: n(f.at) } : {}),
+});
 
 function overview(d: ListRaw): CampaignsOverview {
   const h = d.health;
@@ -166,6 +212,8 @@ function overview(d: ListRaw): CampaignsOverview {
         cap: { def: n(g.cap?.[0]) || 50, max: n(g.cap?.[1]) || 300 },
         hold: g.hold || "",
         noBroadcast: g.bcOff || "",
+        ...(g.bcHow ? { how: g.bcHow } : {}),
+        ...(g.bcOn ? { launchOn: true } : {}),
         ...(g.phone ? { phone: g.phone } : {}),
       }
     : null;
@@ -264,6 +312,7 @@ function autoMessages(d: MsgRaw): AutoMessages {
   };
 }
 const ST_KEYS = ["valid", "booked", "service", "marketing", "stopped", "refused", "ready"] as const;
+const METRIC_KEYS = ["total", "valid", "invalid", "regular", "once", "d30_60", "d61_90", "booked", "marketing", "refused", "noperm"] as const;
 const stCounts = (x: Partial<CrmStatusCounts> | undefined): CrmStatusCounts | undefined =>
   x && typeof x === "object" ? (Object.fromEntries(ST_KEYS.map((k) => [k, n(x[k])])) as CrmStatusCounts) : undefined;
 const personSt = (x: Partial<CrmPersonStatus> | undefined): CrmPersonStatus | undefined =>
@@ -285,7 +334,8 @@ export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown>
     consent: d.consent === true,
   };
   if (!bot) Object.assign(b, { tpl: (d.tpl || "").trim(), lang: (d.lang || "ru").trim(), params: d.params || [] });
-  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", ...(d.tplId ? { tplId: d.tplId } : {}) });
+  // stop — выбор владельца: строка отказа в конце (её добавляет сервер, текст на пульте не меняем)
+  else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", stop: d.stop === true, ...(d.tplId ? { tplId: d.tplId } : {}) });
   if (d.source === "segment") b.segment = d.segment ? segBody(d.segment) : { id: "" };
   else {
     b.recipients = d.recipients || "";
@@ -333,6 +383,29 @@ export const liveCampaigns: CampaignSource = {
     // второй номер: to сервер не слушает (только номер для проверки владельца), rid — номер нажатия
     return (await call<{ text: string }>("/api/bc/test", { ...draftBody(ws, draft), to, ...(rid ? { rid } : {}) })).text;
   },
+  async gaTest(ws, draft, rid) {
+    const d = await call<{ text?: string; preview?: string; dup?: boolean }>("/api/bc/test", { ...draftBody(ws, { ...draft, channel: "bot" }), rid });
+    return { text: d.text || "", preview: d.preview || "", ...(d.dup ? { dup: true } : {}) };
+  },
+  async campaignLaunch(ws, id, opts = {}): Promise<LaunchResult> {
+    try {
+      const d = await call<{ b: BRaw }>("/api/bc/act", {
+        c: ws,
+        id,
+        act: "start",
+        op: getOperator(),
+        ...(opts.sure ? { sure: true, n: opts.n } : {}),
+        ...(opts.at ? { at: Math.round(opts.at) } : {}),
+        // force — только после «Всё равно запустить» на вопрос о сигнале Green-API (и только вместе с подтверждённой аудиторией)
+        ...(opts.force ? { force: true } : {}),
+      });
+      return { kind: "done", campaign: detail(d.b) };
+    } catch (e) {
+      // 409 { confirm, final } — итоговая аудитория: подтвердить тем же запросом с sure и n; без final — вопрос о сигнале Green-API
+      if (e instanceof ApiError && e.confirm) return e.final ? { kind: "final", question: e.confirm, final: finalOf(e.final as FinalRaw) } : { kind: "confirm", question: e.confirm };
+      throw e;
+    }
+  },
   async crmSegments(ws) {
     const d = await call<SegRaw>(`/api/crm/segments?c=${enc(ws)}`);
     const st = d.statuses ? stCounts(d.statuses) : undefined;
@@ -354,6 +427,7 @@ export const liveCampaigns: CampaignSource = {
       excluded: { ...{ stop: 0, noconsent: 0, fut: 0, recent: 0, marketed: 0 }, ...(d.excluded || {}) },
       consent: d.consent,
       ...(d.statuses !== undefined ? { statuses: d.statuses && st ? { ...st, base: n(d.statuses.base), invalid: n(d.statuses.invalid) } : null } : {}),
+      ...(d.metrics !== undefined ? { metrics: d.metrics ? (Object.fromEntries(METRIC_KEYS.map((k) => [k, n(d.metrics![k])])) as CrmMetrics) : null } : {}),
       info: d.info || null,
       ...(d.error ? { error: d.error, errorAt: n(d.errorAt) } : {}),
     };

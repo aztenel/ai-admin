@@ -181,8 +181,9 @@ async function owner(scheme) {
   await page.waitForLoadState("networkidle");
   const tabs = page.getByRole("tablist", { name: "Вид рассылок" });
   await tabs.waitFor();
-  const names = (await tabs.getByRole("tab").allInnerTexts()).map((x) => x.replace(/\s+/g, " ").trim());
-  ok("вкладки: «Маркетинг · рассылки», «Автоматические · сообщения», «Календарь · план и итоги»", names.length === 3 && /Маркетинг/.test(names[0]) && /Автоматические/.test(names[1]) && /сообщения/.test(names[1]) && /Календарь/.test(names[2]), JSON.stringify(names));
+  // финальное ТЗ рассылок (02.11.2026): четвёртая вкладка — «Meta»; на телефоне видны только названия, подписи — в названии вкладки
+  const names = await tabs.getByRole("tab").evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") || e.textContent || "").replace(/\s+/g, " ").trim()));
+  ok("вкладки: «Маркетинг · рассылки», «Автоматические · сообщения», «Календарь · план и итоги», «Meta»", names.length === 4 && /^Маркетинг · рассылки/.test(names[0]) && /^Автоматические · сообщения/.test(names[1]) && /^Календарь/.test(names[2]) && /^Meta/.test(names[3]), JSON.stringify(names));
   // прежнее «service» в памяти устройства — открывается новая вкладка
   ok("в памяти устройства «service» (прежние «Сервисные») — открыта вкладка «Автоматические»", (await page.getByRole("tab", { name: /Автоматические/ }).getAttribute("aria-selected")) === "true");
   // подписи вкладок не обрезаны на 390 px

@@ -1,7 +1,7 @@
 // Обзор номеров компании для раздела «Рассылки» (решение владельца 19.10.2026: два вида рассылок — два номера).
-// Основной номер (Meta / Wazzapo) — вкладка «Маркетинг» (у компании со вторым номером и базой — в свёрнутой группе «Meta — неактивный
-// канал», 02.11.2026): качество по оценке Meta, предел за 24 часа, сколько ушло, сигнал Meta «остановиться» (снять его может только
-// владелец — сотруднику кнопку не показываем, сервер ответит 403).
+// Второй номер (Green-API) — главный канал рассылок (финальное ТЗ, 02.11.2026): карточка ChannelCard во вкладке «Маркетинг».
+// Основной номер (Meta / Wazzapo) — вкладка «Meta»: качество по оценке Meta, предел за 24 часа, сколько ушло, сигнал Meta «остановиться»
+// (снять его может только владелец — сотруднику кнопку не показываем, сервер ответит 403).
 // Номер бота (Green-API) — вкладка «Автоматические» компании без журнала Altegio: на связи ли, ведёт ли вебхук в бота, сколько ушло
 // рассылками за 24 часа (у компании с журналом то же — в карточке «Отправка клиентам», AutoMessages.tsx).
 // Всё — из /api/bc/list (CampaignsOverview); чего сервер не знает, не показываем.
@@ -278,15 +278,19 @@ export function NumberSkeleton() {
   );
 }
 
-/** Карточка главного канала маркетинга (ТЗ v3.0 §2.2, §5.1): на связи ли номер, можно ли запускать рассылки, главное действие.
- *  bot — «Второй WhatsApp» (с 02.11.2026 главный канал рассылок; запуск с него — отдельное решение владельца: пока он выключен на сервере,
- *  здесь так и написано); main — основной номер, шаблоны Meta (у компании без базы клиентов мастеру второго номера некого выбрать). */
-export function ChannelCard({ ov, channel = "bot", onCreate }: { ov: CampaignsOverview; channel?: "bot" | "main"; onCreate: () => void }) {
+/** Карточка главного канала рассылок — второй номер (финальное ТЗ рассылок, 02.11.2026): на связи ли номер, приходят ли ответы клиентов,
+ *  можно ли запускать рассылки (запрет кода — пока владелец не включит), сколько ушло за сутки, главное действие «Создать рассылку».
+ *  Технические причины — словами сервера (без слов «вебхук» и «инстанс»). */
+export function ChannelCard({ ov, onCreate }: { ov: CampaignsOverview; onCreate: () => void }) {
   const b = ov.bot;
+  const state: { label: string; ok: boolean; text: string } = !b
+    ? { label: "Не подключён", ok: false, text: "Второй номер (Green-API) у компании не подключён. Рассылки шаблонами Meta — во вкладке «Meta»." }
+    : !b.ready
+      ? { label: "Нет связи", ok: false, text: b.why || "Номер не на связи." }
+      : !b.hook
+        ? { label: "Не настроен до конца", ok: false, text: b.warn || "Ответы клиентов не приходят в пульт." }
+        : { label: "На связи", ok: true, text: "" };
   const off = !!b?.noBroadcast;
-  const main = channel === "main";
-  const ready = main ? ov.main.ready : !!b?.ready;
-  const phone = main ? ov.main.phone : b?.phone;
   return (
     <section aria-label="Канал рассылок" className="mb-4 rounded-2xl bg-surface p-4 shadow-card">
       <div className="flex items-start gap-3">
@@ -294,24 +298,28 @@ export function ChannelCard({ ov, channel = "bot", onCreate }: { ov: CampaignsOv
           <Smartphone aria-hidden className="size-5" strokeWidth={1.9} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[1.0625rem] font-semibold">{main ? "Основной номер" : "Второй WhatsApp"}</p>
-          <p className="text-sm text-fg-2">{phone ? formatPhone(phone) : "номер не подключён"}</p>
+          <p className="text-[1.0625rem] font-semibold">Второй WhatsApp</p>
+          <p className="tnum text-sm text-fg-2">{b?.phone ? formatPhone(b.phone) : "номер не подключён"}</p>
         </div>
-        {(main || b) && (
-          <span className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium", ready ? "bg-positive-soft text-positive" : "bg-critical-soft text-critical")}>
-            {ready ? <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} /> : <CircleAlert aria-hidden className="size-3.5" strokeWidth={2.25} />}
-            {main ? (ready ? "Подключён" : "Не подключён") : ready ? "На связи" : "Нет соединения"}
-          </span>
-        )}
+        <span className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium", state.ok ? "bg-positive-soft text-positive" : "bg-critical-soft text-critical")}>
+          {state.ok ? <CircleCheck aria-hidden className="size-3.5" strokeWidth={2.25} /> : <CircleAlert aria-hidden className="size-3.5" strokeWidth={2.25} />}
+          {state.label}
+        </span>
       </div>
-      {main ? (
-        <p className="mt-3 text-sm text-fg-2">Рассылки шаблонами Meta: только шаблоном, который одобрила Meta.</p>
-      ) : (
-        b && (
-          <p className={cn("mt-3 text-sm", off ? "text-fg-2" : "text-positive")}>
-            {off ? "Запуск рассылок выключен. Черновики, проверка и одобрение работают." : "Рассылки с этого номера можно запускать."}
-          </p>
-        )
+      {state.text && <p className="mt-3 text-sm text-critical">{state.text}</p>}
+      {b?.hold && <p className="mt-2 text-sm text-critical">Сигнал от Green-API: {b.hold}</p>}
+      {b && (
+        // как включить запуск — в мастере и в листе рассылки (свёрнуто), а не на главном экране: это настройка, не ежедневная работа
+        <p className={cn("mt-3 text-sm", off ? "text-fg-2" : "text-fg")}>
+          {off
+            ? "Запуск рассылок выключен — его включает владелец отдельным решением. Черновик, проверка, тест и одобрение работают."
+            : `Запуск разрешён${b.launchOn ? " владельцем" : ""}: реклама уходит только тем, кто дал согласие, не больше предела в сутки.`}
+        </p>
+      )}
+      {b && (
+        <p className="tnum mt-1 text-sm text-fg-3">
+          За 24 часа ушло рассылками: {nf.format(b.used24h)} {plural(b.used24h, ["сообщение", "сообщения", "сообщений"])}
+        </p>
       )}
       <Button variant="primary" size="lg" className="mt-3 w-full md:hidden" onClick={onCreate}>
         Создать рассылку

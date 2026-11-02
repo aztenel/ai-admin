@@ -29,6 +29,8 @@ import type {
   CrmInfo,
   CrmOverview,
   CrmPage,
+  GaTestResult,
+  LaunchResult,
   SegmentSpec,
   ServiceOverview,
   ServiceDryRun,
@@ -80,6 +82,17 @@ export interface CampaignSource {
    *  Второй номер (02.11.2026): to не слушается — только номер для проверки владельца («Автоматические»); нет его — ApiError code
    *  «notest» с preview; сотруднику — 403. rid — номер нажатия: повтор того же нажатия второй раз не отправит. */
   testSend(ws: string, draft: CampaignDraft, to: string, rid?: string): Promise<string>;
+  /** Тест рассылки со второго номера (финальное ТЗ 02.11.2026): только владелец и только на его номер для проверки («Автоматические» →
+   *  «Номер для проверки»), настоящая отправка Green-API. rid — номер нажатия (повтор после обрыва связи второй раз не отправит).
+   *  Не ушло — ApiError: code notest / preview / nosender (с preview — что пришло бы), 403 — сотрудник, 429 — много проб за час. */
+  gaTest(ws: string, draft: CampaignDraft, rid: string): Promise<GaTestResult>;
+  /**
+   * Запустить или запланировать (at — мс, через 5 минут … 30 дней) рассылку со второго номера — только владелец. Первый вызов (без sure)
+   * у рассылки по базе: сервер присылает итоговую аудиторию и точный текст ({ kind: "final" }) — подтвердить тем же вызовом с sure и
+   * n = final.n; число изменилось — сервер снова пришлёт final. Отказы — ApiError: code ga_off (how — как включить, только владельцу),
+   * empty (некому отправить), preview (тестовая версия).
+   */
+  campaignLaunch(ws: string, id: string, opts?: { sure?: boolean; n?: number; at?: number; force?: boolean }): Promise<LaunchResult>;
   /** База клиентов: числа, сегменты, статусы, исключения. */
   crmSegments(ws: string): Promise<CrmOverview>;
   /** Люди сегмента по 50 (page с 1), номера — маской. all — все клиенты сегмента со статусами (и те, кому реклама не уйдёт). */
@@ -106,8 +119,9 @@ export interface CampaignSource {
   messageStats(ws: string, days: 7 | 30): Promise<MessageStats>;
   /** Библиотека рекламных текстов. */
   templates(ws: string): Promise<TemplateLibrary>;
-  /** Сохранить текст (и одобрить или снять одобрение) — только владелец. Ошибка — ApiError с текстом сервера. */
-  templateSave(ws: string, item: { id?: string; title: string; goal?: string; ru: string; kk: string; approved: boolean }): Promise<LibraryItem>;
+  /** Сохранить текст (и одобрить или снять одобрение) — только владелец. Без id — свой новый текст (cat — категория). Правка текста —
+   *  новая версия, одобрение снимается. Ошибка — ApiError с текстом сервера. */
+  templateSave(ws: string, item: { id?: string; title: string; goal?: string; cat?: string; ru: string; kk?: string; approved?: boolean }): Promise<LibraryItem>;
   /** Как текст увидят 3–5 клиентов (номера маской); нет базы — на примере. По id из библиотеки или по своему тексту. */
   templatePreview(ws: string, q: { id?: string; text?: string; lang: "ru" | "kk"; segment?: SegmentSpec }): Promise<TemplatePreview>;
   /** Дублировать, убрать в архив или вернуть (только владелец). */
