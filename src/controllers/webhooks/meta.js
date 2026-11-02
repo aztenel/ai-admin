@@ -68,7 +68,10 @@ export async function handleWAText(env, channel, fromDigits, text, send, wx) {
     // проигрыш журнала не прошёл (база ещё не отвечает): событие остаётся в журнале, клиенту не пишем — иначе каждая попытка (раз
     // в минуту) слала бы ему «спасибо за сообщение»; администратор знает о сбое с первой обработки
     if (wx && wx.replay) throw e;
-    if (!sent) { try { await send(fallbackText(detectLang(text, ""))); } catch (e2) { console.log("wa send", String(e2)); } }
+    // бот компании на этом номере выключен (Winchester: waOff, gaOff) — клиенту не пишем ничего и при сбое: он писал администратору,
+    // а не боту (выпуск 02.11.2026, условие владельца «никаких сообщений клиентам даже при сбое D1»); сигнал администратору — ниже
+    const own = wx && wx.client && hasClient(wx.client) ? CLIENTS[wx.client] : null;
+    if (!sent && !(own && botOff(env, own, channel))) { try { await send(fallbackText(detectLang(text, ""))); } catch (e2) { console.log("wa send", String(e2)); } }
     try { await notifyOnce(env, "wa:" + fromDigits, `⚠️ Сбой бота в WhatsApp — клиент мог не получить ответ, ответьте ему сами\n${phone}\nСообщение: «${redact(String(text)).slice(0, 200)}»\n${String(e).slice(0, 200)}`, wx && wx.client); } catch (e2) {}
   }
 }

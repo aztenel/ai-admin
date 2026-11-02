@@ -25,7 +25,7 @@ import { siteConf } from "../services/sitebook/config.js";
 import { siteCatalog } from "../services/sitebook/catalog.js";
 import { siteTimes } from "../services/sitebook/slots.js";
 import { bookingCard } from "../services/inbox/booking-card.js";
-import { linesOf, lineLabel, lineChans, opsOf } from "../services/inbox/lines.js";
+import { linesOf, lineLabel, lineChans, opsOf, oldGaChat, OLD_LINE } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
 import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbOff } from "../services/inbox/send.js";
@@ -137,9 +137,11 @@ export async function inboxApi(request, env, url, s, ctx) {
   let p = h.profile || {};
   // номер Green-API — только свой у компании или общий, закреплённый за ней (gaRoute): чужой общий номер не подставляется (аудит 31.10.2026)
   const gaOn = ch === "ga" && !!gaRoute(env, cid);
+  // переписка прежнего второго номера (GA_SINCE_<ID>, services/inbox/lines.js): ответ отсюда ушёл бы с нового номера — отправка закрыта
+  const oldLine = ch === "ga" && oldGaChat(env, cid, p);
   // почему из пульта сейчас нельзя отправить — пульт показывает это заранее, а не после нажатия: черновик клиентам не пишет;
   // второму номеру нужна база для защиты от двойной отправки (без неё Green-API не вызывается)
-  const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : ch === "ga" && gaOn ? await sendDbOff(env, now) : "";
+  const sendOffOf = async () => ch === "web" ? "" : isPreview(env) ? PREVIEW_SEND : oldLine ? OLD_LINE : ch === "ga" && gaOn ? await sendDbOff(env, now) : "";
   const view = async () => {
     const phone = ch === "web" ? p.phone || "" : "+" + id, sendOff = await sendOffOf();
     // галочки из D1, если копия переписки здесь ещё старая (01.11.2026); переписки в D1 — уже согласованы, лишний запрос не нужен
@@ -185,6 +187,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   let file = null;
   // черновик клиентам не пишет ни с какого номера (аудит 31.10.2026): отказ до чтения тела и до обращения к провайдеру
   if ((P === "/api/inbox/send" || isFile) && isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
+  if ((P === "/api/inbox/send" || isFile) && oldLine) return jsonP({ error: OLD_LINE, code: "oldline" }, 409);
   if (isFile) { // со второго номера (Green-API); у Meta и чата сайта отправки файлов из пульта нет — и тело не читаем
     if (ch !== "ga") return jsonP({ error: NO_FILES }, 409);
     if (!gaOn) return jsonP({ error: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." }, 409);
@@ -295,6 +298,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       // устройства (отметка D1 del-<номер сообщения>); неизвестно, удалилось ли, — отметка dlu и предупреждение, без повтора
       if (ch !== "ga" || !gaOn) return jsonP({ error: DEL_WHY.channel, code: "channel" }, 409);
       if (isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
+      if (oldLine) return jsonP({ error: OLD_LINE, code: "oldline" }, 409); // сообщение прежнего номера новый номер не удалит
       const mid = String(b.mid || "").slice(0, 80);
       if (!mid) return jsonP({ error: DEL_WHY.nomid, code: "nomid" }, 400);
       const why = delAllWhy((h.turns || [])[findTurn(h.turns || [], { mid })], now);
@@ -360,6 +364,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       /** @type {any} */ let sent = null, again = false;
       if (msg) {
         if (isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
+        if (oldLine) return jsonP({ error: OLD_LINE, code: "oldline" }, 409);
         const r = await sendOnce(env, cid, ch, id, rid, () => sendTo(msg));
         if ("blocked" in r) return blockedAnswer(r.blocked);
         if ("dup" in r) {

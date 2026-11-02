@@ -8,6 +8,23 @@ import { gaInfo } from "../integrations/greenapi/client.js";
 import { linesRead, linesSave, opsRead } from "../../db/kv/inbox.js";
 
 const DEF = { wa: "Основной номер", ga: "Второй номер", web: "Чат на сайте" };
+
+// Смена второго номера (выпуск Winchester 02.11.2026: на боевом был другой инстанс Green-API, подключаем номер владельца). Переписка
+// хранится по номеру клиента без номера, на который он писал, поэтому старые чаты прежнего номера выглядели бы чатами нового, и ответ
+// из пульта ушёл бы клиенту уже с нового номера. Text GA_SINCE_<ID> — когда подключён нынешний второй номер («2026-11-02 14:05» по
+// Астане, ISO-время или миллисекунды): в чате второго номера без сообщения клиента после этого времени отправка из пульта закрыта,
+// история видна. Убрать переменную — проверки нет. Не разобрать значение — закрыто во всех чатах второго номера (закрыто при сомнении).
+/** @param {Env} env @param {string} cid @returns {number} 0 — проверки нет */
+export function gaSince(env, cid) {
+  const raw = String(/** @type {Record<string, any>} */ (env)["GA_SINCE_" + String(cid).toUpperCase()] ?? "").trim();
+  if (!raw) return 0;
+  if (/^\d{12,14}$/.test(raw)) return +raw;
+  const iso = raw.replace(" ", "T"), t = Date.parse(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : iso + "+05:00");
+  return Number.isFinite(t) ? t : Infinity;
+}
+/** чат второго номера, где клиент не писал после подключения нынешнего номера @param {Env} env @param {string} cid @param {any} p профиль чата */
+export const oldGaChat = (env, cid, p) => { const s = gaSince(env, cid); return s > 0 && !(+((p && p.li) || 0) >= s); };
+export const OLD_LINE = "Это переписка прежнего второго номера: ответ отсюда ушёл бы клиенту уже с нового номера, поэтому отправка закрыта. Ответьте с телефона прежнего номера.";
 /** Подпись номера. Компания с одним номером Green-API без своей подписи — просто «WhatsApp». @param {string} cid @param {string} ch @param {string[]} chans */
 export function lineLabel(cid, ch, chans) {
   const c = CLIENTS[cid] || {}, own = c.lines && c.lines[ch];
