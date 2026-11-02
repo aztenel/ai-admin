@@ -415,7 +415,7 @@ test("база клиентов без согласий: клиенты видн
   assert.deepEqual(r.list.map(x => [x.name, x.why]), [["Арман", "нет согласия на рекламу"], ["Ерлан", "нет согласия на рекламу"], ["Айдос", "просил не писать («стоп»)"]]);
   assert.ok(r.list.every(x => x.phone.includes("***")), "номера маской");
   assert.deepEqual(r.list[1].st, { booked: true, service: true, marketing: false, stopped: false, refused: false, ready: false });
-  const pv = await (await own.post("/api/bc/templates/preview", { c: "winchester", id: "M01", lang: "ru", segment: "pora" })).json();
+  const pv = await (await own.post("/api/bc/templates/preview", { c: "winchester", id: "W02", lang: "ru", segment: "pora" })).json();
   assert.equal(pv.demo, false, "пример — на настоящих клиентах сегмента");
   assert.ok(pv.list.length >= 2 && pv.list.every(x => x.allowed === false && x.why), JSON.stringify(pv.list));
   assert.match(pv.list[0].text, /^Здравствуйте, Арман!/);

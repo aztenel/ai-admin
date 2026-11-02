@@ -12,7 +12,7 @@ export const bcKey = /** @param {string} cid @param {string} id */ (cid, id) => 
 /** @param {Record<string, any>} b */
 export const bcMeta = b => ({ name: snip(b.name, 60), status: b.status, total: b.total, pos: b.pos, sent: b.sent, failed: b.failed, skipped: b.skipped, ...(b.excl ? { excl: b.excl } : {}), created: b.created, ...(b.ch ? { ch: b.ch } : {}),
   ...(b.by ? { by: snip(b.by, 8) } : {}), ...(b.src ? { src: snip(b.src, 8) } : {}), ...(b.seg ? { seg: snip(b.seg, 60) } : {}), ...(b.tpl ? { tpl: snip(b.tpl, 60) } : {}),
-  ...(b.tplId ? { tplId: snip(b.tplId, 16) } : {}), ...(b.approvedAt ? { approved: true } : {}), ...(b.demo ? { demo: 1 } : {}) }); // tplId — текст библиотеки, approved — одобрил владелец (ТЗ v3.0), demo — рассылка демо-базы черновика
+  ...(b.tplId ? { tplId: snip(b.tplId, 16) } : {}), ...(b.approvedAt ? { approved: true } : {}), ...(b.demo ? { demo: 1 } : {}), ...(b.at ? { at: b.at } : {}) }); // tplId — текст библиотеки, approved — одобрил владелец (ТЗ v3.0), demo — рассылка демо-базы черновика
 /** @param {Env} env @param {string} cid @param {Record<string, any>} b */
 export const bcPut = (env, cid, b) => kvRetry(() => env.KV.put(bcKey(cid, b.id), JSON.stringify(b), { expirationTtl: 180 * 86400, metadata: bcMeta(b) }));
 /** Строки списка рассылок компании из метаданных (без чтения каждой рассылки). @param {Env} env @param {string} cid @param {number} [limit] */
@@ -30,9 +30,20 @@ export const bcLastSave = (env, cid, v) => env.KV.put("bclast:" + cid, JSON.stri
 export async function bcChunksSave(env, cid, id, list) {
   for (let k = 0; k * BC_CHUNK < list.length; k++) await env.KV.put(bcChunkKey(cid, id, k), JSON.stringify(list.slice(k * BC_CHUNK, (k + 1) * BC_CHUNK)), { expirationTtl: 180 * 86400 });
 }
+// кому рассылка со второго номера по базе ушла (или могла уйти): [цифры, когда, номер сообщения, статус] — для итогов рассылки
+// (финальное ТЗ рассылок 02.11.2026: «записались после», «отказались»). bcs:<клиент>:<id>, 180 дней, как сама рассылка. Дописывает
+// одна фоновая отправка (замок рассылки), по сообщению в минуту — гонок нет. Номера наружу не уходят: итоги — только числа
+/** @param {Env} env @param {string} cid @param {string} id @returns {Promise<any[][]>} */
+export const bcSentRead = async (env, cid, id) => { try { const v = JSON.parse((await env.KV.get(`bcs:${cid}:${id}`)) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+/** @param {Env} env @param {string} cid @param {string} id @param {any[][]} add */
+export async function bcSentAdd(env, cid, id, add) {
+  if (!add.length) return;
+  await kvRetry(async () => { const cur = await bcSentRead(env, cid, id); await env.KV.put(`bcs:${cid}:${id}`, JSON.stringify(cur.concat(add).slice(-5000)), { expirationTtl: 180 * 86400 }); });
+}
 // удалить рассылку вместе со списком получателей (демо-база черновика: «Убрать демо-базу»)
 /** @param {Env} env @param {string} cid @param {string} id @param {number} total */
 export async function bcDrop(env, cid, id, total) {
   for (let k = 0; k * BC_CHUNK < Math.max(1, total); k++) await env.KV.delete(bcChunkKey(cid, id, k));
+  await env.KV.delete(`bcs:${cid}:${id}`);
   await kvRetry(() => env.KV.delete(bcKey(cid, id)));
 }

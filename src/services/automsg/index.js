@@ -75,7 +75,7 @@ export async function autoInfo(env, c, now, owner) {
   const set = await autoSet(env, c), ready = await readiness(env, c, now);
   const [ap, own, log] = await Promise.all([svApprovals(env, c.id), svVariants(env, c.id), jrLogLoad(env, c.id)]);
   const days = Array.from({ length: 7 }, (_, i) => isoDay(now - i * 86400e3)), counts = await autoCounts(env, c.id, days);
-  const mkBan = mkLocked(c);
+  const mkBan = mkLocked(env, c);
   /** @type {any} */ let view = null;
   const scenarios = [];
   for (const d of AUTO) {
@@ -84,7 +84,7 @@ export async function autoInfo(env, c, now, owner) {
       for (const o of arr) { const v = o[d.id] || {}; x.sent += +v.s || 0; x.failed += (+v.f || 0) + (+v.u || 0); x.skipped += (+v.k || 0) + (+v.c || 0); }
       return x;
     };
-    const locked = d.id === "campaigns" ? (bcGaOff(c.id) ? GA_OFF + " Черновики, одобрение и проверка на ваш номер — в «Маркетинге»." : "Рассылки создаются и запускаются в «Маркетинге».")
+    const locked = d.id === "campaigns" ? (bcGaOff(c.id, env) ? GA_OFF + " Черновики, одобрение и проверка на ваш номер — в «Маркетинге»." : "Рассылки создаются и запускаются в «Маркетинге».")
       : d.group === "marketing" ? mkBan : "";
     const tx = textOf(c, d, set, ap, own, now);
     const on = d.id === "campaigns" ? false : s.on;
@@ -152,7 +152,7 @@ export async function autoChange(env, c, b, who, now) {
   if (b.timing != null) { const r = timingPatch(d, b.timing, set.win, set.s[d.id].t); if ("error" in r) return { error: r.error, status: 400 }; timing = r.t; }
   const on = b.on == null ? null : b.on === true;
   if (on != null && d.id === "campaigns") return { error: "Рассылки запускаются в «Маркетинге», здесь их не включают.", status: 409, code: "locked" };
-  if (on && d.group === "marketing" && mkLocked(c)) return { error: mkLocked(c), status: 409, code: "locked" };
+  if (on && d.group === "marketing" && mkLocked(env, c)) return { error: mkLocked(env, c), status: 409, code: "locked" };
   /** @type {{ ru: string, kk: string } | null} */ let mk = null;
   if (b.text != null && d.group !== "service") {
     if (!MK_TEXT[d.id]) return { error: "У этого сценария нет своего текста.", status: 400 };

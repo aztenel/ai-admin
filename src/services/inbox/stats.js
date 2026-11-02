@@ -8,7 +8,8 @@
 /** @import { Env } from "../../lib/types.js" */
 import { d1Ready } from "../../db/d1/status.js";
 import { msgEventAdd, msgEventCounts } from "../../db/d1/stats.js";
-import { replyTo } from "./queue.js";
+import { replyTo, topicOf } from "./queue.js";
+import { stopKind } from "../conversation/stop-words.js";
 
 export const SOURCES = ["service", "review", "campaign", "admin"];
 const EVENTS = ["sent", "delivered", "read", "failed", "replied"];
@@ -31,9 +32,9 @@ export async function statStatus(env, cid, ch, mid, turn, status, now) {
     const db = await d1Ready(env, now);
     if (!db) return;
     if (status === "failed" && turn.st !== "failed") return; // уже доставлено — поздняя ошибка Green-API не считается (как у галочек, status.js)
-    const at = +turn.t || now, d = { ch, src };
-    if (status === "sent" || status === "delivered" || status === "read") await msgEventAdd(db, cid, `msg:${cid}:${ch}:${mid}:sent`, "msg_sent", d, at);
-    if (status !== "sent") await msgEventAdd(db, cid, `msg:${cid}:${ch}:${mid}:${status}`, "msg_" + status, d, now);
+    const at = +turn.t || now, d = { ch, src }, bc = turn.bc ? String(turn.bc) : ""; // bc — номер рассылки: итоги рассылки (results.js)
+    if (status === "sent" || status === "delivered" || status === "read") await msgEventAdd(db, cid, `msg:${cid}:${ch}:${mid}:sent`, "msg_sent", d, at, bc);
+    if (status !== "sent") await msgEventAdd(db, cid, `msg:${cid}:${ch}:${mid}:${status}`, "msg_" + status, d, now, bc);
   } catch (e) { console.log("stat", String(e).slice(0, 120)); }
 }
 
@@ -48,10 +49,13 @@ export async function statReply(env, cid, ch, digits, turns, now) {
   const src = replyTo(turns.slice(0, i), now);
   if (!src) return;
   const our = turns.slice(0, i).reverse().find(t => t && (t.rm || t.bc));
+  // ответ на рассылку: тема (хочет записаться, перенос…) и «стоп» — для итогов рассылки; текст ответа в журнал не пишем
+  const text = String((turns[i] && turns[i].text) || ""), topic = topicOf(text), stop = stopKind(text);
   try {
     const db = await d1Ready(env, now);
     if (!db) return;
-    await msgEventAdd(db, cid, `rep:${cid}:${ch}:${tag(digits)}:${src.k}:${src.id}:${src.at}`, "msg_replied", { ch, src: srcOf(our) || "service" }, now);
+    await msgEventAdd(db, cid, `rep:${cid}:${ch}:${tag(digits)}:${src.k}:${src.id}:${src.at}`, "msg_replied",
+      { ch, src: srcOf(our) || "service", ...(topic ? { topic } : {}), ...(stop ? { stop } : {}) }, now, src.k === "bc" ? src.id : "");
   } catch (e) { console.log("stat reply", String(e).slice(0, 120)); }
 }
 

@@ -16,6 +16,7 @@ import { bcTick } from "../../src/services/broadcast/sender.js";
 import { gaKind, gaCode, gaUnsure } from "../../src/services/integrations/greenapi/client.js";
 import { CLIENTS } from "../../src/config/builtin-clients.js";
 import { autoOn, legacyOn } from "../automsg.mjs";
+import { OWN } from "../texts.mjs";
 
 const W = CLIENTS.winchester, INST = { id: "7105000099", token: "ga-tok-5xx" };
 const GA = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
@@ -99,7 +100,7 @@ const day = n => new Date(NOW - n * 86400e3 + 5 * 3600e3).toISOString().slice(0,
 let rid = 9500;
 const rec = (phone, n, name, staff) => ({ id: ++rid, datetime: `${day(n)}T12:00:00+05:00`, deleted: false, attendance: 1, staff: { id: 1, name: staff },
   client: { id: +phone.replace(/\D/g, "").slice(-6), phone, name }, services: [{ id: 1, title: "Мужская стрижка" }] });
-const DRAFT = { c: "winchester", ch: "ga", name: "Пора на стрижку", tplId: "M03", lang: "ru", segment: "pora", cap: 50, from: 8, to: 22, consent: true };
+const DRAFT = { c: "winchester", ch: "ga", name: "Пора на стрижку", text: OWN.staff, lang: "ru", segment: "pora", cap: 50, from: 8, to: 22, consent: true };
 
 /** рассылка двум клиентам; первая отправка — ответ reply; фоновая отправка идёт, пока рассылка не закончится (паузы пропускаются) */
 async function campaign(reply) {

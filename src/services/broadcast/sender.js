@@ -4,7 +4,7 @@
 import { clean } from "../../lib/text.js";
 import { TZ, local, hhmm, isoDay } from "../../lib/time.js";
 import { kvRetry } from "../../db/kv/retry.js";
-import { bcChunkKey, bcPut, bcGet } from "../../db/kv/broadcasts.js";
+import { bcChunkKey, bcPut, bcGet, bcSentAdd } from "../../db/kv/broadcasts.js";
 import { bcmAdd, autoLoad } from "../../db/kv/crm.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { logSafe } from "../../lib/phone.js";
@@ -41,16 +41,22 @@ import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } fr
 export const bcAt = (ms, now) => { const d = local(ms), t = hhmm(d); return isoDay(ms) === isoDay(now) ? "в " + t : isoDay(ms) === isoDay(now + 86400e3) ? "завтра в " + t : `${d.getUTCDate()}.${String(d.getUTCMonth() + 1).padStart(2, "0")} в ${t}`; };
 // gaNoBroadcast (Winchester, 18.10.2026): рассылка с неофициального номера — прямой путь к блокировке. С ТЗ v3.0 (31.10.2026) это запрет
 // только на запуск и отправку: черновик со второго номера можно создать, проверить на клиентах базы и одобрить, а запуск отвечает
-// 409 ga_off. Снимает запрет владелец отдельным решением (правка кода), не переменной
+// 409 ga_off. Финальное ТЗ рассылок (02.11.2026): управляемое включение — запрет снимает только явное решение владельца, переменная
+// GA_BROADCAST_<ID> = 1 в Cloudflare (Production). Молча и из пульта он не снимается. И со снятым запретом реклама уходит только
+// клиентам с подтверждённым согласием, не больше предела в сутки, в часы отправки и после подтверждения запуска владельцем
 export const GA_OFF = "Запуск рассылок со второго номера выключен. Его включает владелец отдельным решением.";
-/** запуск рассылок с номера Green-API выключен у компании @param {string} cid */
-export const bcGaOff = cid => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast);
+/** как включить — владельцу @param {string} cid */
+export const gaOnHow = cid => `Включить запуск может только владелец: переменная GA_BROADCAST_${cid.toUpperCase()} = 1 в Cloudflare (Production). Реклама и тогда уйдёт только клиентам с подтверждённым согласием, не больше предела в сутки и после вашего подтверждения запуска.`;
+/** владелец разрешил рассылки со второго номера (GA_BROADCAST_<ID> = 1) @param {any} env @param {string} cid */
+export const gaBcAllowed = (env, cid) => String((env && env["GA_BROADCAST_" + cid.toUpperCase()]) || "").trim() === "1";
+/** запуск рассылок с номера Green-API выключен у компании @param {string} cid @param {any} env */
+export const bcGaOff = (cid, env) => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) && !gaBcAllowed(env, cid);
 /** с какого номера и каким токеном уходят сообщения рассылки (ch = "ga" — номер Green-API клиента). Для запуска и отправки:
  *  у второго номера с запретом — { error: GA_OFF, code: "ga_off" }. Черновики маршрут не спрашивают
  *  @param {Env} env @param {string} cid @param {any} ch @returns {Record<string, any>} */
 export const bcRoute = (env, cid, ch) => {
   const up = cid.toUpperCase();
-  if (ch === "ga" && bcGaOff(cid)) return { error: GA_OFF, code: "ga_off" };
+  if (ch === "ga" && bcGaOff(cid, env)) return { error: GA_OFF, code: "ga_off" };
   if (ch === "ga") { const ga = gaRoute(env, cid); return ga ? { ga, quiet: true } : { error: `Второй номер (Green-API) у этой компании не подключён: в Cloudflare нужны переменная GA_ID_${up} и секрет GA_TOKEN_${up} из кабинета Green-API.` }; }
   if (env["WA_TOKEN_" + up]) { const pnid = env["PHONE_NUMBER_ID_" + up] || CLIENTS[cid].waPhoneId || ""; return pnid ? { client: cid, pnid, quiet: true } : { error: "В паспорте бота не указан «Phone number ID», без него рассылку не отправить. Откройте «Мои боты», затем «Изменить»." }; }
   if (env.WA_TOKEN && env.PHONE_NUMBER_ID && env.WA_CLIENT === cid) return env.APP_SECRET ? { quiet: true } : { error: "Для рассылок нужен секрет APP_SECRET (App secret приложения Meta) в Cloudflare: без него бот не может доверять сигналам Meta об отказах и жалобах." };
@@ -59,11 +65,13 @@ export const bcRoute = (env, cid, ch) => {
 // рассылка через Green-API: обычный текст. Предел в сутки — до 300 (по умолчанию 50), между сообщениями 30–150 секунд
 export const GA_CAP = [50, 300], GA_GAP = [30e3, 150e3], GA_MSG_MAX = 1500, GA_CAPTION_MAX = 1000;
 export const GA_STOP_LINE = "Чтобы не получать сообщения, ответьте СТОП";
-// текст как написал администратор (переводы строк сохраняются); в конце — строка «ответьте СТОП», если про «стоп» в тексте ничего нет
-/** @param {any} src */
-export function bcGaMsg(src) {
-  const t = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u2060\ufeff\u00ad]/g, "").replace(/\t/g, " ").replace(/[ ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return !t ? "" : /(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(t) ? t : t + "\n\n" + GA_STOP_LINE;
+// текст как написал администратор (переводы строк сохраняются); в конце — строка «ответьте СТОП», если про «стоп» в тексте ничего нет.
+// mode "none" — без строки: рассылка по базе из библиотеки или своим текстом (утверждённые тексты не меняем; строку отказа владелец
+// добавляет сам галочкой в мастере, create.js — и видит её в предпросмотре). U+200D (соединитель эмодзи) не вырезаем
+/** @param {any} src @param {string} [mode] */
+export function bcGaMsg(src, mode = "auto") {
+  const t = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u200b\u200c\u200e\u200f\u2060\ufeff\u00ad]/g, "").replace(/\t/g, " ").replace(/[ ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return !t ? "" : mode === "none" || /(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(t) ? t : t + "\n\n" + GA_STOP_LINE;
 }
 /** @param {any} b @param {any} name */
 export const bcGaText = (b, name) => String(b.msg || "").replace(/\{\s*(имя|name)\s*\}/gi, name || b.fallback || "уважаемый клиент");
@@ -122,7 +130,7 @@ export async function bcRun(env, cid, id, on) {
 }
 // получатели рассылки с номера from, n человек (части bcr: по BC_CHUNK)
 /** @param {Env} env @param {string} cid @param {string} id @param {number} from @param {number} n @returns {Promise<any[]>} */
-async function bcRange(env, cid, id, from, n) {
+export async function bcRange(env, cid, id, from, n) {
   const out = [];
   for (let k = Math.floor(from / BC_CHUNK); n > 0 && k <= Math.floor((from + n - 1) / BC_CHUNK); k++) {
     const ch = JSON.parse((await env.KV.get(bcChunkKey(cid, id, k))) || "[]");
@@ -133,12 +141,38 @@ async function bcRange(env, cid, id, from, n) {
 // когда отправлять нельзя: вне часов отправки или после временного отказа Meta → { note, till }
 /** @param {any} b @param {number} now */
 export function bcWait(b, now) {
+  if (b.at > now) return { note: `Запланирована: начнётся ${bcAt(b.at, now)} по Астане.`, till: b.at }; // запуск на время (финальное ТЗ рассылок, 02.11.2026)
   if (b.retryAt > now) return { note: `${b.retryWhy || bcFrom(b) + " временно не принимает сообщения"}. Повторю ${bcAt(b.retryAt, now)}.`, till: b.retryAt };
   const n = local(now), hr = n.getUTCHours() + n.getUTCMinutes() / 60;
   if (hr >= b.from && hr < b.to) return null;
   const day0 = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) - TZ * 3600e3, till = day0 + b.from * 3600e3 + (hr >= b.to ? 86400e3 : 0);
   return { note: `Отправка идёт с ${hStr(b.from)} до ${hStr(b.to)} по Астане. Продолжу ${bcAt(till, now)}.`, till };
 }
+/**
+ * Итоговая аудитория перед запуском рассылки по базе со второго номера (финальное ТЗ рассылок, 02.11.2026: «перед реальной отправкой
+ * показать итоговую аудиторию и получить подтверждение владельца»): кому из оставшихся сообщение уйдёт, если запустить сейчас, —
+ * те же проверки, что перед каждой отправкой (bcTick): «стоп», подтверждённое согласие, запись, недавний визит, реклама за 30 дней,
+ * данные для текста. sample — готовый текст первому из них (без номера). why — почему никому.
+ * @param {Env} env @param {string} cid @param {any} b @param {number} now @returns {Promise<{ n: number, rest: number, sample: string, why: string }>}
+ */
+export async function bcFinal(env, cid, b, now) {
+  const rest = Math.max(0, (+b.total || 0) - (+b.pos || 0));
+  const items = rest ? await bcRange(env, cid, b.id, +b.pos || 0, rest) : [];
+  const [stop, view] = await Promise.all([bcOptouts(env, cid), crmView(env, CLIENTS[cid], now)]);
+  if (!view.gate || !view.gate.ready) return { n: 0, rest, sample: "", why: (view.gate && view.gate.why) || "База согласий не отвечает." };
+  if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return { n: 0, rest, sample: "", why: "База клиентов из Altegio не обновлялась больше 3 дней: обновите её в разделе «Клиенты»." };
+  const no = new Set([...(view.marked || []), ...(view.futOnly || [])]), fresh = new Map(), allow = view.allow || new Set(), co = companyOf(CLIENTS[cid]);
+  for (const x of view.rows) { if (x.why && x.why !== "stop") no.add(x.p); fresh.set(x.p, x); }
+  let n = 0, sample = "";
+  for (const [digits, name, staff, svc, last] of items) {
+    if (stop.has(digits) || no.has(digits) || !allow.has(digits)) continue;
+    const x = fresh.get(digits), rd = render(b.msg, dataFor(x ? { name: x.n, staff: x.staff, svc: x.svc, d: x.d } : { name, staff, svc, d: last ? daysSince(String(last), now) : null }, co));
+    if (rd.blocked) continue;
+    n++; if (!sample) sample = rd.text;
+  }
+  return { n, rest, sample, why: n ? "" : "из этого списка сейчас некому писать рекламу: нет подтверждённого согласия, просили не писать, уже записаны, были недавно или реклама уже была за 30 дней" };
+}
+
 // одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки.
 // gaBusy — с номера Green-API этого клиента в эту минуту уже ушло сообщение (другой рассылкой): ждём следующей минуты
 /** @param {Env} env @param {string} cid @param {string} id @param {any} gaBusy @returns {Promise<Record<string, any>>} */
@@ -304,6 +338,8 @@ export async function bcTick(env, cid, id, gaBusy) {
     // не останавливает — в журнал без номеров
     if (marked.length) { try { await bcmAdd(env, cid, isoDay(now), marked); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
     if (logged.length) await bcLog(env, cid, b, logged, now);
+    // кому ушло — для итогов рассылки по базе («записались после», «отказались»); сбой рассылку не останавливает
+    if (gaCrm && logged.length) { try { await bcSentAdd(env, cid, id, logged.map(x => [x[0], now, String(x[2] || "").slice(0, 80), x[4] || "sent"])); } catch (e) { console.log("bcs", String(e).slice(0, 120)); } }
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
       const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);
       return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${why}).` : halt.kind === "temp" ? `${bcFrom(b)} больше часа не принимает сообщения (${why}).` : `${ga ? "Green-API отклонил" : "Meta отклонила"} отправку (${why}).`);

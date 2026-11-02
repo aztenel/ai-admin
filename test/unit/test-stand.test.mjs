@@ -110,7 +110,7 @@ test("рассылки и пробная отправка со второго н
   assert.equal(start.status, 409);
   assert.equal((await start.json()).code, "ga_off");
   // пробная отправка — только на номер для проверки из настроек владельца (02.11.2026); на стенде его нет — не уходит, номер из запроса не слушаем
-  const probe = await b.post("/api/bc/test", { c: "winchester", ch: "ga", name: "Проба", tplId: "M01", lang: "ru", segment: "pora", cap: 50, from: 10, consent: true, to: "+7 700 000 77 05" });
+  const probe = await b.post("/api/bc/test", { c: "winchester", ch: "ga", name: "Проба", tplId: "W05", lang: "ru", segment: "pora", cap: 50, from: 10, consent: true, to: "+7 700 000 77 05" });
   assert.equal(probe.status, 409, "пробная отправка без номера для проверки закрыта");
   const cat = await b.go("/api/site/winchester/catalog", { headers: { origin: "https://winchester.kz" } });
   assert.equal(cat.status, 503, "без ключа Altegio запись с сайта на стенде выключена");

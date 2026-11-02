@@ -2004,7 +2004,7 @@
   ]
  },
  "POST /api/bc/templates/action {\"c\":\"barber\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
-  "status": 400,
+  "status": 404,
   "type": "application/json",
   "cache": "no-store",
   "json": [
@@ -2028,7 +2028,7 @@
   ]
  },
  "POST /api/bc/templates/action {\"c\":\"dent\",\"id\":\"M01\",\"action\":\"nope\"} [owner]": {
-  "status": 400,
+  "status": 404,
   "type": "application/json",
   "cache": "no-store",
   "json": [
@@ -2880,6 +2880,7 @@
    "clients",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",
@@ -2897,6 +2898,7 @@
    "clients",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",
@@ -2923,6 +2925,7 @@
    "consent",
    "excluded",
    "info",
+   "metrics",
    "ok",
    "owner",
    "segments",

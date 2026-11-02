@@ -130,6 +130,21 @@ export function crmFunnel(view, seg, o = {}) {
   return { total: valid + (+snap.masked || 0) + (+snap.bad || 0), valid, segment, rules, consent };
 }
 
+// Цифры базы за 90 дней (финальное ТЗ рассылок Winchester, 02.11.2026 §3): клиенты — без повторов по номеру (снимок уже собран по
+// номеру), «без подтверждённого разрешения» — нет согласия или оно не подтверждено (из файла, флаг Altegio): это не отказ, но и не
+// разрешение. Записанные без визита за 90 дней (futOnly) — в «всего» и «будущая запись», в остальных строках их нет (визитов нет)
+/** @param {CrmView} view @param {ReturnType<typeof crmStatusCount>} st @param {number} invalid */
+function crmMetrics(view, st, invalid) {
+  const rows = view.rows;
+  let noperm = 0, refused = 0;
+  const one = (/** @type {any} */ s2) => { if (s2.stopped || s2.refused) refused++; else if (!s2.marketing) noperm++; };
+  for (const x of rows) one(crmStatus(view, x));
+  for (const p of view.futOnly || []) one(crmStatus(view, { p, fut: 1, why: "fut" }));
+  return { total: st.valid + invalid, valid: st.valid, invalid, regular: rows.filter(x => x.v >= 3).length, once: rows.filter(x => x.v === 1).length,
+    d30_60: rows.filter(x => x.d >= 30 && x.d <= 60).length, d61_90: rows.filter(x => x.d >= 61 && x.d <= 90).length, booked: st.booked,
+    marketing: st.marketing, refused, noperm };
+}
+
 // кнопки с числами и сведения о снимке (для пульта)
 /** @param {Env} env @param {Client} c @param {number} now */
 export async function crmSegments(env, c, now) {
@@ -144,7 +159,7 @@ export async function crmSegments(env, c, now) {
   const { list, futOnly, ...info } = snap || {}; // номера — только на сервере
   const st = crmStatusCount(view, rows, true), invalid = (+(snap && snap.masked) || 0) + (+(snap && snap.bad) || 0);
   return { at: snap ? snap.at : 0, clients: rows.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, consent: view.gate,
-    statuses: snap ? { base: st.valid + invalid, ...st, invalid } : null,
+    statuses: snap ? { base: st.valid + invalid, ...st, invalid } : null, metrics: snap ? crmMetrics(view, st, invalid) : null,
     info: snap ? info : null, ...(err && err.at > ((snap && snap.at) || 0) ? { error: err.error, errorAt: err.at } : {}) };
 }
 

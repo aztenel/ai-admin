@@ -38,14 +38,14 @@ const MAX_TRIES = 3;      // Green-API точно не принял (429, пер
 export const MK_IDS = /** @type {const} */ (["birthday", "reactivate"]);
 const STOP = new Set(["stop"]);
 
-/** реклама со второго номера сейчас разрешена? → "" или почему нет @param {Client} c */
-export const mkLocked = c => bcGaOff(c.id) ? "Реклама со второго номера выключена: массовые сообщения с обычного WhatsApp — главная причина блокировок. Включает владелец отдельным решением." : "";
+/** реклама со второго номера сейчас разрешена (запрет gaNoBroadcast снят владельцем: GA_BROADCAST_<ID> = 1)? → "" или почему нет @param {Env} env @param {Client} c */
+export const mkLocked = (env, c) => bcGaOff(c.id, env) ? "Реклама со второго номера выключена: массовые сообщения с обычного WhatsApp — главная причина блокировок. Включает владелец отдельным решением." : "";
 
 /** фоновая задача раз в минуту @param {Env} env @param {number} now */
 export async function mkRun(env, now) {
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
-    if (!jrOn(env, c) || mkLocked(c)) continue;
+    if (!jrOn(env, c) || mkLocked(env, c)) continue;
     try { n += await mkClient(env, c, now); } catch (/** @type {any} */ e) { console.log("mk", c.id, String((e && e.stack) || e).slice(0, 300)); }
   }
   return n;

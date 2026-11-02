@@ -18,7 +18,7 @@ import { bcParse, bcName } from "./parse.js";
 import { bcSeg, bcOptouts } from "./segments.js";
 import { bcRun, bcGaMsg, bcGaText, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "./sender.js";
 import { render, dataFor, normName, textIssues, toCanonical, MISSING_WHY } from "./render.js";
-import { libraryOf, companyOf, DEMO } from "./library.js";
+import { libraryOf, companyOf, DEMO, STOP_RU, STOP_KK } from "./library.js";
 import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel } from "../crm/segments.js";
 
 /** @typedef {{ list: any[], dup: number, bad: string[], badN: number, cut: number, errors: string[], empty: string, noList: boolean,
@@ -56,7 +56,9 @@ function funnelOf(rc, blocked, allowed) {
 /** рассылка со второго номера по сегменту базы @param {Record<string, any>} body */
 const gaCrm = body => body.ch === "ga" && body.segment != null && body.segment !== "";
 
-// текст рассылки со второго номера по базе: из библиотеки (tplId, язык lang) или свой; вставки — в новом виде. errors — что не так
+// текст рассылки со второго номера по базе: из библиотеки (tplId, язык lang) или свой; вставки — в новом виде. errors — что не так.
+// Утверждённые тексты не меняем (финальное ТЗ рассылок, 02.11.2026): строки «ответьте СТОП» в конце сами не добавляем; stop: true —
+// владелец выбрал добавить строку отказа (STOP_RU), и она есть в предпросмотре, проверке и отправке — один и тот же текст
 /** @param {Env} env @param {Client} c @param {Record<string, any>} body */
 async function gaText(env, c, body) {
   const lang = body.lang === "kk" ? "kk" : "ru", errors = /** @type {string[]} */ ([]);
@@ -67,8 +69,10 @@ async function gaText(env, c, body) {
     else { tplId = it.id; if (!text.trim()) text = (lang === "kk" && it.kk) || it.ru; }
   }
   text = toCanonical(text);
+  const stop = body.stop === true;
+  if (stop && text.trim() && !/(^|[^а-яёa-z])(стоп|stop)([^а-яёa-z]|$)/i.test(text)) text = text.replace(/\s+$/, "") + "\n\n" + (lang === "kk" ? STOP_KK : STOP_RU);
   if (text.trim()) for (const x of textIssues(text)) errors.push(x.charAt(0).toLowerCase() + x.slice(1));
-  return { body: /** @type {Record<string, any>} */ ({ ...body, text, lang }), errors, tplId, lang };
+  return { body: /** @type {Record<string, any>} */ ({ ...body, text, lang, stopMode: "none" }), errors, tplId, lang, stop };
 }
 
 // пробная отправка себе со второго номера: текст на вымышленном клиенте («Айгерим»). Рассылка по базе или текст из библиотеки —
@@ -89,7 +93,7 @@ export async function bcGaTestText(env, c, body0) {
 export function bcFields(body) {
   const errors = /** @type {string[]} */ ([]), img = String(body.img || "").trim(), fallback = clean(body.fallback || "", 30);
   if (body.ch === "ga") {
-    const msg = bcGaMsg(body.text);
+    const msg = bcGaMsg(body.text, body.stopMode);
     if (!msg) errors.push("напишите текст сообщения");
     else if (img ? msg.replace(/\{\s*(имя|name)\s*\}/gi, "x".repeat(30)).length > 1024 : msg.length > GA_MSG_MAX) errors.push(img ? `текст с картинкой не длиннее ${GA_CAPTION_MAX} знаков: это подпись к картинке, у WhatsApp она короче обычного сообщения` : `текст сообщения не длиннее ${GA_MSG_MAX} знаков`); // подпись к картинке — до 1024 знаков вместе с самым длинным именем
     if (img && !(/^https:\/\/[^\s"'<>]{4,500}$/.test(img))) errors.push("картинка: ссылка, которая начинается с https://");
@@ -193,8 +197,11 @@ export async function bcCreate(env, c, body0, now, by, o = {}) {
   if (errors.length) return { ok: false, errors, status: 400 };
   const base = { id: now.toString(36) + Math.random().toString(36).slice(2, 5), name, ...(f.img ? { img: f.img } : {}), text: f.text, fallback: f.fallback || "уважаемый клиент", created: now, by, status: "ready",
     total: list.length, pos: 0, sent: 0, failed: 0, skipped: 0, cap, from, to, ...(rc.seg && rc.seg.label ? { seg: rc.seg.label } : {}), ...(rc.crm ? { src: "crm", seg: rc.crm.label, segId: rc.crm.id, crmAt: rc.crm.at } : {}) };
+  // sel — сколько клиентов было в выбранной аудитории (и тех, кому реклама сейчас не уйдёт): «выбрано» в итогах рассылки
+  const fn = g && body.segment != null && body.segment !== "" ? funnelOf(rc, gr ? gr.blocked : {}, list.length) : null;
   /** @type {Record<string, any>} */
-  const b = ga ? { ...base, ch: "ga", msg: f.msg, ...(g ? { render: 1, lang: g.lang, ...(g.tplId ? { tplId: g.tplId } : {}), drop: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }).slice(0, 12) } : {}) }
+  const b = ga ? { ...base, ch: "ga", msg: f.msg, ...(g ? { render: 1, lang: g.lang, ...(g.tplId ? { tplId: g.tplId } : {}), ...(g.stop ? { stop: 1 } : {}), ...(fn ? { sel: fn.segment } : {}),
+    drop: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }).slice(0, 12) } : {}) }
     : { ...base, tpl: f.tpl, lang: f.lang, params: f.params };
   if (o.start) bcStarting(b, now);
   try { await bcChunksSave(env, c.id, b.id, list); await bcPut(env, c.id, b); }

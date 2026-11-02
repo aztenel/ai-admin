@@ -3,10 +3,11 @@
 // (он повторяет каждую минуту до суток) второй раз не считается. Только числа: номера и тексты сюда не пишутся.
 import { TZ } from "../../lib/time.js";
 
-/** @param {any} db @param {string} ws @param {string} key @param {string} kind @param {Record<string, any>} details @param {number} at */
-export async function msgEventAdd(db, ws, key, kind, details, at) {
-  await db.prepare("insert into events (ws, event_key, kind, actor, details, at) values (?, ?, ?, 'provider', ?, ?) on conflict do nothing")
-    .bind(ws, key.slice(0, 200), kind, JSON.stringify(details), at).run();
+/** campaign — номер рассылки (events.campaign_id), если сообщение из рассылки: итоги рассылки (results.js)
+ *  @param {any} db @param {string} ws @param {string} key @param {string} kind @param {Record<string, any>} details @param {number} at @param {string} [campaign] */
+export async function msgEventAdd(db, ws, key, kind, details, at, campaign) {
+  await db.prepare("insert into events (ws, event_key, kind, actor, details, at, campaign_id) values (?, ?, ?, 'provider', ?, ?, ?) on conflict do nothing")
+    .bind(ws, key.slice(0, 200), kind, JSON.stringify(details), at, campaign ? String(campaign).slice(0, 40) : null).run();
 }
 
 /** Какие из этих событий уже записаны: галочки открытого чата (services/inbox/status.js → stFresh). Поиск по уникальному ключу и своей компании.

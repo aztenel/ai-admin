@@ -7,7 +7,7 @@
 // запрет gaNoBroadcast в коде (Winchester) — его снимает только решение владельца, не переключатель.
 // Здесь — только описание и проверка настроек (чистые функции); отправка — services/reminders/journal.js и ./marketing.js.
 /** @import { Client } from "../../lib/types.js" */
-import { STOP_RU, STOP_KK, LIBRARY } from "../broadcast/library.js";
+import { STOP_RU, STOP_KK } from "../broadcast/library.js";
 
 /**
  * @typedef {{ key: string, label: string, kind: "minutes" | "hours" | "days" | "time" | "choice" | "count", min?: number, max?: number, step?: number,
@@ -54,11 +54,13 @@ export const KIND_IDS = /** @type {Record<string, string>} */ (Object.fromEntrie
 // тексты рекламных сценариев по умолчанию: коротко, без обещаний, которых нет (скидок, подарков), с отказом в конце
 const BD_RU = "{{client.first_name}}, с днём рождения! Желаем вам хорошего года. Будем рады видеть вас в {{company.name}}.";
 const BD_KK = "{{client.first_name}}, туған күніңіз құтты болсын! Сізге жақсы жыл тілейміз. Сізді {{company.name}} барбершопында көргенге қуаныштымыз.";
-const M02 = LIBRARY.find(x => x.id === "M02");
+// реактивация — прежняя тема «Давно не были» библиотеки (до 02.11.2026 бралась оттуда; библиотека теперь — утверждённые тексты рассылок)
+const RA_RU = "Здравствуйте, {{client.first_name}}! Давно вас не видели в {{company.name}}. Будем рады записать вас снова: {{booking.url}}";
+const RA_KK = "Сәлеметсіз бе, {{client.first_name}}! Сізді {{company.name}} барбершопында көптен бері көрмедік. Қайта жазылсаңыз, қуанамыз: {{booking.url}}";
 /** @type {Record<string, { ru: string, kk: string }>} */
 export const MK_TEXT = {
   birthday: { ru: BD_RU + "\n\n" + STOP_RU, kk: BD_KK + "\n\n" + STOP_KK },
-  reactivate: { ru: M02 ? M02.ru : "Давно вас не видели в {{company.name}}. Будем рады записать вас снова: {{booking.url}}\n\n" + STOP_RU, kk: M02 ? M02.kk : "" },
+  reactivate: { ru: RA_RU + "\n\n" + STOP_RU, kk: RA_KK + "\n\n" + STOP_KK },
 };
 
 export const WIN_DEF = { from: 10, to: 21 };
