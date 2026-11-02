@@ -15,7 +15,9 @@
     "check:meta": "node scripts/check-meta.mjs",
     "qa": "node scripts/qa.mjs",
     "images": "python3 scripts/images.py",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && node scripts/deploy.mjs",
+    "deploy:cf": "node scripts/deploy.mjs",
+    "check:deploy": "node scripts/deploy.mjs --check"
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.4",
