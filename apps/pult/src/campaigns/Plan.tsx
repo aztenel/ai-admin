@@ -16,7 +16,7 @@ import { EXCLUDED } from "./common";
 import { useLoad } from "./useLoad";
 
 const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
-const KIND: Record<ServiceKind, string> = { s01: "подтверждение", d1: "накануне", h2: "за 2 часа", s06: "перенос", rv: "отзыв" };
+const KIND: Record<ServiceKind, string> = { s01: "подтверждение", d1: "накануне", h2: "в день визита", s06: "перенос", cx: "отмена", rv: "отзыв" };
 const MESSAGES: [string, string, string] = ["сообщение", "сообщения", "сообщений"];
 const CLIENTS: [string, string, string] = ["клиент", "клиента", "клиентов"];
 

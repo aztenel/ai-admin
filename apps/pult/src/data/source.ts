@@ -7,6 +7,10 @@
 import type { BookingCard, ChannelReport, ChatAction, ConversationDetail, ConversationRef, InboxSnapshot, Lead, Session, WorkspaceOption, ChatActionExtra, ConversationSummary } from "@/model/types";
 import type {
   AutoInfo,
+  AutoMessages,
+  AutoMsgAudience,
+  AutoMsgPatch,
+  AutoMsgTestResult,
   CampaignCalendar,
   LibraryItem,
   MessageStats,
@@ -72,12 +76,14 @@ export interface CampaignSource {
   campaignAct(ws: string, id: string, act: CampaignAct, force?: boolean): Promise<CampaignActResult>;
   /** Отправить порцию вручную — только когда campaign.stalled (фон молчит). */
   campaignTick(ws: string, id: string): Promise<CampaignTickResult>;
-  /** Пробная отправка черновика на один номер (свой). Ответ — текст сервера «Шаблон отправлен на … — проверьте WhatsApp». */
-  testSend(ws: string, draft: CampaignDraft, to: string): Promise<string>;
-  /** База клиентов: числа, сегменты, исключения. */
+  /** Пробная отправка черновика на один номер (свой). Ответ — текст сервера «Шаблон отправлен на … — проверьте WhatsApp».
+   *  Второй номер (02.11.2026): to не слушается — только номер для проверки владельца («Автоматические»); нет его — ApiError code
+   *  «notest» с preview; сотруднику — 403. rid — номер нажатия: повтор того же нажатия второй раз не отправит. */
+  testSend(ws: string, draft: CampaignDraft, to: string, rid?: string): Promise<string>;
+  /** База клиентов: числа, сегменты, статусы, исключения. */
   crmSegments(ws: string): Promise<CrmOverview>;
-  /** Люди сегмента по 50 (page с 1), номера — маской. */
-  crmList(ws: string, spec: SegmentSpec, page?: number): Promise<CrmPage>;
+  /** Люди сегмента по 50 (page с 1), номера — маской. all — все клиенты сегмента со статусами (и те, кому реклама не уйдёт). */
+  crmList(ws: string, spec: SegmentSpec, page?: number, opts?: { all?: boolean }): Promise<CrmPage>;
   /** Собрать базу из журнала Altegio сейчас — только владелец, до минуты. */
   crmRefresh(ws: string): Promise<CrmInfo>;
   /** Автосценарий «Пора на стрижку»: настройки и состояние. */
@@ -106,6 +112,15 @@ export interface CampaignSource {
   templatePreview(ws: string, q: { id?: string; text?: string; lang: "ru" | "kk"; segment?: SegmentSpec }): Promise<TemplatePreview>;
   /** Дублировать, убрать в архив или вернуть (только владелец). */
   templateAction(ws: string, id: string, action: "duplicate" | "archive" | "restore"): Promise<LibraryItem>;
+  /** «Автоматические сообщения» второго номера: готовность, часы и предел, номер для проверки, девять сценариев (владелец и сотрудник). */
+  autoMessages(ws: string): Promise<AutoMessages>;
+  /** Изменить — только владелец (сотруднику 403). Ошибка — ApiError с текстом сервера; code «locked» — рекламный сценарий включить нельзя. */
+  autoMessageSet(ws: string, patch: AutoMsgPatch): Promise<void>;
+  /** Проверка сценария на номер владельца — только владелец. rid — номер нажатия (повтор того же нажатия не отправит второй раз).
+   *  Не ушло — ApiError: code notest / preview / nosender (с preview — тем, что пришло бы), 429 — много проверок за час. */
+  autoMessageTest(ws: string, id: string, lang: "ru" | "kk", rid: string): Promise<AutoMsgTestResult>;
+  /** Кому рекламный сценарий написал бы сегодня — только владелец, только числа (Altegio не ответил — ApiError 503). */
+  autoMessageAudience(ws: string, id: "birthday" | "reactivate"): Promise<AutoMsgAudience>;
 }
 
 /**

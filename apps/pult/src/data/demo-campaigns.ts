@@ -31,6 +31,7 @@ import type {
   TemplateVar,
 } from "@/model/campaigns";
 import type { Campaign, Role } from "@/model/types";
+import { createDemoAutoMsg } from "./demo-automsg";
 import { ApiError } from "./errors";
 import type { CampaignSource } from "./source";
 
@@ -89,7 +90,20 @@ const NO_GA = "Рассылки с номера бота (Green-API) у этой
 const GA_HOOK_WARN = "Номер не настроен до конца: ответы клиентов не приходят в пульт, и тем, кто ответит «стоп», рассылка будет приходить дальше.";
 const NO_BASE_AUTO = "У этой компании нет базы клиентов из Altegio — автосценарий недоступен.";
 
-type Person = CrmPerson & { why: "" | "stop" | "fut" | "recent" | "marketed" };
+type Person = CrmPerson & { why: "" | "stop" | "noconsent" | "fut" | "recent" | "marketed" };
+/** Почему реклама не уйдёт — словами сервера (src/services/crm/segments.js, crmWhyText). */
+const WHY_TEXT: Record<Person["why"], string> = { "": "", stop: "просил не писать («стоп»)", noconsent: "нет согласия на рекламу", fut: "уже записан", recent: "был меньше 14 дней назад", marketed: "реклама уже была за 30 дней" };
+/** Статусы клиента (как crmStatus сервера): согласия нет у «noconsent» и у тех, кто просил не писать. */
+const statusOf = (p: Person) => ({ booked: p.why === "fut", service: p.why !== "stop", marketing: p.why !== "stop" && p.why !== "noconsent", stopped: p.why === "stop", refused: false, ready: !p.why });
+function statusCount(list: Person[]) {
+  const out = { valid: 0, booked: 0, service: 0, marketing: 0, stopped: 0, refused: 0, ready: 0 };
+  for (const p of list) {
+    out.valid++;
+    const st = statusOf(p);
+    for (const k of ["booked", "service", "marketing", "stopped", "refused", "ready"] as const) if (st[k]) out[k]++;
+  }
+  return out;
+}
 type Camp = CampaignDetail & { runFrom?: number; posFrom?: number };
 type Ws = {
   main: Omit<MainNumberState, "used24h" | "hold">;
@@ -119,7 +133,8 @@ function makeBase(now: number): Person[] {
     // первые — были недавно (меньше 14 дней); каждый девятый — ровно 28 дней назад: автосценарию «Пора на стрижку» есть кому писать сегодня
     const d = i < 4 ? 5 + i * 2 : i % 9 === 4 ? 28 : 15 + Math.floor(r() * 76);
     const v = 1 + Math.floor(r() * r() * 6);
-    const why: Person["why"] = i < 4 ? "recent" : i % 19 === 3 ? "stop" : i % 13 === 5 ? "fut" : i % 17 === 8 ? "marketed" : "";
+    // у каждого пятого нет подтверждённого согласия на рекламу: виден в базе, а реклама ему не уходит
+    const why: Person["why"] = i < 4 ? "recent" : i % 19 === 3 ? "stop" : i % 13 === 5 ? "fut" : i % 17 === 8 ? "marketed" : i % 5 === 2 ? "noconsent" : "";
     people.push({
       name: NAMES[Math.floor(r() * NAMES.length)],
       phone: `+7 700 *** ** ${String(10 + i).padStart(2, "0")}`,
@@ -151,11 +166,12 @@ function segLabel(s: SegmentSpec): string {
   const days = s.from !== undefined || s.to !== undefined ? `${s.from ?? 0}–${s.to ?? 400} дн. с визита` : "";
   return [base, days, s.staff ? `мастер ${s.staff}` : ""].filter(Boolean).join(" · ");
 }
-function pick(base: Person[], s: SegmentSpec): Person[] | null {
+/** Клиенты сегмента: all — все (и те, кому реклама не уйдёт), иначе — только кому уйдёт. */
+function pick(base: Person[], s: SegmentSpec, all = false): Person[] | null {
   const t = segTest(s.id);
   if (!t) return null;
   return base
-    .filter((p) => !p.why && t(p) && (s.from === undefined || p.d >= s.from) && (s.to === undefined || p.d <= s.to) && (!s.staff || p.staff === s.staff))
+    .filter((p) => (all || !p.why) && t(p) && (s.from === undefined || p.d >= s.from) && (s.to === undefined || p.d <= s.to) && (!s.staff || p.staff === s.staff))
     .sort((a, b) => a.d - b.d || b.v - a.v || a.phone.localeCompare(b.phone));
 }
 
@@ -333,12 +349,15 @@ function barberQueue(now: number): ServiceQueueItem[] {
   }
   return out.filter((x) => x.at > now).sort((a, z) => a.at - z.at);
 }
-function demoService(ws: string, now: number): Omit<ServiceOverview, "owner"> {
+function demoService(ws: string, now: number, kindOn: (k: string) => boolean): Omit<ServiceOverview, "owner"> {
   const kinds = (on: Partial<Record<ServiceKindState["kind"], boolean>>, link = ""): ServiceKindState[] =>
     (["d1", "h2", "rv"] as const).map((k) => ({ kind: k, label: SERVICE_LABEL[k] || "", on: !!on[k], ...(k === "rv" && link ? { link } : {}) }));
   if (ws === "demo") {
-    const queue = barberQueue(now);
-    return { kinds: kinds({ d1: true, h2: true, rv: true }, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 6, botOff: false, altegio: true, catalog: DEMO_CATALOG };
+    // как Winchester (02.11.2026): напоминания по журналу Altegio со второго номера, включает владелец в «Автоматических сообщениях» —
+    // в очереди только включённые сценарии (по умолчанию всё выключено)
+    const queue = barberQueue(now).filter((x) => kindOn(x.kind)).map((x) => ({ ...x, channel: "bot" as const }));
+    const on = { d1: kindOn("d1"), h2: kindOn("h2"), rv: kindOn("rv") };
+    return { kinds: kinds(on, "https://2gis.kz/astana/firm/70000000000000001/tab/reviews"), queue, total: queue.length, sent3d: 0, botOff: false, altegio: true, journal: true, enabled: true, hold: null, log: [], catalog: DEMO_CATALOG };
   }
   // «Демо Сервис» и новая компания — без записи через Altegio: напоминаний и отзывов бот не шлёт (как сервер: только по своим записям в Altegio)
   return { kinds: kinds({ d1: false, h2: false, rv: false }), queue: [], total: 0, sent3d: 0, botOff: false, altegio: false };
@@ -355,6 +374,7 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
   const ownerOnly = (text: string) => {
     if (!owner()) throw new ApiError(text, 403);
   };
+  const auto = createDemoAutoMsg(role);
   const camp1 = (w: Ws, id: string) => {
     const c = w.camps.find((x) => x.id === id);
     if (!c) throw new ApiError("Рассылка не найдена.", 404);
@@ -519,32 +539,50 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       await wait(500);
       const w = find(ws), errors = fields(d);
       if (errors.length) throw new ApiError(errors.join("; "), 400);
+      // второй номер (как сервер с 02.11.2026): только владелец и только на его номер для проверки; номер из запроса не слушается
+      if (d.channel === "bot") {
+        const preview = fillDemo(gaMsg(d.text || ""), "Айгерим");
+        if (!owner()) throw new ApiError("Проверку со второго номера отправляет владелец — на свой номер.", 403, false, { preview });
+        const test = auto.testPhone(ws);
+        if (!test) throw new ApiError("Сначала укажите номер для проверки: «Рассылки» → «Автоматические» → «Номер для проверки».", 409, false, { code: "notest", preview });
+        return `Демо: на ваш номер ${test} ничего не отправлено. В рабочем пульте сообщение придёт со второго номера — проверьте WhatsApp.`;
+      }
       const digits = to.replace(/\D/g, ""), phone = digits.length === 11 && /^[78]7/.test(digits) ? "+7" + digits.slice(1) : digits.length === 10 && digits[0] === "7" ? "+7" + digits : "";
       if (!phone) throw new ApiError("Укажите свой номер полностью, например +7 701 123 45 67.", 400);
-      if (d.channel === "bot" && w.bot?.noBroadcast) throw new ApiError(w.bot.noBroadcast, 409);
-      if (d.channel === "main" && !w.main.ready) throw new ApiError(w.main.why, 409);
-      return `Демо: на ${phone} ничего не отправлено. В рабочем пульте ${d.channel === "bot" ? "сообщение придёт с номера бота" : "шаблон придёт с основного номера"} — проверьте WhatsApp.`;
+      if (!w.main.ready) throw new ApiError(w.main.why, 409);
+      return `Демо: на ${phone} ничего не отправлено. В рабочем пульте шаблон придёт с основного номера — проверьте WhatsApp.`;
     },
     async crmSegments(ws): Promise<CrmOverview> {
       await wait(450);
       const w = find(ws), base = w.base && w.baseAt ? w.base : [];
       const ok = base.filter((p) => !p.why);
       const cnt = (k: Person["why"]) => base.filter((p) => p.why === k).length;
+      // n — кому реклама уйдёт сейчас; total и st — все клиенты сегмента и их статусы (как сервер с 02.11.2026)
+      const seg = (test: (p: Person) => boolean) => {
+        const all = base.filter(test);
+        return { n: all.filter((p) => !p.why).length, total: all.length, st: statusCount(all) };
+      };
       const segments: CrmSegment[] = [
-        ...SEGS.map((s) => ({ id: s.id, label: s.label, rule: s.rule, n: ok.filter(s.test).length })),
-        ...[...new Set(base.map((p) => p.staff))].sort().map((m) => ({ id: `staff:${m}`, label: `Мастер: ${m}`, rule: "последний визит у мастера", n: ok.filter((p) => p.staff === m).length })),
+        ...SEGS.map((s) => ({ id: s.id, label: s.label, rule: s.rule, ...seg(s.test) })),
+        ...[...new Set(base.map((p) => p.staff))].sort().map((m) => ({ id: `staff:${m}`, label: `Мастер: ${m}`, rule: "последний визит у мастера", ...seg((p) => p.staff === m) })),
       ];
       const info: CrmInfo | null = w.baseAt ? { at: w.baseAt, from: dayIso(w.baseAt - 90 * DAY), to: dayIso(w.baseAt + 60 * DAY), records: base.length * 2 + 9, visits: base.reduce((a, p) => a + p.v, 0), clients: base.length, masked: 3, bad: 0, att: { "1": base.reduce((a, p) => a + p.v, 0), "-1": 4, "0": 2 }, cut: false } : null;
-      return { owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments, excluded: { stop: cnt("stop"), noconsent: 0, fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") }, info };
+      const st = statusCount(base);
+      return {
+        owner: owner(), why: w.crmWhy, available: !w.crmWhy || !!w.baseAt, at: w.baseAt, clients: base.length, ok: ok.length, segments,
+        excluded: { stop: cnt("stop"), noconsent: cnt("noconsent"), fut: cnt("fut"), recent: cnt("recent"), marketed: cnt("marketed") },
+        statuses: info ? { ...st, base: st.valid + info.masked + info.bad, invalid: info.masked + info.bad } : null, info,
+      };
     },
-    async crmList(ws, spec, page = 1) {
+    async crmList(ws, spec, page = 1, opts) {
       await wait(300);
       const w = find(ws);
       if ([spec.from, spec.to].some((v) => v !== undefined && !(v >= 0 && v <= 400))) throw new ApiError("Дни с визита — число от 0 до 400.", 400);
-      const people = pick(w.base && w.baseAt ? w.base : [], spec);
+      const people = pick(w.base && w.baseAt ? w.base : [], spec, !!opts?.all);
       if (!people) throw new ApiError("Неизвестный сегмент.", 400);
       const per = 50, pages = Math.max(1, Math.ceil(people.length / per)), p = Math.min(Math.max(1, Math.round(page)), 1000);
-      return { seg: spec.id, total: people.length, page: p, pages, per, list: people.slice((p - 1) * per, p * per).map(({ why: _w, ...x }) => x) };
+      const list = people.slice((p - 1) * per, p * per).map(({ why, ...x }) => (opts?.all ? { ...x, st: statusOf({ ...x, why }), why: WHY_TEXT[why] } : x));
+      return { seg: spec.id, total: people.length, page: p, pages, per, list, ...(opts?.all ? { all: true } : {}) };
     },
     async crmRefresh(ws) {
       const w = find(ws);
@@ -600,7 +638,7 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
     async serviceMessages(ws) {
       await wait(350);
       find(ws);
-      return { owner: owner(), ...demoService(ws, Date.now()) };
+      return { owner: owner(), ...demoService(ws, Date.now(), (k) => auto.kindOn(ws, k)) };
     },
     async serviceDryRun(ws) {
       await wait(300);
@@ -676,6 +714,10 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       ownerOnly("Менять библиотеку может только владелец.");
       throw new ApiError("В демо библиотека не меняется.", 409);
     },
+    autoMessages: (ws) => auto.autoMessages(ws),
+    autoMessageSet: (ws, patch) => auto.autoMessageSet(ws, patch),
+    autoMessageTest: (ws, id, lang) => auto.autoMessageTest(ws, id, lang),
+    autoMessageAudience: (ws, id) => auto.autoMessageAudience(ws, id),
   };
 
   return {

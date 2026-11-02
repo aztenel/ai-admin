@@ -1,20 +1,22 @@
-// Раздел «Рассылки» — хаб (этап 3 Winchester). Решение владельца 19.10.2026 (главнее ТЗ): два вида рассылок — две вкладки,
-// у каждого вида свой номер.
-//  · «Маркетинг · основной номер» — шаблоны Meta: обзор номера (качество, предел, сигнал Meta), рассылки в работе, база клиентов
-//    и сегменты, автосценарий «Пора на стрижку», история, «Новая рассылка» (мастер — только основной номер, без выбора номера).
-//  · «Сервисные · номер бота» — сообщения, которые бот шлёт сам (напоминания, просьба об отзыве): обзор номера бота и ServiceMessages.
-// Рассылок с номера бота (Green-API) в пульте не создают: массовые сообщения с обычного WhatsApp — главная причина блокировок.
-// Старая страница /broadcast не нужна — ссылки на неё здесь нет.
+// Раздел «Рассылки» — хаб. Три вкладки (02.11.2026):
+//  · «Маркетинг · рассылки» — главный канал рассылок — второй номер (Green-API): «Создать рассылку» сразу открывает мастер второго номера
+//    (GaWizard: шаблон → кому → аудитория → пример → проверка → когда), без вопроса «С какого номера?». База клиентов со статусами,
+//    история. Основной номер и шаблоны Meta (обзор номера, автосценарий «Пора на стрижку», мастер шаблона Meta) — отдельной свёрнутой
+//    группой «Meta — неактивный канал»: ими по-прежнему можно пользоваться. У компании без базы клиентов (мастеру второго номера некого
+//    выбрать) главный канал — основной номер, как раньше.
+//  · «Автоматические · сообщения» — девять сценариев второго номера (AutoMessages.tsx): сервисные о записи и реклама с согласием,
+//    у каждого выключатель, текст и время, проверка на свой номер и журнал. Компания без журнала Altegio — что бот шлёт сам.
+//  · «Календарь · план и итоги» — план на дни вперёд (сервисные и реклама отдельно) и итоги доставки (Plan.tsx).
+// Рассылки с номера бота текстом по списку пульт не создаёт. Старая страница /broadcast не нужна — ссылки на неё здесь нет.
 // Мастер — полноэкранный лист на телефоне (внутри корня пульта, чтобы клавиатура iPhone не закрывала поля — lib/viewport.ts) и большой
 // лист по центру на компьютере. Открытый лист — своя запись истории: жест «назад» закрывает лист, а не уводит из раздела; в мастере на
 // телефоне «назад» — на прошлый шаг (как стрелка мастера), созданную, но не запущенную рассылку — в её лист (Wizard: backRef).
-// Выбранная вкладка запоминается на этом устройстве (localStorage pult2.campaigns.tab).
-// ТЗ v2.0 (31.10.2026): третья вкладка «Календарь · план и итоги» — 14 дней вперёд (сервисные и реклама отдельно) и итоги доставки;
-// во вкладке «Маркетинг» — «Библиотека текстов» (28 тем RU/KZ, одобрение владельцем).
-import { CircleAlert, Plus, RefreshCw } from "lucide-react";
+// Выбранная вкладка запоминается на этом устройстве (localStorage pult2.campaigns.tab; прежнее значение «service» — это «Автоматические»).
+import { ChevronDown, CircleAlert, Megaphone, Plus, RefreshCw, Smartphone } from "lucide-react";
 import { Dialog as D } from "radix-ui";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import AutoScenario from "@/campaigns/AutoScenario";
+import AutoTab from "@/campaigns/AutoMessages";
 import { CRM_STALE } from "@/campaigns/base/shared";
 import { CampaignSheet } from "@/campaigns/CampaignSheet";
 import ClientBase from "@/campaigns/ClientBase";
@@ -23,13 +25,14 @@ import { BotNumber, ChannelCard, MainNumber, NumberSkeleton } from "@/campaigns/
 import GaWizard from "@/campaigns/GaWizard";
 import Library from "@/campaigns/Library";
 import Plan from "@/campaigns/Plan";
-import ServiceMessages from "@/campaigns/ServiceMessages";
+import { QUALITY } from "@/campaigns/common";
 import { useLoad } from "@/campaigns/useLoad";
 import { ChunkBoundary } from "@/components/boundary";
 import { Sheet } from "@/components/overlay";
 import { Button, EmptyState, IconButton, Spinner } from "@/components/ui";
+import { formatPhone } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
-import type { CampaignStatus, SegmentSpec } from "@/model/campaigns";
+import type { CampaignsOverview, CampaignStatus, SegmentSpec } from "@/model/campaigns";
 import type { WizardBack } from "@/campaigns/Wizard";
 import { useStore } from "@/state/store";
 import { Group, Page } from "./Page";
@@ -37,12 +40,13 @@ import { Group, Page } from "./Page";
 // мастер — отдельный кусок: грузится, только когда его открыли
 const Wizard = lazy(() => import("@/campaigns/Wizard"));
 
-type Tab = "marketing" | "service" | "plan";
+type Tab = "marketing" | "auto" | "plan";
 const TAB_KEY = "pult2.campaigns.tab";
 function readTab(): Tab {
   try {
     const v = localStorage.getItem(TAB_KEY);
-    return v === "service" || v === "plan" ? v : "marketing";
+    // «service» — прежняя вкладка «Сервисные»: её место заняли «Автоматические сообщения»
+    return v === "auto" || v === "service" ? "auto" : v === "plan" ? "plan" : "marketing";
   } catch {
     return "marketing";
   }
@@ -56,12 +60,12 @@ function saveTab(t: Tab) {
 }
 const TABS: { id: Tab; title: string; sub: string }[] = [
   { id: "marketing", title: "Маркетинг", sub: "рассылки" },
-  { id: "service", title: "Сервисные", sub: "напоминания" },
+  { id: "auto", title: "Автоматические", sub: "сообщения" },
   { id: "plan", title: "Календарь", sub: "план и итоги" },
 ];
 
 type Preset = { segment?: SegmentSpec; channel?: "main" | "bot" };
-type Layer = { kind: "wizard"; preset?: Preset } | { kind: "ga"; tplId?: string; seg?: string } | { kind: "choose"; preset?: Preset } | { kind: "campaign"; id: string } | { kind: "nomain" };
+type Layer = { kind: "wizard"; preset?: Preset } | { kind: "ga"; tplId?: string; spec?: SegmentSpec } | { kind: "campaign"; id: string } | { kind: "nomain" };
 // подвкладки маркетинга (ТЗ v3.0 §2.2): рассылки и аудитории · шаблоны · журнал прошедших
 type Sub = "campaigns" | "templates" | "journal";
 const SUB_KEY = "pult2.campaigns.sub";
@@ -113,8 +117,10 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   };
   const ov = useLoad((src) => src.campaignsOverview(ws), [ws]);
   const crm = useLoad((src) => src.crmSegments(ws), [ws]);
-  // «Обновить» перечитывает и вложенные блоки (база, автосценарий, сервисные) — заново их монтируем
+  // «Обновить» перечитывает и вложенные блоки (база, автосценарий, автоматические) — заново их монтируем
   const [rev, setRev] = useState(0);
+  // «Meta — неактивный канал» раскрыта: помним, пока открыт раздел (переход по подвкладкам её не сворачивает)
+  const [metaOpen, setMetaOpen] = useState(false);
   const [layer, setLayer] = useState<Layer | null>(null);
   const closeLayer = useCallback(() => setLayer(null), []);
   // мастер сам отвечает на «назад» и Esc (шаг назад, лист созданной рассылки); пока он не загрузился — просто закрыть
@@ -143,18 +149,18 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   const past = visible.filter((r) => !isActive(r.id, r.status));
   // база и автосценарий — только у компании с базой клиентов; сбой загрузки — пусть база сама покажет ошибку
   const hasBase = crm.data ? crm.data.available : !!crm.error;
+  // главный канал рассылок — второй номер (02.11.2026), если он есть и есть база клиентов: мастер второго номера пишет только по базе
+  const gaMain = !!ov.data?.bot && hasBase;
+  const loading = ov.loading || crm.loading;
 
-  // «Создать рассылку» — со второго номера (ТЗ v3.0 §5): мастер без Meta; шаблоном Meta — только если основной номер подключён
-  //   подключены оба номера — сначала вопрос «С какого номера?» (ТЗ v3.0 §5.1: клиент должен знать, откуда придёт сообщение)
+  // «Создать рассылку»: второй номер — сразу его мастер; шаблоном Meta — из группы «Meta — неактивный канал» (channel: "main")
   const newCampaign = (preset?: Preset) =>
     setLayer(
-      ov.data?.bot && ov.data.main.ready && !preset?.channel
-        ? { kind: "choose", preset }
-        : ov.data?.bot && preset?.channel !== "main"
-          ? { kind: "ga", seg: preset?.segment?.id }
-          : ov.data && !ov.data.main.ready
-            ? { kind: "nomain" }
-            : { kind: "wizard", preset },
+      gaMain && preset?.channel !== "main"
+        ? { kind: "ga", spec: preset?.segment }
+        : ov.data && !ov.data.main.ready
+          ? { kind: "nomain" }
+          : { kind: "wizard", preset: preset && { segment: preset.segment, channel: "main" } },
     );
   const refresh = () => {
     void ov.reload();
@@ -187,7 +193,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         <>
           <IconButton icon={RefreshCw} label="Обновить" onClick={refresh} className={cn((ov.refreshing || crm.refreshing) && "[&>svg]:animate-spin")} />
           {tab === "marketing" && (
-            <Button variant="primary" icon={Plus} className="max-md:hidden" disabled={ov.loading} onClick={() => newCampaign()}>
+            <Button variant="primary" icon={Plus} className="max-md:hidden" disabled={loading} onClick={() => newCampaign()}>
               Создать рассылку
             </Button>
           )}
@@ -198,7 +204,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
 
       {tab === "marketing" ? (
         <div role="tabpanel" id="cmp-panel-marketing" aria-labelledby="cmp-tab-marketing">
-          {ov.loading ? <NumberSkeleton /> : ov.data ? <ChannelCard ov={ov.data} onCreate={() => newCampaign()} /> : loadError}
+          {loading ? <NumberSkeleton /> : ov.data ? <ChannelCard ov={ov.data} channel={gaMain ? "bot" : "main"} onCreate={() => newCampaign()} /> : loadError}
           {staleError}
           <SubTabs value={sub} onChange={setSub} />
           {sub === "campaigns" && (
@@ -209,14 +215,18 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
                   <p className="py-4 text-ui text-fg-2 pointer-coarse:text-base">Рассылок пока нет. Нажмите «Создать рассылку» или выберите аудиторию ниже.</p>
                 </Group>
               )}
-              {hasBase && <ClientBase key={`base${rev}`} ws={ws} owner={owner} onCreate={(spec: SegmentSpec) => newCampaign({ segment: spec })} />}
-              {ov.data && (
-                <>
-                  <h2 className="mb-2 mt-6 px-4 text-sm font-medium text-fg-3">Основной номер, шаблоны Meta</h2>
-                  <MainNumber ws={ws} ov={ov.data} owner={owner} onChanged={() => void ov.reload()} />
-                  {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
-                </>
-              )}
+              {hasBase && <ClientBase key={`base${rev}`} ws={ws} owner={owner} channel={gaMain ? "bot" : "main"} onCreate={(spec: SegmentSpec) => newCampaign({ segment: spec })} />}
+              {ov.data &&
+                !loading &&
+                (gaMain ? (
+                  <MetaSection ws={ws} ov={ov.data} owner={owner} hasBase={hasBase} rev={rev} open={metaOpen} onToggle={() => setMetaOpen((v) => !v)} onChanged={() => void ov.reload()} onCreate={() => newCampaign({ channel: "main" })} />
+                ) : (
+                  <>
+                    <h2 className="mb-2 mt-6 px-4 text-sm font-medium text-fg-3">Основной номер, шаблоны Meta</h2>
+                    <MainNumber ws={ws} ov={ov.data} owner={owner} onChanged={() => void ov.reload()} />
+                    {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
+                  </>
+                ))}
             </>
           )}
           {sub === "templates" && <Library key={`lib${rev}`} ws={ws} owner={owner} onUse={(x) => setLayer({ kind: "ga", tplId: x.id })} />}
@@ -231,11 +241,10 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
               </Group>
             ))}
         </div>
-      ) : tab === "service" ? (
-        <div role="tabpanel" id="cmp-panel-service" aria-labelledby="cmp-tab-service">
-          {ov.loading ? <NumberSkeleton /> : ov.data ? <BotNumber ov={ov.data} /> : failed ? loadError : null}
+      ) : tab === "auto" ? (
+        <div role="tabpanel" id="cmp-panel-auto" aria-labelledby="cmp-tab-auto">
           {staleError}
-          <ServiceMessages key={`svc${rev}`} ws={ws} owner={owner} />
+          <AutoTab key={`auto${rev}`} ws={ws} owner={owner} bot={ov.data?.bot} overview={ov.loading ? <NumberSkeleton /> : ov.data ? <BotNumber ov={ov.data} /> : failed ? loadError : null} onMarketing={() => setTab("marketing")} />
         </div>
       ) : (
         <div role="tabpanel" id="cmp-panel-plan" aria-labelledby="cmp-tab-plan">
@@ -256,40 +265,11 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         }}
       />
 
-      <Sheet
-        open={layer?.kind === "choose"}
-        onOpenChange={(v) => !v && closeLayer()}
-        title="С какого номера отправить?"
-        description="Клиент получит сообщение с выбранного номера, ответ придёт в чат этого номера."
-      >
-        <div className="space-y-2 px-4 pb-4">
-          {(
-            [
-              ["bot", "Второй WhatsApp", "Обычное сообщение. Имя и данные клиента подставляются сами. Запуск рассылок с этого номера пока выключен."],
-              ["main", "Основной номер, шаблон Meta", "Только шаблоном, одобренным Meta в её кабинете."],
-            ] as const
-          ).map(([ch, title, sub]) => (
-            <button
-              key={ch}
-              type="button"
-              onClick={() => {
-                const preset = layer?.kind === "choose" ? layer.preset : undefined;
-                setLayer(ch === "bot" ? { kind: "ga", seg: preset?.segment?.id } : { kind: "wizard", preset: { ...preset, channel: "main" } });
-              }}
-              className="flex w-full flex-col rounded-2xl bg-surface-2 px-4 py-3 text-left hover:brightness-[0.98]"
-            >
-              <span className="font-semibold">{title}</span>
-              <span className="text-sm text-fg-2">{sub}</span>
-            </button>
-          ))}
-        </div>
-      </Sheet>
-
       <GaWizard
         ws={ws}
         owner={owner}
         open={layer?.kind === "ga"}
-        preset={layer?.kind === "ga" ? { tplId: layer.tplId, seg: layer.seg } : undefined}
+        preset={layer?.kind === "ga" ? { tplId: layer.tplId, seg: layer.spec?.id, spec: layer.spec } : undefined}
         onClose={closeLayer}
         onDone={(id) => {
           setLayer({ kind: "campaign", id });
@@ -335,6 +315,48 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   );
 }
 
+/** «Meta — неактивный канал» (02.11.2026): основной номер и шаблоны Meta свёрнуты — рассылки идут со второго номера. Внутри — обзор номера
+ *  (качество, предел, сигнал Meta), «Рассылка шаблоном Meta» (прежний мастер) и автосценарий «Пора на стрижку». Сигнал Meta «остановиться»
+ *  виден и в свёрнутом виде. Раскрыта ли — помнит хаб, пока открыт раздел. */
+function MetaSection({ ws, ov, owner, hasBase, rev, open, onToggle, onChanged, onCreate }: { ws: string; ov: CampaignsOverview; owner: boolean; hasBase: boolean; rev: number; open: boolean; onToggle: () => void; onChanged: () => void; onCreate: () => void }) {
+  const m = ov.main;
+  const state = !m.ready ? "не подключён" : [m.phone ? formatPhone(m.phone) : "подключён", m.quality !== "unknown" ? `качество ${QUALITY[m.quality].label.split(",")[0]}` : ""].filter(Boolean).join(" · ");
+  return (
+    <section aria-label="Meta — неактивный канал" className="mb-6 mt-6">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="meta-body"
+        onClick={onToggle}
+        className="flex w-full items-start gap-3 rounded-[0.875rem] bg-surface px-4 py-3 text-left hover:brightness-[0.99] active:bg-surface-2"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-[0.625rem] bg-surface-2 text-fg-3">
+          <Smartphone aria-hidden className="size-[1.125rem]" strokeWidth={1.9} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[0.9375rem] font-semibold md:text-base">Meta — неактивный канал</span>
+          <span className="block text-sm text-fg-2">Основной номер и шаблоны Meta. Сейчас рассылки идут со второго номера.</span>
+          <span className="tnum block text-sm text-fg-3">{state}</span>
+          {m.hold.length > 0 && <span className="block text-sm font-medium text-critical">Есть сигнал Meta «остановиться»</span>}
+        </span>
+        <ChevronDown aria-hidden className={cn("mt-2 size-5 shrink-0 text-fg-3 transition-transform", open && "rotate-180")} strokeWidth={2} />
+      </button>
+      {open && (
+        <div id="meta-body" className="mt-4">
+          <MainNumber ws={ws} ov={ov} owner={owner} onChanged={onChanged} />
+          <div className="-mt-3 mb-6 px-1">
+            <Button variant="outline" icon={Megaphone} className="max-md:w-full" onClick={onCreate}>
+              Рассылка шаблоном Meta
+            </Button>
+            <p className="mt-1.5 px-3 text-sm text-fg-3">С основного номера, только шаблоном, который одобрила Meta. Платно: цена — в кабинете Meta.</p>
+          </div>
+          {hasBase && <AutoScenario key={`auto${rev}`} ws={ws} owner={owner} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Подвкладки маркетинга: Рассылки · Шаблоны · Журнал. */
 function SubTabs({ value, onChange }: { value: Sub; onChange: (v: Sub) => void }) {
   return (
@@ -356,7 +378,8 @@ function SubTabs({ value, onChange }: { value: Sub; onChange: (v: Sub) => void }
   );
 }
 
-/** Вкладки «Маркетинг · основной номер» / «Сервисные · номер бота» / «Календарь · план и итоги». На телефоне — в две строки, на компьютере — в одну. */
+/** Вкладки «Маркетинг · рассылки» / «Автоматические · сообщения» / «Календарь · план и итоги». На телефоне — в две строки (средняя
+ *  шире: «Автоматические» — самое длинное слово), на компьютере — в одну. */
 function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -367,7 +390,7 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
     refs.current[j]?.focus();
   };
   return (
-    <div role="tablist" aria-label="Вид рассылок" className="mb-5 grid grid-cols-3 gap-0.5 rounded-[0.75rem] bg-surface-3 p-0.5 dark:bg-surface-2">
+    <div role="tablist" aria-label="Вид рассылок" className="mb-5 grid grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)_minmax(0,1fr)] gap-0.5 rounded-[0.75rem] bg-surface-3 p-0.5 md:grid-cols-3 dark:bg-surface-2">
       {TABS.map((t, i) => {
         const on = value === t.id;
         return (
@@ -385,16 +408,16 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
             onClick={() => onChange(t.id)}
             onKeyDown={(e) => onKey(e, i)}
             className={cn(
-              "flex min-w-0 flex-col items-center justify-center rounded-[0.625rem] px-2 py-1.5 text-center transition-colors max-md:min-h-12 md:min-h-9 md:flex-row md:gap-1 md:pointer-coarse:min-h-11",
+              "flex min-w-0 flex-col items-center justify-center rounded-[0.625rem] px-1.5 py-1.5 text-center transition-colors max-md:min-h-12 md:min-h-9 md:flex-row md:gap-1 md:px-2 md:pointer-coarse:min-h-11",
               on ? "bg-surface text-fg shadow-[0_1px_2px_rgb(16_24_40/0.1)] dark:bg-surface-3" : "text-fg-2 hover:text-fg",
             )}
           >
-            <span className="truncate text-ui font-semibold pointer-coarse:text-base">{t.title}</span>
+            <span className="max-w-full truncate text-ui font-semibold pointer-coarse:text-base">{t.title}</span>
             <span aria-hidden className="text-fg-2 max-md:hidden">
               {" · "}
             </span>
             {/* подпись — text-fg-2 и у неактивной вкладки: fg-3 на заливке вкладок — 4.39:1, ниже 4.5:1 (находка проверки 19.10.2026) */}
-            <span className="truncate text-xs text-fg-2 md:text-ui">{t.sub}</span>
+            <span className="max-w-full truncate text-xs text-fg-2 md:text-ui">{t.sub}</span>
           </button>
         );
       })}

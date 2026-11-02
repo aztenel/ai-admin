@@ -20,7 +20,7 @@ import { STOP_RU, DEMO, companyOf } from "../broadcast/library.js";
 import { GA_OFF, bcGaOff } from "../broadcast/sender.js";
 import { jrOn, sendOnceAuto } from "../reminders/journal.js";
 import { serviceVariant } from "../reminders/info.js";
-import { scenario, activeOf, approvalFits, svText, svVars, render as svRender } from "../reminders/templates.js";
+import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS } from "../reminders/templates.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { linesRead } from "../../db/kv/inbox.js";
 import { jrLogLoad, jrLogAdd, jrHold, svApprovals, svApprove, svVariants } from "../../db/kv/reminders.js";
@@ -57,7 +57,9 @@ function textOf(c, d, set, ap, own, now) {
     const sc = scenario(String(d.sc)), act = sc && activeOf(sc, own);
     if (!sc || !act) return { text: null, preview: "" };
     const b = { ...SAMPLE, date: isoDay(now + 86400e3) };
-    return { text: { ru: act.ru, kk: act.kk, v: act.v, variant: act.id, own: !act.builtin, approved: approvalFits(ap[sc.id], act), vars: sc.vars },
+    // вставки для кнопок: какие подходят сценарию и какие уже стоят в тексте (у встроенных текстов есть {компания}, {услуга и мастер})
+    const used = [...`${act.ru} ${act.kk}`.matchAll(/\{([^{}]+)\}/g)].map(m => m[1]).filter(v => SV_VARS.includes(v));
+    return { text: { ru: act.ru, kk: act.kk, v: act.v, variant: act.id, own: !act.builtin, approved: approvalFits(ap[sc.id], act), vars: [...new Set([...sc.vars, ...used])] },
       preview: svRender(act.ru, svVars(c, b, "ru")) };
   }
   if (!MK_TEXT[d.id]) return { text: null, preview: "" };
@@ -144,39 +146,49 @@ export async function autoChange(env, c, b, who, now) {
   const d = autoDef(String(b.id || ""));
   if (!d) return { error: "Сценарий не найден.", status: 404 };
   /** @type {any[]} */ const ev = [];
-  if (b.on != null) {
-    const on = b.on === true;
-    if (d.id === "campaigns") return { error: "Рассылки запускаются в «Маркетинге», здесь их не включают.", status: 409, code: "locked" };
-    if (on && d.group === "marketing" && mkLocked(c)) return { error: mkLocked(c), status: 409, code: "locked" };
-    if (on && d.group === "service") { // включить — одобрить действующий текст (включает и правит тексты только владелец)
-      const sc = scenario(String(d.sc)), act = sc && activeOf(sc, await svVariants(env, c.id));
-      if (!sc || !act) return { error: "У сценария нет текста.", status: 400 };
-      if (!approvalFits((await svApprovals(env, c.id))[sc.id], act)) await svApprove(env, c.id, sc.id, act.v, true, now, act.id);
+  // сначала всё проверить, потом записывать: ошибка в тексте не оставляет сохранённым новое время, отказ включить — новый текст
+  // (находка проверки пульта 02.11.2026: время записывалось раньше, чем проверялся текст)
+  /** @type {Record<string, any> | null} */ let timing = null;
+  if (b.timing != null) { const r = timingPatch(d, b.timing, set.win, set.s[d.id].t); if ("error" in r) return { error: r.error, status: 400 }; timing = r.t; }
+  const on = b.on == null ? null : b.on === true;
+  if (on != null && d.id === "campaigns") return { error: "Рассылки запускаются в «Маркетинге», здесь их не включают.", status: 409, code: "locked" };
+  if (on && d.group === "marketing" && mkLocked(c)) return { error: mkLocked(c), status: 409, code: "locked" };
+  /** @type {{ ru: string, kk: string } | null} */ let mk = null;
+  if (b.text != null && d.group !== "service") {
+    if (!MK_TEXT[d.id]) return { error: "У этого сценария нет своего текста.", status: 400 };
+    const ck = mkTextCheck(b.text);
+    if ("error" in ck) return { error: ck.error, status: 400 };
+    mk = ck;
+  }
+  if (on && d.group === "marketing" && !mk) { const ck = mkTextCheck(set.tx[d.id]); if ("error" in ck) return { error: ck.error, status: 400 }; }
+  const sc = d.group === "service" ? scenario(String(d.sc)) : null;
+  if ((on || b.text != null) && d.group === "service" && !(sc && activeOf(sc, await svVariants(env, c.id)))) return { error: "У сценария нет текста.", status: 400 };
+  // запись: текст (сервисный проверяется и пишется одним шагом — первым, до остального), время, выключатель
+  if (b.text != null && sc) {
+    const act = /** @type {any} */ (activeOf(sc, await svVariants(env, c.id)));
+    const r = await serviceVariant(env, c, { id: sc.id, ...(act.builtin ? {} : { variant: act.id }), ru: b.text.ru, kk: b.text.kk ?? "", active: true }, by, now);
+    if (!r.ok) return { error: r.error, status: r.status || 400 };
+    const now2 = activeOf(sc, await svVariants(env, c.id));
+    if (now2) await svApprove(env, c.id, sc.id, now2.v, true, now, now2.id); // правит владелец — новая версия сразу одобрена им
+    ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: "текст сообщения" });
+  }
+  if (mk) {
+    const t = mk;
+    await autoEdit(env, c.id, o => { o.tx = o.tx || {}; const was = o.tx[d.id] || {}; o.tx[d.id] = { ru: t.ru, kk: t.kk, v: (+was.v || 0) + 1, at: now, by }; });
+    ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: "текст сообщения" });
+  }
+  if (timing) {
+    const t = timing;
+    await autoEdit(env, c.id, o => { o.s = o.s || {}; o.s[d.id] = { ...(o.s[d.id] || { on: false }), t }; });
+    ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: `время: ${timingText(d, t, set.win)}` });
+  }
+  if (on != null) {
+    if (on && sc) { // включить — одобрить действующий текст (включает и правит тексты только владелец)
+      const act = activeOf(sc, await svVariants(env, c.id));
+      if (act && !approvalFits((await svApprovals(env, c.id))[sc.id], act)) await svApprove(env, c.id, sc.id, act.v, true, now, act.id);
     }
-    if (on && d.group === "marketing") { const ck = mkTextCheck(set.tx[d.id]); if ("error" in ck) return { error: ck.error, status: 400 }; }
     await autoEdit(env, c.id, o => { o.s = o.s || {}; o.s[d.id] = { ...(o.s[d.id] || {}), on, at: now, by }; });
     ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: on ? "on" : "off", why: `${SAY[on ? "on" : "off"]} ${by || "владелец"}` });
-  }
-  if (b.timing != null) {
-    const r = timingPatch(d, b.timing, set.win, set.s[d.id].t);
-    if ("error" in r) return { error: r.error, status: 400 };
-    await autoEdit(env, c.id, o => { o.s = o.s || {}; o.s[d.id] = { ...(o.s[d.id] || { on: false }), t: r.t }; });
-    ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: `время: ${timingText(d, r.t, set.win)}` });
-  }
-  if (b.text != null) {
-    if (d.group === "service") {
-      const sc = scenario(String(d.sc)), own = await svVariants(env, c.id), act = sc && activeOf(sc, own);
-      if (!sc || !act) return { error: "У сценария нет текста.", status: 400 };
-      const r = await serviceVariant(env, c, { id: sc.id, ...(act.builtin ? {} : { variant: act.id }), ru: b.text.ru, kk: b.text.kk ?? "", active: true }, by, now);
-      if (!r.ok) return { error: r.error, status: r.status || 400 };
-      const now2 = activeOf(sc, await svVariants(env, c.id));
-      if (now2) await svApprove(env, c.id, sc.id, now2.v, true, now, now2.id); // правит владелец — новая версия сразу одобрена им
-    } else if (MK_TEXT[d.id]) {
-      const ck = mkTextCheck(b.text);
-      if ("error" in ck) return { error: ck.error, status: 400 };
-      await autoEdit(env, c.id, o => { o.tx = o.tx || {}; const was = o.tx[d.id] || {}; o.tx[d.id] = { ru: ck.ru, kk: ck.kk, v: (+was.v || 0) + 1, at: now, by }; });
-    } else return { error: "У этого сценария нет своего текста.", status: 400 };
-    ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: "текст сообщения" });
   }
   if (!ev.length) return { error: "Нечего менять.", status: 400 };
   if (d.kind) { try { await jrLogAdd(env, c.id, ev); } catch (e) { console.log("auto log", String(e)); } }

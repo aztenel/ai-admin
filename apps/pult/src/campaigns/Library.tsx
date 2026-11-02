@@ -301,6 +301,10 @@ function TemplateSheet({ ws, lib, item, canEdit, onClose, onSaved, onUse }: { ws
                 </div>
               )}
               {pv.data.demo && <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>}
+              {/* пример — и на клиенте без согласия (02.11.2026): ему реклама не уйдёт, так и пишем */}
+              {pv.data.list[0]?.allowed === false && (
+                <p className="text-xs text-fg-3">Пример на клиенте, которому реклама сейчас не уйдёт: {pv.data.list[0].why || "нет согласия на рекламу"}.</p>
+              )}
               {(pv.data.blocked || blanks) && <Notice>Перед отправкой впишите настоящие условия вместо [скобок]{pv.data.missing?.length ? ` и данные: ${pv.data.missing.join(", ")}` : ""}.</Notice>}
             </>
           ) : pv?.error ? (

@@ -2,8 +2,10 @@
 // «Создать рассылку по сегменту». Номера — только маской, как их отдал сервер (/api/crm/list): не форматировать (formatPhone),
 // не сохранять в localStorage и не писать в консоль — полные номера клиентов базы знает только сервер.
 // Отбор применяется сам через полсекунды после ввода; в рассылку уходит ровно тот отбор, чей список виден на экране.
+// С 02.11.2026 в списке — все клиенты сегмента со статусами (all=1): «получит рекламу» или «не получит: почему», есть ли запись,
+// отказался ли. Сколько получат рекламу — отдельным запросом (только те, кому уйдёт): без согласия реклама не уходит никому.
 import { CircleAlert, Megaphone, RefreshCw, UsersRound } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Avatar, Button, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
@@ -32,9 +34,11 @@ function ruleText(seg: CrmSegment): string {
 }
 const keyOf = (s: SegmentSpec) => `${s.id}|${s.from ?? ""}|${s.to ?? ""}|${s.staff ?? ""}`;
 
-type Page = { rows: CrmPerson[]; total: number; page: number; pages: number };
+/** rows — все клиенты сегмента (со статусами); allowed — скольким из них реклама уйдёт сейчас (null — сервер старше, только «можно»). */
+type Page = { rows: CrmPerson[]; total: number; page: number; pages: number; allowed: number | null };
 
-export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: CrmSegment; masters: string[]; onCreate: (spec: SegmentSpec) => void }) {
+/** channel — с какого номера рассылка: второй номер (обычное сообщение, бесплатно) или основной (шаблон Meta, оценка цены). */
+export function SegmentView({ ws, seg, masters, channel = "main", onCreate }: { ws: string; seg: CrmSegment; masters: string[]; channel?: "bot" | "main"; onCreate: (spec: SegmentSpec) => void }) {
   const now = useNow(60e3);
   const ofMaster = seg.id.startsWith("staff:");
   const [fromS, setFromS] = useState("");
@@ -78,9 +82,11 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
       // «Ещё» прежнего отбора ещё грузилось — его ответ выбросим (seq), а кнопка не должна остаться с крутилкой (находка проверки 19.10.2026)
       setMore(false);
       try {
-        const p = await src.crmList(ws, s, 1);
+        // все клиенты сегмента со статусами и, отдельно, сколько из них получат рекламу (только они уйдут в рассылку)
+        const [p, ok] = await Promise.all([src.crmList(ws, s, 1, { all: true }), src.crmList(ws, s, 1)]);
         if (my !== seq.current) return; // пришёл ответ на прежний отбор
-        setList({ rows: p.list, total: p.total, page: p.page, pages: p.pages });
+        const every = !!p.all; // сервер старше 02.11.2026 отдаёт только тех, кому можно писать
+        setList({ rows: p.list, total: p.total, page: p.page, pages: p.pages, allowed: every ? ok.total : null });
       } catch (e) {
         if (my === seq.current) setErr(errText(e));
       } finally {
@@ -104,9 +110,9 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
     setMore(true);
     setMoreErr("");
     try {
-      const p = await src.crmList(ws, applied, list.page + 1);
+      const p = await src.crmList(ws, applied, list.page + 1, { all: true });
       if (my !== seq.current) return;
-      setList((cur) => (cur ? { rows: [...cur.rows, ...p.list], total: p.total, page: p.page, pages: p.pages } : cur));
+      setList((cur) => (cur ? { ...cur, rows: [...cur.rows, ...p.list], total: p.total, page: p.page, pages: p.pages } : cur));
     } catch (e) {
       if (my === seq.current) setMoreErr(errText(e));
     } finally {
@@ -117,14 +123,19 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
   const filtered = applied.from !== undefined || applied.to !== undefined || !!applied.staff;
   const anyInput = !!(fromS || toS || staff);
   const total = list?.total ?? 0;
-  const canCreate = !invalid && !pending && !loading && !err && total > 0;
+  // получат рекламу: у сервера со статусами — отдельное число, у старого — весь список (в нём только те, кому можно писать)
+  const allowed = list ? (list.allowed ?? list.total) : 0;
+  const canCreate = !invalid && !pending && !loading && !err && allowed > 0;
   const busy = loading || pending;
+  const bot = channel === "bot";
 
   return (
     <>
       <div className="scroll-area min-h-0 flex-1">
         <div className="px-4 pb-6 pt-2 md:px-6 md:pt-5">
-          <p className="mb-5 px-4 text-ui text-fg-2 pointer-coarse:text-base">{ruleText(seg)} Здесь только те, кому можно писать сейчас.</p>
+          <p className="mb-5 px-4 text-ui text-fg-2 pointer-coarse:text-base">
+            {ruleText(seg)} {list?.allowed === null ? "Здесь только те, кому можно писать сейчас." : "Здесь все клиенты сегмента. Реклама уходит только тем, у кого «получит рекламу»: с подтверждённым согласием и без «стопа»."}
+          </p>
 
           <Group title="Отбор">
             <div className="grid grid-cols-2 gap-3">
@@ -186,7 +197,13 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
           ) : err && list === null ? (
             <LoadError text={err} onRetry={() => void load(applied)} />
           ) : (
-            <Group title={list ? `${nf.format(total)} ${plural(total, PEOPLE)}${filtered ? " с этим отбором" : ""}` : undefined}>
+            <Group
+              title={
+                list
+                  ? `${nf.format(total)} ${plural(total, PEOPLE)}${filtered ? " с этим отбором" : ""}${list.allowed !== null ? ` · можно рекламу: ${nf.format(list.allowed)}` : ""}`
+                  : undefined
+              }
+            >
               {err ? (
                 <LoadError text={err} onRetry={() => void load(applied)} inline />
               ) : !list || list.rows.length === 0 ? (
@@ -231,9 +248,13 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
               ? "Считаю…"
               : err
                 ? ""
-                : total > 0
-                  ? `Шаблон Meta с основного номера получат ${nf.format(total)} ${plural(total, PEOPLE)} · оценка ≈\u00a0${money(costEstimate(total))}`
-                  : "Некому писать, рассылку не создать."}
+                : allowed > 0
+                  ? bot
+                    ? `Рекламу со второго номера получат ${nf.format(allowed)} из ${nf.format(total)}: только с согласием.`
+                    : `Шаблон Meta с основного номера получат ${nf.format(allowed)} ${plural(allowed, PEOPLE)} · оценка ≈\u00a0${money(costEstimate(allowed))}`
+                  : total > 0
+                    ? "Рекламу сейчас не получит никто: нет согласия или другая причина у каждого. Рассылку не создать."
+                    : "Некому писать, рассылку не создать."}
         </p>
         <Button variant="primary" size="lg" icon={Megaphone} className="mb-1 w-full" disabled={!canCreate} onClick={() => onCreate(applied)}>
           Создать рассылку по сегменту
@@ -243,9 +264,11 @@ export function SegmentView({ ws, seg, masters, onCreate }: { ws: string; seg: C
   );
 }
 
-/** Человек сегмента: имя, номер маской, когда был, сколько визитов, мастер и услуга последнего визита. */
+/** Человек сегмента: имя, номер маской, когда был, сколько визитов, мастер и услуга последнего визита; статусы — получит ли рекламу
+ *  (и почему нет — словами сервера), есть ли запись, отказался ли, можно ли сервисные. */
 function Person({ p, now }: { p: CrmPerson; now: number }) {
   const facts = [`был ${visitDay(p.last, now)}`, `${p.v} ${plural(p.v, VISITS)} за 90 дней`, p.staff, p.svc].filter(Boolean).join(" · ");
+  const st = p.st;
   return (
     <li className="flex items-start gap-3 py-3">
       <Avatar name={p.name} size="md" className="mt-0.5" />
@@ -258,8 +281,33 @@ function Person({ p, now }: { p: CrmPerson; now: number }) {
         </div>
         <p className="tnum text-ui text-fg-2 pointer-coarse:text-base">{p.phone}</p>
         <p className="mt-0.5 line-clamp-2 text-sm text-fg-3">{facts}</p>
+        {st && (
+          <div role="group" aria-label="Статусы" className="mt-1.5 flex flex-wrap gap-1">
+            {st.ready ? <Chip tone="positive">получит рекламу</Chip> : <Chip tone={st.stopped ? "critical" : "muted"}>не получит рекламу{p.why ? `: ${p.why}` : ""}</Chip>}
+            {st.booked && <Chip>есть запись</Chip>}
+            {st.stopped && <Chip tone="critical">отказался</Chip>}
+            {!st.stopped && st.refused && <Chip>отказ от рекламы</Chip>}
+            {!st.service && <Chip tone="critical">сервисные нельзя</Chip>}
+          </div>
+        )}
       </div>
     </li>
+  );
+}
+
+function Chip({ tone = "neutral", children }: { tone?: "neutral" | "positive" | "critical" | "muted"; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex min-h-6 max-w-full items-center rounded-full px-2 text-xs font-medium",
+        tone === "positive" && "bg-positive-soft text-positive",
+        tone === "critical" && "bg-critical-soft text-critical",
+        tone === "muted" && "bg-surface-2 text-fg-2",
+        tone === "neutral" && "bg-accent-soft text-accent-ink",
+      )}
+    >
+      <span className="min-w-0 truncate">{children}</span>
+    </span>
   );
 }
 

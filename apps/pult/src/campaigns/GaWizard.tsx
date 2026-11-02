@@ -5,17 +5,22 @@
 // номером → по сегменту → исключения по правилам и по разрешениям → можно отправлять) и ничего не «добавляет»: нет согласия —
 // не пишем, «стоп» — не пишем. В конце — «Сохранить черновик» (сотрудник и владелец) и «Одобрить» (владелец, после отметки
 // «проверено»). «Запустить» — недоступно, пока запуск рассылок со второго номера не включён отдельным решением владельца.
-import { useEffect, useMemo, useState } from "react";
+// 02.11.2026: на шаге «Кому» у сегмента — все его клиенты и сколько из них можно рекламу (без согласия реклама не уходит); пример —
+// и на тех, кто рекламу не получит, с пометкой «не получит: почему»; проба уходит только на номер для проверки владельца
+// («Автоматические» → «Номер для проверки»; номер из пульта сервер не слушает), у пробы — номер нажатия (rid): повтор после обрыва
+// связи второй раз не отправит.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, CircleCheck, FlaskConical, Users } from "lucide-react";
 import { Sheet, toast } from "@/components/overlay";
 import { Button, Skeleton } from "@/components/ui";
 import { ApiError } from "@/data/errors";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AudienceFunnel, CampaignCheck, CampaignDraft, CrmSegment, FunnelReason, LibraryItem, TemplateVar } from "@/model/campaigns";
+import type { AudienceFunnel, CampaignCheck, CampaignDraft, CrmSegment, CrmStatuses, FunnelReason, LibraryItem, SegmentSpec, TemplatePreview, TemplateVar } from "@/model/campaigns";
 import { store } from "@/state/store";
+import { newRid } from "./autoText";
 import { nf, Notice, segRule } from "./base/shared";
-import { EXCLUDED, errorList } from "./common";
+import { EXCLUDED, errorList, errText, segmentTitle } from "./common";
 import { DEFAULT_VARS, hasBlanks, toCanon } from "./vars";
 import { WaBubble } from "./WaBubble";
 
@@ -37,20 +42,29 @@ function funnelOf(d: CampaignCheck, seg?: CrmSegment): AudienceFunnel | null {
   return { total: 0, valid: 0, segment: seg?.n ? seg.n + out : d.valid + out, rules, consent, allowed: d.valid };
 }
 
-export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: { ws: string; owner: boolean; open: boolean; preset?: { tplId?: string; seg?: string }; onClose: () => void; onDone: (id: string) => void }) {
+/** Все клиенты сегмента (у старого сервера — только те, кому можно писать). */
+const totalOf = (s: CrmSegment) => s.total ?? s.n;
+
+type Preset = { tplId?: string; seg?: string; spec?: SegmentSpec };
+export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: { ws: string; owner: boolean; open: boolean; preset?: Preset; onClose: () => void; onDone: (id: string) => void }) {
   const [step, setStep] = useState(0);
   const [segs, setSegs] = useState<CrmSegment[] | null>(null);
   const [segErr, setSegErr] = useState("");
+  const [statuses, setStatuses] = useState<CrmStatuses | null>(null);
   const [seg, setSeg] = useState("");
   const [lib, setLib] = useState<{ items: LibraryItem[]; vars: TemplateVar[] } | null>(null);
   const [tplId, setTplId] = useState(preset?.tplId || "");
   const [own, setOwn] = useState("");
   const [lang, setLang] = useState<"ru" | "kk">("ru");
   const [check, setCheck] = useState<{ data?: CampaignCheck; error?: string; busy?: boolean }>({});
-  // пример на вымышленном клиенте и тот же текст без имени: сырой текст с {{…}} показывать нельзя (ТЗ v3.0 §4.2)
-  const [demo, setDemo] = useState<{ text: string; noName: string } | null>(null);
-  const [testTo, setTestTo] = useState("");
-  const [test, setTest] = useState<{ busy?: boolean; ok?: string; off?: string; preview?: string; error?: string }>({});
+  // пример на клиентах сегмента (с пометкой, кто не получит) и тот же текст без имени: сырой текст с {{…}} показывать нельзя (ТЗ v3.0 §4.2)
+  const [demo, setDemo] = useState<{ list: TemplatePreview["list"]; demo: boolean; noName: string } | null>(null);
+  // проба: только на номер для проверки владельца (сервер берёт его сам); null — ещё не узнали, "" — не указан
+  const [testPhone, setTestPhone] = useState<string | null>(null);
+  const [phoneIn, setPhoneIn] = useState("");
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [test, setTest] = useState<{ busy?: boolean; ok?: string; off?: string; code?: string; preview?: string; error?: string; retry?: boolean }>({});
+  const rid = useRef<string | null>(null);
   const [checked, setChecked] = useState(false);
   const [from, setFrom] = useState(11);
   const [to, setTo] = useState(20);
@@ -69,13 +83,17 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     setCheck({});
     setDemo(null);
     setTest({});
+    setTestPhone(null);
+    rid.current = null;
     setChecked(false);
     store.source.crmSegments(ws).then(
       (d) => {
         if (!live) return;
-        // «Вся база» сервер не присылает отдельным сегментом — как на экране базы, собираем из числа «можно писать»
-        const all: CrmSegment = { id: "all", label: "Вся база", rule: "все, кому можно писать", n: d.ok };
-        setSegs([...d.segments.filter((s) => s.n > 0 && s.id !== "all"), ...(d.available ? [all] : [])]);
+        // «Вся база» сервер не присылает отдельным сегментом — как на экране базы: все клиенты и кому можно рекламу
+        const all: CrmSegment = { id: "all", label: "Вся база", rule: "все клиенты за 90 дней", n: d.ok, total: d.clients };
+        // сегменты, где есть клиенты, — и те, где рекламу сейчас не получит никто: воронка на следующем шаге объяснит почему
+        setSegs([...d.segments.filter((s) => totalOf(s) > 0 && s.id !== "all"), ...(d.available ? [all] : [])]);
+        setStatuses(d.statuses || null);
         setSegErr(d.available ? "" : d.why || "База клиентов не подключена.");
       },
       (e: unknown) => live && setSegErr(errorList(e)[0] || "Сегменты не загрузились"),
@@ -97,12 +115,15 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
   const vars = lib?.vars || DEFAULT_VARS;
   const text = tpl ? (lang === "kk" ? tpl.kk : tpl.ru) : toCanon(own, vars);
   const segment = segs?.find((s) => s.id === seg);
+  // отбор из списка людей сегмента (дни с визита, мастер) — пока выбран тот же сегмент
+  const spec: SegmentSpec = preset?.spec && preset.spec.id === seg ? preset.spec : { id: seg };
+  const filtered = spec.from !== undefined || spec.to !== undefined || !!spec.staff;
   const draft: CampaignDraft = useMemo(
     () => ({
       name: `${tpl ? tpl.title : "Своё сообщение"} · ${new Date().toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}`,
       source: "segment",
       channel: "bot",
-      segment: { id: seg },
+      segment: spec,
       tplId: tpl?.id,
       lang,
       text,
@@ -111,7 +132,9 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
       to,
       consent: true,
     }),
-    [tpl, seg, lang, text, cap, from, to],
+    // spec — из preset и seg
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tpl, seg, preset?.spec, lang, text, cap, from, to],
   );
 
   // аудитория — при входе на шаг «Аудитория» (шаблон и сегмент уже выбраны)
@@ -129,13 +152,14 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, step]);
 
-  // пример без имени и запасной пример на вымышленном клиенте — при входе на «Предпросмотр»
+  // пример на клиентах сегмента (и на тех, кто рекламу не получит, — с причиной) и тот же текст без имени — при входе на «Предпросмотр»
   useEffect(() => {
     if (!open || step !== 3 || !store.source) return;
     let live = true;
-    store.source.templatePreview(ws, tpl ? { id: tpl.id, lang } : { text, lang }).then(
-      (p) => live && setDemo({ text: p.list[0]?.text || "", noName: p.noName?.text || "" }),
-      () => live && setDemo({ text: "", noName: "" }),
+    store.source.templatePreview(ws, { ...(tpl ? { id: tpl.id } : { text }), lang, segment: spec }).then(
+      (p) => live && setDemo({ list: p.list, demo: p.demo, noName: p.noName?.text || "" }),
+      // пример не собрался — тексты из проверки (только те, кому уйдёт)
+      () => live && setDemo({ list: (check.data?.samples || []).map((x) => ({ to: x.to, text: x.text, allowed: true })), demo: false, noName: "" }),
     );
     return () => {
       live = false;
@@ -143,20 +167,59 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, step]);
 
+  // проба: номер для проверки владельца — при входе на «Проверка» (сотруднику проба недоступна, сервер ответит 403)
+  useEffect(() => {
+    if (!open || step !== 4 || !owner || !store.source || testPhone !== null) return;
+    let live = true;
+    store.source.autoMessages(ws).then(
+      (d) => live && setTestPhone(d.test?.phone || ""),
+      () => live && setTestPhone("?"), // не узнали — отправить можно, сервер сам скажет, если номера нет
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, step, owner]);
+
   const valid = check.data?.valid ?? 0;
   const funnel = check.data ? funnelOf(check.data, segment) : null;
   const canNext = [!!text.trim() && !hasBlanks(text), !!seg, !!check.data?.ok && valid > 0, true, true, from < to && cap >= 1][step];
 
+  // rid — номер нажатия: повтор после обрыва связи (исход неизвестен) — с тем же rid, сервер второй раз не отправит
   const sendTest = async () => {
     const src = store.source;
-    if (!src) return;
+    if (!src || test.busy) return;
+    rid.current ??= newRid();
     setTest({ busy: true });
     try {
-      setTest({ ok: await src.testSend(ws, draft, testTo) });
+      const ok = await src.testSend(ws, draft, "", rid.current);
+      rid.current = null;
+      setTest({ ok });
     } catch (e) {
-      // второй номер Winchester: пробная отправка выключена вместе с запуском — сервер присылает, как клиент увидит сообщение
-      if (e instanceof ApiError && (e.code === "ga_off" || e.code === "preview")) setTest({ off: e.message, preview: e.preview || "" });
-      else setTest({ error: errorList(e)[0] || "Не отправилось" });
+      const a = e instanceof ApiError ? e : null;
+      const unsure = !a || a.offline || a.status >= 500;
+      if (!unsure) rid.current = null;
+      if (a?.code === "notest") {
+        setTestPhone("");
+        setTest({ error: "Сначала укажите номер для проверки — ниже.", preview: a.preview || "" });
+      } else if (a && (a.code === "ga_off" || a.code === "preview")) setTest({ off: a.message, preview: a.preview || "" });
+      else setTest({ error: errorList(e)[0] || "Не отправилось", preview: a?.preview || "", retry: unsure });
+    }
+  };
+  const savePhone = async () => {
+    const src = store.source;
+    if (!src) return;
+    setPhoneBusy(true);
+    try {
+      await src.autoMessageSet(ws, { testPhone: phoneIn.trim() });
+      const d = await src.autoMessages(ws);
+      setTestPhone(d.test?.phone || "");
+      setTest({});
+      toast("Номер для проверки сохранён");
+    } catch (e) {
+      setTest({ error: errText(e) });
+    } finally {
+      setPhoneBusy(false);
     }
   };
   const create = async (approve: boolean) => {
@@ -175,7 +238,6 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
     }
   };
 
-  const samples = check.data?.samples || [];
   return (
     <Sheet
       open={open}
@@ -289,7 +351,13 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
             <Skeleton className="h-40 w-full rounded-2xl" />
           ) : (
             <>
-              <p className="text-sm text-fg-2">Кому отправить. Числа уже без тех, кто просил не писать, без согласия или получал рекламу за 30 дней.</p>
+              <p className="text-sm text-fg-2">Кому отправить. Слева — все клиенты сегмента, «можно рекламу» — кто её получит: с подтверждённым согласием, без «стопа» и без рекламы за 30 дней.</p>
+              {statuses && (
+                <p className="rounded-xl bg-surface px-3 py-2 text-sm text-fg-2">
+                  В базе <b className="tnum font-semibold text-fg">{nf.format(statuses.base)}</b> · номер верный <b className="tnum font-semibold text-fg">{nf.format(statuses.valid)}</b> · реклама можно{" "}
+                  <b className="tnum font-semibold text-fg">{nf.format(statuses.marketing)}</b> · отказались <b className="tnum font-semibold text-fg">{nf.format(statuses.stopped)}</b>
+                </p>
+              )}
               <ul role="radiogroup" aria-label="Сегмент" className="divide-y divide-line rounded-2xl bg-surface">
                 {segs.map((s) => (
                   <li key={s.id}>
@@ -298,10 +366,14 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
                       <span className="min-w-0 flex-1">
                         <span className="block font-medium">{s.label}</span>
                         {segRule(s) && <span className="block truncate text-sm text-fg-2">{segRule(s)}</span>}
+                        {seg === s.id && filtered && <span className="block truncate text-sm text-accent-ink">Отбор: {segmentTitle(spec).replace(/^[^·]*·\s*/, "")}</span>}
                       </span>
-                      <span className="tnum shrink-0 text-sm text-fg-2">
-                        <Users aria-hidden className="mr-1 inline size-3.5" />
-                        {nf.format(s.n)}
+                      <span className="tnum shrink-0 text-right text-sm text-fg-2">
+                        <span className="block">
+                          <Users aria-hidden className="mr-1 inline size-3.5" />
+                          {nf.format(totalOf(s))}
+                        </span>
+                        <span className={cn("block text-xs", s.n ? "text-positive" : "text-fg-3")}>можно рекламу: {nf.format(s.n)}</span>
                       </span>
                     </button>
                   </li>
@@ -324,6 +396,9 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
                 </span>
               </p>
               {funnel && <Funnel f={funnel} />}
+              {valid === 0 && !check.data.errors.length && (
+                <Notice>Некому отправить: в этом сегменте сейчас никто не может получить рекламу. Выберите другой сегмент или дождитесь согласий клиентов.</Notice>
+              )}
               {!!check.data.errors.length && (
                 <Notice tone="critical">
                   {check.data.errors.map((e) => (
@@ -337,54 +412,84 @@ export default function GaWizard({ ws, owner, open, preset, onClose, onDone }: {
             </>
           ) : null)}
 
-        {step === 3 && (
-          <>
-            {samples.length ? (
-              <>
-                <p className="text-sm font-medium text-fg-2">Так увидят клиенты</p>
-                {samples.slice(0, 3).map((x, i) => (
-                  <WaBubble key={i} text={x.text} to={x.to || undefined} />
-                ))}
-              </>
-            ) : !demo ? (
-              <Skeleton className="h-40 w-full rounded-2xl" />
-            ) : demo.text ? (
-              <>
-                <p className="text-sm font-medium text-fg-2">Так увидит клиент</p>
-                <WaBubble text={demo.text} />
-                <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>
-              </>
-            ) : null}
-            {demo?.noName && demo.noName !== (samples[0]?.text || demo.text) && (
-              <div>
-                <p className="mb-1 text-xs text-fg-3">Если имени клиента нет:</p>
-                <WaBubble text={demo.noName} />
-              </div>
-            )}
-          </>
-        )}
+        {step === 3 &&
+          (!demo ? (
+            <Skeleton className="h-40 w-full rounded-2xl" />
+          ) : (
+            <>
+              {demo.list.length > 0 && <p className="text-sm font-medium text-fg-2">{demo.demo ? "Так увидит клиент" : "Так увидят клиенты"}</p>}
+              {demo.list.slice(0, 3).map((x, i) => (
+                <div key={i}>
+                  {/* пример и на тех, кому реклама сейчас не уйдёт: им не уйдёт — так и пишем (без согласия рекламы нет) */}
+                  {x.allowed === false && (
+                    <p className="mb-1 text-sm font-medium text-fg-2">Не получит: {x.why || "нет согласия на рекламу"}</p>
+                  )}
+                  <WaBubble text={x.text} to={x.to && x.to !== "пример" ? x.to : undefined} className={cn(x.allowed === false && "opacity-60")} />
+                </div>
+              ))}
+              {demo.demo && demo.list.length > 0 && <p className="text-xs text-fg-3">Пример на вымышленном клиенте.</p>}
+              {!demo.demo && demo.list.some((x) => x.allowed === false) && (
+                <p className="text-xs text-fg-3">Бледные — клиенты сегмента, которым реклама сейчас не уйдёт: их сервер пропустит.</p>
+              )}
+              {demo.noName && demo.noName !== demo.list[0]?.text && (
+                <div>
+                  <p className="mb-1 text-xs text-fg-3">Если имени клиента нет:</p>
+                  <WaBubble text={demo.noName} />
+                </div>
+              )}
+            </>
+          ))}
 
         {step === 4 && (
           <>
-            <p className="text-sm text-fg-2">Отправьте пример себе, чтобы увидеть сообщение в WhatsApp. Клиентам на этом шаге ничего не уходит.</p>
-            <div className="flex gap-2">
-              <input
-                aria-label="Ваш номер WhatsApp"
-                inputMode="tel"
-                value={testTo}
-                onChange={(e) => setTestTo(e.target.value)}
-                placeholder="+7 701 123 45 67"
-                className="h-11 min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 text-md outline-none focus:border-accent"
-              />
-              <Button icon={FlaskConical} busy={test.busy} disabled={test.busy || testTo.replace(/\D/g, "").length < 10} onClick={() => void sendTest()}>
-                Отправить пример
-              </Button>
-            </div>
-            {test.ok && <Notice tone="muted" role="status">{test.ok}</Notice>}
+            <p className="text-sm text-fg-2">Отправьте пример себе, чтобы увидеть сообщение в WhatsApp. Он придёт со второго номера на ваш номер для проверки, клиентам на этом шаге ничего не уходит.</p>
+            {!owner ? (
+              <Notice tone="muted">Пример себе отправляет владелец — на свой номер для проверки.</Notice>
+            ) : testPhone === null ? (
+              <Skeleton className="h-24 w-full rounded-xl" />
+            ) : testPhone ? (
+              <div className="rounded-xl bg-surface px-3 py-3">
+                {testPhone !== "?" && (
+                  <p className="text-sm text-fg-2">
+                    Номер для проверки: <span className="tnum font-medium text-fg">{testPhone}</span>
+                  </p>
+                )}
+                <Button variant="secondary" icon={FlaskConical} className="mt-2 w-full" busy={test.busy} onClick={() => void sendTest()}>
+                  {test.retry ? "Повторить" : "Отправить пример себе"}
+                </Button>
+                <p className="mt-1.5 text-xs text-fg-3">Сменить номер — «Рассылки» → «Автоматические» → «Номер для проверки».</p>
+              </div>
+            ) : (
+              <div className="rounded-xl bg-surface px-3 py-3">
+                <p className="text-sm">Номер для проверки не указан. Впишите свой номер WhatsApp: он сохранится в «Автоматические» → «Номер для проверки».</p>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    aria-label="Номер для проверки"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={phoneIn}
+                    onChange={(e) => setPhoneIn(e.target.value)}
+                    placeholder="+7 701 123 45 67"
+                    className="h-11 min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 text-md outline-none focus:border-accent"
+                  />
+                  <Button busy={phoneBusy} disabled={phoneBusy || phoneIn.replace(/\D/g, "").length < 10} onClick={() => void savePhone()}>
+                    Сохранить
+                  </Button>
+                </div>
+              </div>
+            )}
+            {test.ok && (
+              <p role="status" className="flex gap-2 py-1 text-ui text-positive pointer-coarse:text-base">
+                <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2.25} />
+                <span className="min-w-0">{test.ok}</span>
+              </p>
+            )}
             {test.error && <Notice tone="critical">{test.error}</Notice>}
+            {test.error && test.preview && <WaBubble text={test.preview} />}
             {test.off !== undefined && (
               <>
-                <Notice tone="muted">Пробная отправка со второго номера выключена, как и запуск рассылок. Ниже то, что пришло бы вам.</Notice>
+                <Notice tone="muted">{test.off || "Пробная отправка со второго номера отсюда не уходит."} Ниже то, что пришло бы вам.</Notice>
                 {test.preview && <WaBubble text={test.preview} />}
               </>
             )}

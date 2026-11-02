@@ -480,3 +480,16 @@ test("отказы Altegio на нескольких страницах: ста�
   assert.ok(after.last_ok_at && JSON.parse(after.cursor).done, "проход дошёл до конца: " + after.cursor);
   assert.equal(active(), 204, "список неполный — ни один отказ не снят");
 });
+
+test("время и текст одним запросом: ошибка в тексте не оставляет сохранённым новое время; вставки для кнопок — и те, что уже в тексте", async () => {
+  net.reset();
+  const s = mk(ENV), own = await login(s, OWNER);
+  const r = await set(own, { id: "remind3", timing: { hours: 5 }, text: { ru: "Ждём вас {когда-нибудь}." } });
+  assert.equal(r.status, 400);
+  const j = await info(own);
+  assert.equal(sc(j, "remind3").timing.hours, 3, "время не сохранилось");
+  assert.ok(sc(j, "remind24").text.vars.includes("компания") && sc(j, "remind24").text.vars.includes("услуга и мастер"), JSON.stringify(sc(j, "remind24").text.vars));
+  assert.equal((await set(own, { id: "remind3", timing: { hours: 5 }, text: { ru: "Ждём вас сегодня в {время}." } })).status, 200);
+  const k = sc(await info(own), "remind3");
+  assert.equal(k.timing.hours, 5); assert.equal(k.text.ru, "Ждём вас сегодня в {время}.");
+});

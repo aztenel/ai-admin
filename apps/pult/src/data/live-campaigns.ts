@@ -4,7 +4,16 @@
 // Полные номера клиентов базы сервер не отдаёт — здесь их нет и быть не может; ответы не пишутся ни в консоль, ни в localStorage.
 import type {
   AutoInfo,
+  AutoMessages,
+  AutoMsgAudience,
+  AutoMsgCounts,
+  AutoMsgField,
+  AutoMsgLogItem,
+  AutoMsgScenario,
+  AutoMsgTestResult,
   CampaignCalendar,
+  CrmPersonStatus,
+  CrmStatusCounts,
   CampaignResults,
   LibraryItem,
   MessageStats,
@@ -70,6 +79,19 @@ type ServiceRaw = {
 type DryRaw = Partial<Omit<ServiceDryRun, "items">> & { items?: { k: string; sc?: string; at?: number; status?: string; why?: string; name?: string; phone?: string; date?: string; time?: string; staff?: string; svc?: string; text?: string; lang?: string }[] };
 type AutoRaw = { owner: boolean; auto: AutoSettings; available: boolean; why: string; crm: AutoInfo["crm"]; today: AutoInfo["today"]; note?: string;
   qual: { quality: string; at: number } | null; skip?: { at: number; why: string } };
+type CountsRaw = { sent?: number; failed?: number; skipped?: number };
+type MsgScenarioRaw = {
+  id: string; group?: string; title?: string; who?: string; on?: boolean; live?: boolean; why?: string; locked?: string; at?: number; by?: string;
+  timing?: Record<string, string | number>; fields?: AutoMsgField[]; timingText?: string;
+  text?: { ru?: string; kk?: string; v?: number; variant?: string; own?: boolean; approved?: boolean; vars?: string[] } | null; preview?: string;
+  counts?: { today?: CountsRaw; week?: CountsRaw }; log?: { t?: number; st?: string; why?: string; name?: string; phone?: string; date?: string; time?: string }[];
+  audience?: { total?: number; allowed?: number; why?: Record<string, number>; base?: boolean } | null;
+};
+type MsgRaw = {
+  client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string };
+  altegio?: { ready?: boolean; why?: string }; db?: string; hold?: { at?: number; why?: string } | null; window?: { from?: number; to?: number }; cap?: number;
+  marketing?: { allowed?: boolean; why?: string }; test?: { phone?: string } | null; scenarios?: MsgScenarioRaw[];
+};
 
 // ---------- перевод в понятия пульта ----------
 const n = (x: unknown) => (typeof x === "number" && isFinite(x) ? x : 0);
@@ -150,7 +172,7 @@ function overview(d: ListRaw): CampaignsOverview {
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv"];
 const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
 const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
 const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];
@@ -194,6 +216,58 @@ function dryRun(d: DryRaw): ServiceDryRun {
     quiet: !!d.quiet, hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null, total: Math.max(n(d.total), items.length), items,
     skipped: (d.skipped || []).filter((x) => x && x.why).map((x) => ({ why: x.why, n: n(x.n) })) };
 }
+
+// ---------- «Автоматические сообщения» (/api/msg/*) ----------
+const counts = (x: CountsRaw | undefined): AutoMsgCounts => ({ sent: n(x?.sent), failed: n(x?.failed), skipped: n(x?.skipped) });
+const FIELD_KINDS: AutoMsgField["kind"][] = ["minutes", "hours", "days", "time", "choice", "count"];
+/** Сценарий: незнакомые виды полей (сервер новее пульта) не показываем — их значение сервер оставит как было. */
+function msgScenario(x: MsgScenarioRaw): AutoMsgScenario {
+  const t = x.text;
+  const log: AutoMsgLogItem[] = (x.log || []).map((l) => ({ at: n(l.t), state: String(l.st || ""), why: l.why || "", name: l.name || "", phone: l.phone || "", date: l.date || "", time: l.time || "" }));
+  return {
+    id: String(x.id),
+    group: x.group === "marketing" ? "marketing" : "service",
+    title: x.title || x.id,
+    who: x.who || "",
+    on: !!x.on,
+    live: !!x.live,
+    why: x.why || "",
+    locked: x.locked || "",
+    at: n(x.at),
+    by: x.by || "",
+    timing: x.timing && typeof x.timing === "object" ? x.timing : {},
+    fields: (x.fields || []).filter((f) => f && typeof f.key === "string" && FIELD_KINDS.includes(f.kind)),
+    timingText: x.timingText || "",
+    text: t ? { ru: t.ru || "", kk: t.kk || "", v: n(t.v), ...(t.variant ? { variant: t.variant } : {}), own: !!t.own, approved: !!t.approved, vars: Array.isArray(t.vars) ? t.vars.map(String) : [] } : null,
+    preview: x.preview || "",
+    counts: { today: counts(x.counts?.today), week: counts(x.counts?.week) },
+    log,
+    ...(x.audience !== undefined ? { audience: x.audience ? { total: n(x.audience.total), allowed: n(x.audience.allowed), why: x.audience.why || {}, base: !!x.audience.base } : null } : {}),
+  };
+}
+function autoMessages(d: MsgRaw): AutoMessages {
+  return {
+    workspace: d.client || { id: "", name: "" },
+    owner: !!d.owner,
+    stage: d.stage === "preview" ? "preview" : "production",
+    now: n(d.now) || Date.now(),
+    master: { on: !!d.master?.on, why: d.master?.why || "" },
+    sender: { ready: !!d.sender?.ready, phone: d.sender?.phone || "", why: d.sender?.why || "" },
+    altegio: { ready: d.altegio?.ready !== false, why: d.altegio?.why || "" },
+    db: d.db || "",
+    hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null,
+    window: { from: n(d.window?.from) || 10, to: n(d.window?.to) || 21 },
+    cap: n(d.cap),
+    marketing: { allowed: !!d.marketing?.allowed, why: d.marketing?.why || "" },
+    test: d.test && d.test.phone ? { phone: d.test.phone } : null,
+    scenarios: (d.scenarios || []).filter((x) => x && x.id).map(msgScenario),
+  };
+}
+const ST_KEYS = ["valid", "booked", "service", "marketing", "stopped", "refused", "ready"] as const;
+const stCounts = (x: Partial<CrmStatusCounts> | undefined): CrmStatusCounts | undefined =>
+  x && typeof x === "object" ? (Object.fromEntries(ST_KEYS.map((k) => [k, n(x[k])])) as CrmStatusCounts) : undefined;
+const personSt = (x: Partial<CrmPersonStatus> | undefined): CrmPersonStatus | undefined =>
+  x && typeof x === "object" ? { booked: !!x.booked, service: !!x.service, marketing: !!x.marketing, stopped: !!x.stopped, refused: !!x.refused, ready: !!x.ready } : undefined;
 
 /** Черновик → тело запроса check / test / create. fallback шлём всегда: без него предпросмотр («клиент») не совпал бы с отправкой. */
 export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown> {
@@ -255,11 +329,13 @@ export const liveCampaigns: CampaignSource = {
     const d = await call<{ b: BRaw; state: string }>("/api/bc/tick", { c: ws, id });
     return { campaign: detail(d.b), state: d.state || "" };
   },
-  async testSend(ws, draft, to) {
-    return (await call<{ text: string }>("/api/bc/test", { ...draftBody(ws, draft), to })).text;
+  async testSend(ws, draft, to, rid) {
+    // второй номер: to сервер не слушает (только номер для проверки владельца), rid — номер нажатия
+    return (await call<{ text: string }>("/api/bc/test", { ...draftBody(ws, draft), to, ...(rid ? { rid } : {}) })).text;
   },
   async crmSegments(ws) {
     const d = await call<SegRaw>(`/api/crm/segments?c=${enc(ws)}`);
+    const st = d.statuses ? stCounts(d.statuses) : undefined;
     return {
       owner: !!d.owner,
       why: d.why || "",
@@ -267,19 +343,36 @@ export const liveCampaigns: CampaignSource = {
       at: n(d.at),
       clients: n(d.clients),
       ok: n(d.ok),
-      segments: d.segments || [],
+      segments: (d.segments || []).map((s) => ({
+        id: s.id,
+        label: s.label,
+        rule: s.rule,
+        n: n(s.n),
+        ...(typeof s.total === "number" ? { total: s.total } : {}),
+        ...(s.st ? { st: stCounts(s.st) } : {}),
+      })),
       excluded: { ...{ stop: 0, noconsent: 0, fut: 0, recent: 0, marketed: 0 }, ...(d.excluded || {}) },
       consent: d.consent,
+      ...(d.statuses !== undefined ? { statuses: d.statuses && st ? { ...st, base: n(d.statuses.base), invalid: n(d.statuses.invalid) } : null } : {}),
       info: d.info || null,
       ...(d.error ? { error: d.error, errorAt: n(d.errorAt) } : {}),
     };
   },
-  async crmList(ws, spec, page = 1) {
+  async crmList(ws, spec, page = 1, opts) {
     const q = new URLSearchParams({ c: ws, seg: spec.id, page: String(page) });
     if (spec.from !== undefined) q.set("from", String(spec.from));
     if (spec.to !== undefined) q.set("to", String(spec.to));
     if (spec.staff) q.set("staff", spec.staff);
-    return call<CrmPage>(`/api/crm/list?${q}`);
+    if (opts?.all) q.set("all", "1");
+    const d = await call<CrmPage>(`/api/crm/list?${q}`);
+    // номер — маска сервера как есть; статусы — только у списка всех клиентов
+    return {
+      ...d,
+      list: (d.list || []).map((p) => {
+        const st = personSt(p.st);
+        return { ...p, ...(st ? { st } : {}), ...(typeof p.why === "string" ? { why: p.why } : {}) };
+      }),
+    };
   },
   async crmRefresh(ws) {
     const { ok: _ok, ...info } = await call<CrmInfo & { ok: true }>("/api/crm/refresh", { c: ws });
@@ -334,5 +427,20 @@ export const liveCampaigns: CampaignSource = {
   },
   async templateAction(ws, id, action) {
     return (await call<{ ok: true; item: LibraryItem }>("/api/bc/templates/action", { c: ws, id, action, op: getOperator() })).item;
+  },
+  async autoMessages(ws) {
+    return autoMessages(await call<MsgRaw>(`/api/msg/auto?c=${enc(ws)}`));
+  },
+  async autoMessageSet(ws, patch) {
+    // op — имя сотрудника на устройстве: сервер пишет его в журнал сценария («включил Азамат»)
+    await call<{ ok: true }>("/api/msg/auto", { c: ws, ...patch, op: getOperator() });
+  },
+  async autoMessageTest(ws, id, lang, rid): Promise<AutoMsgTestResult> {
+    const d = await call<{ text?: string; to?: string; dup?: boolean; unknown?: boolean }>("/api/msg/test", { c: ws, id, lang, rid, op: getOperator() });
+    return { text: d.text || "", to: d.to || "", ...(d.dup ? { dup: true } : {}), ...(d.unknown ? { unknown: true } : {}) };
+  },
+  async autoMessageAudience(ws, id): Promise<AutoMsgAudience> {
+    const d = await call<{ id?: string; total?: number; allowed?: number; day?: string; at?: number }>("/api/msg/audience", { c: ws, id });
+    return { id: d.id || id, ...(typeof d.total === "number" ? { total: d.total } : {}), allowed: n(d.allowed), day: d.day || "", at: n(d.at) };
   },
 };
