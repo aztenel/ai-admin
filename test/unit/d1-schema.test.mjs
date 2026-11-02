@@ -14,10 +14,12 @@ const NO_SQLITE = sqliteOk ? false : "node:sqlite есть только в Node 
 const jsonc = f => JSON.parse(readFileSync(new URL("../../" + f, import.meta.url), "utf8").replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*/g, (m, s) => s || ""));
 const PROD_KV = "29debedd4b844096b1c5c55eb30dd271";
 
-test("черновики не подключены к боевым данным: своё KV, своя база D1, у боевого сайта D1 нет", () => {
+test("черновики не подключены к боевым данным: своё KV, своя база D1; у боевого сайта — своя база ai-admin", () => {
   const w = jsonc("wrangler.jsonc"), p = w.previews;
   assert.deepEqual(w.kv_namespaces, [{ binding: "KV", id: PROD_KV }], "боевая привязка KV не менялась");
-  assert.equal(w.d1_databases, undefined, "боевой сайт к D1 не подключён — только по решению владельца");
+  // боевая база подключена по решению владельца (docs/runbooks/winchester-go-live.md): только ai-admin, не база черновиков
+  assert.deepEqual(w.d1_databases.map(d => [d.binding, d.database_name, d.database_id]), [["DB", "ai-admin", "ea1610ed-d342-41ca-8170-40ffe81feb41"]]);
+  assert.notEqual(w.d1_databases[0].database_id, p.d1_databases[0].database_id, "у черновиков и боевого сайта — разные базы");
   assert.equal(w.vars, undefined, "переменные боевого сайта — только в панели (keep_vars)");
   assert.equal(p.vars.STAGE, "preview");
   assert.equal(p.kv_namespaces.length, 1);

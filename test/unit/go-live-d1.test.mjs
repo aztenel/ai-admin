@@ -46,7 +46,9 @@ test("инструкция и правка привязки: та же отме�
   // правка ложится на текущие файлы: wrangler.jsonc или проверку схемы изменили — правку нужно собрать заново
   let git = true;
   try { execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: fileURLToPath(ROOT), stdio: "ignore" }); } catch (e) { git = false; }
-  if (git) execFileSync("git", ["apply", "--check", fileURLToPath(PATCH)], { cwd: fileURLToPath(ROOT), stdio: "pipe" });
+  // после шага 9.3 правка уже применена (боевая база подключена) — тогда она должна сниматься обратно (откат), а не ложиться ещё раз
+  const apply = (/** @type {string[]} */ extra) => { try { execFileSync("git", ["apply", "--check", ...extra, fileURLToPath(PATCH)], { cwd: fileURLToPath(ROOT), stdio: "pipe" }); return true; } catch (e) { return false; } };
+  if (git) assert.ok(apply([]) || apply(["--reverse"]), "правка не ложится на текущие файлы и не снимается с них: wrangler.jsonc или проверку схемы изменили — правку нужно собрать заново");
 });
 
 test("привязку выложили раньше миграций: пульт пишет «не настроена», Green-API не вызывается", { skip }, async () => {
