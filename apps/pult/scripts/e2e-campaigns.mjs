@@ -1340,6 +1340,71 @@ async function fixesPhone() {
   await finish(t);
 }
 
+/** Нулевая аудитория (решение владельца 02.11.2026): ни у одного клиента нет согласия на рекламу — тест любого из 28 текстов на свой номер
+ *  всё равно уходит (это проверка текста), а сохранить, одобрить и запустить рассылку нельзя: честно «Реальная рассылка сейчас
+ *  невозможна». Клиентам — ничего. Согласия снимаются для этой сессии (следующая, последняя, выдаёт свои). */
+async function zeroAudience() {
+  const t = await session({ key: dl.OWNER, c: "winchester", vp: PHONE, scheme: "light", tag: "zero-w-owner-390-light", own: [TEST_TO.replace(/\D/g, "")] });
+  const { page } = t;
+  // база клиентов есть (как у Winchester на боевом), а согласий на рекламу — ни у кого
+  await subTab(page, "Клиенты");
+  await tap(page.getByRole("button", { name: "Обновить базу" }));
+  await page.getByText("Читаю журнал Altegio… до минуты").waitFor({ state: "detached", timeout: 90_000 });
+  await dl.bot.S.env.DB.prepare("delete from consents where ws = 'winchester'").run();
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await tap(page.getByRole("region", { name: "Канал рассылок" }).getByRole("button", { name: "Создать рассылку" }));
+  const gw = gaDialog(page);
+  await gw.waitFor();
+  await gaAt(gw, "Аудитория");
+  const segs = gw.getByRole("radiogroup", { name: "Сегмент" });
+  const allR = segs.getByRole("radio", { name: /^Вся база/ });
+  await tap(allR);
+  ok(`${t.tag}: аудитория — клиенты есть, а «можно рекламу: 0»`, /можно рекламу: 0/.test((await allR.getAttribute("aria-label")) || ""), (await allR.getAttribute("aria-label")) || "");
+  await gaNext(gw);
+  await gaAt(gw, "Сообщение");
+  const msgs = gw.getByRole("radiogroup", { name: "Сообщение" });
+  await tap(msgs.getByRole("radio", { name: "Давно не виделись" }));
+  await gaNext(gw);
+  await gaAt(gw, "Предпросмотр");
+  await gaNext(gw);
+  await gaAt(gw, "Проверка");
+  await gw.getByText(/Сообщение получат:/).waitFor({ timeout: 15000 });
+  const ck = norm(await text(gw));
+  ok(`${t.tag}: проверка — получат 0, причина и как получить согласия`, /Сообщение получат: 0/.test(ck) && /согласи/i.test(ck), ck.slice(0, 300));
+  ok(`${t.tag}: «Далее» доступно — на «Тест» можно и при нулевой аудитории`, !(await gw.getByRole("button", { name: "Далее" }).isDisabled()));
+  await step(t, "zero-check");
+  await gaNext(gw);
+  await gaAt(gw, "Тест");
+  ok(`${t.tag}: на «Тесте» сказано, что это только проверка текста, а реальная рассылка сейчас невозможна`, /Это только проверка текста на вашем номере/.test(await text(gw)));
+  const pin = gw.getByLabel("Номер для проверки");
+  const send = gw.getByRole("button", { name: "Отправить тест" });
+  await pin.or(send).first().waitFor({ timeout: 10000 });
+  if (await pin.count()) {
+    await fill(pin, TEST_TO);
+    await tap(gw.getByRole("button", { name: "Сохранить" }));
+  }
+  await send.waitFor({ timeout: 10000 });
+  const before = gaSent().length;
+  await tap(send);
+  await gw.getByRole("status").filter({ hasText: /отправлено на ваш номер/i }).waitFor({ timeout: 10000 }).catch(() => {});
+  const out = gaSent().slice(before);
+  ok(`${t.tag}: тест «Давно не виделись» ушёл один раз — только на номер владельца, с именем вымышленного клиента`, out.length === 1 && out[0].to === "77000009999" && /^Добрый день, Айгерим! 👋🏻\n\nДавно не виделись в Winchester!/.test(out[0].text), JSON.stringify(out.map((x) => [x.to, x.text.slice(0, 50)])));
+  await step(t, "zero-test");
+  await gaNext(gw);
+  await gaAt(gw, "Сохранение и запуск");
+  const fin = await text(gw);
+  ok(
+    `${t.tag}: «Сохранение и запуск» — «Реальная рассылка сейчас невозможна», тест — отдельно; ни «Сохранить черновик», ни «Одобрить», ни «Запустить»`,
+    /Реальная рассылка сейчас невозможна/.test(fin) && /Тест на ваш номер уже отправлен — это только проверка текста, не рассылка/.test(fin) &&
+      !(await gw.getByRole("button", { name: /^(Сохранить черновик|Одобрить|Запустить|Запланировать)/ }).count()),
+    fin.slice(0, 400),
+  );
+  ok(`${t.tag}: клиентам не ушло ничего — после теста ни одного сообщения`, gaSent().length === before + 1);
+  await step(t, "zero-save");
+  await finish(t);
+}
+
 /** [4] Люди сегмента: «Ещё» ещё грузится, а отбор поменяли — «Ещё» не остаётся с крутилкой навсегда. Нужно больше 50 человек:
  *  журнал Altegio — 130 вымышленных клиентов (последней сессией: базу Winchester после неё не проверяем). */
 async function fixesPaging() {
@@ -1460,6 +1525,7 @@ try {
   await run("Находки проверки: сигнал Meta — сотрудник и владелец", fixesHold);
   await run("Находки проверки: Winchester · телефон", fixesPhone);
   await run("Находки проверки: собранный пульт без связи", fixesOffline);
+  await run("Нулевая аудитория: тест любого из 28 текстов на свой номер", zeroAudience);
   await run("Находки проверки: люди сегмента, «Ещё» и отбор", fixesPaging);
 } finally {
   await browser.close();

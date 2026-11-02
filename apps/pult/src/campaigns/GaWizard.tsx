@@ -233,11 +233,15 @@ export default function GaWizard({
   // null — второго номера у компании нет; undefined — сведения о номерах ещё не пришли (не мешаем: сервер проверит сам)
   const noSender = bot === null ? "Второй номер (Green-API) у этой компании не подключён." : "";
   const valid = cd?.valid ?? 0;
+  // настоящую рассылку можно сохранить и запустить, только если есть кому писать рекламу (проверка прошла, получателей больше нуля)
+  const canSave = !!cd?.ok && valid > 0 && capOk && from < to;
   const canNext = [
     !!segment && !baseErr && !noSender,
     tplId !== null && !!text.trim() && !hasBlanks(text),
     !!cd,
-    !!cd?.ok && valid > 0 && capOk && from < to,
+    // на «Тест» — и при нулевой аудитории (решение владельца 02.11.2026): тест уходит только на его номер для проверки, это проверка
+    // текста, а не рассылка; сохранить и запустить рассылку при нуле по-прежнему нельзя (canSave, шаг «Сохранение и запуск»)
+    !!cd && capOk && from < to,
     true,
     false,
   ][step];
@@ -447,6 +451,7 @@ export default function GaWizard({
       )}
       {step === 4 && (
         <TestStep
+          realOff={!canSave}
           owner={owner}
           testPhone={testPhone}
           phoneIn={phoneIn}
@@ -481,6 +486,10 @@ export default function GaWizard({
               ))}
             </div>
           )}
+          {!created && !canSave ? (
+            <RealOff cd={cd} valid={valid} capOk={capOk} hours={from < to} tested={tested} onCheck={() => go(3)} onTest={owner ? () => go(4) : undefined} />
+          ) : (
+          <>
           <LaunchControls
             ws={ws}
             owner={owner}
@@ -503,6 +512,8 @@ export default function GaWizard({
             </Button>
           </div>
           {owner && launchOff && <p className="text-sm text-fg-3">Одобрение — ваше решение о рассылке, а не отправка: клиентам ничего не уйдёт, пока запуск выключен.</p>}
+          </>
+          )}
           <section aria-label="Что в рассылке">
             <h3 className="mb-1.5 px-1 text-sm font-medium text-fg-3">Что в рассылке</h3>
             <dl className="divide-y divide-line rounded-[0.875rem] bg-surface px-4">
@@ -533,6 +544,49 @@ export default function GaWizard({
         </div>
       )}
     </Frame>
+  );
+}
+
+/** Реальную рассылку сейчас не сохранить и не запустить: некому писать рекламу или проверка не прошла. Тест на свой номер — отдельно
+ *  и работает (шаг «Тест»): это проверка текста, а не рассылка — так и пишем, чтобы тест не принимали за готовую рассылку. */
+function RealOff({ cd, valid, capOk, hours, tested, onCheck, onTest }: { cd?: CampaignCheck; valid: number; capOk: boolean; hours: boolean; tested: boolean; onCheck: () => void; onTest?: () => void }) {
+  const f = cd?.funnel;
+  const reasons = [...(f?.consent || []), ...(f?.rules || [])].filter((x) => x.n > 0);
+  const errs = (cd?.errors || []).filter((e) => !/некому писать/.test(e));
+  return (
+    <section aria-label="Реальная рассылка" className="space-y-3">
+      <div role="status" className="rounded-[0.875rem] border border-line-strong bg-surface px-4 py-3">
+        <p className="text-md font-semibold">Реальная рассылка сейчас невозможна</p>
+        <p className="mt-1 text-ui text-fg-2 pointer-coarse:text-base">
+          {valid === 0
+            ? "Некому писать рекламу: у клиентов этой аудитории нет подтверждённого согласия или все исключены правилами. Сохранить, одобрить и запустить рассылку нельзя — клиентам ничего не уйдёт."
+            : !capOk || !hours
+              ? "Проверьте предел в сутки и часы отправки на шаге «Проверка»."
+              : "Проверка не прошла — причины ниже. Клиентам ничего не уйдёт."}
+        </p>
+        {!!errs.length && valid > 0 && (
+          <ul className="mt-2 list-disc pl-5 text-sm text-critical">
+            {errs.map((e) => (
+              <li key={e}>{e[0].toUpperCase() + e.slice(1)}</li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-2 text-sm text-fg-3">
+          {tested ? "Тест на ваш номер уже отправлен — это только проверка текста, не рассылка." : "Тест на ваш номер работает и без аудитории — это только проверка текста, не рассылка."}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={onCheck}>
+            Проверить получателей
+          </Button>
+          {onTest && (
+            <Button size="sm" variant="secondary" icon={FlaskConical} onClick={onTest}>
+              Отправить тест
+            </Button>
+          )}
+        </div>
+      </div>
+      {valid === 0 && <ConsentHowTo reasons={reasons} note={f?.note} />}
+    </section>
   );
 }
 
@@ -1028,6 +1082,7 @@ function Reasons({ title, list }: { title: string; list: FunnelReason[] }) {
 
 // ---------- шаг 5: тест ----------
 function TestStep({
+  realOff,
   owner,
   testPhone,
   phoneIn,
@@ -1037,6 +1092,7 @@ function TestStep({
   test,
   onSend,
 }: {
+  realOff: boolean;
   owner: boolean;
   testPhone: string | null;
   phoneIn: string;
@@ -1049,6 +1105,7 @@ function TestStep({
   return (
     <div className="space-y-3">
       <p className="text-ui text-fg-2 pointer-coarse:text-base">Отправьте тест себе, чтобы увидеть сообщение в WhatsApp. Оно придёт со второго номера на ваш номер для проверки — клиентам на этом шаге ничего не уходит.</p>
+      {realOff && <Notice tone="muted">Это только проверка текста на вашем номере. Реальная рассылка клиентам сейчас невозможна — почему, видно на шаге «Проверка».</Notice>}
       {!owner ? (
         <Notice tone="muted">Тест отправляет владелец — на свой номер для проверки.</Notice>
       ) : testPhone === null ? (
