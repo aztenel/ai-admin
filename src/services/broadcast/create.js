@@ -40,7 +40,7 @@ const exclList = m => Object.entries(m).filter(([, n]) => n > 0).map(([code, n])
 export const RULE_WHY = { ...EXCL_WHY, cooldown: "пауза после отменённой записи" };
 /** @type {Record<string, string>} */
 export const CONSENT_WHY = { stop: "просили не писать («стоп»)", block: "запрет: не писать вообще", review: "неоднозначный «стоп», ждёт решения",
-  denied: "отказались от рекламы", unconfirmed: "согласие не подтверждено (из файла или Altegio)", noconsent: "нет согласия на рекламу" };
+  denied: "отказались от рекламы", unconfirmed: "согласие не подтверждено (из файла без подтверждения владельца)", noconsent: "нет согласия на рекламу" };
 /** @param {Record<string, number>} m @param {Record<string, string>} words */
 const whyList = (m, words) => Object.entries(m).filter(([, n]) => n > 0).map(([code, n]) => ({ code, why: words[code] || code, n })).sort((a, b) => b.n - a.n);
 /** @param {Recipients} rc @param {Record<string, number>} blocked кому из сегмента не собрать текст @param {number} allowed */

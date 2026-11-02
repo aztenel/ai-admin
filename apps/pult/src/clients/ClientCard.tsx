@@ -326,7 +326,7 @@ function ConsentBlock({
   return (
     <InsetGroup
       title="Согласие на сообщения"
-      note="Реклама уходит только при подтверждённом согласии: клиент сам написал в WhatsApp, подписал анкету или согласился устно в салоне. Согласие из файла или из Altegio нужно подтвердить."
+      note="Реклама уходит только при подтверждённом согласии: клиент сам написал в WhatsApp, дал письменное согласие (анкета, переписка на телефоне салона) или согласился устно в салоне. В Altegio его вносить не нужно. Согласие из файла без подтверждения владельца нужно подтвердить."
     >
       <dl>
         <Field stacked label={PURPOSE.marketing}>
@@ -363,7 +363,7 @@ function ConsentBlock({
                 checked={evidence === "document"}
                 onSelect={() => (setEvidence("document"), setErr(null), given || setGiven(astanaToday(now)))}
                 title="Письменное согласие"
-                sub="анкета или договор: номер и дата"
+                sub="анкета, договор или переписка в WhatsApp на телефоне салона: где хранится и дата"
               />
               <RadioRow
                 name="evidence"
@@ -383,7 +383,7 @@ function ConsentBlock({
           )}
           {state === "granted" && evidence === "document" && (
             <>
-              <TextField label="Номер или где хранится" placeholder="Например: анкета № 12, папка «Согласия»" maxLength={120} value={ref} onChange={(e) => setRef(e.target.value)} error={fieldErr("evidenceRef")} />
+              <TextField label="Номер или где хранится" placeholder="Например: анкета № 12 или WhatsApp на телефоне салона" maxLength={120} value={ref} onChange={(e) => setRef(e.target.value)} error={fieldErr("evidenceRef")} />
               <TextField label="Дата согласия" type="date" max={astanaToday(now)} value={given} onChange={(e) => setGiven(e.target.value)} error={fieldErr("givenAt")} />
             </>
           )}

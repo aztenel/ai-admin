@@ -39,28 +39,40 @@ export function csvRows(text, max = 20000) {
   return rows;
 }
 
-const HEAD = { phone: /тел|phone|номер|моб|whats|ватсап|вацап/i, name: /имя|name|фио|клиент|аты|есім/i, consent: /соглас|consent|рассыл|подпис|келісім/i };
+const HEAD = { phone: /тел|phone|номер|моб|whats|ватсап|вацап/i, name: /имя|name|фио|клиент|аты|есім/i, consent: /соглас|разреш|consent|рассыл|подпис|реклам|келісім|рұқсат/i };
+// колонка согласия — только «можно рекламу» (находка независимой проверки 02.11.2026: «Отказ от рассылки: да» и «Согласие на обработку
+// персональных данных: да» читались как согласие на рекламу, а с подтверждением владельца становились разрешением): заголовок с отказом,
+// запретом, отрицанием или про обработку данных — не она; подходящих колонок две и больше — ни одна (непонятно, какую читать).
+// «(да/нет)» в заголовке — подсказка, а не отрицание
+const CONSENT_NO = /отказ|запрет|запрещ|исключ|отпис|стоп|stop|unsub|opt\s*-?\s*out|бас\s+тарт|қарсы|(?:^|[^\p{L}])(?:не|нет|без|no|not|non|жоқ|емес)(?=$|[^\p{L}])/iu;
+const CONSENT_PD = /персональн|пдн|обработк|данн|personal|privacy|дербес|деректер/iu;
+const HINT = /\(?\s*(?:да\s*\/\s*нет|yes\s*\/\s*no|иә\s*\/\s*жоқ)\s*\)?/giu;
 
 /**
  * Какая колонка что: по заголовку, а без заголовка — номер там, где больше всего номеров, имя — первая колонка с буквами.
+ * skipped — колонки, похожие на согласие, которые не читаются: why — no (отказ, запрет, отрицание), pd (обработка данных), many (их несколько).
  * @param {string[][]} rows
  * @param {(s: string) => string} phoneOf нормализация номера (пусто — не номер)
- * @returns {{ header: boolean, phone: number, name: number, consent: number }} -1 — колонки нет
+ * @returns {{ header: boolean, phone: number, name: number, consent: number, skipped: { i: number, why: string }[] }} -1 — колонки нет
  */
 export function tableColumns(rows, phoneOf) {
   const top = rows[0] || [];
   const find = (/** @type {RegExp} */ re) => top.findIndex(x => re.test(String(x || "")));
   const header = top.some(x => HEAD.phone.test(String(x || "")) || HEAD.name.test(String(x || ""))) && !top.some(x => phoneOf(String(x || "")));
   if (header) {
-    const phone = find(HEAD.phone), name = top.findIndex((x, i) => i !== phone && HEAD.name.test(String(x || ""))), consent = top.findIndex((x, i) => i !== phone && i !== name && HEAD.consent.test(String(x || "")));
-    if (phone >= 0) return { header, phone, name, consent };
+    const phone = find(HEAD.phone), name = top.findIndex((x, i) => i !== phone && HEAD.name.test(String(x || "")));
+    const cands = top.map((x, i) => ({ i, h: String(x || "") })).filter(x => x.i !== phone && x.i !== name && HEAD.consent.test(x.h));
+    const why = (/** @type {string} */ h) => CONSENT_NO.test(h.replace(HINT, " ")) ? "no" : CONSENT_PD.test(h) ? "pd" : "";
+    const ok = cands.filter(x => !why(x.h)), consent = ok.length === 1 ? ok[0].i : -1;
+    const skipped = cands.filter(x => x.i !== consent).map(x => ({ i: x.i, why: why(x.h) || "many" }));
+    if (phone >= 0) return { header, phone, name, consent, skipped };
   }
   const body = rows.slice(header ? 1 : 0, 51), width = Math.max(0, ...body.map(r => r.length));
   let phone = -1, best = 0;
   for (let i = 0; i < width; i++) { const n = body.filter(r => phoneOf(String(r[i] || ""))).length; if (n > best) { best = n; phone = i; } }
   let name = -1;
   for (let i = 0; i < width && name < 0; i++) if (i !== phone && body.filter(r => /\p{L}{2}/u.test(String(r[i] || ""))).length >= Math.max(1, body.length / 2)) name = i;
-  return { header, phone, name, consent: -1 };
+  return { header, phone, name, consent: -1, skipped: [] };
 }
 
 /** «да», «yes», «1», «+», «согласен» → granted; «нет», «no», «0», «-» → denied; пусто или другое → null. @param {any} v */

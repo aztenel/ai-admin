@@ -12,8 +12,9 @@ export const GAP_MS = MARKETING_GAP_DAYS * 86400e3;
 
 // можно писать рекламу: нет запрета и решения не ждёт, нет будущей записи, подтверждённое согласие (без него — нельзя, решение
 // владельца 31.10.2026), не был последние 14 дней, рекламы не было 30 дней
-// (с 31.10.2026: согласие — только подтверждённое; пауза после отменённой записи — тоже «нельзя»)
-export const READY = `blocked = 0 and review = 0 and booked = 0 and cooled = 0 and consent = 'granted' and cconf = 1 and (d is null or d >= ${QUIET_DAYS}) and recent = 0`;
+// (с 31.10.2026: согласие — только подтверждённое; пауза после отменённой записи — тоже «нельзя»; с 02.11.2026 — и отказ из Altegio
+// «не получает массовые уведомления», altno: рассылка его уже не пускала, а «Клиенты» считали таких «можно рекламу»)
+export const READY = `blocked = 0 and altno = 0 and review = 0 and booked = 0 and cooled = 0 and consent = 'granted' and cconf = 1 and (d is null or d >= ${QUIET_DAYS}) and recent = 0`;
 /** Пауза рекламы после отменённой или пропавшей записи — дней (решение владельца 31.10.2026: исчезнувшая запись не возвращает в рекламу сразу). */
 export const COOL_DAYS = 14;
 
@@ -48,8 +49,9 @@ export function marketWhy(k) {
   if (+k.full) out.push("просил не писать вообще");
   else if (+k.blocked) out.push("просил не писать рекламу («стоп»)");
   if (+k.review) out.push("неоднозначный «стоп» — ждёт решения");
+  if (+k.altno) out.push("в Altegio отмечено: не получает массовые уведомления (отказ от рекламы)");
   if (k.consent !== "granted") out.push(k.consent === "denied" ? "отказался от рассылок" : "нет подтверждённого согласия на рассылки");
-  else if (!+k.cconf) out.push("согласие не подтверждено (из файла или Altegio) — подтвердите в карточке");
+  else if (!+k.cconf) out.push("согласие не подтверждено (из файла без подтверждения владельца) — подтвердите в карточке");
   if (+k.booked) out.push("уже записан");
   if (+k.cooled) out.push(`отменил запись — пауза до ${new Date(+k.cool_until + 5 * 3600e3).toISOString().slice(0, 10).split("-").reverse().join(".")}`);
   if (k.d != null && +k.d < QUIET_DAYS) out.push(`был ${+k.d} дн. назад — меньше ${QUIET_DAYS}`);

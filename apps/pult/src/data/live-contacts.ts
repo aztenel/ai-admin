@@ -229,6 +229,8 @@ function preview(x: unknown): ImportPreview {
     columns: { phone: str(col.phone), name: str(col.name), consent: str(col.consent) },
     hasConsent: !!d.hasConsent,
     consentNote: str(d.consentNote),
+    consentCounts: d.consentCounts && typeof d.consentCounts === "object" ? { yes: num(obj(d.consentCounts).yes), no: num(obj(d.consentCounts).no) } : null,
+    consentWarn: str(d.consentWarn),
     rows: arr(d.rows).map((v) => {
       const o = obj(v);
       return { row: num(o.row), phone: str(o.phone), name: str(o.name), action: oneOf<ImportAction>(o.action, ACTIONS, "invalid"), ...(str(o.error) ? { error: str(o.error) } : {}) };
@@ -300,9 +302,18 @@ export const liveContacts: ContactSource = {
     }
     return preview(await call<unknown>("/api/contacts/import", { c: ws, text: input.text }));
   },
-  async importConfirm(ws, id, consentBasis) {
-    const d = obj(await call<unknown>("/api/contacts/import/confirm", { c: ws, id, ...(consentBasis ? { consentBasis } : {}) }));
-    return { created: num(d.created), updated: num(d.updated), consents: num(d.consents), consentsUnconfirmed: num(d.consentsUnconfirmed), consentsSkipped: num(d.consentsSkipped) };
+  async importConfirm(ws, id, consentBasis, attest) {
+    const d = obj(
+      await call<unknown>("/api/contacts/import/confirm", { c: ws, id, ...(consentBasis ? { consentBasis } : {}), ...(attest ? { consentConfirmed: true, consentGivenAt: attest.givenAt } : {}) }),
+    );
+    return {
+      created: num(d.created),
+      updated: num(d.updated),
+      consents: num(d.consents),
+      consentsConfirmed: num(d.consentsConfirmed),
+      consentsUnconfirmed: num(d.consentsUnconfirmed),
+      consentsSkipped: num(d.consentsSkipped),
+    };
   },
   async importDiscard(ws, id) {
     await call("/api/contacts/import/discard", { c: ws, id });

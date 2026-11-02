@@ -3,17 +3,19 @@
 // До подтверждения в базе ничего не меняется; «Отменить» удаляет предпросмотр на сервере. Импорт не снимает запреты. Согласия из файла
 // ставятся, только если указано основание (где клиенты соглашались) — без него колонка согласия не используется. Даже с основанием
 // «да» из файла записывается как НЕ подтверждённое: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке; клиентам,
-// которые сами отказывались, «да» из файла не ставится вовсе (31.10.2026, правило владельца).
+// которые сами отказывались, «да» из файла не ставится вовсе (31.10.2026, правило владельца). Владелец может подтвердить, что клиенты
+// из файла сами разрешили рекламу (в WhatsApp, письменно — где и когда; задание владельца 02.11.2026: разрешения не обязаны быть в
+// Altegio) — тогда «да» подтверждено; «стоп», запреты и прежние отказы такой список не отменяет (сервер их пропускает).
 import { CircleAlert, CircleCheck, FileUp, ListChecks } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Notice } from "@/campaigns/base/shared";
-import { TextArea, TextField } from "@/campaigns/wizard/fields";
+import { Checkbox, TextArea, TextField } from "@/campaigns/wizard/fields";
 import { Button, InsetGroup } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ImportAction, ImportDone, ImportPreview } from "@/model/contacts";
 import { store } from "@/state/store";
-import { ACTION_LABEL, errMsg } from "./common";
+import { ACTION_LABEL, errField, errMsg } from "./common";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const ACCEPT = ".csv,.xlsx,.txt,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -21,13 +23,20 @@ const ORDER: ImportAction[] = ["new", "update", "same", "dup", "invalid"];
 const TONE: Record<ImportAction, string> = { new: "text-positive", update: "text-accent-ink", same: "text-fg-2", dup: "text-fg-2", invalid: "text-critical" };
 const ROWS: [string, string, string] = ["строка", "строки", "строк"];
 
-export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => void; onClose: () => void }) {
+/** Сегодня по Астане — ГГГГ-ММ-ДД (самая поздняя дата разрешений). */
+const astanaToday = () => new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10);
+
+export function ImportFlow({ ws, owner, onDone, onClose }: { ws: string; owner: boolean; onDone: () => void; onClose: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [pv, setPv] = useState<ImportPreview | null>(null);
   const [basis, setBasis] = useState("");
+  // владелец: клиенты из файла сами разрешили рекламу — когда (дата)
+  const [attest, setAttest] = useState(false);
+  const [given, setGiven] = useState("");
+  const [fieldErr, setFieldErr] = useState<{ field: string; text: string } | null>(null);
   const [done, setDone] = useState<ImportDone | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
@@ -47,13 +56,19 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
   const confirm = async () => {
     if (!pv) return;
     setErr("");
+    setFieldErr(null);
+    const sure = owner && pv.hasConsent && attest;
+    if (sure && basis.trim().length < 3) return setFieldErr({ field: "consentBasis", text: "Укажите, где клиенты дали разрешение." });
+    if (sure && !/^\d{4}-\d{2}-\d{2}$/.test(given)) return setFieldErr({ field: "consentGivenAt", text: "Укажите дату, когда клиенты дали разрешение." });
     setBusy("confirm");
     try {
-      const r = await store.source!.importConfirm(ws, pv.id, pv.hasConsent && basis.trim() ? basis.trim() : undefined);
+      const r = await store.source!.importConfirm(ws, pv.id, pv.hasConsent && basis.trim() ? basis.trim() : undefined, sure ? { givenAt: given } : undefined);
       setDone(r);
       onDone();
     } catch (e) {
-      setErr(errMsg(e));
+      const f = errField(e);
+      if (f === "consentBasis" || f === "consentGivenAt") setFieldErr({ field: f, text: errMsg(e) });
+      else setErr(errMsg(e));
     } finally {
       setBusy("");
     }
@@ -87,8 +102,13 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
             .
           </span>
         </div>
-        {(done.consentsUnconfirmed > 0 || done.consentsSkipped > 0) && (
+        {(done.consentsConfirmed > 0 || done.consentsUnconfirmed > 0 || done.consentsSkipped > 0) && (
           <ul aria-label="Согласия из файла" className="mb-6 space-y-2 px-1 text-ui text-fg-2 pointer-coarse:text-base">
+            {done.consentsConfirmed > 0 && (
+              <li>
+                Разрешений «да» записано и подтверждено: <b className="tnum text-fg">{done.consentsConfirmed}</b>. Рекламу им можно отправлять по общим правилам рассылки.
+              </li>
+            )}
             {done.consentsUnconfirmed > 0 && (
               <li>
                 Согласий «да» из файла: <b className="tnum text-fg">{done.consentsUnconfirmed}</b>, они не подтверждены. Реклама им не уйдёт, пока вы не подтвердите согласие в карточке клиента.
@@ -96,7 +116,7 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
             )}
             {done.consentsSkipped > 0 && (
               <li>
-                Пропущено: <b className="tnum text-fg">{done.consentsSkipped}</b>: клиент сам отказывался от рассылок, отметка «да» в файле этого не отменяет.
+                Пропущено: <b className="tnum text-fg">{done.consentsSkipped}</b>: клиент отказывался от рассылок, просил «стоп» или у него запрет. Отметка «да» в файле этого не отменяет.
               </li>
             )}
           </ul>
@@ -193,14 +213,47 @@ export function ImportFlow({ ws, onDone, onClose }: { ws: string; onDone: () => 
               Номер: {pv.columns.phone ? `«${pv.columns.phone}»` : "не нашли"}; имя: {pv.columns.name ? `«${pv.columns.name}»` : "нет"}; согласие:{" "}
               {pv.columns.consent ? `«${pv.columns.consent}»` : "нет"}.
             </p>
+            {pv.consentWarn && <Notice>{pv.consentWarn}</Notice>}
           </InsetGroup>
           {consentRows && (
-            <InsetGroup title="Согласие из файла" note="Например: «анкета в салоне, 2025» или «согласие при записи на сайте».">
-              <TextField label="Основание согласия" maxLength={120} value={basis} onChange={(e) => setBasis(e.target.value)} />
+            <InsetGroup title="Согласие из файла" note="Например: «анкета в салоне, 2025» или «написали «да» в WhatsApp на телефоне салона».">
+              {pv.consentCounts && (
+                <p className="pt-3 text-ui text-fg-2 pointer-coarse:text-base">
+                  В колонке «{pv.columns.consent}»: «да» — <b className="tnum text-fg">{pv.consentCounts.yes}</b>, «нет» — <b className="tnum text-fg">{pv.consentCounts.no}</b>.
+                </p>
+              )}
+              <TextField
+                label="Основание согласия"
+                maxLength={120}
+                value={basis}
+                onChange={(e) => (setBasis(e.target.value), setFieldErr(null))}
+                error={fieldErr?.field === "consentBasis" ? fieldErr.text : undefined}
+              />
               {!basis.trim() && <Notice>Без основания согласия из файла не ставятся, клиенты загрузятся без согласия на рекламу.</Notice>}
+              {owner && (
+                <>
+                  <Checkbox checked={attest} onChange={(v) => (setAttest(v), setFieldErr(null), v && !given && setGiven(astanaToday()))}>
+                    Клиенты с «да» сами разрешили рекламу — подтверждаю
+                    <span className="mt-0.5 block text-sm text-fg-2">В WhatsApp, письменно или в другом месте. В Altegio вносить не нужно.</span>
+                  </Checkbox>
+                  {attest && (
+                    <TextField
+                      label="Когда получены разрешения"
+                      type="date"
+                      max={astanaToday()}
+                      value={given}
+                      onChange={(e) => (setGiven(e.target.value), setFieldErr(null))}
+                      hint="Если в разные дни — последняя дата."
+                      error={fieldErr?.field === "consentGivenAt" ? fieldErr.text : undefined}
+                    />
+                  )}
+                </>
+              )}
               <Notice tone="muted">
-                {pv.consentNote ||
-                  "Даже с основанием «да» из файла будет не подтверждено: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится."}
+                {attest
+                  ? "«Да» из файла будет подтверждено: реклама этим клиентам пойдёт по общим правилам рассылки. Кто просил «стоп», отказывался или у кого запрет — тем «да» не запишется."
+                  : pv.consentNote ||
+                    "Даже с основанием «да» из файла будет не подтверждено: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится."}
               </Notice>
             </InsetGroup>
           )}
