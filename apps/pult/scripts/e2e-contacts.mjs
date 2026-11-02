@@ -450,6 +450,7 @@ async function owner(vp, scheme, tag) {
   await fill(imp3.getByLabel("Строки из таблицы"), ATTEST_TEXT);
   await tap(imp3.getByRole("button", { name: "Проверить" }));
   await imp3.getByRole("list", { name: "Итог проверки" }).waitFor();
+  ok(`${tag}: до загрузки видно, сколько «да» и «нет»`, /«да» — 1, «нет» — 0/.test(await text(imp3)), (await text(imp3)).slice(0, 400));
   const attestBox = imp3.getByRole("checkbox", { name: /сами разрешили рекламу/ });
   ok(`${tag}: владельцу — отметка «клиенты сами разрешили рекламу»`, (await attestBox.count()) === 1);
   await fill(imp3.getByLabel("Основание согласия"), "написали «да» в WhatsApp на телефоне салона (проверка)");
@@ -478,6 +479,16 @@ async function owner(vp, scheme, tag) {
   await closeCard(t);
   await page.getByRole("button", { name: "Очистить поиск" }).click();
   await page.waitForTimeout(700);
+  // колонка «Отказ от рассылки» — не согласие: предупреждение, блока согласия и отметки нет (находка независимой проверки 02.11.2026)
+  await menuAction(t, "Импорт из файла");
+  const imp4 = page.getByRole("dialog", { name: "Импорт клиентов" });
+  await fill(imp4.getByLabel("Строки из таблицы"), ["Телефон;Отказ от рассылки", "+7 700 000 77 31;да"].join("\n"));
+  await tap(imp4.getByRole("button", { name: "Проверить" }));
+  await imp4.getByRole("list", { name: "Итог проверки" }).waitFor();
+  ok(`${tag}: «Отказ от рассылки» — не согласие: предупреждение, без отметки`, /не читаю как согласие/.test(await text(imp4)) && !(await imp4.getByRole("checkbox").count()), (await text(imp4)).slice(0, 400));
+  await step(t, "import-optout-column");
+  await tap(imp4.getByRole("button", { name: "Отменить" }));
+  await imp4.waitFor({ state: "detached" });
 
   // импорт файлом CSV и отмена
   await menuAction(t, "Импорт из файла");

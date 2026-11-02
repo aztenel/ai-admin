@@ -23,6 +23,16 @@ const nameOf = (/** @type {any} */ s) => String(s ?? "").replace(/\s+/g, " ").tr
 /** @param {string[][]} table @param {{ header: boolean }} cols @param {number} i */
 const colName = (table, cols, i) => i < 0 ? "" : cols.header && String((table[0] || [])[i] || "").trim() ? String(table[0][i]).trim().slice(0, 40) : `${i + 1}-я колонка`;
 
+/** Почему колонки, похожие на согласие, не читаются. @param {string[][]} table @param {{ header: boolean, skipped: { i: number, why: string }[] }} cols */
+function skippedText(table, cols) {
+  const nm = (/** @type {number} */ i) => `«${String((table[0] || [])[i] || "").trim().slice(0, 40)}»`, of = (/** @type {string} */ w) => cols.skipped.filter(x => x.why === w).map(x => nm(x.i));
+  const out = [], no = of("no"), pd = of("pd"), many = of("many");
+  if (no.length) out.push(`Колонку ${no.join(", ")} не читаю как согласие: это отказ или запрет, «да» в ней — не разрешение на рекламу.`);
+  if (pd.length) out.push(`Колонку ${pd.join(", ")} не читаю как согласие на рекламу: это согласие на обработку данных.`);
+  if (many.length) out.push(`Колонок согласия несколько (${many.join(", ")}) — не знаю, какую читать. Оставьте в файле одну, например «Согласие на рекламу».`);
+  return out.join(" ");
+}
+
 /** Байты файла (или текст) → строки таблицы. @param {Uint8Array} bytes @param {string} name */
 export async function readTable(bytes, name) {
   if (bytes.length > IMPORT_MAX_BYTES) throw err("Файл больше 5 МБ — разделите его на части.");
@@ -44,7 +54,7 @@ export async function importPreview(db, ws, table, x) {
   const phones = [...new Set(body.map(r => phoneOf(String(r[cols.phone] || ""))).filter(Boolean))];
   const known = await contactsByPhones(db, ws, phones);
   const seen = new Set(), counts = { total: body.length, new: 0, update: 0, same: 0, dup: 0, invalid: 0 }, rows = [];
-  let hasConsent = false;
+  let hasConsent = false, yes = 0, no = 0;
   for (let i = 0; i < body.length; i++) {
     const r = body[i], raw = String(r[cols.phone] ?? ""), p = phoneOf(raw), n = cols.name >= 0 ? nameOf(r[cols.name]) : "", c = cols.consent >= 0 ? consentValue(r[cols.consent]) : null;
     const row = i + 1 + (cols.header ? 1 : 0);
@@ -54,6 +64,7 @@ export async function importPreview(db, ws, table, x) {
     seen.add(p);
     const k = known.get(p), a = !k ? "new" : n && n !== k.name ? "update" : "same";
     counts[a]++;
+    if (c === "granted") yes++; else if (c === "denied") no++;
     rows.push({ row, p, n, c, a, e: null });
   }
   await importSave(db, ws, { id: x.id, mode: "saved", by: x.by, at: x.at, sourceName: x.sourceName, counts, rows });
@@ -62,6 +73,9 @@ export async function importPreview(db, ws, table, x) {
   return {
     id: x.id, total: counts.total, counts: { new: counts.new, update: counts.update, same: counts.same, dup: counts.dup, invalid: counts.invalid },
     columns: { phone: colName(table, cols, cols.phone), name: colName(table, cols, cols.name), consent: colName(table, cols, cols.consent) }, header: cols.header, hasConsent,
+    // сколько «да» и «нет» в колонке согласия — до загрузки (владелец видит, что подтверждает); колонки, похожие на согласие, но не
+    // прочитанные (отказ, обработка данных, их несколько), — словами
+    consentCounts: cols.consent >= 0 ? { yes, no } : null, consentWarn: skippedText(table, cols),
     consentNote: hasConsent ? "Согласия из файла запишутся как «не подтверждено»: реклама им не уйдёт, пока согласие не подтвердят в карточке клиента. Если клиенты из файла сами разрешили рекламу (в WhatsApp, письменно), владелец может подтвердить это при загрузке: где и когда — тогда «да» подтверждено. Тем, кто сам отказывался или просил «стоп», «да» из файла не записывается. Без основания согласия из файла не записываются вовсе." : "",
     rows: show.map(r => ({ row: r.row, phone: r.p ? maskPhone(r.p) : "", name: logSafe(r.n), action: r.a, ...(r.e ? { error: r.e } : {}) }))
   };

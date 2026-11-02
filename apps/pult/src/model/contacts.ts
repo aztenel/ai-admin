@@ -189,6 +189,10 @@ export type ImportPreview = {
   hasConsent: boolean;
   /** Что будет с согласиями из файла (сервер): показать под блоком согласия. */
   consentNote: string;
+  /** Сколько «да» и «нет» в колонке согласия (null — колонки нет): видно до загрузки. */
+  consentCounts: { yes: number; no: number } | null;
+  /** Колонки, похожие на согласие, которые не читаются (отказ, обработка данных, их несколько), — словами; пусто — таких нет. */
+  consentWarn: string;
   rows: ImportRow[];
 };
 /** consents — сколько записано отметок из файла; consentsConfirmed — «есть», подтверждено владельцем; consentsUnconfirmed — «есть», но не

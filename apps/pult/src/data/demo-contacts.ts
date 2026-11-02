@@ -572,7 +572,11 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       const isHead = head.some((h) => /телефон|номер|phone|имя|name/.test(h)) && !head.some((h) => normPhone(h));
       const pi = isHead ? head.findIndex((h) => /телефон|номер|phone/.test(h)) : 0;
       const ni = isHead ? head.findIndex((h) => /имя|name|клиент/.test(h)) : 1;
-      const ci = isHead ? head.findIndex((h) => /соглас|consent/.test(h)) : -1;
+      // как на сервере (lib/table.js): колонка согласия — только «можно рекламу»; отказ, запрет, обработка данных или несколько таких — нет
+      const cand = isHead ? head.map((h, i) => ({ h, i })).filter((x) => x.i !== pi && x.i !== ni && /соглас|разреш|consent|рассыл|подпис|реклам/.test(x.h)) : [];
+      const bad = (h: string) => /отказ|запрет|запрещ|исключ|отпис|стоп|stop|unsub|opt\s*-?\s*out|(?:^|[^\p{L}])(?:не|нет|без|no|not)(?=$|[^\p{L}])/iu.test(h.replace(/\(?\s*да\s*\/\s*нет\s*\)?/giu, " ")) || /персональн|пдн|обработк|данн|personal/iu.test(h);
+      const good = cand.filter((x) => !bad(x.h)), ci = good.length === 1 ? good[0].i : -1;
+      const warn = cand.filter((x) => x.i !== ci).map((x) => `«${x.h}»`);
       if (!isHead) head = [];
       const seen = new Set<string>();
       const rows = lines.slice(isHead ? 1 : 0).map((l, k) => {
@@ -589,6 +593,7 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
       });
       const counts = { new: 0, update: 0, same: 0, dup: 0, invalid: 0 } as Record<ImportAction, number>;
       for (const r of rows) counts[r.action]++;
+      const valid = rows.filter((r) => r.action !== "dup" && r.action !== "invalid");
       const iid = `imp${++w.seq}`;
       w.imports.set(iid, { rows });
       const order: Record<ImportAction, number> = { invalid: 0, dup: 1, new: 2, update: 3, same: 4 };
@@ -599,6 +604,8 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         columns: { phone: isHead ? head[pi] || "" : "1-я колонка", name: ni >= 0 ? (isHead ? head[ni] || "" : "2-я колонка") : "", consent: ci >= 0 ? head[ci] || "" : "" },
         hasConsent: ci >= 0,
         consentNote: "Согласия «да» из файла запишутся как НЕ подтверждённые: реклама таким клиентам не уйдёт, пока согласие не подтвердят в карточке. Тем, кто сам отказывался, «да» из файла не ставится.",
+        consentCounts: ci >= 0 ? { yes: valid.filter((r) => r.consent === "granted").length, no: valid.filter((r) => r.consent === "denied").length } : null,
+        consentWarn: warn.length ? `Колонку ${warn.join(", ")} не читаю как согласие на рекламу: это отказ, обработка данных или колонок согласия несколько.` : "",
         rows: [...rows].sort((a, b) => order[a.action] - order[b.action] || a.row - b.row).slice(0, 200).map((r) => ({ row: r.row, phone: r.phone ? mask(r.phone) : "", name: r.name, action: r.action, ...(r.error ? { error: r.error } : {}) })),
       };
     },

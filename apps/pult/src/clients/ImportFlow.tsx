@@ -213,9 +213,15 @@ export function ImportFlow({ ws, owner, onDone, onClose }: { ws: string; owner: 
               Номер: {pv.columns.phone ? `«${pv.columns.phone}»` : "не нашли"}; имя: {pv.columns.name ? `«${pv.columns.name}»` : "нет"}; согласие:{" "}
               {pv.columns.consent ? `«${pv.columns.consent}»` : "нет"}.
             </p>
+            {pv.consentWarn && <Notice>{pv.consentWarn}</Notice>}
           </InsetGroup>
           {consentRows && (
             <InsetGroup title="Согласие из файла" note="Например: «анкета в салоне, 2025» или «написали «да» в WhatsApp на телефоне салона».">
+              {pv.consentCounts && (
+                <p className="pt-3 text-ui text-fg-2 pointer-coarse:text-base">
+                  В колонке «{pv.columns.consent}»: «да» — <b className="tnum text-fg">{pv.consentCounts.yes}</b>, «нет» — <b className="tnum text-fg">{pv.consentCounts.no}</b>.
+                </p>
+              )}
               <TextField
                 label="Основание согласия"
                 maxLength={120}

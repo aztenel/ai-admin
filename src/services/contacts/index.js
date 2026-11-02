@@ -27,6 +27,8 @@ const n0 = v => (v == null ? null : +v);
 const ACTOR = /** @type {Record<string, string>} */ ({ owner: "владелец", staff: "сотрудник", webhook: "сообщение клиента", migration: "перенос из прежнего хранилища", sync: "синхронизация", "—": "—" });
 /** @param {any} a */
 const who = a => ACTOR[String(a)] || String(a || "");
+/** «ГГГГ-ММ-ДД» — существующий день (не 31 февраля, не 0026 год: находка проверки 02.11.2026) → полночь по Астане; иначе NaN @param {string} s */
+const dayAt = s => { if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || +s.slice(0, 4) < 2000) return NaN; const g = dayStart(s); return dayOf(g) === s ? g : NaN; };
 /** строка из запроса — только строкой (подмена типа не проходит) @param {any} v */
 const str = v => (typeof v === "string" ? v : "");
 const MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
@@ -255,7 +257,7 @@ export async function contactsConsent(env, c, now, b, actor) {
     givenAt = m.t; evRef = `сообщение клиента ${dayWords(m.t)}: «${m.text}»`;
   } else if (evidence === "document") {
     if (evRef.length < 3) throw fail("input", "Укажите номер письменного согласия или где оно хранится.", "evidenceRef");
-    const g = /^\d{4}-\d{2}-\d{2}$/.test(str(b.givenAt)) ? dayStart(str(b.givenAt)) : NaN;
+    const g = dayAt(str(b.givenAt));
     if (!Number.isFinite(g)) throw fail("input", "Укажите дату согласия.", "givenAt");
     if (g > now) throw fail("input", "Дата согласия ещё не наступила.", "givenAt");
     if (refused && g + 86400e3 <= refused) throw fail("consent", `Согласие подписано раньше отказа клиента (${dayWords(refused)}) — нужно новое, не раньше этого дня.`);
@@ -345,7 +347,7 @@ export async function contactsImportConfirm(env, c, now, b, actor, owner = false
   if (attest) {
     if (!owner) throw fail("forbidden", "Подтвердить разрешения из файла может только владелец.");
     if (basis.length < 3) throw fail("input", "Укажите, где клиенты дали разрешение: например, «написали «да» в WhatsApp на телефоне салона».", "consentBasis");
-    const g = /^\d{4}-\d{2}-\d{2}$/.test(str(b.consentGivenAt)) ? dayStart(str(b.consentGivenAt)) : NaN;
+    const g = dayAt(str(b.consentGivenAt));
     if (!Number.isFinite(g)) throw fail("input", "Укажите дату, когда клиенты дали разрешение (можно последнюю).", "consentGivenAt");
     if (g > now) throw fail("input", "Эта дата ещё не наступила.", "consentGivenAt");
     givenAt = g;

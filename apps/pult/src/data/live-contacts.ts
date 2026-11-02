@@ -229,6 +229,8 @@ function preview(x: unknown): ImportPreview {
     columns: { phone: str(col.phone), name: str(col.name), consent: str(col.consent) },
     hasConsent: !!d.hasConsent,
     consentNote: str(d.consentNote),
+    consentCounts: d.consentCounts && typeof d.consentCounts === "object" ? { yes: num(obj(d.consentCounts).yes), no: num(obj(d.consentCounts).no) } : null,
+    consentWarn: str(d.consentWarn),
     rows: arr(d.rows).map((v) => {
       const o = obj(v);
       return { row: num(o.row), phone: str(o.phone), name: str(o.name), action: oneOf<ImportAction>(o.action, ACTIONS, "invalid"), ...(str(o.error) ? { error: str(o.error) } : {}) };

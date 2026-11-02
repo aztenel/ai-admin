@@ -83,13 +83,14 @@ export async function refusedAt(db, ws, contactId) {
     union all select max(coalesce(given_at, created_at)) from consents where ws = ?1 and contact_id = ?2 and purpose = 'marketing' and state = 'denied' and coalesce(evidence, '') <> 'import')`).bind(ws, contactId).first("t");
   return v == null ? null : +v;
 }
-// strict — список разрешений, который подтвердил владелец (задание владельца 02.11.2026): «да» из него не отменяет и любой действующий
-// запрет (поставил человек, неоднозначный «стоп», отказ из Altegio «не получает массовые уведомления»), и последнее «нет» (в том числе
-// из прежнего файла). Отменить отказ может только новое согласие самого клиента в его карточке (сообщение или письменно, позже отказа)
+// strict — список разрешений, который подтвердил владелец (задание владельца 02.11.2026): «да» из него не отменяет ни любой действующий
+// запрет (поставил человек, неоднозначный «стоп», отказ из Altegio «не получает массовые уведомления»), ни любое прежнее «нет» — на
+// рекламу или на сервисные, в том числе из файла и уже сменённое на «не известно» или неподтверждённое «да» (находка независимой
+// проверки 02.11.2026). Отменить отказ может только новое согласие самого клиента в его карточке (сообщение или письменно, позже отказа)
 const STRICT = `
       or exists (select 1 from restrictions r where r.ws = c.ws and r.contact_id = c.id and r.lifted_at is null and r.kind in ('marketing_optout', 'full_block'))
-      or (select s.state from consents s where s.ws = c.ws and s.contact_id = c.id and s.purpose = 'marketing' order by s.id desc limit 1) = 'denied'`;
-/** Номера, которые сами отказывались (импорт «да» им не записывается); strict — ещё и с действующим запретом или последним «нет».
+      or exists (select 1 from consents s where s.ws = c.ws and s.contact_id = c.id and s.state = 'denied')`;
+/** Номера, которые сами отказывались (импорт «да» им не записывается); strict — ещё и с действующим запретом или любым прежним «нет».
  *  @param {any} db @param {string} ws @param {string[]} phones @param {boolean} [strict] */
 export async function refusedPhones(db, ws, phones, strict = false) {
   const out = new Set();

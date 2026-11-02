@@ -16,6 +16,7 @@ import { bcTick } from "../../src/services/broadcast/sender.js";
 import { LIBRARY, CATS } from "../../src/services/broadcast/library.js";
 import { restrictionAdd } from "../../src/db/d1/rights.js";
 import { dayStart } from "../../src/services/contacts/normalize.js";
+import { tableColumns } from "../../src/lib/table.js";
 
 const skip = sqliteOk ? false : "база согласий D1 — node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, OWNER = "owner-key-123456", STAFF_W = "staff-key-winch-0001";
@@ -219,4 +220,61 @@ test("«Клиенты»: отказ из Altegio («не получает ма�
   assert.equal(card.canMarket.ok, false, JSON.stringify(card.canMarket)); assert.ok(card.canMarket.reasons.some(x => /Altegio/.test(x)));
   const segs = await (await own.go("/api/contacts/segments?c=winchester")).json();
   assert.equal(segs.segments.find(x => x.id === "all").ready, 0, JSON.stringify(segs.segments[0]));
+});
+
+// находки независимой проверки 02.11.2026 (до исправления — красные):
+// 1) колонка согласия выбиралась по слову «рассыл»/«соглас» — первой подходящей: «Отказ от рассылки: да» или «Согласие на обработку
+//    персональных данных: да» с подтверждением владельца становились разрешением на рекламу;
+// 2) прежнее «нет» из файла снималось: после него «не известно» в карточке или «да» без подтверждения — и список владельца проходил;
+// 3) отказ от сервисных сообщений не мешал «да» на рекламу из списка;
+// 4) дата разрешений «2026-02-31», «0026-11-02», «2026-00-00» принималась (сдвигалась на другой день или в 1926 год)
+test("находка 1: колонка отказа, согласия на обработку данных или две колонки согласия — не разрешение на рекламу; «да» и «нет» видны до загрузки", { skip }, async () => {
+  const ph2 = s => s.replace(/\D/g, "").length >= 10 ? s : "";
+  const col = head => { const c = tableColumns([head, ["+77000001101", ...head.slice(1).map(() => "да")]], ph2); return c.consent < 0 ? "" : head[c.consent]; };
+  for (const bad of ["Отказ от рассылки", "Запрет рассылки", "Не согласен", "No consent", "Исключить из рассылок", "Отписался от рассылки", "Согласие на обработку персональных данных", "Согласие ПДн", "Стоп-лист"])
+    assert.equal(col(["Телефон", bad]), "", "не согласие на рекламу: " + bad);
+  for (const good of ["Согласие", "Согласие на рассылку", "Разрешил рекламу", "Рассылка", "Подписка", "Consent", "Келісім"]) assert.equal(col(["Телефон", good]), good, "согласие: " + good);
+  assert.equal(col(["Телефон", "Согласие на обработку персональных данных", "Согласие на рассылку"]), "Согласие на рассылку", "обработка данных — мимо, рассылка — она");
+  assert.equal(col(["Телефон", "Согласие на рассылку", "Согласие на рекламу"]), "", "две колонки согласия — ни одной: непонятно, какая");
+
+  const { d, own } = await base();
+  // согласие на обработку данных «да», на рассылку «нет» — с подтверждением владельца рекламы нет, «нет» записано
+  let pv = await post(own, "/api/contacts/import", { c: "winchester", text: `Телефон;Имя;Согласие на обработку персональных данных;Согласие на рассылку\n${ph(1101)};Азамат;да;нет\n${ph(1102)};Ерлан;да;да\n` });
+  assert.equal(pv.j.columns.consent, "Согласие на рассылку"); assert.deepEqual(pv.j.consentCounts, { yes: 1, no: 1 });
+  let r = await post(own, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id, ...ATTEST });
+  assert.deepEqual([r.j.consentsConfirmed, r.j.consents], [1, 2], JSON.stringify(r.j));
+  assert.deepEqual(consentsOf(d, 1101).map(c => c.state), ["denied"]);
+  // «Отказ от рассылки: да» — не согласие: колонки согласия нет, предупреждение, ничего не записано
+  pv = await post(own, "/api/contacts/import", { c: "winchester", text: `Телефон;Отказ от рассылки\n${ph(1109)};да\n` });
+  assert.equal(pv.j.hasConsent, false); assert.match(pv.j.consentWarn, /Отказ от рассылки/);
+  r = await post(own, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id, ...ATTEST });
+  assert.equal(r.j.consents, 0); assert.deepEqual(consentsOf(d, 1109), []);
+  // две колонки согласия — ни одна не читается, предупреждение называет обе
+  pv = await post(own, "/api/contacts/import", { c: "winchester", text: `Телефон;Согласие на рассылку;Согласие на рекламу\n${ph(1110)};да;да\n` });
+  assert.equal(pv.j.hasConsent, false); assert.match(pv.j.consentWarn, /Согласие на рассылку.*Согласие на рекламу/);
+});
+
+test("находки 2–4: прежнее «нет» (и после «не известно» или «да» без подтверждения), отказ от сервисных и несуществующая дата — список владельца не проходит", { skip }, async () => {
+  const { d, own, st } = await base();
+  // «нет» из файла, потом сотрудник — «да» без подтверждения (1101) и «не известно» в карточке (1102)
+  await importList(st, `Телефон;Согласие\n${ph(1101)};нет\n${ph(1102)};нет\n`, { consentBasis: "анкета" });
+  await importList(st, `Телефон;Согласие\n${ph(1101)};да\n`, { consentBasis: "анкета" });
+  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: idOf(d, 1102), purpose: "marketing", state: "unknown", basis: "не помнит" })).status, 200);
+  // отказ от сервисных сообщений (1103)
+  await post(own, "/api/contacts/add", { c: "winchester", phone: ph(1103), name: "Данияр" });
+  assert.equal((await post(st, "/api/contacts/consent", { c: "winchester", id: idOf(d, 1103), purpose: "service", state: "denied", basis: "просил не писать" })).status, 200);
+  const { r } = await importList(own, `Телефон;Согласие\n${ph(1101)};да\n${ph(1102)};да\n${ph(1103)};да\n`, ATTEST);
+  assert.deepEqual([r.j.consentsConfirmed, r.j.consentsSkipped], [0, 3], JSON.stringify(r.j));
+  for (const i of [1101, 1102, 1103]) assert.ok(!consentsOf(d, i).some(c => c.state === "granted" && c.confirmed), "отказ остался: " + i);
+  // несуществующая или слишком старая дата — 400 (поле даты)
+  const pv = await post(own, "/api/contacts/import", { c: "winchester", text: `Телефон;Согласие\n${ph(1104)};да\n` });
+  for (const bad of ["2026-02-31", "0026-11-02", "2026-00-00", "2026-13-01"]) {
+    const x = await post(own, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id, ...ATTEST, consentGivenAt: bad });
+    assert.equal(x.status, 400, bad); assert.equal(x.j.field, "consentGivenAt");
+  }
+  // и в карточке («Письменное согласие») — так же
+  await post(own, "/api/contacts/import/discard", { c: "winchester", id: pv.j.id });
+  await post(own, "/api/contacts/add", { c: "winchester", phone: ph(1104), name: "Тимур" });
+  const x = await post(own, "/api/contacts/consent", { c: "winchester", id: idOf(d, 1104), purpose: "marketing", state: "granted", evidence: "document", evidenceRef: "WhatsApp на телефоне салона", givenAt: "2026-02-31" });
+  assert.equal(x.status, 400); assert.equal(x.j.field, "givenAt");
 });
