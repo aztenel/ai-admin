@@ -264,15 +264,14 @@ export async function eventPut(db, ws, key, kind, details, at, actor = "sync") {
  * news — проход «разрешил рассылки» (флаг Altegio, не подтверждённое согласие): reset — перед первой страницей флаги сбрасываются
  * (клиент мог запретить рассылки в Altegio). extra — отметка курсора в той же пачке.
  * @param {any} db @param {string} ws @param {any[]} rows [{ id, p, n, s, cr, fv, lv, vc }] или [{ p }] для news @param {number} stamp @param {any[]} extra
- * @param {{ news?: boolean, nomass?: boolean, lift?: boolean, reset?: boolean }} [mode]
+ * @param {{ news?: boolean, nomass?: boolean, lift?: boolean, all?: string[] | null, reset?: boolean }} [mode]
  */
 export async function directoryApply(db, ws, rows, stamp, extra, mode = {}) {
   const list = [];
   if (mode.news && mode.reset) list.push(db.prepare("update contacts set alt_newsletter = null where ws = ? and alt_newsletter is not null").bind(ws));
   // в Altegio «не получать массовые уведомления» — отказ от рекламы (запрет marketing_optout с источником altegio; сервисные он не закрывает).
-  // Весь список прохода — одним пакетом в конце: сначала поставить (или вернуть) запреты тем, у кого флаг есть, потом снять тем, у кого
-  // его больше нет (lift — только если список прочитан целиком). Снимать до того, как прочитан весь список, нельзя: прерванный проход
-  // оставил бы отказ снятым (ревью безопасности 02.11.2026)
+  // Ставится (или возвращается) на каждой странице; снимается только в конце прохода по полному списку (mode.all) — снимать до того, как
+  // прочитан весь список, нельзя: прерванный проход оставил бы отказ снятым (ревью безопасности 02.11.2026)
   for (const part of chunks(rows)) {
     const j = JSON.stringify(part);
     if (mode.nomass) {
@@ -295,9 +294,10 @@ export async function directoryApply(db, ws, rows, stamp, extra, mode = {}) {
       select c.id, ?1, 'altegio', coalesce(j.value ->> '$.cr', ''), ?2, ?2 from json_each(?3) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p' where true
       on conflict do nothing`).bind(ws, stamp, j));
   }
-  if (mode.nomass && mode.lift) list.push(db.prepare(`update restrictions set lifted_at = ?2, lifted_by = 'sync', lift_reason = 'Altegio: массовые уведомления снова включены'
+  // снять — тем, кого нет в полном списке прохода (mode.all — все номера с флагом, со всех страниц); список неполный — не снимаем
+  if (mode.nomass && mode.lift && Array.isArray(mode.all)) list.push(db.prepare(`update restrictions set lifted_at = ?2, lifted_by = 'sync', lift_reason = 'Altegio: массовые уведомления снова включены'
     where ws = ?1 and source = 'altegio' and kind = 'marketing_optout' and lifted_at is null
-      and contact_id not in (select c.id from json_each(?3) j join contacts c on c.ws = ?1 and c.phone = j.value ->> '$.p')`).bind(ws, stamp, JSON.stringify(rows)));
+      and contact_id not in (select c.id from json_each(?3) j join contacts c on c.ws = ?1 and c.phone = j.value)`).bind(ws, stamp, JSON.stringify(mode.all)));
   list.push(...extra);
   await db.batch(list);
 }

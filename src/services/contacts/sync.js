@@ -270,11 +270,14 @@ async function dirStep(env, c, db, now, t0, force) {
     }
     const last = r.list.length < DIR.pageSize;
     const next = last ? (phase === "all" ? { phase: "news", page: 1 } : phase === "news" ? { phase: "nomass", page: 1 } : { phase: "done", page: 1 }) : { phase, page: page + 1 };
-    // отказы из Altegio копятся по страницам в курсоре и записываются одним пакетом в конце прохода (снимать — только по полному списку)
-    const nm = phase === "nomass" ? [...(Array.isArray(cur.nm) ? cur.nm : []), ...rows.map(x => x.p)] : null, NM_MAX = 5000;
-    const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done", ...(nm && !last ? { nm: nm.slice(0, NM_MAX) } : {}) };
+    // отказы из Altegio («не получает массовые уведомления»): ставятся на каждой странице (ставить запрет — всегда в безопасную сторону),
+    // а снимаются только в конце прохода и только по списку, собранному целиком с первой страницы (в курсоре nm). Список потерян (курсор
+    // прежней версии посреди прохода) или больше 5000 — в этот проход ничего не снимаем (ревью безопасности 02.11.2026)
+    const NM_MAX = 5000, had = phase !== "nomass" ? null : page === 1 ? [] : Array.isArray(cur.nm) ? cur.nm : null;
+    const nm = had ? [...had, ...rows.map(x => x.p)] : null, nmOk = !!nm && nm.length <= NM_MAX;
+    const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done", ...(nm && nmOk && !last ? { nm } : {}) };
     const extra = curNext.done ? [syncOkStmt(db, ws, SRC, "clients", now, JSON.stringify(curNext), null), syncClearStmt(db, ws, SRC, "clients")] : [syncCursorStmt(db, ws, SRC, "clients", JSON.stringify(curNext))];
-    if (nm) await directoryApply(db, ws, last ? nm.slice(0, NM_MAX).map(p => ({ p })) : [], now, extra, last ? { nomass: true, lift: nm.length <= NM_MAX } : {});
+    if (phase === "nomass") await directoryApply(db, ws, rows, now, extra, { nomass: true, lift: last && nmOk, all: nmOk ? nm : null });
     else await directoryApply(db, ws, rows, now, extra, { news: phase === "news", reset: phase === "news" && page === 1 });
     read += r.list.length; cur = curNext; page = next.page; phase = next.phase;
     if (cur.done) break;

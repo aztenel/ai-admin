@@ -455,3 +455,28 @@ test("база контактов D1 у адреса есть, но не отв�
   await jrRun(s.env, at(TODAY, "18:05"));
   assert.equal(sent().length, 1, "база ответила — ушло");
 });
+
+test("отказы Altegio на нескольких страницах: ставятся все; снимаются только по полному списку прохода; список потерян посреди прохода — не снимаем", { skip }, async () => {
+  net.reset();
+  const d = d1With("production"), now = Date.now(), day = n => new Date(now - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+  net.altJournal = [];
+  net.altClients = Array.from({ length: 205 }, (_, i) => ({ id: i + 1, name: "Клиент " + i, phone: "+7700002" + String(i).padStart(4, "0"), last_visit_date: day(10 + (i % 50)), visits_count: 2, nomass: true }));
+  const s = mk({ ALTEGIO_PARTNER: "partner-test", ALTEGIO_USER_WINCHESTER: "usr-tok", DB: d.db });
+  const active = () => d.raw.prepare("select count(*) n from restrictions where ws = 'winchester' and source = 'altegio' and kind = 'marketing_optout' and lifted_at is null").get().n;
+  for (let i = 0; i < 8; i++) await syncStep(s.env, W, now + i * 16 * 60e3, { force: true });
+  assert.equal(active(), 205, "все отказы с обеих страниц поставлены");
+  // у одного клиента флаг сняли — следующий полный проход снимает только его отказ
+  net.altClients[3].nomass = false;
+  for (let i = 0; i < 8; i++) await syncStep(s.env, W, now + 8 * 86400e3 + i * 16 * 60e3, { force: true });
+  assert.equal(active(), 204);
+  // курсор посреди прохода без списка первой страницы (прежняя версия кода): снимать по неполному списку нельзя
+  for (const c of net.altClients.slice(0, 200)) c.nomass = false; // будто бы на первой странице флагов больше нет — но эту страницу в проходе не читали
+  const row = d.raw.prepare("select cursor from sync_state where ws = 'winchester' and scope = 'clients'").get();
+  const cur = { ...JSON.parse(row.cursor || "{}"), page: 2, phase: "nomass", done: false };
+  delete cur.nm;
+  d.raw.prepare("update sync_state set cursor = ?, last_ok_at = null where ws = 'winchester' and scope = 'clients'").run(JSON.stringify(cur));
+  await syncStep(s.env, W, now + 16 * 86400e3, { force: true });
+  const after = d.raw.prepare("select cursor, last_ok_at from sync_state where ws = 'winchester' and scope = 'clients'").get();
+  assert.ok(after.last_ok_at && JSON.parse(after.cursor).done, "проход дошёл до конца: " + after.cursor);
+  assert.equal(active(), 204, "список неполный — ни один отказ не снят");
+});
