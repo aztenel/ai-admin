@@ -370,7 +370,16 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   if (o.set && son && !son.on) return skip("сценарий выключен");
   if (son && son.at > x.at) return skip("сценарий включили позже, чем должно было уйти это сообщение");
   if (await optedOut(env, c.id, x.p)) return skip("клиент просил не писать");
-  if (!st.blocks) st.blocks = await marketingGate(env, c, now).then(g => g.reasons).catch(() => new Map());
+  if (!st.blocks) {
+    // «стоп» и запреты базы контактов D1. База у адреса есть, но не ответила — не шлём в эту минуту (закрыто при сомнении: полный
+    // запрет владельца есть только в D1, не в KV); базы у адреса нет — только «стоп» из KV, как раньше
+    const g = await marketingGate(env, c, now).catch(() => null);
+    if (env.DB && (!g || !g.ready)) {
+      if (!x.db) { x.db = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "не ушло: база клиентов не ответила (проверка «стопа» и запретов), пробуем ещё раз", now)); }
+      return "stop";
+    }
+    st.blocks = (g && g.reasons) || new Map();
+  }
   if (SVC_NO.has(st.blocks.get(x.p) || "")) return skip("в базе клиентов — «стоп» или запрет писать");
   if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) return skip("отзыв у этого клиента уже просили (раз в 60 дней)");
   // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста)

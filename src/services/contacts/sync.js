@@ -270,9 +270,12 @@ async function dirStep(env, c, db, now, t0, force) {
     }
     const last = r.list.length < DIR.pageSize;
     const next = last ? (phase === "all" ? { phase: "news", page: 1 } : phase === "news" ? { phase: "nomass", page: 1 } : { phase: "done", page: 1 }) : { phase, page: page + 1 };
-    const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done" };
+    // отказы из Altegio копятся по страницам в курсоре и записываются одним пакетом в конце прохода (снимать — только по полному списку)
+    const nm = phase === "nomass" ? [...(Array.isArray(cur.nm) ? cur.nm : []), ...rows.map(x => x.p)] : null, NM_MAX = 5000;
+    const curNext = { total: phase === "all" ? r.total : +cur.total || r.total, ...st, page: next.page, phase: next.phase, done: next.phase === "done", ...(nm && !last ? { nm: nm.slice(0, NM_MAX) } : {}) };
     const extra = curNext.done ? [syncOkStmt(db, ws, SRC, "clients", now, JSON.stringify(curNext), null), syncClearStmt(db, ws, SRC, "clients")] : [syncCursorStmt(db, ws, SRC, "clients", JSON.stringify(curNext))];
-    await directoryApply(db, ws, rows, now, extra, { news: phase === "news", nomass: phase === "nomass", reset: flag && page === 1 });
+    if (nm) await directoryApply(db, ws, last ? nm.slice(0, NM_MAX).map(p => ({ p })) : [], now, extra, last ? { nomass: true, lift: nm.length <= NM_MAX } : {});
+    else await directoryApply(db, ws, rows, now, extra, { news: phase === "news", reset: phase === "news" && page === 1 });
     read += r.list.length; cur = curNext; page = next.page; phase = next.phase;
     if (cur.done) break;
   }

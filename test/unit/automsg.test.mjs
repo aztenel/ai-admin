@@ -440,3 +440,18 @@ test("Altegio «не получать массовые уведомления» 
   assert.ok(again.lifted_at, "отказ снят");
   assert.deepEqual(net.alt.filter(x => !/^GET /.test(x) && !/^POST \/locations\/\d+\/clients\/search$/.test(x)), [], "Altegio — только чтение");
 });
+
+test("база контактов D1 у адреса есть, но не ответила: сервисное сообщение не уходит (полный запрет есть только в D1), ответила — уходит", { skip }, async () => {
+  net.reset();
+  net.altJournal = [rec(ph(6161), TOM, "15:00", { id: 6161 })];
+  const good = d1With("production").db;
+  const s = mk({ ...ENV, DB: good }); await approveAll(s); await autoOn(s, { remind24: true });
+  await jrRun(s.env, at(TODAY, "17:00"));
+  s.env.DB = { prepare() { throw new Error("D1 не отвечает"); }, batch() { throw new Error("D1 не отвечает"); } };
+  await jrRun(s.env, at(TODAY, "18:00"));
+  assert.deepEqual(sent(), [], "закрыто при сомнении");
+  assert.ok(log(s).some(x => x.k === "d1" && /база клиентов не ответила/.test(x.why)), JSON.stringify(log(s)));
+  s.env.DB = good;
+  await jrRun(s.env, at(TODAY, "18:05"));
+  assert.equal(sent().length, 1, "база ответила — ушло");
+});
