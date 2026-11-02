@@ -169,6 +169,17 @@ test("черновик из библиотеки: в проверке, проб�
   const t = await (await own.post("/api/bc/test", { ...DRAFT, rid: "rid-final-0001" })).json();
   assert.equal(t.ok, true, JSON.stringify(t));
   assert.deepEqual(gaSent(), [{ to: "77000000997", text: `Добрый день, Айгерим! 👋🏻${tail}` }]); assert.equal(t.preview, gaSent()[0].text);
+  // проба — в переписке владельца со вторым номером: галочки доставки и его ответ видны в пульте («Ответы»), в цифры рассылок не идёт
+  const own9 = () => s.kv.json("h:ga:winchester:77000000997");
+  const pt = own9().turns.find(x => x.test);
+  assert.ok(pt && pt.text === t.preview && pt.mid && pt.bc === "test", JSON.stringify(own9()));
+  await hook(s, { typeWebhook: "outgoingMessageStatus", chatId: "77000000997@c.us", idMessage: pt.mid, status: "read", sendByApi: true });
+  await s.gaText("winchester", INST, "77000000997", "Пришло, всё хорошо");
+  await s.settle();
+  assert.equal(own9().turns.find(x => x.test).st, "read");
+  assert.equal(own9().turns.at(-1).text, "Пришло, всё хорошо"); assert.equal(own9().profile.need.src.k, "bc", "ответ на пробу — в «Ответах»");
+  const stats = await (await own.go("/api/bc/stats?c=winchester&days=7")).json();
+  assert.deepEqual(stats.by.campaign, { sent: 0, delivered: 0, read: 0, failed: 0, replied: 0 }, "проба в цифры рассылок не идёт");
   // черновик: текст и выбранная аудитория сохранены
   const c = await (await own.post("/api/bc/create", DRAFT)).json();
   assert.equal(c.ok, true, JSON.stringify(c));
@@ -237,6 +248,11 @@ test("отказ после рассылки считается; тестова�
   await s.settle();
   const g = await (await own.go(`/api/bc/get?c=winchester&id=${c.b.id}`)).json();
   assert.equal(g.results.sent, 2); assert.equal(g.results.refused, 1, JSON.stringify(g.results));
+  // удалили рассылку — удалён и список «кому ушло» (номера не остаются)
+  assert.ok(s.kv.json(`bcs:winchester:${c.b.id}`).length === 2);
+  b = s.kv.json("bc:winchester:" + c.b.id); b.status = "done"; s.kv.mem.set("bc:winchester:" + c.b.id, JSON.stringify(b));
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: c.b.id, act: "delete" })).json()).gone, true);
+  assert.equal(s.kv.mem.has(`bcs:winchester:${c.b.id}`), false); assert.equal(s.kv.mem.has(`bcr:winchester:${c.b.id}:0`), false);
   // тестовая версия: запуск — 409 preview и с разрешением владельца
   const p = mk({ ...ON, STAGE: "preview" }), pown = await login(p, OWNER);
   p.kv.mem.set("crm:winchester:snap", s.kv.mem.get("crm:winchester:snap")); p.env.DB = s.env.DB;

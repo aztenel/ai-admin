@@ -101,6 +101,15 @@ async function bcLog(env, cid, b, list, now) {
     }));
   }
 }
+// проба рассылки на номер владельца (финальное ТЗ рассылок, 02.11.2026): то же сообщение — в его переписку со вторым номером, с номером
+// сообщения: галочки доставки (отчёты Green-API) и его ответ видны в пульте, как у настоящей рассылки («Ответы»). test: 1 — в цифры
+// рассылок и сервисных сообщений проба не попадает (inbox/stats.js). Сбой записи пробу не отменяет: сообщение уже ушло
+/** @param {Env} env @param {string} cid @param {string} digits @param {string} text @param {any} r ответ отправки { ok, id?, code? } @param {number} now */
+export async function bcTestLog(env, cid, digits, text, r, now) {
+  const mid = r && r.id ? String(r.id).slice(0, 80) : "";
+  try { await logTurns(env.KV, `h:ga:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc: "test", by: "bc", test: 1, ...(mid ? { mid } : {}), st: r && r.ok ? "sent" : "unknown" }]); }
+  catch (e) { console.log("bc test log", String(e).slice(0, 120)); }
+}
 // сведения о номере из Meta: качество и предел получателей за 24 часа
 /** @param {Env} env @param {any} route */
 export async function bcHealth(env, route) {

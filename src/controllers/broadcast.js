@@ -21,8 +21,8 @@ import { bcResults } from "../services/broadcast/results.js";
 import { statsOf } from "../services/inbox/stats.js";
 import { opWho } from "../services/inbox/operator.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "../services/broadcast/holds.js";
-import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, bcGaOff, bcFinal, gaOnHow, GA_CAP, GA_OFF } from "../services/broadcast/sender.js";
-import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo } from "../services/broadcast/deps.js";
+import { bcRoute, bcHealth, bcSendGa, bcRun, bcTick, bcGaOff, bcFinal, bcTestLog, gaOnHow, GA_CAP, GA_OFF } from "../services/broadcast/sender.js";
+import { kvRetry, bcKey, bcChunkKey, bcPut, bcGet, sendTemplate, gaRoute, gaWhy, gaInfo, gaKind } from "../services/broadcast/deps.js";
 import { autoSet as msgSettings } from "../services/automsg/index.js";
 import { sendOnceAuto } from "../services/reminders/journal.js";
 /** @import { Env } from "../lib/types.js" */
@@ -161,6 +161,7 @@ export async function bcApi(request, env, url, s) {
     const ridOk = /^[A-Za-z0-9_-]{6,40}$/.test(String(body.rid || ""));
     const once = await sendOnceAuto(env, cid, test.p, "bt-" + (ridOk ? body.rid : now.toString(36)), async () => {
       r = await bcSendGa(env, test.p, gt.f, "Айгерим", gr, gt.text);
+      if (r.ok || gaKind(r.code) === "net") await bcTestLog(env, cid, test.p, gt.text, r, now); // в переписку владельца: галочки и его ответ видны в пульте
       return r.ok ? { ok: true } : { ok: false };
     });
     if (once && "dup" in once) return jsonP({ ok: true, dup: true, text: `Проверка уже отправлена на ${fmtPhone(test.p)}.`, preview: gt.text });
@@ -254,6 +255,7 @@ export async function bcApi(request, env, url, s) {
     else if (act === "delete") { // вместе с рассылкой удаляется и список номеров
       if (cur.status === "running") return jsonP({ error: "Сначала остановите рассылку." }, 409);
       for (let k = 0; k * BC_CHUNK < cur.total; k++) { try { await env.KV.delete(bcChunkKey(cid, id, k)); } catch (e) {} }
+      await kvRetry(() => env.KV.delete(`bcs:${cid}:${id}`)); // и кому ушло (итоги рассылки): номера не остаются после удаления
       await kvRetry(() => env.KV.delete(bcKey(cid, id))); await bcRun(env, cid, id, false); // рассылку могли записать секунду назад — KV просит подождать
       return jsonP({ ok: true, gone: true });
     } else return jsonP({ error: "Неизвестное действие." }, 400);

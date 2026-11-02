@@ -16,7 +16,7 @@ const EVENTS = ["sent", "delivered", "read", "failed", "replied"];
 
 /** Чьё сообщение: напоминание, просьба об отзыве, рассылка, ответ сотрудника. Бот — не считаем. @param {any} t */
 export function srcOf(t) {
-  if (!t) return "";
+  if (!t || t.test) return ""; // проба на номер владельца — не рассылка и не напоминание
   if (t.rm) return t.rm === "rv" || t.rm === "s12" ? "review" : "service"; // rv — просьба об отзыве (S12), остальное — подтверждения и напоминания
   if (t.bc) return "campaign";
   if (t.by === "admin") return "admin";
@@ -49,6 +49,7 @@ export async function statReply(env, cid, ch, digits, turns, now) {
   const src = replyTo(turns.slice(0, i), now);
   if (!src) return;
   const our = turns.slice(0, i).reverse().find(t => t && (t.rm || t.bc));
+  if (our && our.test) return; // ответ на пробу владельца в цифры не идёт
   // ответ на рассылку: тема (хочет записаться, перенос…) и «стоп» — для итогов рассылки; текст ответа в журнал не пишем
   const text = String((turns[i] && turns[i].text) || ""), topic = topicOf(text), stop = stopKind(text);
   try {
