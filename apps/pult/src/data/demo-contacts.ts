@@ -602,13 +602,21 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
         rows: [...rows].sort((a, b) => order[a.action] - order[b.action] || a.row - b.row).slice(0, 200).map((r) => ({ row: r.row, phone: r.phone ? mask(r.phone) : "", name: r.name, action: r.action, ...(r.error ? { error: r.error } : {}) })),
       };
     },
-    async importConfirm(id, iid, consentBasis) {
+    async importConfirm(id, iid, consentBasis, attest) {
       await wait(500);
       const w = ws(id), imp = w.imports.get(iid);
       if (!imp) throw new ApiError("Загрузка уже подтверждена или отменена.", 409);
+      // как на сервере: подтвердить разрешения из файла — только владелец, с «где» и датой (не в будущем)
+      const given = attest ? Date.parse(`${attest.givenAt}T00:00:00+05:00`) : 0;
+      if (attest) {
+        ownerOnly("Подтвердить разрешения из файла");
+        if ((consentBasis || "").trim().length < 3) throw new ApiError("Укажите, где клиенты дали разрешение.", 400, false, { field: "consentBasis" });
+        if (!Number.isFinite(given)) throw new ApiError("Укажите дату, когда клиенты дали разрешение (можно последнюю).", 400, false, { field: "consentGivenAt" });
+        if (given > Date.now()) throw new ApiError("Эта дата ещё не наступила.", 400, false, { field: "consentGivenAt" });
+      }
       w.imports.delete(iid);
       const now = Date.now();
-      let created = 0, updated = 0, consents = 0, consentsUnconfirmed = 0, consentsSkipped = 0;
+      let created = 0, updated = 0, consents = 0, consentsConfirmed = 0, consentsUnconfirmed = 0, consentsSkipped = 0;
       for (const r of imp.rows) {
         if (r.action !== "new" && r.action !== "update" && r.action !== "same") continue;
         let p = w.people.find((x) => x.phone === r.phone);
@@ -621,19 +629,26 @@ export function createDemoContacts(role: () => "owner" | "staff"): ContactSource
           p.updatedAt = now;
           updated++;
         }
-        // как на сервере: из файла записываются и «да», и «нет» — только с основанием; «да» — не подтверждено, а тем, кто сам
-        // отказывался, «да» из файла не ставится
+        // как на сервере: из файла записываются и «да», и «нет» — только с основанием; «да» — не подтверждено (с подтверждением владельца —
+        // подтверждено, как письменное с датой), а тем, кто сам отказывался, «да» из файла не ставится; с подтверждением — и при любом
+        // действующем запрете или последнем «нет»
         if (r.consent && consentBasis?.trim()) {
-          if (r.consent === "granted" && refusedAt(p)) {
+          const blocked = refusedAt(p) || (attest && (active(p).some((x) => x.kind === "marketing_optout" || x.kind === "full_block") || consentNow(p, "marketing")?.state === "denied"));
+          if (r.consent === "granted" && blocked) {
             consentsSkipped++;
             continue;
           }
-          p.consents.push({ ...cons(r.consent, consentBasis.trim(), "import", actor(), now, "import", `файл, ${fmtDay(now, now)}`), confirmed: r.consent === "denied" });
+          if (r.consent === "granted" && attest) {
+            p.consents.push({ ...cons("granted", consentBasis.trim(), "import", actor(), now, "document", `файл, ${fmtDay(now, now)}`), confirmed: true, givenAt: given });
+            consentsConfirmed++;
+          } else {
+            p.consents.push({ ...cons(r.consent, consentBasis.trim(), "import", actor(), now, "import", `файл, ${fmtDay(now, now)}`), confirmed: r.consent === "denied" });
+            if (r.consent === "granted") consentsUnconfirmed++;
+          }
           consents++;
-          if (r.consent === "granted") consentsUnconfirmed++;
         }
       }
-      return { created, updated, consents, consentsUnconfirmed, consentsSkipped };
+      return { created, updated, consents, consentsConfirmed, consentsUnconfirmed, consentsSkipped };
     },
     async importDiscard(id, iid) {
       await wait(150);

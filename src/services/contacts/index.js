@@ -337,8 +337,21 @@ export async function contactsImport(env, c, now, bytes, name, actor) {
   return importPreview(db, c.id, await readTable(bytes, name), { id: newId(), by: actor, at: now, sourceName: name });
 }
 /** @param {Env} env @param {Client} c @param {number} now @param {any} b @param {string} actor */
-export async function contactsImportConfirm(env, c, now, b, actor) {
-  const db = await dbOf(env, now), r = await importApply(db, c.id, String(b.id || ""), { basis: String(b.consentBasis || ""), actor, at: now });
+export async function contactsImportConfirm(env, c, now, b, actor, owner = false) {
+  // владелец подтверждает, что клиенты из файла сами разрешили рекламу (задание владельца 02.11.2026: разрешения из WhatsApp и других
+  // мест, даже если их нет в Altegio): где — основание, когда — дата; без этого «да» из файла не подтверждено, как раньше
+  const attest = b.consentConfirmed === true, basis = str(b.consentBasis).replace(/\s+/g, " ").trim();
+  let givenAt = 0;
+  if (attest) {
+    if (!owner) throw fail("forbidden", "Подтвердить разрешения из файла может только владелец.");
+    if (basis.length < 3) throw fail("input", "Укажите, где клиенты дали разрешение: например, «написали «да» в WhatsApp на телефоне салона».", "consentBasis");
+    const g = /^\d{4}-\d{2}-\d{2}$/.test(str(b.consentGivenAt)) ? dayStart(str(b.consentGivenAt)) : NaN;
+    if (!Number.isFinite(g)) throw fail("input", "Укажите дату, когда клиенты дали разрешение (можно последнюю).", "consentGivenAt");
+    if (g > now) throw fail("input", "Эта дата ещё не наступила.", "consentGivenAt");
+    givenAt = g;
+  }
+  const db = await dbOf(env, now);
+  const r = await importApply(db, c.id, String(b.id || ""), { basis, actor, at: now, ...(attest ? { attest: { givenAt }, stops: await kvStops(env, c.id) } : {}) });
   if (!r.ok) throw fail("done", "Этот файл уже загружен или отменён.");
   return r;
 }

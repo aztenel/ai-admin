@@ -4,6 +4,9 @@
 // («анкета в салоне 2026»), и даже тогда — «не подтверждено»: реклама ему не уйдёт, пока согласие не подтвердят в карточке
 // (сообщение клиента, письменное согласие). Тем, кто сам отказывался, «да» из файла не записывается вовсе. Файл не хранится — только
 // строки предпросмотра, они удаляются при подтверждении, отмене или через сутки.
+// Разрешения, полученные раньше и не внесённые в Altegio (задание владельца 02.11.2026): владелец подтверждает, что клиенты из файла
+// сами разрешили рекламу — где (WhatsApp на телефоне салона, анкеты) и когда; тогда «да» подтверждено. Такой список не отменяет ни
+// одного отказа: у кого «стоп» (в D1 или в прежнем KV), действующий запрет, отказ из Altegio или последнее «нет» — «да» не записывается.
 import { normPhone, maskPhone, logSafe } from "../../lib/phone.js";
 import { decodeText, csvRows, tableColumns, consentValue } from "../../lib/table.js";
 import { isZip, xlsxRows } from "../../lib/xlsx.js";
@@ -59,27 +62,30 @@ export async function importPreview(db, ws, table, x) {
   return {
     id: x.id, total: counts.total, counts: { new: counts.new, update: counts.update, same: counts.same, dup: counts.dup, invalid: counts.invalid },
     columns: { phone: colName(table, cols, cols.phone), name: colName(table, cols, cols.name), consent: colName(table, cols, cols.consent) }, header: cols.header, hasConsent,
-    consentNote: hasConsent ? "Согласия из файла запишутся как «не подтверждено»: реклама им не уйдёт, пока согласие не подтвердят в карточке клиента. Тем, кто сам отказывался, «да» из файла не записывается. Без основания согласия из файла не записываются вовсе." : "",
+    consentNote: hasConsent ? "Согласия из файла запишутся как «не подтверждено»: реклама им не уйдёт, пока согласие не подтвердят в карточке клиента. Если клиенты из файла сами разрешили рекламу (в WhatsApp, письменно), владелец может подтвердить это при загрузке: где и когда — тогда «да» подтверждено. Тем, кто сам отказывался или просил «стоп», «да» из файла не записывается. Без основания согласия из файла не записываются вовсе." : "",
     rows: show.map(r => ({ row: r.row, phone: r.p ? maskPhone(r.p) : "", name: logSafe(r.n), action: r.a, ...(r.e ? { error: r.e } : {}) }))
   };
 }
 
 /**
  * «Загрузить»: новые — в базу, у существующих — имя из файла, согласия — только с основанием. Повтор — ничего не делает.
- * @param {any} db @param {string} ws @param {string} id @param {{ basis: string, actor: string, at: number }} x
+ * attest — владелец подтвердил, что клиенты сами разрешили рекламу (givenAt — когда): «да» подтверждено; stops — «стоп» из прежнего KV.
+ * @param {any} db @param {string} ws @param {string} id @param {{ basis: string, actor: string, at: number, attest?: { givenAt: number }, stops?: string[] }} x
  */
 export async function importApply(db, ws, id, x) {
   const imp = await importGet(db, ws, id);
   if (!imp) throw err("Импорт не найден — загрузите файл заново.");
   if (imp.state !== "preview") return { ok: false, already: true, state: String(imp.state) };
-  const rows = await importRows(db, id), basis = String(x.basis || "").trim();
+  const rows = await importRows(db, id), basis = String(x.basis || "").trim(), attest = !!x.attest;
   const fresh = rows.filter((/** @type {any} */ r) => r.action === "new").map((/** @type {any} */ r) => ({ p: r.phone, n: r.name || "", s: searchOf(r.name, r.phone) }));
   const update = rows.filter((/** @type {any} */ r) => r.action === "update").map((/** @type {any} */ r) => ({ p: r.phone, n: r.name, s: searchOf(r.name, r.phone) }));
   /** @type {{ p: string, c: string }[]} */
   const all = basis ? rows.filter((/** @type {any} */ r) => r.consent === "granted" || r.consent === "denied").map((/** @type {any} */ r) => ({ p: String(r.phone), c: String(r.consent) })) : [];
-  const refused = await refusedPhones(db, ws, all.filter(r => r.c === "granted").map(r => r.p));
-  const consents = all.filter(r => !(r.c === "granted" && refused.has(r.p)));
-  const res = await importConfirm(db, ws, id, { fresh, update, consents, basis, ref: `файл «${String(imp.source_name || "").slice(0, 60)}»`, actor: x.actor, at: x.at });
-  return res.ok ? { ok: true, created: fresh.length, updated: update.length, consents: consents.length, consentsUnconfirmed: consents.filter(r => r.c === "granted").length, consentsSkipped: all.length - consents.length } : { ok: false, already: true };
+  const refused = await refusedPhones(db, ws, all.filter(r => r.c === "granted").map(r => r.p), attest);
+  if (attest) for (const p of x.stops || []) refused.add(String(p));
+  const consents = all.filter(r => !(r.c === "granted" && refused.has(r.p))), yes = consents.filter(r => r.c === "granted").length;
+  const res = await importConfirm(db, ws, id, { fresh, update, consents, basis, ref: `файл «${String(imp.source_name || "").slice(0, 60)}»`, actor: x.actor, at: x.at,
+    ...(attest && x.attest ? { confirmed: true, givenAt: x.attest.givenAt } : {}) });
+  return res.ok ? { ok: true, created: fresh.length, updated: update.length, consents: consents.length, consentsConfirmed: attest ? yes : 0, consentsUnconfirmed: attest ? 0 : yes, consentsSkipped: all.length - consents.length } : { ok: false, already: true };
 }
 export { importDiscard };

@@ -57,7 +57,7 @@ export async function contactsApi(request, env, url, s) {
       if (!f) return jsonP({ error: "Выберите файл или вставьте строки." }, 400);
       return jsonP(await contactsImport(env, c, now, f.bytes, f.name, actor));
     }
-    if (P === "/api/contacts/import/confirm") return jsonP(await contactsImportConfirm(env, c, now, body, actor));
+    if (P === "/api/contacts/import/confirm") return jsonP(await contactsImportConfirm(env, c, now, body, actor, owner)); // подтвердить разрешения из файла — только владелец (проверяет сервис)
     if (P === "/api/contacts/import/discard") return jsonP(await contactsImportDiscard(env, c, now, body));
     if (P === "/api/contacts/sync") {
       const mode = String(body.mode || "step");

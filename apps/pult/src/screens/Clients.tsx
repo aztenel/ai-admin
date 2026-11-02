@@ -323,7 +323,7 @@ function Hub({ ws, name, openId }: { ws: string; name?: string; openId?: string 
       </Layer>
 
       <Layer open={layer === "import"} onClose={closeLayer} title="Импорт клиентов">
-        {layer === "import" && <ImportFlow ws={ws} onDone={changed} onClose={closeLayer} />}
+        {layer === "import" && <ImportFlow ws={ws} owner={owner} onDone={changed} onClose={closeLayer} />}
       </Layer>
 
       <Layer open={layer === "sync"} onClose={closeLayer} title="Синхронизация и проверки">

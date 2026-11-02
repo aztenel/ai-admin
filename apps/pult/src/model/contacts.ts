@@ -89,7 +89,7 @@ export type ContactRow = {
   nextBookingAt: number | null;
   lastStaff: string;
   consent: ConsentState;
-  /** Согласие «есть» подтверждено (сообщение клиента, письменное, устно без прежнего отказа); из файла или Altegio — нет. */
+  /** Согласие «есть» подтверждено (сообщение клиента, письменное, устно без прежнего отказа, список с подтверждением владельца); из файла без подтверждения — нет. */
   consentConfirmed: boolean;
   stop: boolean;
   fullBlock: boolean;
@@ -191,8 +191,11 @@ export type ImportPreview = {
   consentNote: string;
   rows: ImportRow[];
 };
-/** consents — сколько записано отметок из файла; consentsUnconfirmed — из них «есть», но не подтверждено; consentsSkipped — пропущено (клиент сам отказывался). */
-export type ImportDone = { created: number; updated: number; consents: number; consentsUnconfirmed: number; consentsSkipped: number };
+/** consents — сколько записано отметок из файла; consentsConfirmed — «есть», подтверждено владельцем; consentsUnconfirmed — «есть», но не
+ *  подтверждено; consentsSkipped — пропущено (клиент сам отказывался, «стоп», запрет или отказ в Altegio). */
+export type ImportDone = { created: number; updated: number; consents: number; consentsConfirmed: number; consentsUnconfirmed: number; consentsSkipped: number };
+/** Владелец подтверждает, что клиенты из файла сами разрешили рекламу (в WhatsApp, письменно), — когда (ГГГГ-ММ-ДД). */
+export type ImportAttest = { givenAt: string };
 /** Импорт: файл (.csv, .xlsx, .txt) или вставленный текст. */
 export type ImportInput = { file: File } | { text: string };
 

@@ -28,7 +28,9 @@ const FULL = /7700000\d{4}/g;
 // номера, которые человек набирает сам (не из базы): добавление и импорт
 const ADD = "+7 700 000 77 01";
 const IMPORT_TEXT = ["Телефон;Имя;Согласие", "+7 700 000 77 11;Тестовый Один;да", "8 700 000 77 12;Тестовый Два;нет", "+7 700 000 77 11;Повтор;да", "12345;Неверный;да"].join("\n");
-const OWN = ["77000007701", "77000007711", "77000007712", "77000007721", "77000007722"];
+const OWN = ["77000007701", "77000007711", "77000007712", "77000007721", "77000007722", "77000007731"];
+// разрешения, полученные раньше (WhatsApp на телефоне салона), — списком с подтверждением владельца (задание владельца 02.11.2026)
+const ATTEST_TEXT = ["Телефон;Имя;Согласие", "+7 700 000 77 31;Тестовый Три;да"].join("\n");
 const CSV = "Телефон,Имя\n+77000007721,Файл Один\n+77000007722,Файл Два\n";
 
 // ---------- итоги ----------
@@ -442,6 +444,41 @@ async function owner(vp, scheme, tag) {
   await page.getByRole("button", { name: "Очистить поиск" }).click();
   await page.waitForTimeout(700);
 
+  // список разрешений, полученных раньше не в Altegio: владелец отмечает «клиенты сами разрешили рекламу» — где и когда
+  await menuAction(t, "Импорт из файла");
+  const imp3 = page.getByRole("dialog", { name: "Импорт клиентов" });
+  await fill(imp3.getByLabel("Строки из таблицы"), ATTEST_TEXT);
+  await tap(imp3.getByRole("button", { name: "Проверить" }));
+  await imp3.getByRole("list", { name: "Итог проверки" }).waitFor();
+  const attestBox = imp3.getByRole("checkbox", { name: /сами разрешили рекламу/ });
+  ok(`${tag}: владельцу — отметка «клиенты сами разрешили рекламу»`, (await attestBox.count()) === 1);
+  await fill(imp3.getByLabel("Основание согласия"), "написали «да» в WhatsApp на телефоне салона (проверка)");
+  await attestBox.check();
+  const day = imp3.getByLabel("Когда получены разрешения");
+  ok(`${tag}: дата разрешений — сегодня по умолчанию, не позже сегодня`, /^\d{4}-\d{2}-\d{2}$/.test(await day.inputValue()) && (await day.getAttribute("max")) === (await day.inputValue()));
+  await step(t, "import-attest");
+  await tap(imp3.getByRole("button", { name: "Загрузить 1" }));
+  await imp3.getByText(/^Загружено/).waitFor();
+  ok(`${tag}: «да» из списка с подтверждением — подтверждено`, /Разрешений «да» записано и подтверждено:\s*1/.test(await text(imp3)), await text(imp3));
+  await tap(imp3.getByRole("button", { name: "Готово" }));
+  await imp3.waitFor({ state: "detached" });
+  await fill(page.getByPlaceholder("Имя или номер"), "Тестовый Три");
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(200);
+    if (await page.locator('section[aria-busy="true"]').count()) continue;
+    const r = await rows(page).allInnerTexts();
+    if (r.length === 1 && /Тестовый Три/.test(r[0])) break;
+  }
+  await tap(rows(page).first().getByRole("button"));
+  const ac = page.getByRole("dialog");
+  await ac.getByText("Визиты", { exact: true }).waitFor();
+  const acLine = await text(ac.getByText("Реклама и акции").locator(".."));
+  ok(`${tag}: карточка — «Есть, подтверждено», где и когда`, /Есть, подтверждено/.test(acLine) && /письменное согласие/.test(acLine), acLine);
+  await step(t, "import-attested-card");
+  await closeCard(t);
+  await page.getByRole("button", { name: "Очистить поиск" }).click();
+  await page.waitForTimeout(700);
+
   // импорт файлом CSV и отмена
   await menuAction(t, "Импорт из файла");
   const imp2 = page.getByRole("dialog", { name: "Импорт клиентов" });
@@ -495,6 +532,15 @@ async function staff(vp, scheme, tag) {
   ok(`${tag}: у сотрудника в меню нет проверок Altegio`, !(await page.getByRole("menuitem", { name: /Проверка базы/ }).count()) && (await page.getByRole("menuitem", { name: "Импорт из файла" }).count()) === 1);
   await page.keyboard.press("Escape");
   await step(t, "list");
+  // список с колонкой согласия: подтвердить разрешения может только владелец — у сотрудника отметки нет
+  await menuAction(t, "Импорт из файла");
+  const simp = page.getByRole("dialog", { name: "Импорт клиентов" });
+  await fill(simp.getByLabel("Строки из таблицы"), ATTEST_TEXT);
+  await tap(simp.getByRole("button", { name: "Проверить" }));
+  await simp.getByRole("list", { name: "Итог проверки" }).waitFor();
+  ok(`${tag}: у сотрудника нет отметки «клиенты сами разрешили рекламу»`, (await simp.getByLabel("Основание согласия").count()) === 1 && !(await simp.getByRole("checkbox").count()));
+  await tap(simp.getByRole("button", { name: "Отменить" }));
+  await simp.waitFor({ state: "detached" });
   const { card } = await openFirst(t);
   // свой запрет и попытка снять: кнопки «Снять запрет» у сотрудника нет
   await tap(card.getByRole("button", { name: "Добавить запрет" }));

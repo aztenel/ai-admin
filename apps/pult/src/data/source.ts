@@ -42,6 +42,7 @@ import type {
   ContactSegments,
   DemoOp,
   ContactsStatus,
+  ImportAttest,
   ImportDone,
   ImportInput,
   ImportPreview,
@@ -156,7 +157,8 @@ export interface ContactSource {
   liftRestriction(ws: string, id: string, rid: string, reason: string): Promise<void>;
   reviewRestriction(ws: string, id: string, rid: string, decision: ReviewDecision, reason?: string): Promise<void>;
   importPreview(ws: string, input: ImportInput): Promise<ImportPreview>;
-  importConfirm(ws: string, id: string, consentBasis?: string): Promise<ImportDone>;
+  /** attest — только владелец: клиенты из файла сами разрешили рекламу (где — consentBasis, когда — givenAt); «да» подтверждено. 400 { field: consentBasis | consentGivenAt }, 403 — не владелец. */
+  importConfirm(ws: string, id: string, consentBasis?: string, attest?: ImportAttest): Promise<ImportDone>;
   importDiscard(ws: string, id: string): Promise<void>;
   /** Только владелец: step — синхронизировать сейчас (порция), dry — проверка без записи, test — тестовые клиенты (черновик). */
   syncContacts(ws: string, mode: SyncMode): Promise<SyncResult>;

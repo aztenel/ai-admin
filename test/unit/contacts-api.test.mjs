@@ -165,7 +165,7 @@ test("импорт: CSV с дублями и неверными номерами
   assert.ok(pv.j.rows.every(r => !/7000000094/.test(r.phone)), "в предпросмотре — маской");
   assert.equal(d.raw.prepare("select count(*) n from contacts").get().n, 2, "предпросмотр ничего не добавил");
   const ok = await post(st, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id, consentBasis: "анкета в салоне, октябрь 2026" });
-  assert.deepEqual(ok.j, { ok: true, created: 1, updated: 1, consents: 2, consentsUnconfirmed: 1, consentsSkipped: 0 });
+  assert.deepEqual(ok.j, { ok: true, created: 1, updated: 1, consents: 2, consentsConfirmed: 0, consentsUnconfirmed: 1, consentsSkipped: 0 });
   assert.equal((await post(st, "/api/contacts/import/confirm", { c: "winchester", id: pv.j.id })).status, 409, "второе «Загрузить» — ничего");
   assert.equal(d.raw.prepare("select count(*) n from contacts").get().n, 3);
   assert.equal(d.raw.prepare("select name from contacts where phone = '77000000941'").get().name, "Нурлан");

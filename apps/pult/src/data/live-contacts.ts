@@ -300,9 +300,18 @@ export const liveContacts: ContactSource = {
     }
     return preview(await call<unknown>("/api/contacts/import", { c: ws, text: input.text }));
   },
-  async importConfirm(ws, id, consentBasis) {
-    const d = obj(await call<unknown>("/api/contacts/import/confirm", { c: ws, id, ...(consentBasis ? { consentBasis } : {}) }));
-    return { created: num(d.created), updated: num(d.updated), consents: num(d.consents), consentsUnconfirmed: num(d.consentsUnconfirmed), consentsSkipped: num(d.consentsSkipped) };
+  async importConfirm(ws, id, consentBasis, attest) {
+    const d = obj(
+      await call<unknown>("/api/contacts/import/confirm", { c: ws, id, ...(consentBasis ? { consentBasis } : {}), ...(attest ? { consentConfirmed: true, consentGivenAt: attest.givenAt } : {}) }),
+    );
+    return {
+      created: num(d.created),
+      updated: num(d.updated),
+      consents: num(d.consents),
+      consentsConfirmed: num(d.consentsConfirmed),
+      consentsUnconfirmed: num(d.consentsUnconfirmed),
+      consentsSkipped: num(d.consentsSkipped),
+    };
   },
   async importDiscard(ws, id) {
     await call("/api/contacts/import/discard", { c: ws, id });
