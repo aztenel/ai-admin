@@ -1,0 +1,19 @@
+{
+  "id": "/app/",
+  "name": "Winchester",
+  "short_name": "Winchester",
+  "description": "Чаты с клиентами, заявки и рассылки Winchester",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "ru",
+  "theme_color": "#fbf7f0",
+  "background_color": "#fbf7f0",
+  "icons": [
+    { "src": "./winchester-192.png?v=w1", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./winchester-512.png?v=w1", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./winchester-512.png?v=w1", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "./winchester-favicon.svg?v=w1", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

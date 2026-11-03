@@ -123,3 +123,28 @@ test("/app → /app/: переносится только ?c=, ключ из а�
   assert.equal(r.status, 301); assert.equal(r.headers.get("location"), "/app/?c=winchester");
   assert.equal(pultApp("/app", "?key=owner-key-123456", PULT_APP).headers.get("location"), "/app/");
 });
+
+// значок Winchester на экране «Домой» (задание владельца 03.11.2026): знак с сайта winchester.kz, PNG без прозрачности (iOS залил бы
+// прозрачное чёрным) нужного размера, манифест с названием «Winchester»; адреса с ?v= — новая версия, прежний значок не берётся из кэша
+test("значок Winchester: PNG 180, 192, 512 без прозрачности, значок вкладки с сайта, манифест «Winchester» с версией адресов", async () => {
+  for (const n of [180, 192, 512]) {
+    const f = PULT_APP[`winchester-${n}.png`];
+    assert.ok(f && f.type === "image/png" && f.b64, `winchester-${n}.png в сборке`);
+    const b = Buffer.from(f.body, "base64");
+    assert.deepEqual([b.readUInt32BE(16), b.readUInt32BE(20)], [n, n], `размер ${n}×${n}`);
+    assert.equal(b[25], 2, "цвет без прозрачности (RGB)");
+  }
+  const { readFileSync } = await import("node:fs");
+  assert.equal(PULT_APP["winchester-favicon.svg"].body, readFileSync(new URL("../../apps/winchester-site/favicon.svg", import.meta.url), "utf8"), "значок вкладки — тот же, что у сайта winchester.kz");
+  const m = JSON.parse(PULT_APP["winchester.webmanifest"].body);
+  assert.deepEqual([m.name, m.short_name, m.id, m.start_url], ["Winchester", "Winchester", "/app/", "./"]);
+  for (const i of m.icons) {
+    assert.match(i.src, /\?v=\w+$/, "адрес значка с версией");
+    assert.ok(Object.hasOwn(PULT_APP, i.src.slice(2).replace(/\?.*$/, "")), `${i.src} есть в сборке`);
+  }
+  // пульт меняет ссылки на значок, манифест и название при оформлении Winchester — и с той же версией адреса
+  const js = Object.entries(PULT_APP).filter(([k]) => k.endsWith(".js")).map(([, f]) => f.body).join("\n");
+  assert.match(js, /winchester-180\.png\?v=/); assert.match(js, /winchester\.webmanifest\?v=/);
+  const r = pultApp("/app/winchester-180.png", "", PULT_APP);
+  assert.equal(r.status, 200); assert.equal(r.headers.get("content-type"), "image/png");
+});
