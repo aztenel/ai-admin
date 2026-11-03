@@ -32,11 +32,17 @@ async function altNoMass(env, c, now) {
   if (hit && now >= hit.at && now - hit.at < NOMASS_TTL) return hit.set;
   const user = altUserKey(env, c), loc = altLoc(env, c), set = new Set();
   if (!user || !loc) throw new Error("нет ключа журнала Altegio");
-  for (let page = 1; page <= 25; page++) {
+  // список отказов читается целиком или никак (находка проверки безопасности 03.11.2026): ответ не как у Altegio, страниц больше предела
+  // или прочитано меньше, чем Altegio насчитал, — ошибка, и реклама не уходит никому
+  let seen = 0, total = 0, done = false;
+  for (let page = 1; page <= 25 && !done; page++) {
     const r = await altClientsSearch(env, user, loc, { page, page_size: 200, fields: ["id", "phone"], order_by: "id", order_by_direction: "ASC", filters: [{ type: "is_mass_notification_allowed", state: { value: false } }] });
+    if (!r.ok) throw new Error("ответ Altegio не похож на список клиентов");
+    total = Math.max(total, r.total); seen += r.list.length;
     for (const x of r.list) { const p = normPhone(String(x.phone ?? "")).slice(1); if (p) set.add(p); }
-    if (r.list.length < 200) break;
+    done = r.list.length < 200;
   }
+  if (!done || seen < total) throw new Error(`отказы Altegio прочитаны не все (${seen} из ${total})`);
   NOMASS.set(c.id, { at: now, set });
   return set;
 }
