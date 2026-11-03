@@ -8,9 +8,6 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Пульт" />
-    <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="./icon-180.png" />
     <title>Пульт</title>
     <script>
       // Тема до первой отрисовки, иначе тёмная тема мигает белым. Ключ и значения те же, что у прежнего пульта (pult/app.js):
@@ -31,6 +28,16 @@
         r.style.colorScheme = dark ? "dark" : "light";
         var m = document.querySelector('meta[name="theme-color"]');
         if (m) m.setAttribute("content", b === "winchester" ? (dark ? "#210f0f" : "#fbf7f0") : (dark ? "#16191e" : "#ffffff"));
+        // Значок и название для экрана «Домой» (03.11.2026). Safari читает манифест один раз — первый на странице, при загрузке —
+        // и позже его не перечитывает, поэтому ссылки ставятся здесь, по оформлению, которое пульт запомнил (pult.brand), а не
+        // после загрузки пульта. Те же адреса — в src/lib/theme.ts (ICONS): при первом входе оформление известно позже, и пульт
+        // меняет ссылки сам (тогда для экрана «Домой» страницу обновить один раз).
+        var w = b === "winchester", h = document.head;
+        function add(t, a) { var e = document.createElement(t); for (var k in a) e.setAttribute(k, a[k]); h.appendChild(e); }
+        add("meta", { name: "apple-mobile-web-app-title", content: w ? "Winchester" : "Пульт" });
+        add("link", { rel: "manifest", href: w ? "./winchester.webmanifest?v=w1" : "./manifest.webmanifest" });
+        add("link", { rel: "apple-touch-icon", href: w ? "./winchester-180.png?v=w1" : "./icon-180.png" });
+        if (w) add("link", { rel: "icon", type: "image/svg+xml", href: "./winchester-favicon.svg?v=w1" });
       })();
     </script>
   </head>

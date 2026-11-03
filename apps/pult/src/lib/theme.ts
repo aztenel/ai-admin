@@ -56,8 +56,9 @@ const brandOf = () => (brandPref === "auto" ? company : brandPref === "neutral" 
 const bgOf = (brand: string | null): ChatBg => bg ?? (brand === "winchester" ? "pattern" : "plain");
 const BAR: Record<string, [string, string]> = { winchester: ["#fbf7f0", "#210f0f"], neutral: ["#ffffff", "#16191e"] };
 // Значок и название на экране «Домой», значок вкладки (задание владельца 03.11.2026): у Winchester — знак с сайта winchester.kz
-// (logo.svg, favicon.svg) и название «Winchester», у остальных — прежние. iPhone берёт их со страницы в момент «На экран „Домой“»,
-// поэтому ссылки меняются вместе с оформлением. ?v= — новая версия файла: iOS и браузер не возьмут прежний значок из кэша
+// (logo.svg, favicon.svg) и название «Winchester», у остальных — прежние. Сначала их ставит встроенный скрипт index.html по
+// запомненному оформлению (Safari читает только первый манифест страницы); здесь — когда оформление стало известно позже
+// или сменилось. Адреса — те же, что в index.html. ?v= — новая версия файла: iOS и браузер не возьмут прежний значок из кэша
 const ICON_V = "w1";
 const ICONS: Record<string, { touch: string; manifest: string; title: string; fav: string | null }> = {
   winchester: { touch: `./winchester-180.png?v=${ICON_V}`, manifest: `./winchester.webmanifest?v=${ICON_V}`, title: "Winchester", fav: `./winchester-favicon.svg?v=${ICON_V}` },

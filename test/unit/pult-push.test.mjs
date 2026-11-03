@@ -33,10 +33,14 @@ test("манифест для экрана «Домой»: своя област
   assert.equal(m.id, "/app/"); assert.equal(m.scope, "./"); assert.equal(m.start_url, "./"); assert.equal(m.display, "standalone");
   for (const i of m.icons) assert.ok(existsSync(pub(i.src.slice(2))), i.src);
   assert.ok(m.icons.some(i => i.purpose === "maskable"));
+  // ссылки ставит встроенный скрипт страницы по оформлению компании (Safari читает первый манифест страницы при загрузке,
+  // 03.11.2026) — подробно в pult-app.test.mjs; у Winchester свой манифест, тоже отдельным окном: push на iPhone — только оттуда
   const html = readFileSync(new URL("../../apps/pult/index.html", import.meta.url), "utf8");
-  assert.match(html, /<link rel="manifest" href="\.\/manifest\.webmanifest"/);
-  assert.match(html, /<link rel="apple-touch-icon" href="\.\/icon-180\.png"/);
+  assert.match(html, /rel: "manifest", href: [^\n]*"\.\/manifest\.webmanifest"/);
+  assert.match(html, /rel: "apple-touch-icon", href: [^\n]*"\.\/icon-180\.png"/);
   assert.ok(existsSync(pub("icon-180.png")));
+  const w = JSON.parse(readFileSync(pub("winchester.webmanifest"), "utf8"));
+  assert.deepEqual([w.id, w.scope, w.start_url, w.display], ["/app/", "./", "./", "standalone"]);
 });
 
 test("sw.js отдаётся без кэша (иначе браузер сутки держит старую версию), манифест — как остальные файлы", () => {

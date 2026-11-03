@@ -148,3 +148,44 @@ test("значок Winchester: PNG 180, 192, 512 без прозрачности
   const r = pultApp("/app/winchester-180.png", "", PULT_APP);
   assert.equal(r.status, 200); assert.equal(r.headers.get("content-type"), "image/png");
 });
+
+// Safari читает манифест один раз — первый на странице, при загрузке — и потом его не перечитывает (03.11.2026: после выкладки
+// значка владелец увидел прежний). Поэтому ссылки на значок, манифест и название ставит встроенный скрипт страницы — по
+// запомненному оформлению, до загрузки пульта; в самой разметке их нет (иначе первым был бы общий манифест «Пульт»)
+test("значок Winchester: ссылки ставит встроенный скрипт страницы до загрузки пульта, адреса — как у пульта (theme.ts)", async () => {
+  const { runInNewContext } = await import("node:vm");
+  const { readFileSync } = await import("node:fs");
+  assert.doesNotMatch(index.replace(/<script[\s\S]*?<\/script>/gi, ""), /rel="(?:manifest|apple-touch-icon|icon)"|apple-mobile-web-app-title/, "в разметке нет своих ссылок — только из скрипта");
+  const code = [...index.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]).join("\n");
+  /** @param {Record<string, string> | null} store null — хранилище недоступно (частный режим, запрет) */
+  const run = store => {
+    /** @type {{ tag: string, a: Record<string, string> }[]} */
+    const head = [];
+    const document = {
+      documentElement: { setAttribute() {}, style: {} },
+      head: { appendChild: (/** @type {any} */ e) => head.push(e) },
+      createElement: (/** @type {string} */ tag) => ({ tag, a: /** @type {Record<string, string>} */ ({}), setAttribute(/** @type {string} */ k, /** @type {string} */ v) { this.a[k] = String(v); } }),
+      querySelector: () => null,
+    };
+    const localStorage = { getItem: (/** @type {string} */ k) => { if (!store) throw new Error("storage blocked"); return store[k] ?? null; } };
+    const matchMedia = () => ({ matches: false });
+    runInNewContext(code, { document, localStorage, matchMedia, window: { matchMedia } });
+    const pick = (/** @type {string} */ tag, /** @type {string} */ k, /** @type {string} */ v, /** @type {string} */ out) => head.filter(e => e.tag === tag && e.a[k] === v).map(e => e.a[out]);
+    return { title: pick("meta", "name", "apple-mobile-web-app-title", "content"), manifest: pick("link", "rel", "manifest", "href"), touch: pick("link", "rel", "apple-touch-icon", "href"), icon: pick("link", "rel", "icon", "href") };
+  };
+  const src = readFileSync(new URL("../../apps/pult/src/lib/theme.ts", import.meta.url), "utf8");
+  const v = (/const ICON_V = "(\w+)"/.exec(src) || [])[1];
+  assert.ok(v, "версия адресов значка в theme.ts");
+  const winch = { title: ["Winchester"], manifest: [`./winchester.webmanifest?v=${v}`], touch: [`./winchester-180.png?v=${v}`], icon: [`./winchester-favicon.svg?v=${v}`] };
+  const plain = { title: ["Пульт"], manifest: ["./manifest.webmanifest"], touch: ["./icon-180.png"], icon: [] };
+  for (const s of ["./winchester.webmanifest?v=${ICON_V}", "./winchester-180.png?v=${ICON_V}", "./winchester-favicon.svg?v=${ICON_V}", "./manifest.webmanifest", "./icon-180.png"])
+    assert.ok(src.includes(s), `theme.ts меняет ссылки на те же адреса: ${s}`);
+  assert.deepEqual(run({ "pult.brand.co": "winchester" }), winch, "сотрудник Winchester (оформление компании)");
+  assert.deepEqual(run({ "pult.brand": "auto", "pult.brand.co": "winchester" }), winch, "оформление «как у компании»");
+  assert.deepEqual(run({ "pult.brand": "winchester" }), winch, "оформление Winchester выбрано вручную");
+  assert.deepEqual(run({ "pult.brand": "neutral", "pult.brand.co": "winchester" }), plain, "выбрано обычное оформление");
+  assert.deepEqual(run({ "pult.brand.co": "barber" }), plain, "другая компания");
+  assert.deepEqual(run({}), plain, "первый вход: оформление ещё не известно");
+  assert.deepEqual(run(null), plain, "хранилище недоступно — ссылки всё равно есть");
+  for (const u of [...winch.manifest, ...winch.touch, ...winch.icon, ...plain.manifest, ...plain.touch]) assert.ok(Object.hasOwn(PULT_APP, u.slice(2).replace(/\?.*$/, "")), `${u} есть в сборке`);
+});
