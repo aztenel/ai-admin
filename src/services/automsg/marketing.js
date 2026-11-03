@@ -19,7 +19,7 @@ import { notify } from "../integrations/telegram/client.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
-import { marketingGate } from "../contacts/gate.js";
+import { marketingGate, gateAllows } from "../contacts/gate.js";
 import { MARKETING_GAP_DAYS } from "../contacts/segments.js";
 import { crmPick } from "../crm/segments.js";
 import { bcGaOff } from "../broadcast/sender.js";
@@ -123,7 +123,7 @@ export async function mkPick(env, c, id, set, now) {
   const year = isoDay(now).slice(0, 4), days = Array.from({ length: MARKETING_GAP_DAYS }, (_, i) => isoDay(now - i * 86400e3));
   const marked = await bcmRead(env, c.id, days), out = [];
   for (const x of people) {
-    if (!gate.phones.has(x.p) || marked.has(x.p) || await optedOut(env, c.id, x.p) || await bdGreeted(env, c.id, x.p, year)) continue;
+    if (!gateAllows(gate, x.p) || marked.has(x.p) || await optedOut(env, c.id, x.p) || await bdGreeted(env, c.id, x.p, year)) continue;
     out.push(x);
   }
   return out.slice(0, 50);
@@ -161,7 +161,7 @@ async function mkSend(env, c, id, set, x, now, route, logs) {
   if (await optedOut(env, c.id, x.p)) return skip("клиент просил не писать");
   const gate = await marketingGate(env, c, now).catch(() => null);
   if (!gate || !gate.ready) return "stop"; // база согласий не ответила — закрыто при сомнении, попробуем через минуту
-  if (!gate.phones.has(x.p)) return skip(STOP.has(gate.reasons.get(x.p) || "") ? "клиент просил не писать" : "нет подтверждённого согласия на рекламу");
+  if (!gateAllows(gate, x.p)) return skip(STOP.has(gate.reasons.get(x.p) || "") ? "клиент просил не писать" : "нет подтверждённого согласия на рекламу");
   const day = isoDay(now), year = day.slice(0, 4);
   if (id === "birthday" && await bdGreeted(env, c.id, x.p, year)) return skip("уже поздравили в этом году");
   const cnt = await jrCount(env, c.id, day);
