@@ -274,7 +274,8 @@ const ALL_D1 = process.env.CHAT_STORE_ALL === "d1" ? await import("./d1.mjs") : 
 export function mk(envExtra = {}) {
   const kv = mkKV();
   const d1 = ALL_D1 && !("DB" in envExtra) && !Object.keys(envExtra).some(k => k.startsWith("CHAT_STORE")) ? { CHAT_STORE: "d1", DB: ALL_D1.d1With(envExtra.STAGE === "preview" ? "preview" : "production").db } : {};
-  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", ...d1, ...envExtra };
+  // CONSENT_PRESUMED_WINCHESTER: проверки по умолчанию — с подтверждённым согласием (как до 03.11.2026); «согласие по умолчанию» включают сами
+  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", CONSENT_PRESUMED_WINCHESTER: "0", ...d1, ...envExtra };
   const pending = [], ctx = { waitUntil: p => pending.push(p) };
   const settle = async () => { while (pending.length) await Promise.allSettled(pending.splice(0)); };
   const call = async (path, init = {}) => { const r = await worker.fetch(new Request("https://bot.test" + path, init), env, ctx); await settle(); return r; };

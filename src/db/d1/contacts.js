@@ -144,13 +144,13 @@ const GATE_WHY = `case when full = 1 then 'block' when review = 1 then 'review' 
 /**
  * То же, что consentReadyPhones, и причина для остальных (воронка рассылки показывает, почему человек не получит; ТЗ v3.0 P0).
  * @param {any} db @param {string} ws @param {number} now @param {string[]} kvStops @param {number} gapMs
- * @returns {Promise<{ phones: Set<string>, why: Map<string, string> }>}
+ * @returns {Promise<{ phones: Set<string>, why: Map<string, string>, cool: Set<string> }>}
  */
 export async function consentGate(db, ws, now, kvStops, gapMs) {
-  const r = await db.prepare(`${K} select phone, ${GATE_WHY} as why from k`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
-  const phones = new Set(), why = new Map();
-  for (const x of r.results || []) { if (x.why) why.set(String(x.phone), String(x.why)); else phones.add(String(x.phone)); }
-  return { phones, why };
+  const r = await db.prepare(`${K} select phone, ${GATE_WHY} as why, cooled from k`).bind(ws, now, JSON.stringify(kvStops), gapMs).all();
+  const phones = new Set(), why = new Map(), cool = new Set();
+  for (const x of r.results || []) { if (x.why) why.set(String(x.phone), String(x.why)); else phones.add(String(x.phone)); if (+x.cooled) cool.add(String(x.phone)); }
+  return { phones, why, cool };
 }
 /**
  * Числа для шапки «Клиентов»: всего, с будущей записью, в выбранном сегменте (null — сегмент не выбран), с запретом

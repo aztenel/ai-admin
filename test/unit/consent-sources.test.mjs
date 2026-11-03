@@ -17,6 +17,7 @@ import { LIBRARY, CATS } from "../../src/services/broadcast/library.js";
 import { restrictionAdd } from "../../src/db/d1/rights.js";
 import { dayStart } from "../../src/services/contacts/normalize.js";
 import { tableColumns } from "../../src/lib/table.js";
+import { noMassReset } from "../../src/services/contacts/gate.js";
 
 const skip = sqliteOk ? false : "база согласий D1 — node:sqlite есть только в Node 22+";
 const W = CLIENTS.winchester, OWNER = "owner-key-123456", STAFF_W = "staff-key-winch-0001";
@@ -277,4 +278,39 @@ test("находки 2–4: прежнее «нет» (и после «не из
   await post(own, "/api/contacts/add", { c: "winchester", phone: ph(1104), name: "Тимур" });
   const x = await post(own, "/api/contacts/consent", { c: "winchester", id: idOf(d, 1104), purpose: "marketing", state: "granted", evidence: "document", evidenceRef: "WhatsApp на телефоне салона", givenAt: "2026-02-31" });
   assert.equal(x.status, 400); assert.equal(x.j.field, "givenAt");
+});
+
+// решение владельца 03.11.2026: у Winchester согласие на рекламу по умолчанию — база контактов D1 пуста, а клиент без отказа считается
+// согласным. Отказы остаются: «стоп» (KV и D1), «нет», отказ в Altegio («не получает массовые уведомления» — читается из Altegio), пауза
+// после отмены; правила рассылки (уже записан, был недавно) — тоже. Отказы Altegio не прочитались — рекламы нет никому
+test("согласие по умолчанию (Winchester, 03.11.2026): все клиенты базы без отказа — можно рекламу; «стоп», отказ в Altegio и «нет» — нет", { skip }, async () => {
+  noMassReset();
+  const { s, d, own } = await base({ ...ON, CONSENT_PRESUMED_WINCHESTER: "1" });
+  // 1107 в base() — запрет из Altegio в D1; 1104 — отказ в Altegio только в самом Altegio (D1 о нём не знает)
+  net.altClients = [{ id: 501104, name: "Тимур", phone: ph(1104), nomass: true }];
+  noMassReset();
+  await importList(own, `Телефон;Согласие\n${ph(1108)};нет\n`, { consentBasis: "анкета" });
+  const segs = await (await own.go("/api/crm/segments?c=winchester")).json();
+  // 11 в базе: нельзя 1105 («стоп»), 1106 («стоп» KV), 1107 и 1104 (отказ в Altegio), 1108 («нет»), 1112 (уже записан) — можно 5
+  assert.equal(segs.clients, 11); assert.equal(segs.ok, 5, JSON.stringify(segs.excluded));
+  const DRAFT = { c: "winchester", ch: "ga", name: "Давно не виделись", tplId: "W09", lang: "ru", segment: "all", cap: 50, from: 10, to: 20, consent: true };
+  const chk = await post(own, "/api/bc/check", DRAFT);
+  assert.equal(chk.j.valid, 5, JSON.stringify(chk.j.funnel));
+  const c = (await post(own, "/api/bc/create", DRAFT)).j;
+  let r = await post(own, "/api/bc/act", { c: "winchester", id: c.b.id, act: "start", sure: true, n: 5 });
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  for (let i = 0; i < 6; i++) {
+    const b = s.kv.json("bc:winchester:" + c.b.id);
+    if (b.status !== "running") break;
+    if (b.nextAt) { b.nextAt = Date.now() - 1; s.kv.mem.set("bc:winchester:" + c.b.id, JSON.stringify(b)); }
+    await bcTick(s.env, "winchester", c.b.id);
+  }
+  assert.deepEqual(gaSent().map(x => x.to).sort(), [1101, 1102, 1103, 1109, 1110].map(dg));
+  // отказы Altegio не читаются — рекламы нет никому (закрыто при сомнении)
+  noMassReset(); net.altJournalFail = 503;
+  const s2 = mk({ ...ON, CONSENT_PRESUMED_WINCHESTER: "1", DB: d.db });
+  s2.kv.mem.set("crm:winchester:snap", s.kv.mem.get("crm:winchester:snap"));
+  const o2 = await login(s2, OWNER);
+  assert.equal((await (await o2.go("/api/crm/segments?c=winchester")).json()).ok, 0);
+  net.altJournalFail = 0; noMassReset();
 });

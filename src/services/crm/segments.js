@@ -6,14 +6,14 @@
 // сегмента и автосценарий «Пора на стрижку» (полные номера — только на сервере, браузеру — маской в controllers/crm.js).
 /** @import { Env, Client } from "../../lib/types.js" */
 import { CRM_QUIET_DAYS, CRM_PAST_DAYS } from "../../config/constants.js";
-import { marketingGate } from "../contacts/gate.js";
+import { marketingGate, gateAllows } from "../contacts/gate.js";
 import { MARKETING_GAP_DAYS } from "../contacts/segments.js";
 import { isoDay } from "../../lib/time.js";
 import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number }, reasons?: Map<string, string> }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number, presumed?: boolean }, reasons?: Map<string, string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -67,10 +67,13 @@ export async function crmView(env, c, now) {
   const [stop, marked, gate] = await Promise.all([bcOptouts(env, c.id), bcmRead(env, c.id, days), marketingGate(env, c, now)]);
   const rows = snap.list.map((/** @type {any} */ x) => {
     const d = daysSince(x.last, now);
-    return { ...x, d, why: stop.has(x.p) ? "stop" : !gate.phones.has(x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
+    return { ...x, d, why: stop.has(x.p) ? "stop" : !gateAllows(gate, x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
+  // согласие по умолчанию (gate.presumed): разрешены все номера снимка без отказа — список разрешённых строится по снимку
+  const futOnly = (Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String);
+  const allow = gate.presumed ? new Set([...snap.list.map((/** @type {any} */ x) => String(x.p)), ...futOnly].filter(p => gateAllows(gate, p))) : gate.phones;
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, stop, allow: gate.phones, gate: { ready: gate.ready, why: gate.why, n: gate.phones.size }, reasons: gate.reasons, futOnly: new Set((Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String)) };
+  return { snap, rows, marked, stop, allow, gate: { ready: gate.ready, why: gate.why, n: allow.size, presumed: !!gate.presumed }, reasons: gate.reasons, futOnly: new Set(futOnly) };
 }
 
 // Статусы клиента базы (задание владельца 02.11.2026: «0 доступных» не значит «0 клиентов» — показываем всех, а писать рекламу можно только
