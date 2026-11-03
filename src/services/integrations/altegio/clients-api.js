@@ -10,9 +10,10 @@ import { altRead } from "./client.js";
  * @param {string} user ключ пользователя салона
  * @param {number} loc номер локации
  * @param {{ page: number, page_size: number, fields: string[], order_by?: string, order_by_direction?: string, filters?: any[] }} body
- * @returns {Promise<{ list: any[], total: number }>}
+ * @returns {Promise<{ list: any[], total: number, ok: boolean }>}
  */
 export async function altClientsSearch(env, user, loc, body) {
   const j = await altRead(env, "POST", `/locations/${loc}/clients/search`, body, user, true);
-  return { list: (Array.isArray(j.data) ? j.data : []).filter((/** @type {any} */ x) => x && typeof x === "object"), total: +((j.meta && j.meta.total_count) || 0) };
+  // ok — ответ как у Altegio (data — массив): без него пустой список нельзя принять за «никого нет» (согласие по умолчанию, gate.js)
+  return { list: (Array.isArray(j.data) ? j.data : []).filter((/** @type {any} */ x) => x && typeof x === "object"), total: +((j.meta && j.meta.total_count) || 0), ok: Array.isArray(j.data) };
 }

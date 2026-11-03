@@ -309,8 +309,15 @@ test("согласие по умолчанию (Winchester, 03.11.2026): все 
   // отказы Altegio не читаются — рекламы нет никому (закрыто при сомнении)
   noMassReset(); net.altJournalFail = 503;
   const s2 = mk({ ...ON, CONSENT_PRESUMED_WINCHESTER: "1", DB: d.db });
-  s2.kv.mem.set("crm:winchester:snap", s.kv.mem.get("crm:winchester:snap"));
+  s2.kv.mem.set("crm:winchester:snap", s.kv.mem.get("crm:winchester:snap")); s2.kv.mem.set(`optout:winchester:${dg(1106)}`, "1");
   const o2 = await login(s2, OWNER);
   assert.equal((await (await o2.go("/api/crm/segments?c=winchester")).json()).ok, 0);
   net.altJournalFail = 0; noMassReset();
+  // находка проверки безопасности 03.11.2026: ответ без списка или прочитано меньше, чем Altegio насчитал, — тоже никому
+  for (const bad of ["nodata", "short"]) {
+    net.altClientsBad = bad; noMassReset();
+    assert.equal((await (await o2.go("/api/crm/segments?c=winchester")).json()).ok, 0, bad);
+  }
+  net.altClientsBad = ""; noMassReset();
+  assert.equal((await (await o2.go("/api/crm/segments?c=winchester")).json()).ok, 5, "ответ Altegio снова нормальный — можно");
 });
