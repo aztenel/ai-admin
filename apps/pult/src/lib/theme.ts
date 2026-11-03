@@ -55,6 +55,29 @@ const emit = () => subs.forEach((f) => f());
 const brandOf = () => (brandPref === "auto" ? company : brandPref === "neutral" ? null : brandPref);
 const bgOf = (brand: string | null): ChatBg => bg ?? (brand === "winchester" ? "pattern" : "plain");
 const BAR: Record<string, [string, string]> = { winchester: ["#fbf7f0", "#210f0f"], neutral: ["#ffffff", "#16191e"] };
+// Значок и название на экране «Домой», значок вкладки (задание владельца 03.11.2026): у Winchester — знак с сайта winchester.kz
+// (logo.svg, favicon.svg) и название «Winchester», у остальных — прежние. iPhone берёт их со страницы в момент «На экран „Домой“»,
+// поэтому ссылки меняются вместе с оформлением. ?v= — новая версия файла: iOS и браузер не возьмут прежний значок из кэша
+const ICON_V = "w1";
+const ICONS: Record<string, { touch: string; manifest: string; title: string; fav: string | null }> = {
+  winchester: { touch: `./winchester-180.png?v=${ICON_V}`, manifest: `./winchester.webmanifest?v=${ICON_V}`, title: "Winchester", fav: `./winchester-favicon.svg?v=${ICON_V}` },
+  neutral: { touch: "./icon-180.png", manifest: "./manifest.webmanifest", title: "Пульт", fav: null },
+};
+function applyIcons(brand: string | null) {
+  const x = ICONS[brand === "winchester" ? "winchester" : "neutral"];
+  document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute("href", x.touch);
+  document.querySelector('link[rel="manifest"]')?.setAttribute("href", x.manifest);
+  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute("content", x.title);
+  let fav = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!x.fav) return void fav?.remove();
+  if (!fav) {
+    fav = document.createElement("link");
+    fav.rel = "icon";
+    fav.type = "image/svg+xml";
+    document.head.appendChild(fav);
+  }
+  fav.href = x.fav;
+}
 
 function apply() {
   const dark = pref === "dark" || (pref === "auto" && media.matches);
@@ -68,6 +91,7 @@ function apply() {
   // цвет полосы состояния и заголовка окна — как у панелей пульта
   const bar = BAR[brand || "neutral"] || BAR.neutral;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? bar[1] : bar[0]);
+  applyIcons(brand);
 }
 // сразу при загрузке, до первой отрисовки React: скрипт index.html не знает, что у Winchester узор по умолчанию
 apply();
