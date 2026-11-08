@@ -13,9 +13,9 @@ const STOP_RU = "Если такие сообщения больше не нуж
 const STOP_KK = "Мұндай хабарламалар керек болмаса, «стоп» деп жазыңыз.";
 const MK_VARS = ["client.first_name", "staff.name", "service.name", "visit.days_since", "company.name", "booking.url", "company.address"];
 const DEFS: Def[] = [
-  { id: "confirm", group: "service", title: "Подтверждение записи", kind: "s01", def: { delay: 5 },
+  { id: "confirm", group: "service", title: "Подтверждение записи", kind: "s01", def: { delay: 0 },
     who: "Клиенту, которого записали в Altegio: администратор, сайт, онлайн-запись. Кроме записей через бота в переписке.",
-    fields: [{ key: "delay", label: "Через сколько минут после записи", kind: "minutes", min: 5, max: 60, step: 5 }],
+    fields: [{ key: "delay", label: "Через сколько минут после записи (0 — сразу)", kind: "minutes", min: 0, max: 60, step: 5 }],
     vars: ["имя", "дата", "время", "услуга", "мастер", "адрес"],
     ru: "Здравствуйте[[, {имя}]]! Вы записаны в {компания} на {дата} в {время}.[[ Услуга: {услуга}.]][[ Мастер: {мастер}.]][[ Адрес: {адрес}.]] Если нужно перенести или отменить, напишите сюда.",
     kk: "Сәлеметсіз бе[[, {имя}]]! Сіз {компания} барбершопына жазылдыңыз: {дата}, сағат {время}.[[ Қызмет: {услуга}.]][[ Шебер: {мастер}.]][[ Мекенжай: {адрес}.]] Ауыстыру немесе болдырмау керек болса, осында жазыңыз." },
@@ -77,7 +77,7 @@ const wait = (ms = 220) => new Promise((r) => setTimeout(r, ms + Math.random() *
 function timingText(id: string, t: Record<string, string | number>, w: { from: number; to: number }): string {
   const win = `с ${w.from}:00 до ${w.to}:00`;
   switch (id) {
-    case "confirm": return `Через ${t.delay} мин после записи, ${win}. Не позже чем за час до визита.`;
+    case "confirm": return `${+t.delay ? `Через ${t.delay} мин после записи` : "Сразу после записи, в течение 1–2 минут"}, ${win}. Не позже чем за час до визита.`;
     case "remind24": return t.mode === "eve" ? `Накануне визита в ${t.eve}.` : `За 24 часа до визита. Если это время раньше ${w.from}:00 или позже ${w.to}:00 — в ближайшее время отправки накануне.`;
     case "remind3": return `За ${t.hours} ч до визита, если это время ${win}.`;
     case "move": return `В течение 15 минут после переноса в Altegio, ${win}. Если запись меняют несколько раз подряд — одно сообщение с последним временем.`;

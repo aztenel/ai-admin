@@ -20,7 +20,7 @@ import { TZ, local, isoDay } from "../../lib/time.js";
 import { normPhone, maskPhone } from "../../lib/phone.js";
 import { hash } from "../../lib/crypto.js";
 import { altText } from "../integrations/altegio/client.js";
-import { altRecordsRange } from "../integrations/altegio/records-api.js";
+import { altRecordsRange, altRecordsChanged } from "../integrations/altegio/records-api.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaKind, gaWhy, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { notify } from "../integrations/telegram/client.js";
@@ -40,6 +40,9 @@ import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf } from 
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
+// между полными чтениями — раз в минуту только изменённые записи (ТЗ v4, 08.11.2026: подтверждение за 1–2 минуты). Окно 10 минут с запасом:
+// запись, изменённую за это время, увидим несколько раз — в очередь и состояние она попадает один раз (ключ задачи, версия записи)
+const FAST_WIN = 10 * 60e3;
 const AHEAD = 14;            // журнал читаем со вчера на 14 дней вперёд: подтверждение, перенос и отмена — и у записей не на завтра
 const WIN_PAGES = 4;         // 15 дней одной локации — 1–2 страницы по 200 записей (у Winchester ≈15 записей в день)
 const HORIZON = 36 * 3600e3; // в очереди — только то, что уйдёт в ближайшие 36 часов: дальнее спланирует следующее чтение журнала
@@ -59,10 +62,10 @@ const SVC_NO = new Set(["block", "stop", "review"]); // база контакт�
  *  (так план считают проверки: накануне в 18:00, за 2 часа, отзыв через 3 часа) @param {Client} c @param {any} [set] */
 function opts(c, set) {
   const base = { from: 10, to: 21, eve: "18:00", h2: true, rv: true, cap: 150, s01: false, s06: false, cx: false, noshow: true, ...(c.jr || {}) };
-  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 5, set: /** @type {any} */ (null) };
+  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 0, set: /** @type {any} */ (null) };
   if (!set) return o;
   const s = set.s;
-  return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: +s.confirm.t.delay || 5,
+  return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: Number.isFinite(+s.confirm.t.delay) ? Math.max(0, +s.confirm.t.delay) : 0,
     d1: s.remind24.on, d1mode: s.remind24.t.mode, eve: String(s.remind24.t.eve || "18:00"), h2: s.remind3.on, h2h: +s.remind3.t.hours || 3,
     s06: s.move.on, cx: s.cancel.on, rv: s.review.on, rvh: +s.review.t.hours || 3, set };
 }
@@ -200,6 +203,19 @@ async function jrClient(env, c, now) {
       if (!last) q = q.filter(x => { if (x.at >= now - 60e3) return true; logs.push(entry(x, "skipped", "отправку только что включили: задним числом не шлём", now)); return false; });
       dirty = true;
     } catch (/** @type {any} */ e) { console.log("jr journal", c.id, String((e && e.message) || e).slice(0, 160)); }
+  } else if (o.s01 || o.s06) {
+    // быстрый проход: только записи, которых ещё не видели или у которых сменилась версия. Ничего нового — ничего не пишем (KV)
+    try {
+      const r = await altRecordsChanged(env, user, loc, now - FAST_WIN, now + 86400e3);
+      const prev = await jrbLoad(env, c.id);
+      const fresh = r.list.filter(x => { const v = jrRec(x); return !!v && (!prev[v.id] || prev[v.id].v !== v.v); });
+      if (fresh.length) {
+        const ch = await jrChanges(env, prev, fresh, true, now, { user, loc }); // cut: остальных записей в ответе нет — не «удалены»
+        bk = ch.state; bkDirty = true;
+        q = await jrMerge(env, c, o, q, fresh, now, logs, ch);
+        dirty = true;
+      }
+    } catch (/** @type {any} */ e) { console.log("jr fast", c.id, String((e && e.message) || e).slice(0, 160)); }
   }
   const drop = new Set(), due = [];
   for (const x of q) {

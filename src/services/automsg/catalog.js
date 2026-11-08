@@ -18,9 +18,9 @@ import { STOP_RU, STOP_KK } from "../broadcast/library.js";
 
 /** @type {AutoDef[]} */
 export const AUTO = [
-  { id: "confirm", group: "service", title: "Подтверждение записи", kind: "s01", sc: "S01", def: { delay: 5 },
+  { id: "confirm", group: "service", title: "Подтверждение записи", kind: "s01", sc: "S01", def: { delay: 0 },
     who: "Клиенту, которого записали в Altegio: администратор, сайт, онлайн-запись. Кроме записей через бота в переписке.",
-    fields: [{ key: "delay", label: "Через сколько минут после записи", kind: "minutes", min: 5, max: 60, step: 5 }] },
+    fields: [{ key: "delay", label: "Через сколько минут после записи (0 — сразу)", kind: "minutes", min: 0, max: 60, step: 5 }] },
   { id: "remind24", group: "service", title: "Напоминание за 24 часа", kind: "d1", sc: "S03", def: { mode: "24h", eve: "18:00" },
     who: "Каждому клиенту с записью на завтра, если он записался раньше чем за сутки.",
     fields: [{ key: "mode", label: "Когда", kind: "choice", options: [{ v: "24h", label: "За 24 часа до визита" }, { v: "eve", label: "Накануне в выбранное время" }] },
@@ -146,7 +146,7 @@ const winText = w => `с ${w.from}:00 до ${w.to}:00`;
  */
 export function timingText(d, t, w) {
   switch (d.id) {
-    case "confirm": return `Через ${t.delay} мин после записи, ${winText(w)}. Не позже чем за час до визита.`;
+    case "confirm": return `${+t.delay ? `Через ${t.delay} мин после записи` : "Сразу после записи, в течение 1–2 минут"}, ${winText(w)}. Не позже чем за час до визита.`;
     case "remind24": return t.mode === "eve" ? `Накануне визита в ${t.eve}.` : `За 24 часа до визита. Если это время раньше ${w.from}:00 или позже ${w.to}:00 — в ближайшее время отправки накануне.`;
     case "remind3": return `За ${t.hours} ч до визита, если это время ${winText(w)}.`;
     case "move": return `В течение 15 минут после переноса в Altegio, ${winText(w)}. Если запись меняют несколько раз подряд — одно сообщение с последним временем.`;

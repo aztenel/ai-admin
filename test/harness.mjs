@@ -172,7 +172,8 @@ function altStub(url, init) {
     if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
     if (net.altJournal) { // журнал за период (база клиентов): записи с датой в [start_date, end_date], страница page по count штук
       const q = new URL(url).searchParams, sd = q.get("start_date") || "", ed = q.get("end_date") || "", cnt = Math.max(1, +q.get("count") || 200), pg = Math.max(1, +q.get("page") || 1);
-      const all = net.altJournal.filter(r => { const d = String(r.datetime || "").slice(0, 10); return (!sd || d >= sd) && (!ed || d <= ed); });
+      const ca = q.get("changed_after"), caMs = ca ? Date.parse(ca.length <= 19 ? ca + "Z" : ca) : 0; // изменённые после (как вживую: время без пояса — UTC)
+      const all = net.altJournal.filter(r => { const d = String(r.datetime || "").slice(0, 10); return (!sd || d >= sd) && (!ed || d <= ed) && (!caMs || Date.parse(String(r.last_change_date || r.create_date || "")) >= caMs); });
       return J({ success: true, data: all.slice((pg - 1) * cnt, pg * cnt), meta: { count: all.length } });
     }
     // журнал как вживую: удалённая через API запись помечена deleted, удалённая администратором — пропадает из списка

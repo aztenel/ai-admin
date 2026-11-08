@@ -275,6 +275,36 @@ test("подтверждение записи: только новой, с вы�
   assert.ok(!sent().some(x => x.to === dg(6072)), "старой записи подтверждение не шлём");
 });
 
+test("ТЗ v4: подтверждение сразу — новую запись видит быстрое чтение журнала раз в минуту; повторно не шлём и ничего не переписываем", async () => {
+  net.reset();
+  const OLD = rec(ph(6091), TOM, "16:00", { id: 6091 });
+  net.altJournal = [OLD];
+  const s = mk(ENV); await approveAll(s); await autoOn(s, { confirm: true });
+  await jrRun(s.env, at(TODAY, "12:00")); // полное чтение журнала
+  net.altJournal = [OLD, rec(ph(6092), TOM, "15:00", { id: 6092, made: `${TODAY}T12:03:00+05:00`, name: "Айдос" })];
+  net.alt.length = 0;
+  await jrRun(s.env, at(TODAY, "12:04")); // до следующего полного чтения 11 минут — быстрое чтение изменённых записей
+  assert.ok(net.alt.some(x => /^GET \/records\/133486\?changed_after=/.test(x)), net.alt.join("\n"));
+  assert.ok(!net.alt.some(x => x.includes(`start_date=${YDAY}`)), "полное чтение (со вчера на 14 дней) не нужно; перед отправкой — только день записи: " + net.alt.join("\n"));
+  assert.equal(sent().length, 1, JSON.stringify(log(s)));
+  assert.equal(sent()[0].to, dg(6092)); assert.match(sent()[0].text, /Айдос! Вы записаны в Winchester на 20 октября в 15:00/);
+  const before = [s.kv.mem.get("jrb:winchester"), s.kv.mem.get("jrq:winchester")];
+  await jrRun(s.env, at(TODAY, "12:05")); await jrRun(s.env, at(TODAY, "12:06"));
+  assert.equal(sent().length, 1, "та же запись в окне быстрого чтения — второго сообщения нет");
+  assert.deepEqual([s.kv.mem.get("jrb:winchester"), s.kv.mem.get("jrq:winchester")], before, "ничего нового — хранилище не переписано");
+  // только напоминания, без подтверждения и переноса — быстрого чтения нет (лишние запросы к Altegio не нужны)
+  const s2 = mk(ENV); await approveAll(s2); await autoOn(s2, { remind24: true });
+  await jrRun(s2.env, at(TODAY, "12:00")); net.alt.length = 0;
+  await jrRun(s2.env, at(TODAY, "12:04"));
+  assert.ok(!net.alt.some(x => /^GET \/records\//.test(x)), net.alt.join("\n"));
+});
+
+test("ТЗ v4: текст подтверждения как в уведомлении Altegio — вариант b2", () => {
+  const sc = SCENARIOS.find(x => x.id === "S01");
+  assert.equal(sc.ru.length, 2);
+  assert.equal(sc.ru[1], "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}.");
+});
+
 test("дубли: одна запись, вид и версия — одно сообщение, даже если отметка в KV потерялась (отметка D1); две одновременные отправки с одним ключом — одна", { skip }, async () => {
   net.reset();
   net.altJournal = [rec(ph(6081), TOM, "15:00", { id: 6081 })];
