@@ -35,13 +35,16 @@ import { sendOnce } from "../inbox/send.js";
 import { marketingGate } from "../contacts/gate.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
 import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewedAt, jrReviewMark, optedOut, rmOk,
-  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals, svVariants } from "../../db/kv/reminders.js";
+  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
 import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
 import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf, linkOf } from "./templates.js";
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
 import { bonusScan, sendAt } from "./bonus.js";
+import { svOwn } from "./variants.js";
+import { isPreview } from "../../lib/stage.js";
+import { kvKey } from "../../lib/kv-id.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
 // между полными чтениями — раз в минуту только изменённые записи (ТЗ v4, 08.11.2026: подтверждение за 1–2 минуты). Окно 10 минут с запасом:
@@ -203,8 +206,42 @@ export async function jrRun(env, now) {
   return n;
 }
 
-/** @param {Env} env @param {Client} c @param {number} now */
-async function jrClient(env, c, now) {
+// Событие Altegio (вебхук /alt/<компания>, ТЗ v4: «моментально, а не раз в 15 минут»): журнал читаем сразу, не ждём минуты расписания.
+// Одна компания — один проход за раз: события пачкой (администратор правит запись несколько раз) сливаются в ещё один проход после текущего;
+// между проходами — не меньше KICK_GAP (Altegio принимает 5 запросов в секунду на всех). Память — экземпляра Worker, по хранилищу (kvKey):
+// в другом экземпляре проход может совпасть — от двойной отправки защищают отметки rms: и D1 send_claims.
+const KICK_GAP = 1500;
+/** @type {WeakMap<object, Map<string, { run: Promise<number> | null, again: string, at: number }>>} */
+const KICKS = new WeakMap();
+/** прочитать журнал компании сейчас и отправить то, что пора: "fast" — изменённые записи, "full" — весь журнал (удаление записи)
+ *  @param {Env} env @param {Client} c @param {"fast" | "full"} mode @returns {Promise<number>} сколько сообщений ушло */
+export function jrKick(env, c, mode) {
+  if (!jrOn(env, c) || isPreview(env)) return Promise.resolve(0);
+  const store = /** @type {object} */ (kvKey(env.KV) || env);
+  let m = KICKS.get(store);
+  if (!m) { m = new Map(); KICKS.set(store, m); }
+  const k = m.get(c.id) || { run: null, again: "", at: 0 };
+  m.set(c.id, k);
+  if (k.run) { if (k.again !== "full") k.again = mode; return k.run; } // идёт проход — после него ещё один
+  const go = async () => {
+    let want = /** @type {string} */ (mode), n = 0;
+    while (want) {
+      const wait = k.at + KICK_GAP - Date.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      k.again = "";
+      try { n += await jrClient(env, c, Date.now(), /** @type {"fast" | "full"} */ (want)); }
+      catch (/** @type {any} */ e) { console.log("jr kick", c.id, String((e && e.message) || e).slice(0, 160)); }
+      k.at = Date.now();
+      want = k.again;
+    }
+    return n;
+  };
+  k.run = go().finally(() => { k.run = null; });
+  return k.run;
+}
+
+/** @param {Env} env @param {Client} c @param {number} now @param {"" | "fast" | "full"} [force] проход по событию Altegio */
+async function jrClient(env, c, now, force = "") {
   const user = altUserKey(env, c), loc = altLoc(env, c), route = gaRoute(env, c.id);
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set), logs = /** @type {any[]} */ ([]);
@@ -213,7 +250,7 @@ async function jrClient(env, c, now) {
   /** @type {Record<string, any> | null} */ let bk = null;
   let bkDirty = false;
   const last = await jrSyncAt(env, c.id);
-  if (now - last >= SYNC_MS) {
+  if (force === "full" || now - last >= SYNC_MS) {
     try { await jrSyncMark(env, c.id, now); } catch (e) { console.log("jr sync mark", String(e)); } // не записалась — прочитаем журнал ещё раз через минуту
     try {
       const r = await altRecordsRange(env, user, loc, isoDay(now - 86400e3), isoDay(now + AHEAD * 86400e3), WIN_PAGES);
@@ -257,7 +294,7 @@ async function jrClient(env, c, now) {
   /** @type {[string, string][]} */ const told = [];
   if (due.length && !quiet && !(await jrHold(env, c.id))) {
     const day = isoDay(now), cnt0 = await jrCount(env, c.id, day);
-    const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svVariants(env, c.id), told, blocks: /** @type {Map<string, string> | null} */ (null) };
+    const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svOwn(env, c), told, blocks: /** @type {Map<string, string> | null} */ (null) };
     for (const x of due) {
       if (sent >= PER_MIN) break;
       const r = await jrSend(env, c, o, x, now, { route, user, loc }, st);
@@ -577,7 +614,7 @@ export async function jrDry(env, c, now) {
   const from = isoDay(now - 86400e3), to = isoDay(now + 86400e3);
   const { list, pages, cut } = await altRecordsRange(env, user, loc, from, to, 3);
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set);
-  const { items, skipped } = jrPlanAll(c, list, now, set, await siteNotifyLoad(env.KV, c.id)), ap = await svApprovals(env, c.id), own = await svVariants(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
+  const { items, skipped } = jrPlanAll(c, list, now, set, await siteNotifyLoad(env.KV, c.id)), ap = await svApprovals(env, c.id), own = await svOwn(env, c), byId = new Map(list.map(r => [String(r && r.id), r]));
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   /** @type {Map<string, any>} */ const prof = new Map();
   const out = [];

@@ -24,18 +24,20 @@ export const SV_CATS = [
   { id: "late", label: "Опоздания и неявки" }, { id: "after", label: "После визита" }, { id: "tasks", label: "Ошибки и задачи" },
 ];
 /** переменные, которые можно вставлять в свой текст */
-export const SV_VARS = ["имя", "дата", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "площадка", "компания", "детали", "оценка", "сколько", "баланс"];
+export const SV_VARS = ["имя", "дата", "дата с годом", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "площадка", "компания", "детали", "оценка", "сколько", "баланс"];
 
 /** @type {Scenario[]} */
 export const SCENARIOS = [
-  { id: "S01", title: "Подтверждение новой записи", cat: "booking", auto: "s01", mode: "auto", channel: "второй номер", v: 2,
+  { id: "S01", title: "Подтверждение новой записи", cat: "booking", auto: "s01", mode: "auto", channel: "второй номер", v: 3,
     trigger: "Запись появилась в журнале Altegio не через бота (администратор, сайт, онлайн-запись). Уходит в течение 3 часов, с 10:00 до 21:00",
     note: "Выключено. Включает владелец, текст уходит только после его одобрения",
-    vars: ["имя", "дата", "время", "услуга", "мастер", "адрес"],
-    // b2 — как уведомление Altegio, которое получали клиенты Winchester (ТЗ v4, 08.11.2026)
+    vars: ["имя", "дата", "дата с годом", "время", "услуга", "мастер", "адрес", "детали"],
+    // b2 — как уведомление Altegio, которое получали клиенты Winchester (ТЗ v4, 08.11.2026): дата с годом, «Детали» — ссылка Altegio на запись.
+    // v 3 (08.11.2026): у b2 появился год в дате — прежние одобрения к нему не подходят
     ru: ["Здравствуйте[[, {имя}]]! Вы записаны в {компания} на {дата} в {время}.[[ Услуга: {услуга}.]][[ Мастер: {мастер}.]][[ Адрес: {адрес}.]] Если нужно перенести или отменить, напишите сюда.",
-      "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}.[[\nДетали: {детали}]]"],
-    kk: ["Сәлеметсіз бе[[, {имя}]]! Сіз {компания} барбершопына жазылдыңыз: {дата}, сағат {время}.[[ Қызмет: {услуга}.]][[ Шебер: {мастер}.]][[ Мекенжай: {адрес}.]] Ауыстыру немесе болдырмау керек болса, осында жазыңыз."] },
+      "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата с годом} в {время}.[[\nДетали: {детали}]]"],
+    kk: ["Сәлеметсіз бе[[, {имя}]]! Сіз {компания} барбершопына жазылдыңыз: {дата}, сағат {время}.[[ Қызмет: {услуга}.]][[ Шебер: {мастер}.]][[ Мекенжай: {адрес}.]] Ауыстыру немесе болдырмау керек болса, осында жазыңыз.",
+      "Сіз жазылдыңыз[[: {услуга}]]\n[[Барбер: {мастер}\n]]Күні: {дата с годом}, сағат {время}.[[\nТолығырақ: {детали}]]"] },
   { id: "S02", title: "Запись с сайта без WhatsApp", cat: "booking", mode: "auto", channel: "второй номер", v: 1,
     trigger: "Запись с сайта появляется в журнале Altegio, и подтверждение уходит так же, как у новой записи. На сайте клиент видит «Вы записаны», Altegio может прислать SMS",
     note: "Отдельного текста нет: используется подтверждение новой записи", vars: [], ru: [], kk: [] },
@@ -141,6 +143,14 @@ export function variantsOf(sc, own) {
     .map(/** @param {any} x */ x => ({ id: String(x.id), ru: String(x.ru), kk: String(x.kk || ""), v: +x.v || 1, builtin: false, at: +x.at || 0, by: String(x.by || "") }));
   return [...builtin, ...mine];
 }
+/** варианты владельца с действующими по умолчанию для компании (defs — { S01: "b2" }): владелец выбрал сам — его выбор; нет — умолчание
+ *  @param {Record<string, any>} own @param {Record<string, string> | null} defs @returns {Record<string, any>} */
+export function withActive(own, defs) {
+  if (!defs) return own;
+  const out = { ...own };
+  for (const [id, v] of Object.entries(defs)) if (!(out[id] && out[id].active)) out[id] = { ...(out[id] || {}), active: v, list: (out[id] && out[id].list) || [] };
+  return out;
+}
 /** действующий вариант (выбран владельцем; нет такого — первый встроенный) @param {Scenario} sc @param {Record<string, any>} [own] @returns {Variant | null} */
 export function activeOf(sc, own) {
   const all = variantsOf(sc, own), want = own && own[sc.id] && own[sc.id].active;
@@ -161,12 +171,13 @@ const MONTHS = {
   kk: ["қаңтар", "ақпан", "наурыз", "сәуір", "мамыр", "маусым", "шілде", "тамыз", "қыркүйек", "қазан", "қараша", "желтоқсан"],
   en: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
 };
-/** «2026-10-20» → «20 октября» / «20 қазан» / «October 20». @param {string} iso @param {string} lang */
-export function dayText(iso, lang) {
+/** «2026-10-20» → «20 октября» / «20 қазан» / «October 20»; с годом — «20 октября 2026», как у Altegio
+ *  @param {string} iso @param {string} lang @param {boolean} [year] */
+export function dayText(iso, lang, year) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
   if (!m) return "";
   const d = +m[3], mo = (/** @type {any} */ (MONTHS))[lang] || MONTHS.ru, name = mo[+m[2] - 1];
-  return lang === "en" ? `${name} ${d}` : `${d} ${name}`;
+  return lang === "en" ? `${name} ${d}${year ? ", " + m[1] : ""}` : `${d} ${name}${year ? " " + m[1] : ""}`;
 }
 /** имя для обращения — первое слово, только буквы (из Altegio бывает «Арман К.», «89771», «клиент»). @param {any} n */
 export function firstName(n) {
@@ -206,7 +217,7 @@ export function svVars(c, b, lang) {
   b = b || {};
   const master = lang === "kk" ? "шебер" : lang === "en" ? "barber" : "мастер";
   return {
-    компания: String(c.name || ""), имя: firstName(b.name), дата: dayText(b.date, lang), время: String(b.time || ""),
+    компания: String(c.name || ""), имя: firstName(b.name), дата: dayText(b.date, lang), "дата с годом": dayText(b.date, lang, true), время: String(b.time || ""),
     услуга: String(b.services || ""), мастер: String(b.staffName || ""),
     // «Мужская стрижка, мастер Айдос» — отдельной фразой; нет услуги — «Мастер Айдос»
     "услуга и мастер": [b.services, b.staffName ? `${master} ${b.staffName}` : ""].filter(Boolean).join(", ").replace(/^\p{Ll}/u, ch => ch.toUpperCase()), адрес: addrOf(c), ссылка: String(c.review || ""),

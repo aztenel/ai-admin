@@ -97,6 +97,7 @@ type MsgRaw = {
   client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string };
   altegio?: { ready?: boolean; why?: string }; db?: string; hold?: { at?: number; why?: string } | null; window?: { from?: number; to?: number }; cap?: number;
   marketing?: { allowed?: boolean; why?: string }; test?: { phone?: string } | null; scenarios?: MsgScenarioRaw[];
+  hook?: { url?: string; last?: { at?: number; res?: string; st?: string; n?: number } | null };
 };
 
 // ---------- перевод в понятия пульта ----------
@@ -309,6 +310,7 @@ function autoMessages(d: MsgRaw): AutoMessages {
     marketing: { allowed: !!d.marketing?.allowed, why: d.marketing?.why || "" },
     test: d.test && d.test.phone ? { phone: d.test.phone } : null,
     scenarios: (d.scenarios || []).filter((x) => x && x.id).map(msgScenario),
+    hook: { url: typeof d.hook?.url === "string" && /^https?:\/\//.test(d.hook.url) ? d.hook.url : "", last: d.hook?.last && n(d.hook.last.at) ? { at: n(d.hook.last.at), res: d.hook.last.res || "", st: d.hook.last.st || "", n: n(d.hook.last.n) } : null },
   };
 }
 const ST_KEYS = ["valid", "booked", "service", "marketing", "stopped", "refused", "ready"] as const;

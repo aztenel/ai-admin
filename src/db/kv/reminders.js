@@ -6,6 +6,7 @@
 //   jrcn:<клиент>:<день> — о пределе за сутки уже сообщили в Telegram, 2 дня
 //   jrhold:<клиент> — { at, why }: Green-API отказал (номер заблокирован, ключ не подходит) — 6 часов не шлём
 //   jrv:<клиент>:<номер> — когда просили отзыв (мс), 90 дней: «не чаще раза в N дней» (настройка сценария; 0 — после каждого визита)
+//   alh:<клиент> — последнее событие вебхука Altegio { at, res, st, n } (без данных клиента), 30 дней
 //   jrbn:<клиент> — бонусы (ТЗ v4): по записям с визитом { <запись>: { s: подпись оплаты, tx: [номера операций], c: когда смотрели, t } }, 7 дней
 //   rms:/rmok:<клиент>:<запись>:<вид> — попытка и удачная отправка, 3 дня; общие с напоминаниями бота (services/reminders/send.js).
 //     Значение rms: — версия записи, по которой ушло (у бота и прежнего кода — «1»)
@@ -142,3 +143,12 @@ export const svVariantsEdit = (env, cid, edit) => kvRetry(async () => {
   await env.KV.put(`svtpl:${cid}:var`, JSON.stringify(o));
   return o;
 });
+
+// вебхук Altegio (ТЗ v4): последнее событие — когда, какой ресурс и действие, сколько всего (без данных клиента), 30 дней
+/** @param {Env} env @param {string} cid @returns {Promise<{ at: number, res: string, st: string, n: number } | null>} */
+export async function altHookLast(env, cid) { try { const v = JSON.parse((await env.KV.get("alh:" + cid)) || "null"); return v && typeof v === "object" ? v : null; } catch (e) { return null; } }
+/** @param {Env} env @param {string} cid @param {{ at: number, res: string, st: string }} x */
+export async function altHookSeen(env, cid, x) {
+  const was = await altHookLast(env, cid);
+  await env.KV.put("alh:" + cid, JSON.stringify({ ...x, n: ((was && +was.n) || 0) + 1 }), { expirationTtl: 30 * DAY });
+}

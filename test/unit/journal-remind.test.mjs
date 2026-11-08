@@ -320,7 +320,7 @@ test("ТЗ v4: «Запись подтверждена» со ссылкой «�
   await useVariant(s, "S01", "b2");
   await jrRun(s.env, at(TODAY, "15:01"));
   assert.equal(sent().length, 1);
-  assert.equal(sent()[0].text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября в 12:30.\nДетали: http://openhc.kz/c/OS0oy/HOtyz/");
+  assert.equal(sent()[0].text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября 2026 в 12:30.\nДетали: http://openhc.kz/c/OS0oy/HOtyz/");
 });
 
 const paid = (i, time, o = {}) => {
@@ -386,4 +386,49 @@ test("ТЗ v4: бонусы после 21:00 — утром в начале ча
   assert.deepEqual(sent(), [], "вечером не шлём");
   await jrRun(s.env, at(TOM, "10:00"));
   assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 300\nДоступно: 700"]);
+});
+
+// ТЗ v4, проверка владельца 08.11.2026: «Проверка без отправки» показывала прежние тексты — тексты как у Altegio лежали вторым и третьим
+// вариантом и ждали ручного выбора. У Winchester они действующие по умолчанию (SV_DEFAULT_WINCHESTER = 0 — прежние); дата — с годом, как у Altegio
+test("ТЗ v4: у Winchester по умолчанию действуют тексты как у Altegio — подтверждение с годом и «Детали», благодарность с «Контролем качества»", async () => {
+  net.reset();
+  const { jrDry } = await import("../../src/services/reminders/journal.js");
+  const a = rec(ph(461), TOM, "12:30", { id: 4601, made: `${TODAY}T15:00:00+05:00`, staff: "Тони (Рауан М.)", name: "Кайрат" });
+  a.short_link = "https://openhc.kz/c/OS0oy/HOtyz/";
+  const b = rec(ph(462), TODAY, "12:00", { id: 4602, att: 1, staff: "Тони (Рауан М.)", name: "Кайрат" });
+  b.seance_length = 3600; b.short_link = "https://openhc.kz/c/OWaqc/qONAj/";
+  net.altJournal = [a, b];
+  const s = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "1" });
+  await autoOn(s, { confirm: true, review: true }, { confirm: { delay: 0 }, review: { hours: 1, gap: 0 } });
+  const dry = await jrDry(s.env, W, at(TODAY, "13:30"));
+  const conf = dry.items.find(x => x.k === "s01"), thx = dry.items.find(x => x.k === "rv");
+  assert.equal(conf.text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября 2026 в 12:30.\nДетали: https://openhc.kz/c/OS0oy/HOtyz/", "проверка без отправки — тексты как у Altegio: " + conf.text);
+  assert.equal(thx.text, "Кайрат, благодарим за визит!\nВаш мастер Тони (Рауан М.) порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\nКонтроль качества: https://openhc.kz/e/OWaqc/\n2ГИС: https://go.2gis.com/mrkUN");
+  // владелец включает сценарий в пульте — одобряется действующий (вариант Altegio), и уходит именно он
+  const own = s.browser();
+  await own.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
+  for (const id of ["confirm", "review"]) assert.equal((await own.post("/api/msg/auto", { c: "winchester", id, on: false })).status, 200);
+  for (const id of ["confirm", "review"]) assert.equal((await own.post("/api/msg/auto", { c: "winchester", id, on: true })).status, 200);
+  const ap = s.kv.json("svtpl:winchester");
+  assert.equal(ap.S01.var, "b2"); assert.equal(ap.S12.var, "b3");
+  // включили позже, чем должно было уйти, — задним числом не шлём; новая запись — уходит текстом Altegio
+  net.altJournal = [a, b, { ...rec(ph(463), TOM, "16:00", { id: 4603, made: new Date(Date.now()).toISOString(), staff: "Айдос" }), short_link: "https://openhc.kz/c/AAAAA/BBBBB/" }];
+  const now = Date.now();
+  await jrRun(s.env, now + 60e3); await jrRun(s.env, now + 120e3);
+  const c3 = sent().find(x => x.to === dg(463));
+  if (c3) assert.match(c3.text, /^Вы записаны на услугу: Мужская стрижка\nБарбер: Айдос\nДата: \d+ [а-я]+ \d{4} в 16:00\.\nДетали: https:\/\/openhc\.kz\/c\/AAAAA\/BBBBB\/$/, c3.text);
+});
+
+test("ТЗ v4: SV_DEFAULT_WINCHESTER = 0 — прежние тексты (первый вариант), выбор владельца важнее умолчания", async () => {
+  net.reset();
+  const { jrDry } = await import("../../src/services/reminders/journal.js");
+  const a = rec(ph(471), TOM, "12:30", { id: 4701, made: `${TODAY}T15:00:00+05:00` });
+  net.altJournal = [a];
+  const s = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "0" });
+  await autoOn(s, { confirm: true }, { confirm: { delay: 0 } });
+  assert.match((await jrDry(s.env, W, at(TODAY, "15:30"))).items.find(x => x.k === "s01").text, /^Здравствуйте/);
+  const s2 = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "1" });
+  await autoOn(s2, { confirm: true }, { confirm: { delay: 0 } });
+  await s2.kv.api.put("svtpl:winchester:var", JSON.stringify({ S01: { active: "b1", list: [] } })); // владелец сам выбрал прежний
+  assert.match((await jrDry(s2.env, W, at(TODAY, "15:30"))).items.find(x => x.k === "s01").text, /^Здравствуйте/);
 });
