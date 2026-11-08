@@ -220,7 +220,7 @@ function overview(d: ListRaw): CampaignsOverview {
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv", "bi", "bo"];
 const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
 const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
 const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];

@@ -7,7 +7,8 @@
 // (u…) и выбирает действующий (svtpl:<клиент>:var). Одобрение — у действующего варианта и его версии: изменили текст или выбрали
 // другой вариант — нужно одобрить заново. v — версия встроенных текстов: изменили их в коде — подняли v (31.10.2026: v 2, тексты
 // переписаны простым языком, без тире-разделителей). Переменные: {имя} {дата} {время} {мастер} {услуга} {услуга и мастер} {адрес}
-// {ссылка} {компания}; [[ … ]] — кусок пропадает, если в нём пустая переменная. Тексты коротко и без обещаний, которых нет в Altegio.
+// {ссылка} (отзыв: 2ГИС, Google) {площадка} (где отзыв: «2ГИС») {компания} {детали} (ссылка Altegio на запись, short_link)
+// {оценка} («Контроль качества» Altegio) {сколько} {баланс} (бонусы); [[ … ]] — кусок пропадает, если в нём пустая переменная. Тексты коротко и без обещаний, которых нет в Altegio.
 // Казахские тексты носителем не проверены.
 /** @import { Client } from "../../lib/types.js" */
 
@@ -23,7 +24,7 @@ export const SV_CATS = [
   { id: "late", label: "Опоздания и неявки" }, { id: "after", label: "После визита" }, { id: "tasks", label: "Ошибки и задачи" },
 ];
 /** переменные, которые можно вставлять в свой текст */
-export const SV_VARS = ["имя", "дата", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "компания"];
+export const SV_VARS = ["имя", "дата", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "площадка", "компания", "детали", "оценка", "сколько", "баланс"];
 
 /** @type {Scenario[]} */
 export const SCENARIOS = [
@@ -33,7 +34,7 @@ export const SCENARIOS = [
     vars: ["имя", "дата", "время", "услуга", "мастер", "адрес"],
     // b2 — как уведомление Altegio, которое получали клиенты Winchester (ТЗ v4, 08.11.2026)
     ru: ["Здравствуйте[[, {имя}]]! Вы записаны в {компания} на {дата} в {время}.[[ Услуга: {услуга}.]][[ Мастер: {мастер}.]][[ Адрес: {адрес}.]] Если нужно перенести или отменить, напишите сюда.",
-      "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}."],
+      "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}.[[\nДетали: {детали}]]"],
     kk: ["Сәлеметсіз бе[[, {имя}]]! Сіз {компания} барбершопына жазылдыңыз: {дата}, сағат {время}.[[ Қызмет: {услуга}.]][[ Шебер: {мастер}.]][[ Мекенжай: {адрес}.]] Ауыстыру немесе болдырмау керек болса, осында жазыңыз."] },
   { id: "S02", title: "Запись с сайта без WhatsApp", cat: "booking", mode: "auto", channel: "второй номер", v: 1,
     trigger: "Запись с сайта появляется в журнале Altegio, и подтверждение уходит так же, как у новой записи. На сайте клиент видит «Вы записаны», Altegio может прислать SMS",
@@ -82,15 +83,19 @@ export const SCENARIOS = [
   { id: "S11", title: "Клиент не пришёл", cat: "late", mode: "task", channel: "администратор", v: 1,
     trigger: "В Altegio отмечено «не пришёл». Администратору ставится задача в чате, клиенту ничего не уходит",
     vars: [], ru: [], kk: [] },
-  { id: "S12", title: "Просьба об отзыве", cat: "after", auto: "rv", mode: "auto", channel: "второй номер", v: 2,
-    trigger: "Через 3 часа после начала визита, только с отметкой «пришёл». Одному клиенту не чаще раза в 60 дней",
-    vars: ["имя", "ссылка"],
+  { id: "S12", title: "Благодарность за визит и отзыв", cat: "after", auto: "rv", mode: "auto", channel: "второй номер", v: 2,
+    trigger: "Через 1 час после окончания визита (время меняется в «Автоматических»), только с отметкой «пришёл» в Altegio",
+    vars: ["имя", "мастер", "услуга", "оценка", "площадка", "ссылка"],
+    // b3 — как благодарность Altegio, которую получали клиенты Winchester: «Контроль качества» — ссылка Altegio по записи (ТЗ v4)
     ru: ["Спасибо, что были у нас в {компания}! Будем рады вашему отзыву: {ссылка}\nЕсли что-то не понравилось, напишите сюда, мы разберёмся.",
-      "Здравствуйте[[, {имя}]]! Спасибо за визит в {компания}. Если всё понравилось, оставьте, пожалуйста, отзыв: {ссылка}\nЕсли что-то было не так, напишите сюда."],
+      "Здравствуйте[[, {имя}]]! Спасибо за визит в {компания}. Если всё понравилось, оставьте, пожалуйста, отзыв: {ссылка}\nЕсли что-то было не так, напишите сюда.",
+      "[[{имя}, ]]благодарим за визит!\n[[Ваш мастер {мастер} порадуется отзыву о своей работе\n]][[Услуга: {услуга}\n]][[\nКонтроль качества: {оценка}]][[\n{площадка}: {ссылка}]]"],
     kk: ["{компания} барбершопына келгеніңізге рахмет! Пікір қалдырсаңыз, қуанамыз: {ссылка}\nБірдеңе ұнамаса, осында жазыңыз, біз шешеміз.",
-      "Сәлеметсіз бе[[, {имя}]]! {компания} барбершопына келгеніңізге рахмет. Бәрі ұнаса, пікір қалдырыңызшы: {ссылка}\nБірдеңе дұрыс болмаса, осында жазыңыз."],
+      "Сәлеметсіз бе[[, {имя}]]! {компания} барбершопына келгеніңізге рахмет. Бәрі ұнаса, пікір қалдырыңызшы: {ссылка}\nБірдеңе дұрыс болмаса, осында жазыңыз.",
+      "[[{имя}, ]]келгеніңізге рахмет!\n[[Шеберіңіз {мастер} жұмысы туралы пікіріңізге қуанады\n]][[Қызмет: {услуга}\n]][[\nСапаны бақылау: {оценка}]][[\n{площадка}: {ссылка}]]"],
     en: ["Thank you for visiting {компания}! We'd be grateful for a review: {ссылка}\nIf something wasn't right, write here and we'll sort it out.",
-      "Hello[[, {имя}]]! Thank you for visiting {компания}. If you liked it, please leave a review: {ссылка}\nIf something wasn't right, write here."] },
+      "Hello[[, {имя}]]! Thank you for visiting {компания}. If you liked it, please leave a review: {ссылка}\nIf something wasn't right, write here.",
+      "[[{имя}, ]]thank you for your visit!\n[[Your barber {мастер} will be glad to hear your feedback\n]][[Service: {услуга}\n]][[\nQuality check: {оценка}]][[\n{площадка}: {ссылка}]]"] },
   { id: "S13", title: "Благодарность после визита", cat: "after", mode: "off", channel: "второй номер", v: 1,
     trigger: "Благодарность уже есть в просьбе об отзыве. Отдельно не отправляется, чтобы не писать дважды",
     vars: [], ru: [], kk: [] },
@@ -109,9 +114,22 @@ export const SCENARIOS = [
   { id: "S18", title: "Сообщение не ушло", cat: "tasks", mode: "task", channel: "администратор", v: 1,
     trigger: "Green-API отказал. При временных сбоях до 3 попыток, потом задача администратору в чате и сообщение в Telegram. Если неизвестно, ушло ли, повтора нет",
     vars: [], ru: [], kk: [] },
+  // бонусы (ТЗ v4, 08.11.2026): операции карты лояльности из деталей визита Altegio и баланс карты — как уведомления Altegio Winchester
+  { id: "S19", title: "Начислено бонусов", cat: "after", auto: "bi", mode: "auto", channel: "второй номер", v: 1,
+    trigger: "Altegio начислил бонусы на карту клиента за визит. Уходит в течение 1–2 минут после оплаты визита, в часы отправки",
+    vars: ["сколько", "баланс"],
+    ru: ["Начислено бонусов: {сколько}[[\nДоступно: {баланс}]]"],
+    kk: ["Бонус есептелді: {сколько}[[\nҚолжетімді: {баланс}]]"],
+    en: ["Bonuses added: {сколько}[[\nAvailable: {баланс}]]"] },
+  { id: "S20", title: "Списано бонусов", cat: "after", auto: "bo", mode: "auto", channel: "второй номер", v: 1,
+    trigger: "Клиент оплатил визит бонусами. Уходит в течение 1–2 минут после оплаты визита, в часы отправки",
+    vars: ["сколько", "баланс"],
+    ru: ["Списано бонусов: {сколько}.[[\nИтоговый баланс: {баланс}.]]"],
+    kk: ["Бонус есептен шығарылды: {сколько}.[[\nҚорытынды баланс: {баланс}.]]"],
+    en: ["Bonuses used: {сколько}.[[\nBalance: {баланс}.]]"] },
 ];
 /** вид в очереди → сценарий */
-export const KIND_SC = /** @type {Record<string, string>} */ ({ s01: "S01", d1: "S03", h2: "S04", rv: "S12", s06: "S06", cx: "S07" });
+export const KIND_SC = /** @type {Record<string, string>} */ ({ s01: "S01", d1: "S03", h2: "S04", rv: "S12", s06: "S06", cx: "S07", bi: "S19", bo: "S20" });
 /** @param {string} id */
 export const scenario = id => SCENARIOS.find(x => x.id === id) || null;
 
@@ -158,7 +176,32 @@ export function firstName(n) {
 /** адрес компании: из паспорта или блока сайта @param {Client} c */
 export const addrOf = c => String((c && (c.address || (c.site && c.site.address))) || "");
 
-/** переменные сообщения о записи. b — { name, date, time, services, staffName } @param {Client} c @param {any} b @param {string} lang */
+/** ссылка из Altegio: только http(s) без пробелов и кавычек, до 200 знаков; иначе "" @param {any} u */
+export function linkOf(u) {
+  const x = String(u || "").trim();
+  return x.length <= 200 && /^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[A-Za-z0-9/_\-.~?=&%#+]*)?$/i.test(x) ? x : "";
+}
+/** «Контроль качества» Altegio по ссылке на запись: …/c/<код записи>/<код>/ → …/e/<код записи>/ — так в уведомлениях Altegio,
+ *  которые получали клиенты Winchester (2025: «Детали: openhc.kz/c/OWaqc/qONAj/», «Контроль качества: openhc.kz/e/OWaqc/»).
+ *  Ссылка другого вида — "" (строки «Контроль качества» не будет) @param {any} u */
+export function qualityLink(u) {
+  const m = /^(https?:\/\/[^/]+)\/c\/([A-Za-z0-9]{3,20})\/[A-Za-z0-9]{3,20}\/?$/.exec(linkOf(u));
+  return m ? `${m[1]}/e/${m[2]}/` : "";
+}
+/** где отзыв, по ссылке: «2ГИС», «Google Карты», «Яндекс Карты»; другое — «Отзыв» @param {string} u @param {string} lang */
+export function reviewSite(u, lang) {
+  const x = String(u || "");
+  if (!x) return "";
+  if (/2gis|go\.2gis/i.test(x)) return lang === "en" ? "2GIS" : "2ГИС";
+  if (/google\.|goo\.gl|g\.page/i.test(x)) return lang === "kk" ? "Google Maps" : lang === "en" ? "Google Maps" : "Google Карты";
+  if (/yandex\./i.test(x)) return lang === "en" ? "Yandex Maps" : "Яндекс Карты";
+  return lang === "kk" ? "Пікір" : lang === "en" ? "Review" : "Отзыв";
+}
+/** число бонусов: целое, без пробелов, как в уведомлениях Altegio («1200») @param {any} n */
+const pts = n => (n === null || n === undefined || n === "" || !Number.isFinite(+n)) ? "" : String(Math.round(Math.abs(+n)));
+
+/** переменные сообщения о записи. b — { name, date, time, services, staffName, link (short_link записи), amount, balance }; details и
+ *  quality — готовые значения ссылок (пример в пульте: «ссылка из записи Altegio») @param {Client} c @param {any} b @param {string} lang */
 export function svVars(c, b, lang) {
   b = b || {};
   const master = lang === "kk" ? "шебер" : lang === "en" ? "barber" : "мастер";
@@ -167,12 +210,17 @@ export function svVars(c, b, lang) {
     услуга: String(b.services || ""), мастер: String(b.staffName || ""),
     // «Мужская стрижка, мастер Айдос» — отдельной фразой; нет услуги — «Мастер Айдос»
     "услуга и мастер": [b.services, b.staffName ? `${master} ${b.staffName}` : ""].filter(Boolean).join(", ").replace(/^\p{Ll}/u, ch => ch.toUpperCase()), адрес: addrOf(c), ссылка: String(c.review || ""),
+    площадка: reviewSite(String(c.review || ""), lang),
+    детали: b.details !== undefined ? String(b.details) : linkOf(b.link), оценка: b.quality !== undefined ? String(b.quality) : qualityLink(b.link),
+    сколько: b.amount !== undefined ? pts(b.amount) : "", баланс: b.balance !== undefined ? pts(b.balance) : "",
   };
 }
 /** подстановка: {переменная}; [[ … ]] пропадает, если в нём пустая переменная @param {string} text @param {Record<string, string>} vars */
 export function render(text, vars) {
   const sub = (/** @type {string} */ s) => s.replace(/\{([^{}]+)\}/g, (_, k) => String(vars[k] ?? ""));
-  return sub(String(text).replace(/\[\[([\s\S]*?)\]\]/g, (_, part) => /\{([^{}]+)\}/.test(part) && [...part.matchAll(/\{([^{}]+)\}/g)].some(m => !String(vars[m[1]] ?? "")) ? "" : part));
+  // первая буква — заглавная: «[[{имя}, ]]благодарим за визит!» без имени начинается со строчной
+  return sub(String(text).replace(/\[\[([\s\S]*?)\]\]/g, (_, part) => /\{([^{}]+)\}/.test(part) && [...part.matchAll(/\{([^{}]+)\}/g)].some(m => !String(vars[m[1]] ?? "")) ? "" : part))
+    .replace(/^\p{Ll}/u, ch => ch.toUpperCase());
 }
 /** текст сообщения вида k (d1, h2, rv, s01, s06, cx) на языке чата; нет текста на этом языке — по-русски. vt — вариант текста (действующий
  *  одобренный, approvedVariant); без него — первый встроенный. → { sc, v, lang, text, variant } или null
@@ -186,10 +234,13 @@ export function svText(c, k, b, lang, vt) {
   const use = own ? want : "ru"; // своего текста на языке чата нет — по-русски
   return { sc: sc.id, v: x.v, lang: use, variant: x.id, text: render(own || x.ru, svVars(c, b, use)) };
 }
+/** вымышленная запись для примеров в пульте и проверки на свой номер: ссылок Altegio у неё нет — вместо них пояснение */
+export const SV_SAMPLE = { name: "Арман", time: "15:00", services: "Мужская стрижка", staffName: "Данияр",
+  details: "(ссылка на запись из Altegio)", quality: "(ссылка на оценку визита из Altegio)", amount: 400, balance: 1200 };
 /** каталог для пульта: сценарии с рубрикой, варианты текста (какой действует, какой одобрен), предпросмотр действующего на
  *  вымышленной записи @param {Client} c @param {Record<string, any>} approvals @param {string} sampleDate @param {Record<string, any>} [own] */
 export function svCatalog(c, approvals, sampleDate, own) {
-  const sample = { name: "Арман", date: sampleDate, time: "15:00", services: "Мужская стрижка", staffName: "Данияр" };
+  const sample = { ...SV_SAMPLE, date: sampleDate };
   const cats = /** @type {Record<string, string>} */ (Object.fromEntries(SV_CATS.map(x => [x.id, x.label])));
   return SCENARIOS.map(x => {
     const a = approvals && approvals[x.id], act = activeOf(x, own), ok = !!(x.auto && approvalFits(a, act));

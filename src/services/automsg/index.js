@@ -20,7 +20,7 @@ import { STOP_RU, DEMO, companyOf } from "../broadcast/library.js";
 import { GA_OFF, bcGaOff } from "../broadcast/sender.js";
 import { jrOn, sendOnceAuto } from "../reminders/journal.js";
 import { serviceVariant } from "../reminders/info.js";
-import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS } from "../reminders/templates.js";
+import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS, SV_SAMPLE } from "../reminders/templates.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { linesRead } from "../../db/kv/inbox.js";
 import { jrLogLoad, jrLogAdd, jrHold, svApprovals, svApprove, svVariants } from "../../db/kv/reminders.js";
@@ -30,7 +30,7 @@ import { mkLocked, mkPick, mkText, birthdays } from "./marketing.js";
 
 const LOG_MAX = 20;          // последних событий сценария — в пульт
 const TEST_PER_HOUR = 20;    // проверок за час: номер владельца не засыпаем
-const SAMPLE = { name: "Арман", time: "15:00", services: "Мужская стрижка", staffName: "Данияр" };
+const SAMPLE = SV_SAMPLE; // вымышленная запись: ссылки Altegio — пояснением, бонусы 400 и 1 200
 /** @type {Record<string, string>} */
 const SAY = { on: "включил", off: "выключил", edit: "изменил", test: "проверка" };
 

@@ -33,8 +33,8 @@ const login = async (s, key) => { const b = s.browser(); await b.go("/login", { 
 const post = (b, path, body) => b.post(path, body);
 const log = s => s.kv.json("jrl:winchester") || [];
 
-test("каталог: S01–S18, у каждого режим и рубрика; тексты простым языком без тире (ru, kk, en); шаблон без данных — без пустых кусков", () => {
-  assert.deepEqual(SCENARIOS.map(x => x.id), Array.from({ length: 18 }, (_, i) => "S" + String(i + 1).padStart(2, "0")));
+test("каталог: S01–S20 (S19, S20 — бонусы, ТЗ v4), у каждого режим и рубрика; тексты простым языком без тире (ru, kk, en); шаблон без данных — без пустых кусков", () => {
+  assert.deepEqual(SCENARIOS.map(x => x.id), Array.from({ length: 20 }, (_, i) => "S" + String(i + 1).padStart(2, "0")));
   for (const x of SCENARIOS) {
     assert.ok(["auto", "reply", "task", "off"].includes(x.mode), x.id);
     assert.ok(x.title && x.trigger && x.v >= 1, x.id);
@@ -47,7 +47,7 @@ test("каталог: S01–S18, у каждого режим и рубрика;
   assert.equal(remindText(W, { time: "15:00", staffName: "Айдос" }, "d1"), "Напоминаем: завтра в 15:00 ждём вас в Winchester. Мастер Айдос. Если планы изменились, напишите сюда.");
   assert.equal(remindText(W, { time: "15:00" }, "d1", "kk"), "Еске саламыз: ертең сағат 15:00 Winchester барбершопында күтеміз. Жоспарыңыз өзгерсе, осында жазыңыз.");
   assert.match(remindText(W, b, "h2"), /^Ждём вас сегодня в 15:00 в Winchester\. Мужская стрижка, мастер Айдос\. Адрес: Астана, проспект Кабанбай Батыра, 18\. /);
-  assert.match(remindText(W, b, "rv", "en"), /^Thank you for visiting Winchester! We'd be grateful for a review: https:\/\/2gis/);
+  assert.match(remindText(W, b, "rv", "en"), /^Thank you for visiting Winchester! We'd be grateful for a review: https:\/\/go\.2gis/);
   assert.equal(render("Здравствуйте[[, {имя}]]! В {время}[[ — {мастер}]].", { имя: "", время: "12:00", мастер: "Тони" }), "Здравствуйте! В 12:00 — Тони.");
   const s01 = svText(W, "s01", { name: "Арман Каримов", date: TOM, time: "15:00", services: "Мужская стрижка", staffName: "Айдос" }, "ru");
   assert.equal(s01.sc, "S01");
@@ -220,7 +220,7 @@ test("пульт: каталог в /api/bc/service; одобрить текст
   const s = mk({ ...ENV, KEY_WINCHESTER: "staff-key-winch-0001" });
   const own = await login(s, "owner-key-123456"), staff = await login(s, "staff-key-winch-0001");
   const j = await (await own.go("/api/bc/service?c=winchester")).json();
-  assert.equal(j.catalog.length, 18);
+  assert.equal(j.catalog.length, 20);
   const s03 = j.catalog.find(x => x.id === "S03");
   assert.equal(s03.mode, "auto"); assert.equal(s03.approved, false); assert.ok(s03.preview.ru && s03.preview.kk, JSON.stringify(s03));
   assert.equal((await post(staff, "/api/bc/service/approve", { c: "winchester", id: "S03", v: s03.v })).status, 403);

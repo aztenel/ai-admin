@@ -18,7 +18,7 @@ import { dayEvents } from "../../db/d1/stats.js";
 import { bcList, bcGet } from "../../db/kv/broadcasts.js";
 
 // виды сервисных сообщений словами (очередь jrq: и rmq:)
-const SERVICE_TITLE = /** @type {Record<string, string>} */ ({ s01: "Подтверждения записи", d1: "Напоминания накануне", h2: "Напоминания за 2 часа", s06: "Новое время после переноса", rv: "Просьбы об отзыве" });
+const SERVICE_TITLE = /** @type {Record<string, string>} */ ({ s01: "Подтверждения записи", d1: "Напоминания накануне", h2: "Напоминания за 2 часа", s06: "Новое время после переноса", rv: "Благодарности за визит", bi: "Начислено бонусов", bo: "Списано бонусов" });
 const SRC_TITLE = /** @type {Record<string, string>} */ ({ service: "Напоминания", review: "Просьбы об отзыве", campaign: "Рассылки" });
 /** «12:00» из часа @param {any} h */
 const hh = h => `${String(Math.round(+h) || 0).padStart(2, "0")}:00`;

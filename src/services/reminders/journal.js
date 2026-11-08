@@ -3,7 +3,9 @@
 // Winchester — только исходящие сообщения в часы отправки). remindPlan (plan.js) знает только записи, которые бот сделал в чате;
 // здесь — все записи журнала: администратор, сайт, онлайн-запись.
 // С 02.11.2026 (раздел «Автоматические сообщения», services/automsg) у каждого сценария свой выключатель, время и текст: подтверждение
-// (s01), напоминание за 24 часа или накануне (d1), напоминание за несколько часов (h2), перенос (s06), отмена (cx), просьба об отзыве (rv).
+// (s01), напоминание за 24 часа или накануне (d1), напоминание за несколько часов (h2), перенос (s06), отмена (cx), благодарность и отзыв
+// (rv, с ТЗ v4 — через N часов после окончания визита, ссылки «Детали» и «Контроль качества» Altegio), начислено и списано бонусов (bi, bo —
+// ./bonus.js).
 // Всё выключено, пока владелец не включит сценарий в пульте; главный выключатель — Text REMIND_GA_<ID> = 1 (jrOn). Настройки —
 // msgset:<клиент> (db/kv/automsg.js), часы отправки и предел за сутки — там же (по умолчанию из c.jr паспорта).
 // Раз в 15 минут — журнал со вчера на 14 дней вперёд → очередь jrq:<клиент> (только то, что уйдёт в ближайшие 36 часов) и записи,
@@ -32,13 +34,14 @@ import { stErr } from "../inbox/status.js";
 import { sendOnce } from "../inbox/send.js";
 import { marketingGate } from "../contacts/gate.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
-import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewed, jrReviewMark, optedOut, rmOk,
+import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewedAt, jrReviewMark, optedOut, rmOk,
   jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals, svVariants } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
 import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
-import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf } from "./templates.js";
+import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf, linkOf } from "./templates.js";
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
+import { bonusScan } from "./bonus.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
 // между полными чтениями — раз в минуту только изменённые записи (ТЗ v4, 08.11.2026: подтверждение за 1–2 минуты). Окно 10 минут с запасом:
@@ -63,19 +66,20 @@ const SVC_NO = new Set(["block", "stop", "review"]); // база контакт�
  *  (так план считают проверки: накануне в 18:00, за 2 часа, отзыв через 3 часа) @param {Client} c @param {any} [set] */
 function opts(c, set) {
   const base = { from: 10, to: 21, eve: "18:00", h2: true, rv: true, cap: 150, s01: false, s06: false, cx: false, noshow: true, ...(c.jr || {}) };
-  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 0, set: /** @type {any} */ (null), site: /** @type {any} */ (null) };
+  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, rvgap: 60, s01gap: 0, bi: false, bo: false, set: /** @type {any} */ (null), site: /** @type {any} */ (null) };
   if (!set) return o;
   const s = set.s;
   return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: Number.isFinite(+s.confirm.t.delay) ? Math.max(0, +s.confirm.t.delay) : 0,
     d1: s.remind24.on, d1mode: s.remind24.t.mode, eve: String(s.remind24.t.eve || "18:00"), h2: s.remind3.on, h2h: +s.remind3.t.hours || 3,
-    s06: s.move.on, cx: s.cancel.on, rv: s.review.on, rvh: +s.review.t.hours || 3, set };
+    s06: s.move.on, cx: s.cancel.on, rv: s.review.on, rvh: Number.isFinite(+s.review.t.hours) ? Math.max(0, +s.review.t.hours) : 1,
+    rvgap: Number.isFinite(+s.review.t.gap) ? Math.max(0, +s.review.t.gap) : 0, bi: !!(s.bonusIn && s.bonusIn.on), bo: !!(s.bonusOut && s.bonusOut.on), set };
 }
 /** до какого опоздания ещё шлём: накануне — до конца часов отправки, за несколько часов — 45 минут, отзыв — 3 часа, подтверждение,
  *  перенос и отмена — 3 часа @param {any} o @param {string} k @param {number} at */
 function late(o, k, at) {
   if (k === "h2") return H2_LATE;
   if (k === "rv") return REMIND_LATE;
-  if (k === "s01" || k === "s06" || k === "cx") return NEW_LATE;
+  if (k === "s01" || k === "s06" || k === "cx" || k === "bi" || k === "bo") return NEW_LATE;
   const L = local(at), end = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate(), o.to - TZ, 0);
   return Math.max(0, end - at);
 }
@@ -111,8 +115,10 @@ export function jrRec(r) {
   const dt = String(r.datetime || ""), date = dt.slice(0, 10), time = dt.slice(11, 16);
   const p = normPhone(String(r.client.phone ?? "")).slice(1);
   const att = +r.attendance === -1 || +r.visit_attendance === -1 ? -1 : +r.attendance === 1 || +r.visit_attendance === 1 ? 1 : 0;
+  // len — длительность записи в секундах (seance_length): благодарность — от конца визита; lk — ссылка Altegio на запись (short_link)
+  const len = +r.seance_length > 0 ? +r.seance_length : +r.length > 0 ? +r.length : 0;
   return { id: String(r.id), date, time, p, att, v: recVer(r), made: Date.parse(String(r.create_date || "")) || 0, n: altText(r.client.name || "", 60),
-    staff: altText((r.staff && r.staff.name) || "", 40),
+    staff: altText((r.staff && r.staff.name) || "", 40), len: Math.min(len, 12 * 3600), lk: linkOf(r.short_link),
     svc: (Array.isArray(r.services) ? r.services : []).map(/** @param {any} s */ s => altText(s && s.title, 60)).filter(Boolean).join(", ") };
 }
 
@@ -134,7 +140,7 @@ export function jrPlanAll(c, records, now, set, site) {
     const why = recWhy(r), v = why ? null : jrRec(r);
     if (!v) { skipped.push({ rec: String((r && r.id) ?? ""), why }); continue; }
     if (v.att === -1) { skipped.push({ rec: v.id, why: "клиент не пришёл" }); continue; }
-    const t = atLocal(v.date, v.time), base = { rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc };
+    const t = atLocal(v.date, v.time), base = { rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}) };
     const add = (/** @type {string} */ k, /** @type {number} */ at) => { if (now - at <= late(o, k, at)) out.push({ ...base, k, at }); };
     if (o.s01 && v.made && v.att !== 1) {
       let s1 = v.made + o.s01gap * 60e3;
@@ -161,8 +167,8 @@ export function jrPlanAll(c, records, now, set, site) {
       const h2 = t - o.h2h * 3600e3, hr = local(h2).getUTCHours();
       if (hr >= o.from && hr < o.to && !(v.made && t - v.made < (o.h2h + 2) * 3600e3)) add("h2", h2);
     }
-    if (o.rv && c.review) {
-      let rv = t + o.rvh * 3600e3;
+    if (o.rv && c.review) { // благодарность — через rvh часов после окончания визита (начало + длительность записи)
+      let rv = t + v.len * 1000 + o.rvh * 3600e3;
       const L = local(rv), lh = L.getUTCHours();
       if (lh >= o.to || lh < o.from) rv = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (lh >= o.to ? 1 : 0), o.from + 1 - TZ, 0);
       add("rv", rv);
@@ -172,13 +178,13 @@ export function jrPlanAll(c, records, now, set, site) {
 }
 
 /** @param {any} x */
-const key = x => x.rec + ":" + x.k + ":" + (x.v || "");
+const key = x => x.rec + ":" + x.k + ":" + (x.v || "") + (x.tx ? ":" + x.tx : ""); // бонусы: у записи может быть несколько операций
 /** запись решения для журнала очереди (раздел «Автоматические сообщения») @param {any} x @param {string} st @param {string} why @param {number} now */
 const entry = (x, st, why, now) => ({ t: now, k: x.k, rec: x.rec, p: x.p, n: x.n || "", date: x.date, time: x.time, st, why });
 /** @type {Record<string, string>} */
-const KIND_WORD = { s01: "подтверждение записи", s06: "сообщение о переносе", cx: "сообщение об отмене", d1: "напоминание накануне", h2: "напоминание в день визита", rv: "просьба об отзыве" };
+const KIND_WORD = { s01: "подтверждение записи", s06: "сообщение о переносе", cx: "сообщение об отмене", d1: "напоминание накануне", h2: "напоминание в день визита", rv: "благодарность за визит", bi: "начислено бонусов", bo: "списано бонусов" };
 /** состояние записи журнала → строка очереди @param {any} p */
-const fromState = p => ({ rec: p.id, v: p.v, p: p.p, n: p.n, date: p.d, time: p.t, staff: p.s, svc: p.sv });
+const fromState = p => ({ rec: p.id, v: p.v, p: p.p, n: p.n, date: p.d, time: p.t, staff: p.s, svc: p.sv, ...(p.lk ? { lk: p.lk } : {}) });
 /** клиент знает об этой записи: мы о ней уже писали, или ей не меньше 30 минут @param {any} p @param {number} now */
 const told = (p, now) => (Array.isArray(p.sent) && p.sent.length > 0) || now - (+p.mk || +p.fs || now) >= KNOWN_MS;
 
@@ -218,8 +224,9 @@ async function jrClient(env, c, now) {
       // раньше, задним числом не шлём (ТЗ v3.0: включили сценарий — старые записи не получают сообщений разом)
       if (!last) q = q.filter(x => { if (x.at >= now - 60e3) return true; logs.push(entry(x, "skipped", "отправку только что включили: задним числом не шлём", now)); return false; });
       dirty = true;
+      q = await withBonus(env, c, o, q, r.list, now, { user, loc, full: true }, logs);
     } catch (/** @type {any} */ e) { console.log("jr journal", c.id, String((e && e.message) || e).slice(0, 160)); }
-  } else if (o.s01 || o.s06) {
+  } else if (o.s01 || o.s06 || o.bi || o.bo) {
     // быстрый проход: только записи, которых ещё не видели или у которых сменилась версия. Ничего нового — ничего не пишем (KV)
     try {
       const r = await altRecordsChanged(env, user, loc, now - FAST_WIN, now + 86400e3);
@@ -231,6 +238,9 @@ async function jrClient(env, c, now) {
         q = await jrMerge(env, c, o, q, fresh, now, logs, ch);
         dirty = true;
       }
+      const q0 = q.length;
+      q = await withBonus(env, c, o, q, r.list, now, { user, loc, full: false }, logs); // оплата визита меняет запись — видим её здесь
+      if (q.length !== q0) dirty = true;
     } catch (/** @type {any} */ e) { console.log("jr fast", c.id, String((e && e.message) || e).slice(0, 160)); }
   }
   const drop = new Set(), due = [];
@@ -270,6 +280,17 @@ async function jrClient(env, c, now) {
   try { await autoCountAdd(env, c.id, isoDay(now), countsOf(logs)); } catch (e) { console.log("jr counts", String(e)); }
   return sent;
 }
+/** бонусы по прочитанным записям → в очередь (без повторов по ключу задачи). Сбой — только в журнал Worker: напоминания идут дальше
+ *  @param {Env} env @param {Client} c @param {any} o @param {any[]} q @param {any[]} list @param {number} now @param {{ user: string, loc: number, full: boolean }} ctx @param {any[]} logs */
+async function withBonus(env, c, o, q, list, now, ctx, logs) {
+  if (!o.bi && !o.bo) return q;
+  try {
+    const add = await bonusScan(env, c, o, list.map(r => ({ r, v: jrRec(r) })), now, ctx, (x, st, why) => logs.push(entry(x, st, why, now)));
+    if (!add.length) return q;
+    const have = new Set(q.map(key));
+    return q.concat(add.filter(x => !have.has(key(x)))).slice(-QUEUE_MAX);
+  } catch (/** @type {any} */ e) { console.log("jr bonus", c.id, String((e && e.message) || e).slice(0, 160)); return q; }
+}
 /** решения → прибавка к счётчикам дня по сценариям (неявка — задача администратору, не сценарий) @param {any[]} logs */
 function countsOf(logs) {
   /** @type {Record<string, Record<string, number>>} */ const add = {};
@@ -295,7 +316,7 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
   const cur = new Map(), moved = [], cancelled = [], gone = [];
   const end = atLocal(isoDay(now + AHEAD * 86400e3), "23:59");
   /** @param {any} v @param {any} p */
-  const row = (v, p) => ({ id: v.id, v: v.v, d: v.date, t: v.time, p: v.p, n: v.n, s: v.staff, sv: v.svc, mk: v.made || (p && p.mk) || 0, fs: (p && p.fs) || now, ls: now, sent: (p && Array.isArray(p.sent)) ? p.sent : [] });
+  const row = (v, p) => ({ id: v.id, v: v.v, d: v.date, t: v.time, p: v.p, n: v.n, s: v.staff, sv: v.svc, ...(v.lk ? { lk: v.lk } : {}), mk: v.made || (p && p.mk) || 0, fs: (p && p.fs) || now, ls: now, sent: (p && Array.isArray(p.sent)) ? p.sent : [] });
   for (const r of list) {
     const v = jrRec(r);
     if (!v || v.att === -1 || atLocal(v.date, v.time) < now - 86400e3) continue;
@@ -344,7 +365,8 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
   const keep = [];
   for (const x of q) {
     if (x.k !== "cx" && gone.has(x.rec)) { if (now - x.at <= late(o, x.k, x.at)) logs.push(entry(x, "cancelled", "запись удалена", now)); continue; }
-    if (x.k === "cx" || !known(x)) { if (now - x.at <= late(o, x.k, x.at)) keep.push(x); continue; }
+    // отмена и бонусы не из плана журнала: ждут своей минуты (бонусы снова проверит отправка)
+    if (x.k === "cx" || x.k === "bi" || x.k === "bo" || !known(x)) { if (now - x.at <= late(o, x.k, x.at)) keep.push(x); continue; }
     if (pk.has(key(x))) continue; // в новом плане то же самое
     const same = prk.get(x.rec + ":" + x.k);
     if (!x.v && same && same.date === x.date && same.time === x.time) continue; // очередь до версий записи — та же запись, тихо заменяем
@@ -365,7 +387,7 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
     if (now - +p.ls > FRESH_MS) { logs.push(entry(x, "skipped", "перенос замечен поздно (журнал долго не читали): не пишем задним числом", now)); continue; }
     if (!told(p, now)) { logs.push(entry(x, "skipped", "запись изменили сразу после создания: клиент узнает новое время из подтверждения", now)); continue; }
     if (out.some(y => y.k === "s01" && y.rec === v.id)) { logs.push(entry(x, "skipped", "подтверждение с новым временем ещё не ушло: о переносе отдельно не пишем", now)); continue; }
-    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, k: "s06", at: now });
+    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}), k: "s06", at: now });
   }
   for (const p of ch.cancelled) { // отмена будущей записи: сообщение — только если владелец включил сценарий и клиент знал о записи
     if (!o.cx) continue;
@@ -388,6 +410,16 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
   }
   const seen = new Set();
   return out.filter(x => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true; }).slice(-QUEUE_MAX);
+}
+
+/** данные задачи очереди → данные текста: запись, ссылка Altegio на неё, бонусы @param {any} x */
+const msgOf = x => ({ name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff, link: x.lk || "",
+  ...(x.am !== undefined ? { amount: x.am } : {}), ...(x.bal !== undefined ? { balance: x.bal } : {}) });
+/** благодарность этому номеру уже уходила за последние rvgap дней (0 — после каждого визита) @param {Env} env @param {string} cid @param {string} p @param {any} o @param {number} now */
+async function reviewedRecently(env, cid, p, o, now) {
+  if (!(o.rvgap > 0)) return false;
+  const at = await jrReviewedAt(env, cid, p);
+  return !!at && now - at < o.rvgap * 86400e3;
 }
 
 /** одно сообщение → "sent" | "drop" (не шлём и не будем) | "wait" (отзыв: ждём «пришёл»; текст ждёт одобрения) | "stop" (в эту минуту
@@ -413,7 +445,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     st.blocks = (g && g.reasons) || new Map();
   }
   if (SVC_NO.has(st.blocks.get(x.p) || "")) return skip("в базе клиентов — «стоп» или запрет писать");
-  if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) return skip("отзыв у этого клиента уже просили (раз в 60 дней)");
+  if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) return skip(`благодарность с просьбой об отзыве этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)`);
   // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста)
   const sc = scenario(KIND_SC[x.k] || ""), vt = sc && approvedVariant(sc, st.approvals, st.variants), ap = sc && st.approvals[sc.id];
   if (!sc || !vt) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
@@ -438,9 +470,10 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     if (v.att === -1) return skip("клиент не пришёл");
     if (v.date !== x.date || v.time !== x.time || (x.v && v.v !== x.v)) return skip("запись перенесена");
     if (v.p !== x.p) return skip("в записи другой номер");
+    const after = x.k === "rv" || x.k === "bi" || x.k === "bo"; // после визита: «пришёл» и прошедшее время — не повод не слать
     if (x.k === "rv" && v.att !== 1) { if (!x.wa) { x.wa = 1; st.dirty = true; } return "wait"; }
-    if (x.k !== "rv" && v.att === 1) return skip("клиент уже пришёл");
-    if (x.k !== "rv" && atLocal(x.date, x.time) <= now) return skip("время записи прошло");
+    if (!after && v.att === 1) return skip("клиент уже пришёл");
+    if (!after && atLocal(x.date, x.time) <= now) return skip("время записи прошло");
   }
   const hk = `h:ga:${c.id}:${x.p}`;
   /** @type {any} */ let p = {};
@@ -452,9 +485,9 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     catch (e) { console.log("jr cap note", String(e)); }
     return "stop";
   }
-  const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt);
+  const t = svText(c, x.k, msgOf(x), p.lang, vt);
   if (!t || !t.text) return skip("нет текста сообщения");
-  const ver = x.v || "1";
+  const ver = x.tx || x.v || "1"; // бонусы: одна операция — одно сообщение
   if (!(await jrTry(env, c.id, x.rec, x.k, ver))) return skip("уже отправляли");
   /** @type {Record<string, any>} */ let res = { ok: false, status: 0, code: "ga:net", error: "не отправляли" };
   // атомарная отметка в D1 (если у адреса есть база): одна запись, вид и версия — одно сообщение, даже если две фоновые задачи
@@ -553,7 +586,7 @@ export async function jrDry(env, c, now) {
     const p = prof.get(x.p);
     let why = "", status = "";
     if (await optedOut(env, c.id, x.p)) why = "клиент просил не писать";
-    else if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) why = "отзыв у этого клиента уже просили (раз в 60 дней)";
+    else if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) why = `благодарность этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)`;
     else if (!sc || !vt) why = "текст не одобрен владельцем";
     else if (a && +a.at > x.at) why = "текст одобрен позже, чем должно было уйти это сообщение";
     else if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) why = "подтверждение уже в переписке (запись через бота)";
@@ -563,7 +596,7 @@ export async function jrDry(env, c, now) {
     else if (x.at > now) status = "later";
     else if (quiet) { status = "later"; why = `уйдёт в часы отправки (с ${o.from}:00 до ${o.to}:00)`; }
     else status = "now";
-    const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
+    const t = svText(c, x.k, msgOf(x), p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
     out.push({ k: x.k, sc: sc ? sc.id : "", at: x.at, name: firstName(x.n), phone: maskPhone(x.p), date: x.date, time: x.time, staff: x.staff, svc: x.svc,
       status, why, text: t ? t.text : "", lang: t ? t.lang : "ru" });
   }

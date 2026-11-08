@@ -122,6 +122,10 @@ export async function altProbe(env, c, now) {
     const links = (fields.record || []).filter((/** @type {any} */ x) => /link|url|short|hash|feedback|review/i.test(x.key));
     summary.push(`Поля записи, похожие на ссылки: ${links.map((/** @type {any} */ x) => `${x.key} (${x.filled} из ${x.of})`).join(", ") || "нет"}`);
     fields.recordLinks = links.map((/** @type {any} */ x) => x.key);
+    // вид ссылки short_link без кода: адрес и путь, коды (3 знака и длиннее) — «x» («http://openhc.kz/c/xxxxx/xxxxx/»). По нему видно, совпадает ли
+    // ссылка с «Детали» в уведомлениях Altegio и можно ли из неё получить «Контроль качества» (…/e/<код>/)
+    const shapes = [...new Set(recs.map(r => String((r && r.short_link) || "")).filter(Boolean).map(u => u.replace(/^(https?:\/\/[^/]+)(.*)$/, (_, h, p) => h + p.replace(/[A-Za-z0-9]{3,}/g, (/** @type {string} */ m) => "x".repeat(m.length)))))].slice(0, 3);
+    if (shapes.length) { summary.push(`Вид ссылки short_link: ${shapes.join(", ")}`); fields.shortLink = shapes; }
   }
   // 6. бонусы (ТЗ v4): типы карт салона (настройки — не данные клиентов), карты клиентов из журнала (только число и имена полей),
   // визит и его детали (есть ли список бонусных операций). 403 — у сотрудника, чей ключ в системе, нет права на «Лояльность»

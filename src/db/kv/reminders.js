@@ -5,7 +5,8 @@
 //   jrc:<клиент>:<день> — сколько сообщений ушло за сутки (по Астане), 2 дня
 //   jrcn:<клиент>:<день> — о пределе за сутки уже сообщили в Telegram, 2 дня
 //   jrhold:<клиент> — { at, why }: Green-API отказал (номер заблокирован, ключ не подходит) — 6 часов не шлём
-//   jrv:<клиент>:<номер> — просили отзыв, 60 дней: постоянному клиенту — не после каждой стрижки
+//   jrv:<клиент>:<номер> — когда просили отзыв (мс), 90 дней: «не чаще раза в N дней» (настройка сценария; 0 — после каждого визита)
+//   jrbn:<клиент> — бонусы (ТЗ v4): по записям с визитом { <запись>: { s: подпись оплаты, tx: [номера операций], c: когда смотрели, t } }, 7 дней
 //   rms:/rmok:<клиент>:<запись>:<вид> — попытка и удачная отправка, 3 дня; общие с напоминаниями бота (services/reminders/send.js).
 //     Значение rms: — версия записи, по которой ушло (у бота и прежнего кода — «1»)
 //   rms:<клиент>:ga:<запись>:<вид>:<версия> — попытка по журналу для этой версии записи (время, мастер, услуги), 3 дня: перенос с тем
@@ -53,8 +54,15 @@ export const jrHoldSet = (env, cid, why, now) => kvRetry(() => env.KV.put("jrhol
 
 /** @param {Env} env @param {string} cid @param {string} p */
 export const jrReviewed = async (env, cid, p) => !!(await env.KV.get(`jrv:${cid}:${p}`));
+/** когда этому номеру последний раз отправляли благодарность с просьбой об отзыве (мс; 0 — не отправляли) @param {Env} env @param {string} cid @param {string} p */
+export const jrReviewedAt = async (env, cid, p) => { const v = await env.KV.get(`jrv:${cid}:${p}`); return v ? (+v || 1) : 0; };
 /** @param {Env} env @param {string} cid @param {string} p @param {number} now */
-export const jrReviewMark = (env, cid, p, now) => env.KV.put(`jrv:${cid}:${p}`, String(now), { expirationTtl: 60 * DAY });
+export const jrReviewMark = (env, cid, p, now) => env.KV.put(`jrv:${cid}:${p}`, String(now), { expirationTtl: 90 * DAY });
+
+/** состояние проверки бонусов по записям @param {Env} env @param {string} cid @returns {Promise<Record<string, any>>} */
+export async function jrbnLoad(env, cid) { try { const v = JSON.parse((await env.KV.get("jrbn:" + cid)) || "{}"); return v && typeof v === "object" ? v : {}; } catch (e) { return {}; } }
+/** @param {Env} env @param {string} cid @param {Record<string, any>} st */
+export const jrbnSave = (env, cid, st) => kvRetry(() => Object.keys(st).length ? env.KV.put("jrbn:" + cid, JSON.stringify(st), { expirationTtl: 7 * DAY }) : env.KV.delete("jrbn:" + cid));
 
 /** клиент писал «стоп» (optout: ставят ответы бота, пульт и Meta) @param {Env} env @param {string} cid @param {string} p */
 export const optedOut = async (env, cid, p) => !!(await env.KV.get(`optout:${cid}:${p}`));

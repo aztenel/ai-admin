@@ -262,3 +262,128 @@ test("без REMIND_GA_WINCHESTER = 1 напоминания выключены:
   assert.equal(j.journal, true); assert.equal(j.enabled, false);
   assert.deepEqual(j.kinds.map(x => x.on), [false, false, false, false, false]);
 });
+
+// ТЗ v4 (08.11.2026): благодарность как в уведомлении Altegio Winchester — через N часов после окончания визита, с «Контролем качества»
+// (ссылка Altegio по записи) и 2ГИС; «Запись подтверждена» со ссылкой «Детали»; бонусы из деталей визита и баланса карты
+const useVariant = async (s, sc, variant) => {
+  const x = SCENARIOS.find(y => y.id === sc);
+  const ap = JSON.parse((await s.kv.api.get("svtpl:winchester")) || "{}");
+  ap[sc] = { v: x.v, at: 1, var: variant };
+  await s.kv.api.put("svtpl:winchester", JSON.stringify(ap));
+  const own = JSON.parse((await s.kv.api.get("svtpl:winchester:var")) || "{}");
+  own[sc] = { active: variant, list: [] };
+  await s.kv.api.put("svtpl:winchester:var", JSON.stringify(own));
+};
+
+test("ТЗ v4: благодарность через 1 час после окончания визита — текст как у Altegio, «Контроль качества» из ссылки записи, 2ГИС; после каждого визита", async () => {
+  net.reset();
+  const v = rec(ph(401), TODAY, "12:00", { id: 4001, att: 1, name: "Кайрат", staff: "Тони (Рауан М.)" });
+  v.seance_length = 3600; v.short_link = "http://openhc.kz/c/OWaqc/qONAj/";
+  net.altJournal = [v];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 1, gap: 0 } });
+  await useVariant(s, "S12", "b3");
+  await jrRun(s.env, at(TODAY, "13:30"));
+  await jrRun(s.env, at(TODAY, "13:59"));
+  assert.deepEqual(sent(), [], "визит кончился в 13:00 — благодарность в 14:00");
+  await jrRun(s.env, at(TODAY, "14:00"));
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].text, "Кайрат, благодарим за визит!\nВаш мастер Тони (Рауан М.) порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\nКонтроль качества: http://openhc.kz/e/OWaqc/\n2ГИС: https://go.2gis.com/mrkUN");
+  // следующий визит через день — снова благодарность (как у Altegio: после каждого визита)
+  const w = rec(ph(401), TOM, "12:00", { id: 4002, att: 1, name: "Кайрат" });
+  w.seance_length = 1800; w.short_link = "javascript:alert(1)";
+  net.altJournal.push(w);
+  await jrRun(s.env, at(TOM, "13:20")); await jrRun(s.env, at(TOM, "13:30")); await jrRun(s.env, at(TOM, "13:31"));
+  assert.equal(sent().length, 2, JSON.stringify(sent()));
+  assert.equal(sent()[1].text, "Кайрат, благодарим за визит!\nВаш мастер Тони порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\n2ГИС: https://go.2gis.com/mrkUN", "чужая ссылка — без строки «Контроль качества»");
+});
+
+test("ТЗ v4: благодарность — «не чаще раза в N дней» из настроек; без имени — с заглавной буквы", async () => {
+  net.reset();
+  const a = rec(ph(411), TODAY, "12:00", { id: 4101, att: 1, name: "89771" }), b = rec(ph(411), TOM, "12:00", { id: 4102, att: 1, name: "89771" });
+  net.altJournal = [a, b];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 0, gap: 30 } });
+  await useVariant(s, "S12", "b3");
+  await jrRun(s.env, at(TODAY, "11:00")); // первое чтение журнала (то, что должно было уйти раньше, задним числом не шлём)
+  await jrRun(s.env, at(TODAY, "12:00")); await jrRun(s.env, at(TODAY, "12:01"));
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].text, /^Благодарим за визит!\nВаш мастер Тони/, sent()[0].text);
+  await jrRun(s.env, at(TOM, "12:30")); await jrRun(s.env, at(TOM, "12:31"));
+  assert.equal(sent().length, 1, "второй визит через день — не чаще раза в 30 дней");
+});
+
+test("ТЗ v4: «Запись подтверждена» со ссылкой «Детали» из записи Altegio — как в уведомлении Altegio", async () => {
+  net.reset();
+  const r = rec(ph(421), TOM, "12:30", { id: 4201, made: `${TODAY}T15:00:00+05:00`, staff: "Тони (Рауан М.)" });
+  r.short_link = "http://openhc.kz/c/OS0oy/HOtyz/";
+  net.altJournal = [r];
+  const s = mk(ENV); await approve(s); await autoOn(s, { confirm: true }, { confirm: { delay: 0 } });
+  await useVariant(s, "S01", "b2");
+  await jrRun(s.env, at(TODAY, "15:01"));
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября в 12:30.\nДетали: http://openhc.kz/c/OS0oy/HOtyz/");
+});
+
+const paid = (i, time, o = {}) => {
+  const r = rec(ph(i), TODAY, time, { id: o.id, att: 1, name: "Кайрат" });
+  Object.assign(r, { visit_id: o.visit, paid_full: 1, last_change_date: `${TODAY}T${o.changed || time}:00+05:00` });
+  r.client.id = o.client;
+  return r;
+};
+
+test("ТЗ v4: бонусы — «Начислено бонусов» и «Списано бонусов» с балансом карты за 1–2 минуты после оплаты; одна операция — одно сообщение", async () => {
+  net.reset();
+  const r = paid(431, "12:00", { id: 4301, visit: 9301, client: 7301, changed: "13:10" });
+  net.altJournal = [r];
+  net.altLoyalty = { types: [{ id: 31134, title: "Бонусы" }], cards: { 7301: [{ id: 55, balance: 1200 }] }, details: { 9301: { loyalty_transactions: [
+    { id: 8001, card_id: 55, amount: 400, is_loyalty_withdraw: false, is_discount: false, created_date: `${TODAY} 13:09:00` },
+    { id: 8002, card_id: 55, amount: -300, is_loyalty_withdraw: true, created_date: `${TODAY} 13:09:00` },
+    { id: 8003, card_id: 55, amount: 10, is_discount: true, created_date: `${TODAY} 13:09:00` }, // скидка картой — не бонусы
+    { id: 8004, card_id: 0, certificate_id: 3, amount: 5000, created_date: `${TODAY} 13:09:00` }, // сертификат — не бонусы
+  ] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true, bonusOut: true });
+  await jrRun(s.env, at(TODAY, "13:00")); // полное чтение: оплаты ещё нет
+  r.last_change_date = `${TODAY}T13:10:00+05:00`;
+  await jrRun(s.env, at(TODAY, "13:11")); // быстрый проход видит изменённую запись
+  await jrRun(s.env, at(TODAY, "13:12"));
+  const texts = sent().map(x => x.text).sort();
+  assert.deepEqual(texts, ["Начислено бонусов: 400\nДоступно: 1200", "Списано бонусов: 300.\nИтоговый баланс: 1200."], JSON.stringify(sent()));
+  assert.ok(sent().every(x => x.to === dg(431)));
+  for (const t of ["13:13", "13:30", "14:00"]) await jrRun(s.env, at(TODAY, t));
+  assert.equal(sent().length, 2, "повторное чтение журнала — без дублей");
+  assert.ok(!net.alt.some(x => !/^GET /.test(x) && !/clients\/search/.test(x)), "только чтение Altegio: " + net.alt.filter(x => !/^GET /.test(x)).join(", "));
+});
+
+test("ТЗ v4: бонусы — без права «Лояльность» ничего не шлём и пишем почему; старая операция и выключенный сценарий — не шлём", async () => {
+  net.reset();
+  const r = paid(441, "11:00", { id: 4401, visit: 9401, client: 7401, changed: "12:00" });
+  net.altJournal = [r];
+  net.altLoyalty = null; // 403, как у сотрудника без права
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "12:01"));
+  assert.deepEqual(sent(), []);
+  const log = JSON.parse((await s.kv.api.get("jrl:winchester")) || "[]");
+  assert.ok(log.some(x => /права «Лояльность»/.test(x.why)), JSON.stringify(log));
+  // право дали, но операция была 5 часов назад — задним числом не пишем
+  net.altLoyalty = { cards: { 7401: [{ id: 56, balance: 900 }] }, details: { 9401: { loyalty_transactions: [{ id: 8101, card_id: 56, amount: 300, created_date: `${TODAY} 07:00:00` }] } } };
+  r.last_change_date = `${TODAY}T12:20:00+05:00`;
+  await jrRun(s.env, at(TODAY, "12:21"));
+  assert.deepEqual(sent(), []);
+  // списание при выключенном «Списано бонусов» — не шлём, начисление — шлём
+  net.altLoyalty.details[9401].loyalty_transactions.push({ id: 8102, card_id: 56, amount: 200, is_loyalty_withdraw: true, created_date: `${TODAY} 12:29:00` },
+    { id: 8103, card_id: 56, amount: 350, created_date: `${TODAY} 12:29:00` });
+  r.last_change_date = `${TODAY}T12:30:00+05:00`;
+  await jrRun(s.env, at(TODAY, "12:31")); await jrRun(s.env, at(TODAY, "12:32"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 350\nДоступно: 900"]);
+});
+
+test("ТЗ v4: бонусы после 21:00 — утром в начале часов отправки", async () => {
+  net.reset();
+  const r = paid(451, "20:00", { id: 4501, visit: 9501, client: 7501, changed: "21:30" });
+  net.altJournal = [r];
+  net.altLoyalty = { cards: { 7501: [{ id: 57, balance: 700 }] }, details: { 9501: { loyalty_transactions: [{ id: 8201, card_id: 57, amount: 300, created_date: `${TODAY} 21:29:00` }] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "21:31"));
+  assert.deepEqual(sent(), [], "вечером не шлём");
+  await jrRun(s.env, at(TOM, "10:00"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 300\nДоступно: 700"]);
+});

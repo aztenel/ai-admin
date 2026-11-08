@@ -41,14 +41,14 @@ const approveAll = s => s.kv.api.put("svtpl:winchester", JSON.stringify(Object.f
 const log = s => s.kv.json("jrl:winchester") || [];
 const withD1 = (x = {}) => ({ ...ENV, ...x, ...(sqliteOk ? { DB: d1With("production").db } : {}) });
 
-test("по умолчанию всё выключено: девять сценариев, ни один не шлёт; без главного выключателя — сказано почему; сотрудник видит, но не меняет", async () => {
+test("по умолчанию всё выключено: одиннадцать сценариев (с бонусами, ТЗ v4), ни один не шлёт; без главного выключателя — сказано почему; сотрудник видит, но не меняет", async () => {
   net.reset();
   const { REMIND_GA_WINCHESTER, ...off } = ENV;
   const s = mk(off), own = await login(s, OWNER), staff = await login(s, STAFF), other = await login(s, OTHER);
   const j = await info(own);
-  assert.deepEqual(j.scenarios.map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "birthday", "reactivate", "campaigns"]);
+  assert.deepEqual(j.scenarios.map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "bonusIn", "bonusOut", "birthday", "reactivate", "campaigns"]);
   assert.ok(j.scenarios.every(x => x.on === false && x.live === false), "всё выключено");
-  assert.deepEqual(j.scenarios.filter(x => x.group === "service").map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review"]);
+  assert.deepEqual(j.scenarios.filter(x => x.group === "service").map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "bonusIn", "bonusOut"]);
   assert.equal(j.master.on, false); assert.match(j.master.why, /REMIND_GA_WINCHESTER/);
   assert.equal(j.owner, true); assert.equal(j.window.from, 10); assert.equal(j.window.to, 21);
   assert.match(sc(j, "birthday").locked, /Реклама со второго номера выключена/, "gaNoBroadcast держит рекламу");
@@ -302,7 +302,7 @@ test("ТЗ v4: подтверждение сразу — новую запись
 test("ТЗ v4: текст подтверждения как в уведомлении Altegio — вариант b2", () => {
   const sc = SCENARIOS.find(x => x.id === "S01");
   assert.equal(sc.ru.length, 2);
-  assert.equal(sc.ru[1], "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}.");
+  assert.equal(sc.ru[1], "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата} в {время}.[[\nДетали: {детали}]]");
 });
 
 test("дубли: одна запись, вид и версия — одно сообщение, даже если отметка в KV потерялась (отметка D1); две одновременные отправки с одним ключом — одна", { skip }, async () => {

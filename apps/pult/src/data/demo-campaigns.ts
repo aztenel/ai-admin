@@ -338,7 +338,7 @@ function astanaAt(now: number, day: number, hm: string): number {
 const SERVICE_LABEL: Partial<Record<ServiceKindState["kind"], string>> = {
   d1: "Накануне в 18:00 — напоминание о записи",
   h2: "За 2 часа — напоминание о записи",
-  rv: "Через 3 часа после визита — просьба оставить отзыв",
+  rv: "Через час после визита — благодарность и просьба об отзыве",
 };
 /** Каталог сервисных сценариев — как у сервера (src/services/reminders/templates.js), коротко; тексты — на вымышленной записи. */
 const DEMO_CATALOG: ServiceScenario[] = (

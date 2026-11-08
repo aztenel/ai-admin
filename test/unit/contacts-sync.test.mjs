@@ -193,12 +193,14 @@ test("проба полей Altegio: только имена полей, дол�
 
 test("проба бонусов Altegio (ТЗ v4, 08.11.2026): типы карт и их настройки, карты клиентов и операции визита — только имена полей и числа; без права — понятная причина", { skip }, async () => {
   net.reset(); rid = 0;
-  net.altJournal = [{ ...rec(ph(801), 5, { name: "Секретное Имя", cid: 41 }), visit_id: 9001 }, rec(ph(802), -2, { cid: 42 })];
+  net.altJournal = [{ ...rec(ph(801), 5, { name: "Секретное Имя", cid: 41 }), visit_id: 9001, short_link: "http://openhc.kz/c/OWaqc/qONAj/" }, rec(ph(802), -2, { cid: 42 })];
   const d = d1With("preview"), s = mk({ ...ENV, DB: d.db, STAGE: "preview" });
   // без права на «Лояльность» (заглушка отвечает 403): отчёт объясняет причину, журнал читается как раньше
   let r = await altProbe(s.env, W, Date.now());
   assert.ok(r.summary.some(l => /Бонусы, типы карт: ошибка 403.*нет права на «Лояльность»/.test(l)), r.summary.join("\n"));
   assert.ok(r.summary.some(l => /Поля записи, похожие на ссылки: (нет|.+)/.test(l)));
+  assert.ok(r.summary.includes("Вид ссылки short_link: http://openhc.kz/c/xxxxx/xxxxx/"), r.summary.join("\n")); // без кода ссылки
+  assert.ok(!/OWaqc/.test(JSON.stringify(r)));
   net.altLoyalty = {
     types: [{ id: 7, title: "Бонусная карта Winchester", bonus_percent: 5, round_to: 100, accrual_delay_days: 0, comment: "x".repeat(200) }],
     cards: { 41: [{ id: 1, balance: 10850, type_id: 7, number: "77000000801", owner: { name: "Секретное Имя" } }] },
