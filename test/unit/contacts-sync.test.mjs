@@ -191,6 +191,31 @@ test("проба полей Altegio: только имена полей, дол�
   assert.equal(bad.ok, false); assert.match(bad.summary[0], /ALTEGIO_PARTNER/);
 });
 
+test("проба бонусов Altegio (ТЗ v4, 08.11.2026): типы карт и их настройки, карты клиентов и операции визита — только имена полей и числа; без права — понятная причина", { skip }, async () => {
+  net.reset(); rid = 0;
+  net.altJournal = [{ ...rec(ph(801), 5, { name: "Секретное Имя", cid: 41 }), visit_id: 9001 }, rec(ph(802), -2, { cid: 42 })];
+  const d = d1With("preview"), s = mk({ ...ENV, DB: d.db, STAGE: "preview" });
+  // без права на «Лояльность» (заглушка отвечает 403): отчёт объясняет причину, журнал читается как раньше
+  let r = await altProbe(s.env, W, Date.now());
+  assert.ok(r.summary.some(l => /Бонусы, типы карт: ошибка 403.*нет права на «Лояльность»/.test(l)), r.summary.join("\n"));
+  assert.ok(r.summary.some(l => /Поля записи, похожие на ссылки: (нет|.+)/.test(l)));
+  net.altLoyalty = {
+    types: [{ id: 7, title: "Бонусная карта Winchester", bonus_percent: 5, round_to: 100, accrual_delay_days: 0, comment: "x".repeat(200) }],
+    cards: { 41: [{ id: 1, balance: 10850, type_id: 7, number: "77000000801", owner: { name: "Секретное Имя" } }] },
+    visits: { 9001: { id: 9001, attendance: 1, records: [{ id: 1 }] } },
+    details: { 9001: { payment_status: 1, loyalty_transactions: [{ id: 5, amount: 400, type_id: 1, card_id: 1 }], items: [] } }
+  };
+  r = await altProbe(s.env, W, Date.now());
+  const all = r.summary.join("\n");
+  assert.match(all, /типов карт в салоне — 1: Бонусная карта Winchester/);
+  assert.match(all, /"bonus_percent":5/); assert.ok(!/xxxxxxxxxx/.test(all), "длинные строки настроек не попадают");
+  assert.match(all, /Бонусные карты клиентов: прочитано 2 из 2, с картой — 1; поля карты: id, balance, type_id, number, owner/);
+  assert.match(all, /Детали визита: поля .*loyalty_transactions\[1\]: id, amount, type_id, card_id/);
+  assert.ok(net.alt.some(x => x === "GET /visit/details/133486/" + net.altJournal[0].id + "/9001"), net.alt.join("\n"));
+  assert.ok(!/Секретное|7700000080|10850/.test(JSON.stringify(r)), "без имён, номеров и балансов клиентов");
+  assert.ok(net.alt.every(x => x.startsWith("GET ") || x.startsWith("POST /locations/133486/clients/search")), "только чтение: " + net.alt.join(", "));
+});
+
 test("только чтение Altegio: запрос на изменение через altRead не уходит; ошибка Altegio в пробе — с кодом и его текстом (30.10.2026)", async () => {
   net.reset();
   const s = mk(ENV);

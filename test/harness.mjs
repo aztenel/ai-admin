@@ -52,6 +52,7 @@ export const net = {
   mediaReply: null,            // (url, init) → Response | null: файлы по ссылкам провайдеров (inbox-v2.test.mjs)              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
   altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altClientsBad: "",           // поиск справочника отвечает странно: "nodata" — 200 без data, "short" — total_count больше, чем отдано
+  altLoyalty: null,            // бонусы (проба полей, 08.11.2026): { types: [...], cards: { <client_id>: [...] }, visits: { <visit_id>: {...} }, details: { <visit_id>: {...} } }; null — 403, как без прав на «Лояльность»
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
   ga: [],                      // запросы к Green-API: { url, host, inst, op, token, body, form } (form — поля multipart: файл как { name, size, type })
   gaState: "authorized",       // что отвечает getStateInstance
@@ -63,7 +64,7 @@ export const net = {
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
   push: [],                    // запросы к службам Web Push (Apple, Google, Mozilla, Microsoft): { url, headers, body (байты) }
   pushReply: null,             // функция (rec) → Response | null: свой ответ службы push (410 — подписки нет)
-  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
+  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altLoyalty = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -153,6 +154,14 @@ function altStub(url, init) {
     const size = Math.min(200, +b.page_size || 25), pg = Math.max(1, +b.page || 1);
     if (net.altClientsBad === "nodata") return J({ success: true, meta: {} });
     return J({ success: true, data: all.slice((pg - 1) * size, pg * size).map(x => Object.fromEntries(["id", ...fields].filter(k => k in x).map(k => [k, x[k]]))), meta: { total_count: all.length + (net.altClientsBad === "short" ? 1 : 0) } });
+  }
+  if (method === "GET" && (m = path.match(/^\/(loyalty\/card_types\/salon\/\d+|loyalty\/client_cards\/(\d+)|visits\/(\d+)|visit\/details\/\d+\/\d+\/(\d+))$/))) { // бонусы и визиты
+    const L = net.altLoyalty, no = () => J({ success: false, data: null, meta: { message: "Нет прав" } }, 403);
+    if (!L) return no();
+    if (m[1].startsWith("loyalty/card_types")) return J({ success: true, data: L.types || [], meta: [] });
+    if (m[2]) return J({ success: true, data: (L.cards || {})[m[2]] || [], meta: [] });
+    const v = m[3] ? (L.visits || {})[m[3]] : (L.details || {})[m[4]];
+    return v ? J({ success: true, data: v, meta: [] }) : J({ success: false, data: null, meta: { message: "Not found" } }, 404);
   }
   if ((m = path.match(/^\/client\/(\d+)\/(\d+)$/)) && method === "GET") { // карточка клиента
     const x = net.altClients.find(c => String(c.id) === m[2]);
