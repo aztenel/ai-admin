@@ -92,7 +92,7 @@ export const STOP_RU = "Если такие сообщения больше не
 /** Почему человека нет в сегментах (CrmOverview.excluded). */
 export const EXCLUDED: Record<keyof CrmOverview["excluded"], string> = {
   stop: "просили не писать",
-  noconsent: "нет подтверждённого согласия",
+  noconsent: "нет согласия на рекламу",
   fut: "уже записаны",
   recent: "были меньше 14 дней назад",
   marketed: "уже писали рекламу за 30 дней",

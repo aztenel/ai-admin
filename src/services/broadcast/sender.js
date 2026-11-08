@@ -21,6 +21,7 @@ import { sendGreen } from "../channels/greenapi.js";
 import { BC_HINT, BC_TEMP, BC_ACCOUNT, BC_PARAM, bcWhy } from "./errors.js";
 import { bcOptouts } from "./segments.js";
 import { crmView, daysSince } from "../crm/segments.js";
+import { crmBookedNow } from "../crm/snapshot.js";
 import { render, dataFor } from "./render.js";
 import { companyOf } from "./library.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "./holds.js";
@@ -52,7 +53,7 @@ export const gaBcAllowed = (env, cid) => String((env && env["GA_BROADCAST_" + ci
 // со снятым запретом — только рассылка по базе клиентов (src: crm): ей пишем только с подтверждённым согласием и после подтверждения
 // итоговой аудитории. Список из Excel со второго номера такой компании не запускается и не отправляется (находка проверки 02.11.2026:
 // разрешение открывало и его — без согласия и без итоговой аудитории)
-export const GA_LIST_OFF = "Со второго номера запускаются только рассылки по базе клиентов: им пишем только тем, кто дал подтверждённое согласие. Рассылку по списку со второго номера не запустить.";
+export const GA_LIST_OFF = "Со второго номера запускаются только рассылки по базе клиентов: им пишем только тем, у кого есть согласие на рекламу. Рассылку по списку со второго номера не запустить.";
 /** запуск рассылок с номера Green-API выключен у компании; b — рассылка (без неё — «можно ли вообще») @param {string} cid @param {any} env @param {any} [b] */
 export const bcGaOff = (cid, env, b) => !!(CLIENTS[cid] && CLIENTS[cid].gaNoBroadcast) && (!gaBcAllowed(env, cid) || !!(b && b.src !== "crm"));
 /** почему выключен: запрет не снят или это не рассылка по базе @param {string} cid @param {any} env */
@@ -163,6 +164,8 @@ export function bcWait(b, now) {
   const day0 = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) - TZ * 3600e3, till = day0 + b.from * 3600e3 + (hr >= b.to ? 86400e3 : 0);
   return { note: `Отправка идёт с ${hStr(b.from)} до ${hStr(b.to)} по Астане. Продолжу ${bcAt(till, now)}.`, till };
 }
+// журнал Altegio не прочитался перед рекламой: не видно, кто уже записался (ТЗ v4)
+const BOOKED_WHY = "Altegio не ответил: не видно, кто записался сегодня";
 /**
  * Итоговая аудитория перед запуском рассылки по базе со второго номера (финальное ТЗ рассылок, 02.11.2026: «перед реальной отправкой
  * показать итоговую аудиторию и получить подтверждение владельца»): кому из оставшихся сообщение уйдёт, если запустить сейчас, —
@@ -173,10 +176,13 @@ export function bcWait(b, now) {
 export async function bcFinal(env, cid, b, now) {
   const rest = Math.max(0, (+b.total || 0) - (+b.pos || 0));
   const items = rest ? await bcRange(env, cid, b.id, +b.pos || 0, rest) : [];
-  const [stop, view] = await Promise.all([bcOptouts(env, cid), crmView(env, CLIENTS[cid], now)]);
+  /** @type {Set<string>} */ let booked;
+  try { booked = await crmBookedNow(env, CLIENTS[cid], now); }
+  catch (e) { console.log("bc final booked", String(e).slice(0, 120)); return { n: 0, rest, sample: "", why: BOOKED_WHY + ". Попробуйте через минуту." }; }
+  const [stop, view] = await Promise.all([bcOptouts(env, cid), crmView(env, CLIENTS[cid], now, { booked })]);
   if (!view.gate || !view.gate.ready) return { n: 0, rest, sample: "", why: (view.gate && view.gate.why) || "База согласий не отвечает." };
   if (!view.snap || now - view.snap.at > CRM_FRESH_BC) return { n: 0, rest, sample: "", why: "База клиентов из Altegio не обновлялась больше 3 дней: обновите её в разделе «Клиенты»." };
-  const no = new Set([...(view.marked || []), ...(view.futOnly || [])]), fresh = new Map(), allow = view.allow || new Set(), co = companyOf(CLIENTS[cid]);
+  const no = new Set([...(view.marked || []), ...(view.futOnly || []), ...booked]), fresh = new Map(), allow = view.allow || new Set(), co = companyOf(CLIENTS[cid]);
   for (const x of view.rows) { if (x.why && x.why !== "stop") no.add(x.p); fresh.set(x.p, x); }
   let n = 0, sample = "";
   for (const [digits, name, staff, svc, last] of items) {
@@ -185,7 +191,7 @@ export async function bcFinal(env, cid, b, now) {
     if (rd.blocked) continue;
     n++; if (!sample) sample = rd.text;
   }
-  return { n, rest, sample, why: n ? "" : "из этого списка сейчас некому писать рекламу: нет подтверждённого согласия, просили не писать, уже записаны, были недавно или реклама уже была за 30 дней" };
+  return { n, rest, sample, why: n ? "" : "из этого списка сейчас некому писать рекламу: нет согласия на рекламу, просили не писать, уже записаны, были недавно или реклама уже была за 30 дней" };
 }
 
 // одна порция рассылки → { b, state, did }: state — running, wait, busy, paused, done, stopped; did — были ли отправки.
@@ -288,7 +294,17 @@ export async function bcTick(env, cid, id, gaBusy) {
     /** @type {Set<string> | null} */ let allow = null;
     /** @type {Map<string, any>} */ const fresh = new Map(); // строки свежей базы — для текста со вставками
     if (b.src === "crm" && take > 0) {
-      const view = await crmView(env, CLIENTS[cid], now);
+      // будущие записи — из журнала Altegio прямо сейчас (ТЗ v4, 08.11.2026): ночной снимок не знает о записях, сделанных сегодня, и
+      // рассылка писала рекламу тому, кто уже записался. Журнал не прочитался — не шлём, ждём 5 минут (не видно, кто записался)
+      /** @type {Set<string>} */ let booked;
+      try { booked = await crmBookedNow(env, CLIENTS[cid], now); }
+      catch (e) {
+        console.log("bc booked", cid, String(e).slice(0, 120));
+        b.retryAt = now + 300e3; b.retryWhy = BOOKED_WHY;
+        try { await bcPut(env, cid, b); } catch (e2) { console.log("bc save", String(e2)); }
+        return { b, state: "wait" };
+      }
+      const view = await crmView(env, CLIENTS[cid], now, { booked });
       // реклама — только тем, у кого подтверждённое согласие сейчас (список разрешённых, а не список исключений: человек, которого
       // нет в свежем снимке, тоже не получит; проверка безопасности 31.10.2026). База согласий не отвечает — пауза
       if (!view.gate || !view.gate.ready) return await stopFor(`${(view.gate && view.gate.why) || "База согласий не отвечает."} Рассылка на паузе. Нажмите «Продолжить», когда база снова доступна.`);
@@ -297,6 +313,7 @@ export async function bcTick(env, cid, id, gaBusy) {
       for (const x of view.rows) { if (x.why && x.why !== "stop") no.add(x.p); if (gaCrm) fresh.set(x.p, x); }
       for (const p of view.marked || []) no.add(p);
       for (const p of view.futOnly || []) no.add(p);
+      for (const p of booked) no.add(p);
     }
     if (ga) { const j = items.findIndex(x => !stop.has(x[0])); if (j >= 0) items.length = j + 1; }
     // порция отмечается отправленной до отправки: если дальше что-то сорвётся, повторно она не уйдёт

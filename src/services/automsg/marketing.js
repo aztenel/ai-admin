@@ -7,6 +7,8 @@
 // снимок базы crm:, ровно N дней с визита) → очередь mkq:<клиент>:<сценарий> → по 2 сообщения в минуту в часы отправки, в общий предел
 // второго номера за сутки. Перед каждым сообщением — свежая проверка согласия и «стопа». От дублей: отметка D1 send_claims
 // (a-bd-<номер>-<год>, a-ra-<номер>-<день>), поздравили в этом году (bdg:), реклама за день (bcm: — её видят и рассылки, и сегменты).
+// Записанным (будущая запись в журнале Altegio прямо сейчас — и при сборе, и перед каждым сообщением: ночной снимок не знает о записях,
+// сделанных сегодня) и бывшим меньше 14 дней назад реклама не уходит (ТЗ v4, 08.11.2026); журнал не прочитался — не шлём.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { local, isoDay } from "../../lib/time.js";
@@ -21,7 +23,9 @@ import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { marketingGate, gateAllows } from "../contacts/gate.js";
 import { MARKETING_GAP_DAYS } from "../contacts/segments.js";
-import { crmPick } from "../crm/segments.js";
+import { crmPick, crmView, daysSince } from "../crm/segments.js";
+import { crmBookedNow } from "../crm/snapshot.js";
+import { CRM_QUIET_DAYS } from "../../config/constants.js";
 import { bcGaOff } from "../broadcast/sender.js";
 import { render, dataFor } from "../broadcast/render.js";
 import { companyOf } from "../broadcast/library.js";
@@ -57,6 +61,8 @@ async function mkClient(env, c, now) {
   if (!route) return 0;
   const set = autoSettings(c, await autoLoad(env, c.id)), day = isoDay(now), hr = local(now).getUTCHours();
   const quiet = hr < set.win.from || hr >= set.win.to, logs = /** @type {any[]} */ ([]);
+  /** @type {Promise<Set<string> | null> | null} */ let bk = null;
+  const booked = () => (bk = bk || crmBookedNow(env, c, now).catch(e => { console.log("mk booked", c.id, String(e).slice(0, 120)); return null; })); // один раз за проход
   let sent = 0;
   for (const id of MK_IDS) {
     const sc = set.s[id];
@@ -80,7 +86,7 @@ async function mkClient(env, c, now) {
     let stop = false;
     for (const x of q.list) {
       if (stop || sent >= PER_MIN) { left.push(x); continue; }
-      const r = await mkSend(env, c, id, set, x, now, route, logs);
+      const r = await mkSend(env, c, id, set, x, now, route, logs, booked);
       if (r === "sent") sent++;
       else if (r === "again") left.push(x);
       else if (r === "stop") { left.push(x); stop = true; }
@@ -112,9 +118,10 @@ function mkCounts(logs) {
  * @param {Env} env @param {Client} c @param {string} id @param {any} set @param {number} now
  */
 export async function mkPick(env, c, id, set, now) {
+  const booked = await crmBookedNow(env, c, now); // Altegio не ответил — ошибка: сегодня не шлём
   if (id === "reactivate") {
     const sc = set.s.reactivate;
-    const list = (await crmPick(env, c, "all", now, { days: +sc.t.days })) || [];
+    const list = (await crmPick(env, c, "all", now, { days: +sc.t.days, view: await crmView(env, c, now, { booked }) })) || [];
     return list.slice(0, +sc.t.cap || 20).map(x => ({ p: x.phone, n: x.name, staff: x.staff, svc: x.svc, d: x.d }));
   }
   const people = await birthdays(env, c, now);
@@ -123,23 +130,26 @@ export async function mkPick(env, c, id, set, now) {
   const year = isoDay(now).slice(0, 4), days = Array.from({ length: MARKETING_GAP_DAYS }, (_, i) => isoDay(now - i * 86400e3));
   const marked = await bcmRead(env, c.id, days), out = [];
   for (const x of people) {
+    if (booked.has(x.p) || (x.last && daysSince(x.last, now) < CRM_QUIET_DAYS)) continue; // записан или был недавно
     if (!gateAllows(gate, x.p) || marked.has(x.p) || await optedOut(env, c.id, x.p) || await bdGreeted(env, c.id, x.p, year)) continue;
     out.push(x);
   }
   return out.slice(0, 50);
 }
-/** у кого сегодня день рождения (по Астане) — поиск клиентов Altegio, только чтение. → [{ p, n }] @param {Env} env @param {Client} c @param {number} now */
+/** у кого сегодня день рождения (по Астане) — поиск клиентов Altegio, только чтение. → [{ p, n, last }] (last — день последнего визита)
+ *  @param {Env} env @param {Client} c @param {number} now */
 export async function birthdays(env, c, now) {
   const user = altUserKey(env, c), loc = altLoc(env, c), day = isoDay(now);
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0)) throw new Error("Altegio не подключён: нужен ключ журнала.");
   const out = [], seen = new Set();
   for (let page = 1; page <= 5; page++) {
-    const r = await altClientsSearch(env, user, loc, { page, page_size: 200, fields: ["id", "name", "phone"], filters: [{ type: "birthday", state: { from: day, to: day } }] });
+    const r = await altClientsSearch(env, user, loc, { page, page_size: 200, fields: ["id", "name", "phone", "last_visit_date"], filters: [{ type: "birthday", state: { from: day, to: day } }] });
     for (const x of r.list) {
       const p = normPhone(String(x.phone ?? "")).slice(1);
       if (!p || seen.has(p)) continue;
       seen.add(p);
-      out.push({ p, n: altText(x.name || "", 60) });
+      const last = /^\d{4}-\d{2}-\d{2}/.test(String(x.last_visit_date || "")) ? String(x.last_visit_date).slice(0, 10) : "";
+      out.push({ p, n: altText(x.name || "", 60), ...(last ? { last } : {}) });
     }
     if (r.list.length < 200) break;
   }
@@ -154,14 +164,18 @@ export function mkText(c, set, id, x, lang) {
 }
 
 /** одно сообщение → "sent" | "drop" | "again" (в следующую минуту) | "stop" (больше не шлём сегодня, номер на паузе)
- *  @param {Env} env @param {Client} c @param {string} id @param {any} set @param {any} x @param {number} now @param {any} route @param {any[]} logs */
-async function mkSend(env, c, id, set, x, now, route, logs) {
+ *  @param {Env} env @param {Client} c @param {string} id @param {any} set @param {any} x @param {number} now @param {any} route @param {any[]} logs
+ *  @param {() => Promise<Set<string> | null>} booked будущие записи из журнала (один раз за проход; null — журнал не прочитался) */
+async function mkSend(env, c, id, set, x, now, route, logs, booked) {
   const skip = (/** @type {string} */ why) => { logs.push(mkEntry(id, x, "skipped", why, now)); return "drop"; };
   // перед каждым сообщением — свежая проверка: «стоп» и отказ от рекламы могли прийти после сбора очереди
   if (await optedOut(env, c.id, x.p)) return skip("клиент просил не писать");
   const gate = await marketingGate(env, c, now).catch(() => null);
   if (!gate || !gate.ready) return "stop"; // база согласий не ответила — закрыто при сомнении, попробуем через минуту
-  if (!gateAllows(gate, x.p)) return skip(STOP.has(gate.reasons.get(x.p) || "") ? "клиент просил не писать" : "нет подтверждённого согласия на рекламу");
+  if (!gateAllows(gate, x.p)) return skip(STOP.has(gate.reasons.get(x.p) || "") ? "клиент просил не писать" : "нет согласия на рекламу");
+  const bk = await booked();
+  if (!bk) return "stop"; // журнал Altegio не прочитался: не видно, записался ли — попробуем через минуту
+  if (bk.has(x.p)) return skip("клиент уже записался: рекламу не шлём");
   const day = isoDay(now), year = day.slice(0, 4);
   if (id === "birthday" && await bdGreeted(env, c.id, x.p, year)) return skip("уже поздравили в этом году");
   const cnt = await jrCount(env, c.id, day);

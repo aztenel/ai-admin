@@ -146,3 +146,26 @@ test("запрет снят (только в проверке): отправка
     assert.ok(h.turns.some(x => x.by === "bc" && /Можем записать к мастеру Тони/.test(x.text)), "в переписке — тот же текст, что ушёл");
   } finally { W.gaNoBroadcast = was; }
 });
+
+// ТЗ v4 §6 (08.11.2026): ночной снимок базы не знает о записях, сделанных сегодня, — рассылка писала рекламу тому, кто уже записался.
+// Перед каждой порцией — будущие записи из журнала Altegio (как у автосценария, crmBookedNow); Altegio не ответил — ждём, а не шлём
+test("ТЗ v4: записался сегодня (после ночного снимка) — рекламу не получает; Altegio не ответил — рассылка ждёт и не шлёт", { skip: consentSkip }, async () => {
+  const s = await base(), was = W.gaNoBroadcast;
+  W.gaNoBroadcast = false;
+  try {
+    const r = await bcCreate(s.env, W, { ...DRAFT, text: OWN.staff }, Date.now(), "owner", { start: true });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.b.total, 2);
+    const tick = async () => { const b = s.kv.json("bc:winchester:" + r.b.id); if (b.status !== "running") return b; for (const k of ["nextAt", "retryAt"]) if (b[k]) b[k] = Date.now() - 1; s.kv.mem.set("bc:winchester:" + r.b.id, JSON.stringify(b)); await bcTick(s.env, "winchester", r.b.id); return s.kv.json("bc:winchester:" + r.b.id); };
+    net.altJournalFail = 500; // журнал не читается — не видно, кто записался
+    let b = await tick();
+    assert.deepEqual(gaSent(), [], "без журнала — не шлём");
+    assert.equal(b.status, "running"); assert.match(String(b.retryWhy), /не видно, кто записался/);
+    net.altJournalFail = 0;
+    const fut = rec(ph(601), -2, { name: "Арман" }); fut.attendance = 0; fut.create_date = new Date().toISOString(); // записался сегодня на послезавтра
+    net.altJournal.push(fut);
+    for (let i = 0; i < 4; i++) b = await tick();
+    const out = gaSent();
+    assert.deepEqual(out.map(x => x.to), [dg(602)], JSON.stringify(out));
+    assert.ok((b.excl || 0) >= 1, JSON.stringify(b));
+  } finally { W.gaNoBroadcast = was; net.altJournalFail = 0; }
+});

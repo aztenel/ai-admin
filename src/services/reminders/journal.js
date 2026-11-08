@@ -41,7 +41,7 @@ import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
 import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf, linkOf } from "./templates.js";
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
-import { bonusScan } from "./bonus.js";
+import { bonusScan, sendAt } from "./bonus.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
 // между полными чтениями — раз в минуту только изменённые записи (ТЗ v4, 08.11.2026: подтверждение за 1–2 минуты). Окно 10 минут с запасом:
@@ -387,7 +387,8 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
     if (now - +p.ls > FRESH_MS) { logs.push(entry(x, "skipped", "перенос замечен поздно (журнал долго не читали): не пишем задним числом", now)); continue; }
     if (!told(p, now)) { logs.push(entry(x, "skipped", "запись изменили сразу после создания: клиент узнает новое время из подтверждения", now)); continue; }
     if (out.some(y => y.k === "s01" && y.rec === v.id)) { logs.push(entry(x, "skipped", "подтверждение с новым временем ещё не ушло: о переносе отдельно не пишем", now)); continue; }
-    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}), k: "s06", at: now });
+    // замечен после часов отправки — утром (ТЗ v4: ночные переносы пропадали, «время отправки прошло»)
+    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}), k: "s06", at: sendAt(o, now) });
   }
   for (const p of ch.cancelled) { // отмена будущей записи: сообщение — только если владелец включил сценарий и клиент знал о записи
     if (!o.cx) continue;
@@ -395,7 +396,7 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
     if (atLocal(String(p.d), String(p.t)) <= now) continue;
     if (now - +p.ls > FRESH_MS) { logs.push(entry(x, "skipped", "отмена замечена поздно (журнал долго не читали): не пишем задним числом", now)); continue; }
     if (!told(p, now)) { logs.push(entry(x, "skipped", "запись удалили сразу после создания (ошибка администратора): клиенту не пишем", now)); continue; }
-    out.push({ ...x, at: now });
+    out.push({ ...x, at: sendAt(o, now) }); // ночью — утром
   }
   if (o.noshow !== false) { // S11: «не пришёл» — только задача администратору в чате, клиенту ничего не пишем
     for (const r of list) {

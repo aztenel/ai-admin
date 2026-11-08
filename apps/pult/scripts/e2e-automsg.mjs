@@ -197,7 +197,7 @@ async function owner(scheme) {
   const svcSec = page.locator("section", { has: page.getByRole("heading", { name: "Для записи (сервисные)" }) });
   const mkSec = page.locator("section", { has: page.getByRole("heading", { name: "Реклама (только с согласием)" }) });
   ok("группа «Для записи (сервисные)»: 8 сценариев (с бонусами)", (await svcSec.getByRole("article").count()) === 8);
-  ok("группа «Реклама (только с согласием)»: 3 сценария, сказано про согласие", (await mkSec.getByRole("article").count()) === 3 && /подтверждённое согласие/.test(await text(mkSec)));
+  ok("группа «Реклама (только с согласием)»: 3 сценария, сказано про согласие", (await mkSec.getByRole("article").count()) === 3 && /есть согласие на рекламу/.test(await text(mkSec)));
   const status = page.getByRole("region", { name: "Отправка клиентам" });
   ok("сверху: всё выключено — клиентам ничего не уходит", /Все сценарии выключены/.test(await text(status)), (await text(status)).slice(0, 300));
   ok("сверху: часы отправки и предел за сутки", /с 10:00 до 21:00/.test(await text(status)) && /Не больше в сутки/.test(await text(status)));

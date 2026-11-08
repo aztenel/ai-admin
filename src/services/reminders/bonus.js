@@ -49,8 +49,8 @@ export function bonusTx(details) {
 
 /** подпись оплаты записи: изменилась — смотрим детали визита @param {any} r */
 const sigOf = r => [r.attendance, r.visit_attendance, r.visit_id, r.paid_full, r.payment_status, r.last_change_date].map(x => String(x ?? "")).join("|");
-/** ближайшее время отправки: сейчас или начало часов отправки (вечером — утром) @param {any} o @param {number} now */
-function sendAt(o, now) {
+/** ближайшее время отправки: сейчас или начало часов отправки (вечером — утром) @param {{ from: number, to: number }} o @param {number} now */
+export function sendAt(o, now) {
   const L = local(now), h = L.getUTCHours();
   if (h >= o.from && h < o.to) return now;
   return Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (h >= o.to ? 1 : 0), o.from - TZ, 0);

@@ -2,7 +2,9 @@
 // Удаление данных клиента по его просьбе. Страница /privacy обещает: «напишите … — удалим в течение 10 дней», а кнопки у владельца не было —
 // пришлось бы стирать ключи в панели Cloudflare вручную (17.10.2026, модуль 11 плана проверки). Удаляем переписку, заявки с этим номером
 // (общий список и отдельные ключи), согласие, очередь напоминаний и дневной предел записей. Отметку «стоп» оставляем: без неё бот
-// и рассылки снова начнут писать человеку, который просил не писать. Списки рассылок (получатели bcr: и «кому ушло» bcs: — для итогов) удаляются сами через 180 дней или вместе с рассылкой.
+// и рассылки снова начнут писать человеку, который просил не писать. С ТЗ v4 (08.11.2026) удаление ещё и закрывает клиенту сообщения:
+// ставится «стоп» (KV и база контактов D1, источник erase) и из очереди автоматических сообщений второго номера уходят его задачи —
+// иначе после удаления данных ему продолжали бы приходить напоминания, благодарности и реклама по записям Altegio. Списки рассылок (получатели bcr: и «кому ушло» bcs: — для итогов) удаляются сами через 180 дней или вместе с рассылкой.
 /** @import { Env } from "../../lib/types.js" */
 import { kvRetry } from "../../db/kv/retry.js";
 import { allLeads, loadLeads, saveLeads, leadKey } from "../../db/kv/leads.js";
@@ -10,6 +12,7 @@ import { logTurns, forgetKey } from "../../db/kv/chats.js";
 import { isoDay } from "../../lib/time.js";
 import { walForget } from "../chatstore/wal.js";
 import { chatErased } from "../chatstore/index.js";
+import { stopRecord } from "../contacts/stops.js";
 
 /** @param {Env} env @param {string} cid @param {string} ch @param {string} id @param {string} phone номер чата WhatsApp в виде +7…; у веб-чата пусто: номер там набран посетителем, он мог быть чужим @param {string} loc локация Altegio или "" @param {number} now @returns {Promise<{ leads: number }>} */
 export async function eraseClient(env, cid, ch, id, phone, loc, now) {
@@ -37,5 +40,12 @@ export async function eraseClient(env, cid, ch, id, phone, loc, now) {
     const q = JSON.parse((await env.KV.get("rmq:" + cid)) || "[]"), keep = q.filter((/** @type {any} */ x) => !(x.ch === ch && x.id === id));
     if (keep.length !== q.length) await env.KV.put("rmq:" + cid, JSON.stringify(keep));
   });
+  if (digits && ch !== "web") { // веб-чат: номер набрал посетитель, мог быть чужим — сообщения этому номеру не закрываем
+    await stopRecord(env, { ws: cid, phone: digits, kind: "stop", source: "erase", actor: "owner", eventKey: `erase:${now}`, text: "", at: now });
+    await kvRetry(async () => {
+      const q = JSON.parse((await env.KV.get("jrq:" + cid)) || "[]"), keep = q.filter((/** @type {any} */ x) => String(x && x.p) !== digits);
+      if (keep.length !== q.length) await (keep.length ? env.KV.put("jrq:" + cid, JSON.stringify(keep), { expirationTtl: 3 * 86400 }) : env.KV.delete("jrq:" + cid));
+    });
+  }
   return { leads: n };
 }

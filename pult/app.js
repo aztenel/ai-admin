@@ -724,7 +724,7 @@ function menuSheet() {
   if (d.ch !== "web" && !d.off) { if (d.paused && !d.stop) body.appendChild(opt("refresh", "Вернуть бота", "", function () { doAct("resume"); })); else if (!d.paused) body.appendChild(opt("clock", "Остановить бота на 12 часов", "", function () { doAct("pause"); })); }
   body.appendChild(opt("info", "Карточка клиента", "", openCard));
   body.appendChild(opt("refresh", "Очистить память бота", "бот забудет эту переписку и записи", function () { ask("Очистить память бота?", "Бот забудет эту переписку, записи и просьбы клиента. Окно WhatsApp и «стоп» останутся.", "Очистить", function () { doAct("forget"); }); }, "bad"));
-  if (S.owner) body.appendChild(opt("close", "Удалить данные клиента", "по его просьбе: переписка, заявки, согласие", function () { ask("Удалить данные клиента?", "Удалятся переписка, заявки с этим номером, согласие и напоминания. Вернуть нельзя. Записи в Altegio и сообщения в Telegram удалите сами.", "Удалить", function () { doAct("erase"); }); }, "bad"));
+  if (S.owner) body.appendChild(opt("close", "Удалить данные клиента", "по его просьбе: переписка, заявки, согласие", function () { ask("Удалить данные клиента?", "Удалятся переписка, заявки с этим номером, согласие и напоминания. Сообщения ему больше не уйдут: ни напоминания, ни реклама. Вернуть нельзя. Записи в Altegio и сообщения в Telegram удалите сами.", "Удалить", function () { doAct("erase"); }); }, "bad"));
   sheet(whoOf(d.name || d.waName, d.phone), body);
 }
 

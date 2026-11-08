@@ -10,8 +10,12 @@
 // неоднозначный «стоп», новые и отозванные согласия (D1). Запланированных отправок «под предел» не придумываем: только то, что есть.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { isoDay, local, TZ } from "../../lib/time.js";
+import { CRM_QUIET_DAYS } from "../../config/constants.js";
 import { crmView } from "./segments.js";
 import { autoGet } from "./auto.js";
+import { autoSettings } from "../automsg/catalog.js";
+import { mkLocked } from "../automsg/marketing.js";
+import { autoLoad } from "../../db/kv/automsg.js";
 import { serviceInfo } from "../reminders/info.js";
 import { d1Ready } from "../../db/d1/status.js";
 import { dayEvents } from "../../db/d1/stats.js";
@@ -45,19 +49,26 @@ export async function calendarOf(env, c, now) {
       cell.service.total++; cell.service.kinds[x.k] = (cell.service.kinds[x.k] || 0) + 1;
     }
   } catch (e) { console.log("calendar service", String(e).slice(0, 100)); }
-  // реклама: кто в день k (0 — сегодня) наберёт ровно N дней с визита; прошедшие дни — без плана
+  // реклама: кто в день k (0 — сегодня) наберёт ровно N дней с визита; прошедшие дни — без плана. У компании со вторым номером (c.jr,
+  // Winchester) — реактивация «Автоматических сообщений» (ТЗ v4: календарь показывал автосценарий Meta, а реклама идёт со второго номера),
+  // иначе — автосценарий Meta «Пора на стрижку». «Был меньше 14 дней назад» — на день календаря: к этому дню с визита пройдёт N дней
+  // (было: считалось на сегодня, и с 15-го дня «можно писать 0»)
   /** @type {any} */ let auto = null, at = 0;
   if (c.crm) {
     try {
-      auto = await autoGet(env, c.id);
+      if (c.jr) {
+        const set = autoSettings(c, await autoLoad(env, c.id)), ra = set.s.reactivate, locked = mkLocked(env, c);
+        auto = { on: !!ra.on && !locked, days: +ra.t.days, cap: +ra.t.cap, tpl: true, src: "ga", title: "Реактивация клиентов", time: String(ra.t.time || ""), ...(locked ? { locked } : {}) };
+      } else auto = { ...(await autoGet(env, c.id)), src: "meta", title: "Автосценарий «Пора на стрижку»", time: "11:00" };
       const view = await crmView(env, c, now);
       at = view.snap ? view.snap.at : 0;
       for (const d of days) {
         const k = dayNo(d) - t0;
         if (k < 0) continue;
         const cand = view.rows.filter(x => x.d + k === auto.days), why = /** @type {Record<string, number>} */ ({});
-        for (const x of cand) if (x.why) why[x.why] = (why[x.why] || 0) + 1;
-        const ok = cand.filter(x => !x.why).length;
+        const whyOn = (/** @type {any} */ x) => x.why !== "recent" ? x.why : x.d + k < CRM_QUIET_DAYS ? "recent" : view.marked && view.marked.has(x.p) ? "marketed" : "";
+        for (const x of cand) { const w = whyOn(x); if (w) why[w] = (why[w] || 0) + 1; }
+        const ok = cand.filter(x => !whyOn(x)).length;
         out[d].marketing = { candidates: cand.length, allowed: ok, planned: auto.on && auto.tpl ? Math.min(ok, auto.cap) : 0, excluded: why };
       }
     } catch (e) { console.log("calendar crm", String(e).slice(0, 100)); }
@@ -78,7 +89,7 @@ export async function calendarOf(env, c, now) {
   }
   for (const d of days) {
     const cell = out[d];
-    if (cell.marketing && cell.marketing.planned > 0) ev(d, "campaign", `Автосценарий «Пора на стрижку»`, cell.marketing.planned);
+    if (cell.marketing && cell.marketing.planned > 0) ev(d, "campaign", auto && auto.src === "ga" ? `«${auto.title}» со второго номера` : `Автосценарий «Пора на стрижку»`, cell.marketing.planned);
     for (const [k, n] of Object.entries(cell.service.kinds)) ev(d, "service", SERVICE_TITLE[k] || "Сервисные сообщения", +n || 0);
   }
   try {
@@ -107,5 +118,6 @@ export async function calendarOf(env, c, now) {
   const ORDER = ["approval", "campaign", "service", "sent", "error", "audience"];
   for (const d of days) out[d].events.sort((/** @type {any} */ a, /** @type {any} */ b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || b.n - a.n);
   return { today, weekday0: L.getUTCDay(), from: days[0], to: days[days.length - 1], month,
-    auto: auto ? { on: !!auto.on, days: auto.days, cap: auto.cap, tpl: !!auto.tpl } : null, baseAt: at, days: days.map(d => out[d]) };
+    auto: auto ? { on: !!auto.on, days: auto.days, cap: auto.cap, tpl: !!auto.tpl, src: auto.src, title: auto.title, time: auto.time, ...(auto.locked ? { locked: auto.locked } : {}) } : null,
+    baseAt: at, days: days.map(d => out[d]) };
 }

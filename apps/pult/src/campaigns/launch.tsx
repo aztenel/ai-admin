@@ -238,7 +238,7 @@ export function LaunchConfirm({ final, prevN, busy, onYes, onCancel }: { final?:
             Сообщение получат <b className="tnum text-2xl font-semibold">{nf.format(f.n)}</b> из <span className="tnum">{nf.format(f.rest)}</span>{" "}
             <span className="text-fg-2">{plural(f.rest, CLIENTS)}</span>
           </p>
-          {f.rest > f.n && <p className="text-sm text-fg-2">Остальным сейчас нельзя: нет подтверждённого согласия, просили не писать, записаны, были недавно или реклама уже была.</p>}
+          {f.rest > f.n && <p className="text-sm text-fg-2">Остальным сейчас нельзя: нет согласия на рекламу, просили не писать, записаны, были недавно или реклама уже была.</p>}
           {f.sample && (
             <div>
               <p className="mb-1 text-sm font-medium text-fg-2">Точный текст</p>

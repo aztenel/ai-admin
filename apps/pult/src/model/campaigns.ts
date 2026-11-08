@@ -619,8 +619,9 @@ export type CalendarEventKind = "service" | "campaign" | "approval" | "sent" | "
 export type CalendarEvent = { kind: CalendarEventKind; title: string; n: number; id?: string };
 export type CampaignCalendar = {
   today: string;
-  /** Автосценарий: включён, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы. */
-  auto: { on: boolean; days: number; cap: number; tpl: boolean } | null;
+  /** Реклама по базе: включена, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы.
+   *  src: "ga" — реактивация «Автоматических сообщений» со второго номера (ТЗ v4), "meta" — автосценарий Meta; locked — почему реклама закрыта. */
+  auto: { on: boolean; days: number; cap: number; tpl: boolean; src?: "ga" | "meta"; title?: string; time?: string; locked?: string } | null;
   /** Когда собрана база клиентов (мс), 0 — не собрана. */
   baseAt: number;
   days: CalendarDay[];

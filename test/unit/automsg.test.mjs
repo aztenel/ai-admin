@@ -523,3 +523,74 @@ test("время и текст одним запросом: ошибка в те
   const k = sc(await info(own), "remind3");
   assert.equal(k.timing.hours, 5); assert.equal(k.text.ru, "Ждём вас сегодня в {время}.");
 });
+
+// ТЗ v4 §6 (08.11.2026): реклама автосообщений не видела записей, сделанных сегодня; поздравление не проверяло запись и недавний визит
+const grant = async (d, list) => { for (const i of list) {
+  const r = await contactAdd(d.db, "winchester", { id: "c" + i, phone: dg(i), name: "", search: dg(i), at: 1, actor: "owner" });
+  await consentAdd(d.db, "winchester", { contactId: (r && r.id) || "c" + i, purpose: "marketing", state: "granted", basis: "письменное согласие", source: "manual", actor: "owner", at: 1, evidence: "document", evidenceRef: "тест", confirmed: true, givenAt: 1 });
+} };
+
+test("ТЗ v4: день рождения — не поздравляем рекламой того, кто записан или был меньше 14 дней назад; Altegio не ответил — день пропущен", { skip }, async () => {
+  net.reset();
+  const was = W.gaNoBroadcast; W.gaNoBroadcast = false;
+  try {
+    const d = d1With("production");
+    net.altClients = [{ id: 1, name: "Арман", phone: ph(6201), bd: "1990-10-19", last_visit_date: "2026-08-01 12:00:00" },
+      { id: 2, name: "Ерлан", phone: ph(6202), bd: "1985-10-19", last_visit_date: "2026-10-12 12:00:00" }, // был 7 дней назад
+      { id: 3, name: "Айдос", phone: ph(6203), bd: "1985-10-19", last_visit_date: "2026-07-01 12:00:00" }]; // записан на завтра
+    net.altJournal = [rec(ph(6203), TOM, "15:00", { id: 6203 })];
+    const s = mk({ ...ENV, DB: d.db });
+    await grant(d, [6201, 6202, 6203]);
+    await autoOn(s, { birthday: true }, { birthday: { time: "11:00" } });
+    await mkRun(s.env, at(TODAY, "11:00")); await mkRun(s.env, at(TODAY, "11:01"));
+    assert.deepEqual(sent().map(x => x.to), [dg(6201)], JSON.stringify(sent()));
+    // в другой компании того же дня Altegio не отвечает: поздравлений нет, в журнале — почему
+    net.reset();
+    net.altClients = [{ id: 1, name: "Арман", phone: ph(6201), bd: "1990-10-19" }];
+    net.altJournalFail = 500;
+    const s2 = mk({ ...ENV, DB: d1With("production").db });
+    await autoOn(s2, { birthday: true }, { birthday: { time: "11:00" } });
+    await mkRun(s2.env, at(TODAY, "11:00")); await mkRun(s2.env, at(TODAY, "11:01"));
+    assert.deepEqual(sent(), []);
+    assert.ok(JSON.parse((await s2.kv.api.get("jrl:winchester")) || "[]").some(x => /не удалось собрать получателей/.test(x.why)));
+  } finally { W.gaNoBroadcast = was; net.altJournalFail = 0; }
+});
+
+test("ТЗ v4: реактивация — записался сегодня (после ночного снимка) — не пишем: ни при сборе, ни перед отправкой", { skip }, async () => {
+  net.reset();
+  const was = W.gaNoBroadcast; W.gaNoBroadcast = false;
+  try {
+    const d = d1With("production"), now = at(TODAY, "12:00");
+    const last = n => new Date(now - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+    const s = mk({ ...ENV, DB: d.db });
+    const row = i => ({ p: dg(i), n: "Клиент", last: last(45), first: last(100), v: 2, staff: "Тони", svc: "Мужская стрижка" });
+    await s.kv.api.put("crm:winchester:snap", JSON.stringify({ at: now, list: [row(6211), row(6212), row(6213)], futOnly: [] }));
+    await grant(d, [6211, 6212, 6213]);
+    net.altJournal = [rec(ph(6211), TOM, "15:00", { id: 6211 })]; // записался утром, снимок ночью этого не знал
+    await autoOn(s, { reactivate: true }, { reactivate: { days: 45, time: "12:00", cap: 10 } });
+    await mkRun(s.env, now); // собрал очередь: 6212 и 6213; ушло не больше 2 за минуту
+    const first = sent().map(x => x.to);
+    assert.ok(!first.includes(dg(6211)), "записанного утром нет в очереди");
+    const rest = [dg(6212), dg(6213)].filter(p => !first.includes(p));
+    for (const p of rest) net.altJournal.push(rec("+" + p, TOM, "16:00", { id: +p.slice(-4) + 10 })); // ещё один записался после сбора очереди
+    await mkRun(s.env, now + 60e3); await mkRun(s.env, now + 120e3);
+    assert.deepEqual(sent().map(x => x.to).filter(p => rest.includes(p)), [], "записался после сбора очереди — перед отправкой проверили");
+  } finally { W.gaNoBroadcast = was; }
+});
+
+test("ТЗ v4: перенос и отмена, замеченные вечером после часов отправки, уходят утром (раньше пропадали: «время отправки прошло»)", async () => {
+  net.reset();
+  const A = rec(ph(6221), "2026-10-21", "15:00", { id: 6221, name: "Арман" }), B = rec(ph(6222), "2026-10-21", "16:00", { id: 6222, name: "Ерлан" });
+  net.altJournal = [A, B];
+  const s = mk(ENV); await approveAll(s); await autoOn(s, { move: true, cancel: true });
+  await jrRun(s.env, at(TODAY, "22:00"));
+  net.altJournal = [rec(ph(6221), "2026-10-21", "17:00", { id: 6221, name: "Арман" })]; // перенесли A, удалили B — в 22:15
+  await jrRun(s.env, at(TODAY, "22:16"));
+  assert.deepEqual(sent(), [], "ночью не пишем");
+  for (const t of ["23:00", "07:00"]) await jrRun(s.env, t === "23:00" ? at(TODAY, t) : at(TOM, t));
+  assert.deepEqual(sent(), []);
+  await jrRun(s.env, at(TOM, "10:00")); await jrRun(s.env, at(TOM, "10:01"));
+  const out = sent();
+  assert.equal(out.length, 2, JSON.stringify(log(s).filter(x => x.k === "s06" || x.k === "cx")));
+  assert.ok(out.some(x => x.to === dg(6221) && /17:00/.test(x.text)) && out.some(x => x.to === dg(6222) && /отменена/.test(x.text)), JSON.stringify(out));
+});
