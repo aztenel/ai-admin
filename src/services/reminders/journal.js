@@ -35,6 +35,7 @@ import { logTurns, readHist } from "../../db/kv/chats.js";
 import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewed, jrReviewMark, optedOut, rmOk,
   jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals, svVariants } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
+import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
 import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf } from "./templates.js";
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
@@ -62,7 +63,7 @@ const SVC_NO = new Set(["block", "stop", "review"]); // база контакт�
  *  (так план считают проверки: накануне в 18:00, за 2 часа, отзыв через 3 часа) @param {Client} c @param {any} [set] */
 function opts(c, set) {
   const base = { from: 10, to: 21, eve: "18:00", h2: true, rv: true, cap: 150, s01: false, s06: false, cx: false, noshow: true, ...(c.jr || {}) };
-  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 0, set: /** @type {any} */ (null) };
+  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 0, set: /** @type {any} */ (null), site: /** @type {any} */ (null) };
   if (!set) return o;
   const s = set.s;
   return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: Number.isFinite(+s.confirm.t.delay) ? Math.max(0, +s.confirm.t.delay) : 0,
@@ -119,12 +120,15 @@ export function jrRec(r) {
  *  сделана раньше чем за час до этого; за несколько часов — только если это время в часах отправки и запись сделана заранее; отзыв —
  *  через несколько часов после начала, вне часов отправки — утром (from + 1); подтверждение новой записи — через несколько минут после
  *  записи, в часы отправки и не меньше чем за час до визита. Уже прошедшее и опоздавшее больше допустимого — не планируем.
- *  set — настройки «Автоматических сообщений» (выключатели и время); без них — как в паспорте компании.
- *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] */
-export const jrPlan = (c, records, now, set) => jrPlanAll(c, records, now, set).items;
+ *  set — настройки «Автоматических сообщений» (выключатели и время); без них — как в паспорте компании; site — выбор с сайта.
+ *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] @param {Record<string, { h: number }>} [site] */
+export const jrPlan = (c, records, now, set, site) => jrPlanAll(c, records, now, set, site).items;
 
-/** то же и почему по записям ничего не будет @param {Client} c @param {any[]} records @param {number} now @param {any} [set] */
-export function jrPlanAll(c, records, now, set) {
+/** то же и почему по записям ничего не будет. site — выбор клиента в форме сайта { <номер записи>: { h } } (ТЗ v4): вместо обычных
+ *  напоминаний одно — за столько часов, сколько он выбрал (24 и больше — напоминание накануне, меньше — в день визита; 0 — без напоминаний).
+ *  Нужен включённый сценарий этого вида: текст и одобрение — у него
+ *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] @param {Record<string, { h: number }>} [site] */
+export function jrPlanAll(c, records, now, set, site) {
   const o = opts(c, set), out = /** @type {any[]} */ ([]), skipped = /** @type {any[]} */ ([]);
   for (const r of records) {
     const why = recWhy(r), v = why ? null : jrRec(r);
@@ -138,11 +142,22 @@ export function jrPlanAll(c, records, now, set) {
       if (lh < o.from || lh >= o.to) s1 = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (lh >= o.to ? 1 : 0), o.from - TZ, 0);
       if (t - s1 >= 3600e3) add("s01", s1);
     }
-    if (o.d1 && v.att !== 1) {
+    const pick = site && site[v.id];
+    if (pick && v.att !== 1) { // клиент сам выбрал на сайте, когда напомнить
+      const h = Math.max(0, +pick.h || 0);
+      if (!h) skipped.push({ rec: v.id, why: "на сайте клиент выбрал «не напоминать»" });
+      else if (h >= 12 && o.d1) { const d1 = in24(t - (h - 24) * 3600e3, o); if (d1 < t && !(v.made && v.made > d1 - 600e3)) add("d1", d1); }
+      else if (h < 12 && o.h2) {
+        const h2 = t - h * 3600e3, hr = local(h2).getUTCHours();
+        if (hr >= o.from && hr < o.to && !(v.made && v.made > h2 - 600e3)) add("h2", h2);
+        else skipped.push({ rec: v.id, why: `за ${h} ч до визита — вне часов отправки или запись сделана позже` });
+      }
+    }
+    if (o.d1 && v.att !== 1 && !pick) {
       const d1 = o.d1mode === "24h" ? in24(t, o) : atLocal(v.date, o.eve, -1);
       if (t - d1 >= 12 * 3600e3 && !(v.made && v.made > d1 - 3600e3)) add("d1", d1);
     }
-    if (o.h2 && v.att !== 1) {
+    if (o.h2 && v.att !== 1 && !pick) {
       const h2 = t - o.h2h * 3600e3, hr = local(h2).getUTCHours();
       if (hr >= o.from && hr < o.to && !(v.made && t - v.made < (o.h2h + 2) * 3600e3)) add("h2", h2);
     }
@@ -187,6 +202,7 @@ async function jrClient(env, c, now) {
   const user = altUserKey(env, c), loc = altLoc(env, c), route = gaRoute(env, c.id);
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set), logs = /** @type {any[]} */ ([]);
+  o.site = await siteNotifyLoad(env.KV, c.id); // выбор «напомнить за …» из формы сайта
   let q = await jrqLoad(env, c.id), dirty = false;
   /** @type {Record<string, any> | null} */ let bk = null;
   let bkDirty = false;
@@ -319,7 +335,7 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
  *  @param {Env} env @param {Client} c @param {any} o @param {any[]} q @param {any[]} list @param {number} now @param {any[]} logs
  *  @param {{ moved: { p: any, v: any }[], cancelled: any[] }} ch */
 async function jrMerge(env, c, o, q, list, now, logs, ch) {
-  const byId = new Map(list.map(r => [String(r && r.id), r])), plan = jrPlan(c, list, now, o.set).filter(x => x.at <= now + HORIZON);
+  const byId = new Map(list.map(r => [String(r && r.id), r])), plan = jrPlan(c, list, now, o.set, o.site).filter(x => x.at <= now + HORIZON);
   const pk = new Set(plan.map(key)), prk = new Map(plan.map(x => [x.rec + ":" + x.k, x]));
   const gone = new Set(ch.cancelled.map(p => String(p.id)));
   // запись прочитана сейчас. Которой нет в ответе, та остаётся в очереди как была: удалена ли она, решит свежее чтение журнала её дня
@@ -527,7 +543,7 @@ export async function jrDry(env, c, now) {
   const from = isoDay(now - 86400e3), to = isoDay(now + 86400e3);
   const { list, pages, cut } = await altRecordsRange(env, user, loc, from, to, 3);
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set);
-  const { items, skipped } = jrPlanAll(c, list, now, set), ap = await svApprovals(env, c.id), own = await svVariants(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
+  const { items, skipped } = jrPlanAll(c, list, now, set, await siteNotifyLoad(env.KV, c.id)), ap = await svApprovals(env, c.id), own = await svVariants(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   /** @type {Map<string, any>} */ const prof = new Map();
   const out = [];

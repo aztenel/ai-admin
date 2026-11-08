@@ -52,6 +52,36 @@ test("план: накануне в 18:00, за 2 часа (только с 10 �
   assert.ok(!JSON.stringify(items).includes("XXX"), "скрытый номер не попадает в очередь");
 });
 
+test("ТЗ v4: напоминание по выбору клиента на сайте — одно, в выбранное время; «не напоминать» — без напоминаний; остальные записи как обычно", () => {
+  const now = at(TODAY, "09:00"), set = { win: { from: 10, to: 21 }, cap: 150, s: {
+    confirm: { on: false, t: { delay: 0 } }, remind24: { on: true, t: { mode: "24h", eve: "18:00" } }, remind3: { on: true, t: { hours: 3 } },
+    move: { on: false, t: {} }, cancel: { on: false, t: {} }, review: { on: true, t: { hours: 3 } } } };
+  const list = [rec(ph(301), TOM, "15:00", { id: 31 }), rec(ph(302), TOM, "15:00", { id: 32 }), rec(ph(303), TOM, "15:00", { id: 33 }),
+    rec(ph(304), TOM, "15:00", { id: 34 }), rec(ph(305), TOM, "10:30", { id: 35 })];
+  const site = { 32: { h: 1 }, 33: { h: 24 }, 34: { h: 0 }, 35: { h: 1 } };
+  const all = jrPlan(W, list, now, set, site);
+  assert.deepEqual(kinds(all, 31), ["d1", "h2", "rv"], "без выбора — обычные напоминания");
+  assert.deepEqual(kinds(all, 32), ["h2", "rv"]); assert.equal(all.find(x => x.rec === "32" && x.k === "h2").at, at(TOM, "14:00"), "за 1 час");
+  assert.deepEqual(kinds(all, 33), ["d1", "rv"]); assert.equal(all.find(x => x.rec === "33" && x.k === "d1").at, at(TODAY, "15:00"), "за сутки");
+  assert.deepEqual(kinds(all, 34), ["rv"], "«не напоминать» — без напоминаний, отзыв остаётся");
+  assert.deepEqual(kinds(all, 35), ["rv"], "визит в 10:30, за 1 час — 9:30, раньше часов отправки: не шлём");
+  // сценарий выключен в пульте — по выбору клиента тоже не шлём (текст и одобрение — у сценария)
+  const off = jrPlan(W, list, now, { ...set, s: { ...set.s, remind3: { on: false, t: { hours: 3 } } } }, site);
+  assert.deepEqual(kinds(off, 32), ["rv"]);
+});
+
+test("ТЗ v4: выбор с сайта читается из хранилища — «за 1 час» уходит в 14:00, накануне в 18:00 не уходит", async () => {
+  net.reset();
+  net.altJournal = [rec(ph(311), TOM, "15:00", { id: 41, name: "Арман" })];
+  const s = mk(ENV); await approve(s);
+  await s.kv.api.put("sbn:winchester", JSON.stringify({ 41: { h: 1, t: at(TOM, "15:00") } }));
+  await jrRun(s.env, at(TODAY, "17:59")); await jrRun(s.env, at(TODAY, "18:00")); await jrRun(s.env, at(TODAY, "18:20"));
+  assert.deepEqual(sent(), [], "накануне не шлём: клиент выбрал «за 1 час»");
+  await jrRun(s.env, at(TOM, "14:00"));
+  assert.equal(sent().length, 1, JSON.stringify(s.kv.json("jrq:winchester")));
+  assert.equal(sent()[0].to, dg(311)); assert.match(sent()[0].text, /15:00/);
+});
+
 test("бот на втором номере Winchester выключен по умолчанию, BOT_GA_WINCHESTER = 1 включает; у других компаний — как было", () => {
   assert.equal(botOff({}, W, "ga"), true);
   assert.equal(botOff({ BOT_GA_WINCHESTER: "1" }, W, "ga"), false);

@@ -115,3 +115,21 @@ export async function photoGet(store, cid, loc, staffId, v) {
 export async function photoPut(store, cid, loc, staffId, v, img) {
   await store.put(sphKey(cid, loc, staffId, v), JSON.stringify({ t: img.type, b: toB64(img.bytes) }), { expirationTtl: 86400 });
 }
+
+// Напоминание, которое клиент выбрал в форме сайта (ТЗ v4, 08.11.2026): sbn:<клиент> = { <номер записи Altegio>: { h, t } } — h часов до
+// визита (0 — не напоминать), t — время визита. Один ключ на компанию: записи с сайта редкие, а журнал читает выбор одним запросом.
+// Прошедшие визиты (старше суток) убираются при каждой записи
+const SBN_MAX = 2000;
+/** @param {any} store @param {string} cid @returns {Promise<Record<string, { h: number, t: number }>>} */
+export async function siteNotifyLoad(store, cid) {
+  try { const v = JSON.parse((await store.get("sbn:" + cid)) || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : {}; } catch (e) { return {}; }
+}
+/** @param {any} store @param {string} cid @param {string} rec номер записи Altegio @param {number} h @param {number} visitAt @param {number} now */
+export async function siteNotifySave(store, cid, rec, h, visitAt, now) {
+  const all = await siteNotifyLoad(store, cid);
+  for (const [k, v] of Object.entries(all)) if (!v || !(+v.t > now - 86400e3)) delete all[k];
+  all[String(rec)] = { h: Math.max(0, Math.round(+h) || 0), t: visitAt };
+  const keys = Object.keys(all);
+  if (keys.length > SBN_MAX) for (const k of keys.sort((a, b) => all[a].t - all[b].t).slice(0, keys.length - SBN_MAX)) delete all[k];
+  await store.put("sbn:" + cid, JSON.stringify(all), { expirationTtl: 130 * 86400 });
+}
