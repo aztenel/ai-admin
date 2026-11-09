@@ -12,6 +12,10 @@
 //   APP_SECRET = App secret из App settings → Basic: бот принимает только запросы, подписанные Meta.
 //   Без APP_SECRET бот в WhatsApp сам в расписание Altegio не записывает — передаёт заявку администратору
 //   Text OWNER_NAME, OWNER_EMAIL — оператор и почта на странице /privacy (Privacy Policy URL для публикации приложения Meta)
+// WHATSAPP (Meta), номер компании: Secret WA_TOKEN_<ID> · Secret APP_SECRET_<ID> · Text PHONE_NUMBER_ID_<ID> · Text WABA_ID_<ID>
+//   Вебхук https://<воркер>/wa/<id> (Verify token = VERIFY_TOKEN). WABA_ID_<ID> — шаблоны и сведения аккаунта (src/services/integrations/meta/).
+//   Text WA_SINCE_<ID> — когда подключён номер Meta (пока не читается); Text WA_VIA_<ID>=wazzapo — номер через партнёра Wazzapo.
+//   Имена — META_VARS в src/config/env.js, описание — CLAUDE.md §3.2.
 // WHATSAPP (Green-API, обычный WhatsApp по QR-коду), номер клиента: Text GA_ID_<ID> · Secret GA_TOKEN_<ID> · Text GA_URL_<ID> (apiUrl из кабинета)
 //   Вебхук https://<воркер>/ga/<id>?t=<пароль> настраивает кнопка «Настроить Green-API» на странице /launch?c=<id>. Через этот номер идут и рассылки (обычным текстом).
 // WHATSAPP (Green-API, общий номер воркера — демо):   Text GA_URL · Text GA_ID · Secret GA_TOKEN · Secret GA_HOOK (любой пароль)

@@ -9,12 +9,13 @@ import { bcmAdd, autoLoad } from "../../db/kv/crm.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { logSafe } from "../../lib/phone.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
-import { GRAPH, BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/constants.js";
+import { BC_CHUNK, BC_SLOT, BC_DAY, CRM_FRESH_BC } from "../../config/constants.js";
 import { hStr } from "../schedule/slots.js";
 import { notify } from "../integrations/telegram/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaCall, gaCode, gaWhy, gaKind, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
+import { metaPhone } from "../integrations/meta/phone.js";
 import { sendTemplate } from "../channels/templates.js";
 import { wzOn, wzHealth } from "../channels/wazzapo.js";
 import { sendGreen } from "../channels/greenapi.js";
@@ -117,20 +118,18 @@ export async function bcTestLog(env, cid, digits, text, r, now) {
   try { await logTurns(env.KV, `h:ga:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc: "test", by: "bc", test: 1, ...(mid ? { mid } : {}), st: r && r.ok ? "sent" : "unknown" }]); }
   catch (e) { console.log("bc test log", String(e).slice(0, 120)); }
 }
-// сведения о номере из Meta: качество и предел получателей за 24 часа
+// сведения о номере из Meta: качество и предел получателей за 24 часа. С плана Meta, шаг 2 (09.11.2026) — через metaPhone: у запроса
+// есть срок ответа (раньше fetch шёл без срока, и зависший Graph держал /api/bc/list и проверку номера в 10:00), 429/5xx — один повтор,
+// лестница полей предела та же. Вид ответа прежний: { phone, name, quality, limit } или { error } — пульт и qualityRun не менялись
 /** @param {Env} env @param {any} route */
 export async function bcHealth(env, route) {
   const cr = waCreds(env, route);
   if (route && wzOn(env, route.client)) return wzHealth(env, cr.token, cr.pnid); // номер через партнёра Meta Wazzapo
-  const get = async (/** @type {string} */ f) => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = /** @type {any} */ ({}); try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
-  try {
-    let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле
-    if (j.error && j.error.code === 100) j = await get("display_phone_number,verified_name,quality_rating,messaging_limit_tier");
-    if (j.error && j.error.code === 100) j = await get("display_phone_number,verified_name,quality_rating");
-    if (j.error) return { error: `Meta не отдала сведения о номере (код ${j.error.code}${BC_HINT[j.error.code] ? ": " + BC_HINT[j.error.code] : ""}).` };
-    const tier = String(j.whatsapp_business_manager_messaging_limit || j.messaging_limit_tier || ""), m = /TIER_(\d+)(K)?/i.exec(tier);
-    return { phone: clean(j.display_phone_number || "", 24), name: clean(j.verified_name || "", 60), quality: String(j.quality_rating || "").toUpperCase(), limit: m ? +m[1] * (m[2] ? 1000 : 1) : /UNLIMITED/i.test(tier) ? -1 : 0 };
-  } catch (e) { return { error: "Meta не отвечает, сведения о номере получить не удалось." }; }
+  const h = /** @type {any} */ (await metaPhone(env, cr));
+  if (h.ok) return { phone: h.phone, name: h.name, quality: h.quality, limit: h.limit };
+  if (typeof h.code === "number" && h.code > 0) return { error: `Meta не отдала сведения о номере (код ${h.code}${BC_HINT[h.code] ? ": " + BC_HINT[h.code] : ""}).` };
+  if (h.code === 0 || h.code === "badjson") return { error: "Meta не отвечает, сведения о номере получить не удалось." };
+  return { error: `Сведения о номере не получены: ${h.why}.` }; // нет ключа или номера — до Graph не ходили
 }
 // список рассылок, которые сейчас идут: по нему работает фоновая отправка. false — не записался (запуск без него не отправит ничего)
 /** @param {Env} env @param {string} cid @param {string} id @param {boolean} on @returns {Promise<boolean>} */

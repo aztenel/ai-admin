@@ -32,7 +32,7 @@ export function metaIds(cid = "winchester") {
   return { ...ids };
 }
 
-/** переменные номера Meta компании для mk(): ключ, секрет приложения, номер, WABA (WABA_ID_<ID> код пока не читает — план, шаг 2);
+/** переменные номера Meta компании для mk(): ключ, секрет приложения, номер, WABA (WABA_ID_<ID> читают metaIds и адаптеры Graph — план, шаг 2);
  * у каждой компании свои (metaIds), явные o важнее
  * @param {string} [cid] @param {{ token?: string, secret?: string, pnid?: string, waba?: string }} [o] */
 export function metaEnv(cid = "winchester", o = {}) {
