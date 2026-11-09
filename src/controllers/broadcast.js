@@ -243,7 +243,7 @@ export async function bcApi(request, env, url, s) {
       if (cur.ch === "ga" && cur.src === "crm" && cur.status === "ready" && !past) {
         const fin = await bcFinal(env, cid, cur, now);
         if (!fin.n) return jsonP({ error: "Некому отправить: " + fin.why, code: "empty" }, 409);
-        const plain = `Сообщение получат ${fin.n} из ${fin.rest}: остальным сейчас нельзя (нет подтверждённого согласия, просили не писать, записаны, были недавно или реклама уже была). Не больше ${cur.cap} в сутки, с ${cur.from}:00 до ${cur.to}:00.`;
+        const plain = `Сообщение получат ${fin.n} из ${fin.rest}: остальным сейчас нельзя (нет согласия на рекламу, просили не писать, записаны, были недавно или реклама уже была). Не больше ${cur.cap} в сутки, с ${cur.from}:00 до ${cur.to}:00.`;
         if (!(body.sure === true && +body.n === fin.n))
           return jsonP({ confirm: plain + " Запустить?", final: { n: fin.n, rest: fin.rest, cap: cur.cap, from: cur.from, to: cur.to, days: Math.ceil(fin.n / Math.max(1, cur.cap)), text: cur.msg, sample: fin.sample, ...(plan ? { at: plan } : {}) } }, 409);
       }

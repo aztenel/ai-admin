@@ -26,6 +26,7 @@ import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWAClient, waHook } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
+import { handleAltHook } from "../controllers/webhooks/altegio.js";
 import { greenHook } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
 import { siteApi } from "../controllers/site.js";
@@ -150,6 +151,9 @@ export async function route(request, env, ctx, pult) {
     // ---- WhatsApp клиента через партнёра Meta Wazzapo: вебхук /wz/<id>
     const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
+    // ---- события Altegio о записях: вебхук /alt/<id>?t=<пароль> — журнал читается сразу (ТЗ v4)
+    const am = /^\/alt\/([a-z][a-z0-9]{1,15})$/.exec(P);
+    if (am) return handleAltHook(request, env, ctx, am[1], url);
     if (M === "GET" && P === "/diag") { const a = await owner(); return a === true ? page(diagPage(await diag(env))) : a || forbid(); }
     if (M === "GET" && P === "/diag/storage") { const a = await owner(); return a === true ? page(diagPage(await storage(env), "Хранилища")) : a || forbid(); }
     if (M === "GET" && P === "/admin") { // панель владельца: все служебные страницы в одном месте

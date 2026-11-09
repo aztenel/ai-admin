@@ -504,7 +504,8 @@ test("календарь: этот месяц с 1-го и весь следую
   const r = await (await own.go("/api/bc/calendar?c=winchester")).json();
   const today = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10), [y, m] = today.split("-").map(Number);
   const len = new Date(Date.UTC(y, m - 1 + 2, 0)).getUTCDate() + new Date(Date.UTC(y, m, 0)).getUTCDate();
-  assert.equal(r.days.length, len); assert.equal(r.days[0].date, today.slice(0, 8) + "01"); assert.equal(r.today, today); assert.equal(r.auto.days, 28);
+  assert.equal(r.days.length, len); assert.equal(r.days[0].date, today.slice(0, 8) + "01"); assert.equal(r.today, today);
+  assert.equal(r.auto.src, "ga", "у Winchester реклама по базе — со второго номера (ТЗ v4)"); assert.equal(r.auto.days, 45);
   assert.equal(r.month.length, 2); assert.equal(r.month[0].id, today.slice(0, 7)); assert.ok(r.month.every(x => /^[А-Я][а-я]+$/.test(x.label)), JSON.stringify(r.month));
   assert.equal(r.days[r.days.length - 1].date.slice(0, 7), r.month[1].id);
   for (const d of r.days) { assert.equal(d.past, d.date < today); if (d.past) assert.equal(d.marketing, null, "прошедшие дни — без плана рекламы"); }
@@ -514,4 +515,24 @@ test("календарь: этот месяц с 1-го и весь следую
   for (const d of r.days) if (d.marketing) { assert.ok(d.marketing.allowed <= d.marketing.candidates); assert.ok(d.marketing.planned <= d.marketing.allowed); }
   assert.ok(!/7700000\d{4}/.test(JSON.stringify(r)), "без номеров");
   assert.ok("service" in r.days[0]);
+});
+
+// ТЗ v4 §6 (08.11.2026): у Winchester реклама по базе идёт со второго номера — календарь показывает реактивацию «Автоматических сообщений»,
+// а не автосценарий Meta; «был меньше 14 дней назад» считается на день календаря, а не на сегодня (было: с 15-го дня «можно писать 0»)
+test("ТЗ v4: календарь — реактивация второго номера; «был недавно» — на день календаря", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER), now = Date.now();
+  const last = n => new Date(now - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+  await s.kv.api.put("crm:winchester:snap", JSON.stringify({ at: now, list: [
+    { p: "77000009901", n: "Арман", last: last(5), first: last(100), v: 2, staff: "Тони", svc: "Мужская стрижка" },   // 45 дней — через 40 дней
+    { p: "77000009902", n: "Ерлан", last: last(40), first: last(100), v: 2, staff: "Тони", svc: "Мужская стрижка" }], futOnly: [] })); // через 5 дней
+  await grantSnap(s.env, "winchester");
+  await s.kv.api.put("msgset:winchester", JSON.stringify({ s: { reactivate: { on: true, at: 1, by: "test", t: { days: 45, time: "12:00", cap: 20 } } } }));
+  const r = await (await own.go("/api/bc/calendar?c=winchester")).json();
+  assert.equal(r.auto.src, "ga"); assert.equal(r.auto.days, 45); assert.equal(r.auto.title, "Реактивация клиентов"); assert.equal(r.auto.time, "12:00");
+  const at = k => r.days.find(d => d.date === new Date(now + k * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10));
+  const d5 = at(5), d40 = at(40);
+  assert.ok(d5 && d5.marketing && d5.marketing.candidates === 1 && d5.marketing.allowed === 1, JSON.stringify(d5 && d5.marketing));
+  if (d40) assert.equal(d40.marketing.allowed, 1, "через 40 дней Арман уже не «был недавно»: " + JSON.stringify(d40.marketing));
+  assert.equal(d5.marketing.planned, 0, "реклама со второго номера под запретом gaNoBroadcast — план 0");
+  assert.match(r.auto.locked, /выключена/);
 });

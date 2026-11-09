@@ -8,13 +8,14 @@ import { botOff } from "../channels/index.js";
 import { altLoc } from "../booking/book.js";
 import { altUserKey } from "../booking/journal.js";
 import { isoDay } from "../../lib/time.js";
-import { jrqLoad, jrHold, jrLogLoad, svApprovals, svApprove, svVariants, svVariantsEdit } from "../../db/kv/reminders.js";
+import { jrqLoad, jrHold, jrLogLoad, svApprovals, svApprove, svVariantsEdit } from "../../db/kv/reminders.js";
 import { jrOn } from "./journal.js";
 import { autoSettings } from "../automsg/catalog.js";
 import { autoLoad } from "../../db/kv/automsg.js";
 import { remindLive } from "./plan.js";
-import { KIND_SC, SV_CATS, SV_VARS, scenario, svCatalog, variantsOf, activeOf, approvedVariant, approvalFits } from "./templates.js";
+import { KIND_SC, SV_CATS, SV_VARS, scenario, svCatalog, variantsOf, activeOf, approvedVariant, approvalFits, withActive } from "./templates.js";
 import { cleanText } from "../broadcast/render.js";
+import { svOwn, svDefaults } from "./variants.js";
 
 const QUEUE_MAX = 50;
 const LOG_MAX = 30; // последних решений по очереди — в пульт
@@ -28,18 +29,21 @@ const CHAT_READS = 50;
 // журнал решений (ушло, отменено — запись перенесена, пропущено и почему, задача администратору) — номера маской
 /** @param {Env} env @param {Client} c @param {number} now */
 async function journalInfo(env, c, now) {
-  // включено ли — по выключателям раздела «Автоматические сообщения» (02.11.2026), время — оттуда же. Отмены (cx) здесь нет: прежний
-  // пульт этого вида не знает — новый раздел берёт всё из /api/msg/auto
+  // включено ли — по выключателям раздела «Автоматические сообщения» (02.11.2026), время — оттуда же. С 08.11.2026 здесь и отмена, и бонусы:
+  // без них очередь (и календарь) не показывала сообщения, отложенные на утро (находка проверки)
   const set = autoSettings(c, await autoLoad(env, c.id)), S = set.s, w = set.win;
   const altegio = altLoc(env, c) > 0 && !!altUserKey(env, c), enabled = jrOn(env, c);
-  const go = altegio && enabled, rv = go && S.review.on && !!c.review, ap = await svApprovals(env, c.id), own = await svVariants(env, c.id);
+  const go = altegio && enabled, rv = go && S.review.on && !!c.review, ap = await svApprovals(env, c.id), own = await svOwn(env, c);
   const ok = (/** @type {string} */ k) => { const sc = scenario(KIND_SC[k]); return !!(sc && approvedVariant(sc, ap, own)); };
   const kinds = [
     { k: "s01", label: "Подтверждение сразу после новой записи (кроме записей через бота)", on: go && S.confirm.on },
     { k: "d1", label: S.remind24.t.mode === "eve" ? `Напоминание накануне в ${S.remind24.t.eve}` : "Напоминание за 24 часа до визита", on: go && S.remind24.on },
     { k: "h2", label: `Напоминание за ${S.remind3.t.hours} ч (только с ${w.from}:00 до ${w.to}:00)`, on: go && S.remind3.on },
     { k: "s06", label: "Новое время после переноса в Altegio", on: go && S.move.on },
-    { k: "rv", label: `Просьба об отзыве через ${S.review.t.hours} ч после визита с отметкой «пришёл» (одному клиенту раз в 60 дней)`, on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "cx", label: "Сообщение об отмене записи в Altegio", on: go && S.cancel.on },
+    { k: "rv", label: `Благодарность через ${S.review.t.hours} ч после визита с отметкой «пришёл»` + (+S.review.t.gap > 0 ? ` (одному клиенту не чаще раза в ${S.review.t.gap} дн.)` : " (после каждого визита)"), on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "bi", label: "Начислено бонусов (после оплаты визита)", on: go && !!(S.bonusIn && S.bonusIn.on) },
+    { k: "bo", label: "Списано бонусов (после оплаты визита)", on: go && !!(S.bonusOut && S.bonusOut.on) },
   ].map(x => ({ ...x, sc: KIND_SC[x.k], approved: ok(x.k) }));
   const on = /** @type {Record<string, boolean>} */ (Object.fromEntries(kinds.map(x => [x.k, x.on])));
   const soon = (await jrqLoad(env, c.id)).filter(x => x && on[x.k] && x.at > now - 3600e3).sort((a, b) => a.at - b.at);
@@ -60,7 +64,7 @@ export async function serviceApprove(env, c, id, v, on, now, variant) {
   const sc = scenario(String(id || ""));
   if (!c.jr || !sc) return { error: "Сценарий не найден.", status: 404 };
   if (!sc.auto) return { error: "Этот сценарий сам не отправляется, одобрять нечего.", status: 400 };
-  const act = activeOf(sc, await svVariants(env, c.id));
+  const act = activeOf(sc, await svOwn(env, c));
   if (!act) return { error: "У сценария нет текста.", status: 400 };
   if (variant != null && variant !== "" && String(variant) !== act.id) return { error: "Сначала сделайте этот вариант действующим, потом одобряйте.", status: 409 };
   if (+v !== act.v) return { error: "Текст изменился. Обновите страницу и проверьте новую версию.", status: 409 };
@@ -104,13 +108,13 @@ export async function serviceVariant(env, c, b, who, now) {
   if (edit && !ru) return { error: "Нужен текст на русском.", status: 400 };
   const bad = edit ? svCheck(ru) || (kk ? svCheck(kk) : "") : "";
   if (bad) return { error: bad, status: 400 };
-  const all = variantsOf(sc, await svVariants(env, c.id)), cur = vid ? all.find(x => x.id === vid) : null;
+  const all = variantsOf(sc, await svOwn(env, c)), cur = vid ? all.find(x => x.id === vid) : null;
   if (vid && !cur) return { error: "Такого варианта нет.", status: 404 };
   if (cur && cur.builtin && edit) return { error: "Встроенный текст не меняется. Добавьте свой вариант.", status: 400 };
   if (!vid && !edit) return { error: "Нужен текст на русском.", status: 400 };
   if (!vid && all.filter(x => !x.builtin).length >= 5) return { error: "Своих вариантов не больше пяти. Измените один из них.", status: 400 };
   const id = vid || newVariantId(now, new Set(all.map(x => x.id))), by = String(who || "").slice(0, 32);
-  const own = await svVariantsEdit(env, c.id, o => {
+  const own0 = await svVariantsEdit(env, c.id, o => {
     const e = o[sc.id] && typeof o[sc.id] === "object" ? o[sc.id] : {};
     const list = Array.isArray(e.list) ? e.list : [];
     if (edit) {
@@ -122,6 +126,7 @@ export async function serviceVariant(env, c, b, who, now) {
     if (b.active === true) e.active = id; else if (b.active === false && e.active === id) delete e.active;
     o[sc.id] = e;
   });
+  const own = withActive(own0, svDefaults(env, c)); // действующий по умолчанию у компании (тексты Altegio у Winchester)
   const act = activeOf(sc, own);
   return { ok: true, id: sc.id, variant: id, active: act ? act.id : "", variants: variantsPub(sc, own, await svApprovals(env, c.id)) };
 }

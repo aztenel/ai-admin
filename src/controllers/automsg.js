@@ -20,7 +20,7 @@ export async function automsgApi(request, env, url, s) {
   if (!hasClient(cid) || !canSee(s, cid)) return jsonP({ error: "Нет доступа к этому клиенту." }, 403);
   const c = CLIENTS[cid], now = Date.now(), owner = s.role === "owner";
   if (M === "GET" && P === "/api/msg/auto") {
-    try { return jsonP(await autoInfo(env, c, now, owner)); } catch (e) { console.log("msg auto", String(e)); return jsonP({ error: BUSY }, 503); }
+    try { return jsonP(await autoInfo(env, c, now, owner, url.origin)); } catch (e) { console.log("msg auto", String(e)); return jsonP({ error: BUSY }, 503); }
   }
   if (M !== "POST") return jsonP({ error: "Не найдено." }, 404);
   if (!owner) return jsonP({ error: "Менять автоматические сообщения и проверять их может только владелец." }, 403);

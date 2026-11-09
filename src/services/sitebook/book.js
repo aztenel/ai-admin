@@ -16,7 +16,7 @@ import { settledBy } from "../booking/book.js";
 import { nearest, tStr } from "../booking/fit.js";
 import { ipKey, altLimits } from "../booking/limits.js";
 import { loadLeads, saveLeads, putLeadKey } from "../../db/kv/leads.js";
-import { sbGet, sbPut, sbDrop, sbHourHit, sbHold } from "../../db/kv/site.js";
+import { sbGet, sbPut, sbDrop, sbHourHit, sbHold, siteNotifySave } from "../../db/kv/site.js";
 import { normPhone, maskPhone, logSafe } from "../../lib/phone.js";
 import { clean } from "../../lib/text.js";
 import { isoDay, local, hhmm, mins } from "../../lib/time.js";
@@ -297,6 +297,12 @@ export async function siteBook(env, c, conf, raw, meta, nowMs, defer) {
         }
       }
       altDropTimes(conf.loc); cacheDrop(ck(conf, "sn"));
+      // выбор «напомнить за …» — себе: напоминание в WhatsApp уходит в это время (services/reminders/journal.js), SMS Altegio у
+      // Winchester не подключены (ТЗ v4, 08.11.2026). Не сохранилось — останутся обычные напоминания, запись от этого не страдает
+      if (rec && rec.record_id && remindH !== null) {
+        try { await siteNotifySave(env.KV, conf.id, String(rec.record_id), remindH, Date.parse(`${date}T${time}:00+05:00`), nowMs); }
+        catch (e) { console.log("site notify save", String(e).slice(0, 120)); }
+      }
     }
     // 12. итог: счётчики пределов, заявка, ответ, Telegram после ответа
     if (kind === "live") booking.id = rec.record_id;

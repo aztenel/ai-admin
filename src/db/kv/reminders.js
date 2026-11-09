@@ -5,7 +5,11 @@
 //   jrc:<клиент>:<день> — сколько сообщений ушло за сутки (по Астане), 2 дня
 //   jrcn:<клиент>:<день> — о пределе за сутки уже сообщили в Telegram, 2 дня
 //   jrhold:<клиент> — { at, why }: Green-API отказал (номер заблокирован, ключ не подходит) — 6 часов не шлём
-//   jrv:<клиент>:<номер> — просили отзыв, 60 дней: постоянному клиенту — не после каждой стрижки
+//   jrv:<клиент>:<номер> — когда просили отзыв (мс), 90 дней: «не чаще раза в N дней» (настройка сценария; 0 — после каждого визита)
+//   alh:<клиент> — последнее событие вебхука Altegio { at, res, st, n } (без данных клиента), 30 дней
+//   jrw:<клиент>:<вид> — время последнего события Altegio этого вида (fast, bonus, full), jrwd:<клиент> — { <вид>: до какого времени журнал
+//     прочитан по событиям }, 2 дня. Только у адреса без базы D1 (с базой — sync_state, source 'althook'): services/reminders/kick.js
+//   jrbn:<клиент> — бонусы (ТЗ v4): по записям с визитом { <запись>: { s: подпись оплаты, tx: [номера операций], c: когда смотрели, t } }, 7 дней
 //   rms:/rmok:<клиент>:<запись>:<вид> — попытка и удачная отправка, 3 дня; общие с напоминаниями бота (services/reminders/send.js).
 //     Значение rms: — версия записи, по которой ушло (у бота и прежнего кода — «1»)
 //   rms:<клиент>:ga:<запись>:<вид>:<версия> — попытка по журналу для этой версии записи (время, мастер, услуги), 3 дня: перенос с тем
@@ -53,8 +57,15 @@ export const jrHoldSet = (env, cid, why, now) => kvRetry(() => env.KV.put("jrhol
 
 /** @param {Env} env @param {string} cid @param {string} p */
 export const jrReviewed = async (env, cid, p) => !!(await env.KV.get(`jrv:${cid}:${p}`));
+/** когда этому номеру последний раз отправляли благодарность с просьбой об отзыве (мс; 0 — не отправляли) @param {Env} env @param {string} cid @param {string} p */
+export const jrReviewedAt = async (env, cid, p) => { const v = await env.KV.get(`jrv:${cid}:${p}`); return v ? (+v || 1) : 0; };
 /** @param {Env} env @param {string} cid @param {string} p @param {number} now */
-export const jrReviewMark = (env, cid, p, now) => env.KV.put(`jrv:${cid}:${p}`, String(now), { expirationTtl: 60 * DAY });
+export const jrReviewMark = (env, cid, p, now) => env.KV.put(`jrv:${cid}:${p}`, String(now), { expirationTtl: 90 * DAY });
+
+/** состояние проверки бонусов по записям @param {Env} env @param {string} cid @returns {Promise<Record<string, any>>} */
+export async function jrbnLoad(env, cid) { try { const v = JSON.parse((await env.KV.get("jrbn:" + cid)) || "{}"); return v && typeof v === "object" ? v : {}; } catch (e) { return {}; } }
+/** @param {Env} env @param {string} cid @param {Record<string, any>} st */
+export const jrbnSave = (env, cid, st) => kvRetry(() => Object.keys(st).length ? env.KV.put("jrbn:" + cid, JSON.stringify(st), { expirationTtl: 7 * DAY }) : env.KV.delete("jrbn:" + cid));
 
 /** клиент писал «стоп» (optout: ставят ответы бота, пульт и Meta) @param {Env} env @param {string} cid @param {string} p */
 export const optedOut = async (env, cid, p) => !!(await env.KV.get(`optout:${cid}:${p}`));
@@ -134,3 +145,30 @@ export const svVariantsEdit = (env, cid, edit) => kvRetry(async () => {
   await env.KV.put(`svtpl:${cid}:var`, JSON.stringify(o));
   return o;
 });
+
+// вебхук Altegio (ТЗ v4): последнее событие — когда, какой ресурс и действие, сколько всего (без данных клиента), 30 дней
+/** @param {Env} env @param {string} cid @returns {Promise<{ at: number, res: string, st: string, n: number } | null>} */
+export async function altHookLast(env, cid) { try { const v = JSON.parse((await env.KV.get("alh:" + cid)) || "null"); return v && typeof v === "object" ? v : null; } catch (e) { return null; } }
+/** @param {Env} env @param {string} cid @param {{ at: number, res: string, st: string }} x */
+export async function altHookSeen(env, cid, x) {
+  const was = await altHookLast(env, cid);
+  await env.KV.put("alh:" + cid, JSON.stringify({ ...x, n: ((was && +was.n) || 0) + 1 }), { expirationTtl: 30 * DAY });
+}
+
+// отметки событий вебхука Altegio без базы D1 (services/reminders/kick.js): у каждого вида свой ключ — события разных видов не затирают друг друга
+/** @param {Env} env @param {string} cid @param {string} mode @param {number} at */
+export const kickWantKv = (env, cid, mode, at) => env.KV.put(`jrw:${cid}:${mode}`, String(at), { expirationTtl: 2 * DAY });
+/** @param {Env} env @param {string} cid @param {string[]} modes @returns {Promise<{ mode: string, want: number, done: number }[]>} */
+export async function kickRowsKv(env, cid, modes) {
+  /** @type {Record<string, number>} */ let done = {};
+  try { const v = JSON.parse((await env.KV.get("jrwd:" + cid)) || "{}"); if (v && typeof v === "object") done = v; } catch (e) {}
+  const want = await Promise.all(modes.map(m => env.KV.get(`jrw:${cid}:${m}`)));
+  return modes.map((m, i) => ({ mode: m, want: +(want[i] || 0) || 0, done: +done[m] || 0 }));
+}
+/** @param {Env} env @param {string} cid @param {string[]} modes @param {number} at */
+export async function kickDoneKv(env, cid, modes, at) {
+  /** @type {Record<string, number>} */ let done = {};
+  try { const v = JSON.parse((await env.KV.get("jrwd:" + cid)) || "{}"); if (v && typeof v === "object") done = v; } catch (e) {}
+  for (const m of modes) done[m] = Math.max(+done[m] || 0, at);
+  await env.KV.put("jrwd:" + cid, JSON.stringify(done), { expirationTtl: 2 * DAY });
+}

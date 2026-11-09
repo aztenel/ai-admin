@@ -41,14 +41,14 @@ const approveAll = s => s.kv.api.put("svtpl:winchester", JSON.stringify(Object.f
 const log = s => s.kv.json("jrl:winchester") || [];
 const withD1 = (x = {}) => ({ ...ENV, ...x, ...(sqliteOk ? { DB: d1With("production").db } : {}) });
 
-test("по умолчанию всё выключено: девять сценариев, ни один не шлёт; без главного выключателя — сказано почему; сотрудник видит, но не меняет", async () => {
+test("по умолчанию всё выключено: одиннадцать сценариев (с бонусами, ТЗ v4), ни один не шлёт; без главного выключателя — сказано почему; сотрудник видит, но не меняет", async () => {
   net.reset();
   const { REMIND_GA_WINCHESTER, ...off } = ENV;
   const s = mk(off), own = await login(s, OWNER), staff = await login(s, STAFF), other = await login(s, OTHER);
   const j = await info(own);
-  assert.deepEqual(j.scenarios.map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "birthday", "reactivate", "campaigns"]);
+  assert.deepEqual(j.scenarios.map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "bonusIn", "bonusOut", "birthday", "reactivate", "campaigns"]);
   assert.ok(j.scenarios.every(x => x.on === false && x.live === false), "всё выключено");
-  assert.deepEqual(j.scenarios.filter(x => x.group === "service").map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review"]);
+  assert.deepEqual(j.scenarios.filter(x => x.group === "service").map(x => x.id), ["confirm", "remind24", "remind3", "move", "cancel", "review", "bonusIn", "bonusOut"]);
   assert.equal(j.master.on, false); assert.match(j.master.why, /REMIND_GA_WINCHESTER/);
   assert.equal(j.owner, true); assert.equal(j.window.from, 10); assert.equal(j.window.to, 21);
   assert.match(sc(j, "birthday").locked, /Реклама со второго номера выключена/, "gaNoBroadcast держит рекламу");
@@ -206,6 +206,8 @@ test("перенос: сообщение с новым временем даже
   assert.deepEqual(sent(), [], "первое чтение — только запоминаем записи");
   net.altJournal = [rec(ph(6051), TOM, "17:00", { id: 6051, name: "Арман" })];
   await jrRun(s.env, at(TODAY, "12:16"));
+  assert.deepEqual(sent(), [], "о переносе — через 3 минуты: вдруг запись поправят ещё раз");
+  await jrRun(s.env, at(TODAY, "12:19"));
   assert.equal(sent().length, 1, JSON.stringify(log(s))); assert.match(sent()[0].text, /перенесена на 20 октября, 17:00/);
   await jrRun(s.env, at(TODAY, "12:32")); await jrRun(s.env, at(TODAY, "12:48"));
   assert.equal(sent().length, 1, "тот же журнал — повторов нет");
@@ -216,7 +218,7 @@ test("перенос: сообщение с новым временем даже
   // перенос записи, которую удалили бы из окна, — найден по журналу на 60 дней: тоже перенос, не отмена
   await autoOn(s, { move: true, cancel: true });
   net.altJournal = [rec(ph(6051), "2026-11-20", "15:00", { id: 6051, name: "Арман" })];
-  await jrRun(s.env, at(TODAY, "13:36"));
+  await jrRun(s.env, at(TODAY, "13:36")); await jrRun(s.env, at(TODAY, "13:39"));
   assert.equal(sent().length, 3); assert.match(sent()[2].text, /перенесена на 20 ноября, 15:00/); assert.ok(!/отменена/.test(sent()[2].text));
 });
 
@@ -232,18 +234,18 @@ test("отмена: запись удалили — одно сообщение 
   net.altJournalFail = 0;
   assert.deepEqual(sent(), []);
   net.altJournal = [B, C, D]; // A удалили; E (сегодня в 9:00) уже прошла — о ней не пишем
-  await jrRun(s.env, at(TODAY, "12:32"));
+  await jrRun(s.env, at(TODAY, "12:32")); await jrRun(s.env, at(TODAY, "12:35"));
   assert.equal(sent().length, 1); assert.equal(sent()[0].to, dg(6061));
   assert.match(sent()[0].text, /Ерлан! Ваша запись в Winchester на 20 октября в 15:00 отменена/);
   await jrRun(s.env, at(TODAY, "12:48")); await jrRun(s.env, at(TODAY, "13:04"));
   assert.equal(sent().length, 1, "повторно не пишем");
-  // удалили сразу три записи: две уходят в эту минуту, третью успели вернуть — о ней не пишем
+  // удалили сразу три записи: через 3 минуты две уходят, третью успели вернуть — о ней не пишем
   net.altJournal = [];
-  await jrRun(s.env, at(TODAY, "13:20"));
+  await jrRun(s.env, at(TODAY, "13:20")); await jrRun(s.env, at(TODAY, "13:23"));
   assert.equal(sent().length, 3);
   const left = [B, C, D].find(x => !sent().some(y => y.to === x.client.phone.slice(1)));
   net.altJournal = [left];
-  await jrRun(s.env, at(TODAY, "13:21"));
+  await jrRun(s.env, at(TODAY, "13:24"));
   assert.equal(sent().length, 3, "вернули — не пишем");
   assert.ok(log(s).some(x => x.k === "cx" && /снова есть в Altegio/.test(x.why)), JSON.stringify(log(s).filter(x => x.k === "cx")));
   // запись создали и удалили за несколько минут (ошибка администратора) — клиенту не пишем
@@ -273,6 +275,36 @@ test("подтверждение записи: только новой, с вы�
   assert.match(sent()[0].text, /Айдос! Вы записаны в Winchester на 20 октября в 17:00/, "одно подтверждение — сразу с новым временем");
   assert.ok(!sent().some(x => /перенесена/.test(x.text)), "о переносе отдельно не пишем");
   assert.ok(!sent().some(x => x.to === dg(6072)), "старой записи подтверждение не шлём");
+});
+
+test("ТЗ v4: подтверждение сразу — новую запись видит быстрое чтение журнала раз в минуту; повторно не шлём и ничего не переписываем", async () => {
+  net.reset();
+  const OLD = rec(ph(6091), TOM, "16:00", { id: 6091 });
+  net.altJournal = [OLD];
+  const s = mk(ENV); await approveAll(s); await autoOn(s, { confirm: true });
+  await jrRun(s.env, at(TODAY, "12:00")); // полное чтение журнала
+  net.altJournal = [OLD, rec(ph(6092), TOM, "15:00", { id: 6092, made: `${TODAY}T12:03:00+05:00`, name: "Айдос" })];
+  net.alt.length = 0;
+  await jrRun(s.env, at(TODAY, "12:04")); // до следующего полного чтения 11 минут — быстрое чтение изменённых записей
+  assert.ok(net.alt.some(x => /^GET \/records\/133486\?changed_after=/.test(x)), net.alt.join("\n"));
+  assert.ok(!net.alt.some(x => x.includes(`start_date=${YDAY}`)), "полное чтение (со вчера на 14 дней) не нужно; перед отправкой — только день записи: " + net.alt.join("\n"));
+  assert.equal(sent().length, 1, JSON.stringify(log(s)));
+  assert.equal(sent()[0].to, dg(6092)); assert.match(sent()[0].text, /Айдос! Вы записаны в Winchester на 20 октября в 15:00/);
+  const before = [s.kv.mem.get("jrb:winchester"), s.kv.mem.get("jrq:winchester")];
+  await jrRun(s.env, at(TODAY, "12:05")); await jrRun(s.env, at(TODAY, "12:06"));
+  assert.equal(sent().length, 1, "та же запись в окне быстрого чтения — второго сообщения нет");
+  assert.deepEqual([s.kv.mem.get("jrb:winchester"), s.kv.mem.get("jrq:winchester")], before, "ничего нового — хранилище не переписано");
+  // только напоминания, без подтверждения и переноса — быстрого чтения нет (лишние запросы к Altegio не нужны)
+  const s2 = mk(ENV); await approveAll(s2); await autoOn(s2, { remind24: true });
+  await jrRun(s2.env, at(TODAY, "12:00")); net.alt.length = 0;
+  await jrRun(s2.env, at(TODAY, "12:04"));
+  assert.ok(!net.alt.some(x => /^GET \/records\//.test(x)), net.alt.join("\n"));
+});
+
+test("ТЗ v4: текст подтверждения как в уведомлении Altegio — вариант b2", () => {
+  const sc = SCENARIOS.find(x => x.id === "S01");
+  assert.equal(sc.ru.length, 2);
+  assert.equal(sc.ru[1], "Вы записаны[[ на услугу: {услуга}]]\n[[Барбер: {мастер}\n]]Дата: {дата с годом} в {время}.[[\nДетали: {детали}]]");
 });
 
 test("дубли: одна запись, вид и версия — одно сообщение, даже если отметка в KV потерялась (отметка D1); две одновременные отправки с одним ключом — одна", { skip }, async () => {
@@ -492,4 +524,75 @@ test("время и текст одним запросом: ошибка в те
   assert.equal((await set(own, { id: "remind3", timing: { hours: 5 }, text: { ru: "Ждём вас сегодня в {время}." } })).status, 200);
   const k = sc(await info(own), "remind3");
   assert.equal(k.timing.hours, 5); assert.equal(k.text.ru, "Ждём вас сегодня в {время}.");
+});
+
+// ТЗ v4 §6 (08.11.2026): реклама автосообщений не видела записей, сделанных сегодня; поздравление не проверяло запись и недавний визит
+const grant = async (d, list) => { for (const i of list) {
+  const r = await contactAdd(d.db, "winchester", { id: "c" + i, phone: dg(i), name: "", search: dg(i), at: 1, actor: "owner" });
+  await consentAdd(d.db, "winchester", { contactId: (r && r.id) || "c" + i, purpose: "marketing", state: "granted", basis: "письменное согласие", source: "manual", actor: "owner", at: 1, evidence: "document", evidenceRef: "тест", confirmed: true, givenAt: 1 });
+} };
+
+test("ТЗ v4: день рождения — не поздравляем рекламой того, кто записан или был меньше 14 дней назад; Altegio не ответил — день пропущен", { skip }, async () => {
+  net.reset();
+  const was = W.gaNoBroadcast; W.gaNoBroadcast = false;
+  try {
+    const d = d1With("production");
+    net.altClients = [{ id: 1, name: "Арман", phone: ph(6201), bd: "1990-10-19", last_visit_date: "2026-08-01 12:00:00" },
+      { id: 2, name: "Ерлан", phone: ph(6202), bd: "1985-10-19", last_visit_date: "2026-10-12 12:00:00" }, // был 7 дней назад
+      { id: 3, name: "Айдос", phone: ph(6203), bd: "1985-10-19", last_visit_date: "2026-07-01 12:00:00" }]; // записан на завтра
+    net.altJournal = [rec(ph(6203), TOM, "15:00", { id: 6203 })];
+    const s = mk({ ...ENV, DB: d.db });
+    await grant(d, [6201, 6202, 6203]);
+    await autoOn(s, { birthday: true }, { birthday: { time: "11:00" } });
+    await mkRun(s.env, at(TODAY, "11:00")); await mkRun(s.env, at(TODAY, "11:01"));
+    assert.deepEqual(sent().map(x => x.to), [dg(6201)], JSON.stringify(sent()));
+    // в другой компании того же дня Altegio не отвечает: поздравлений нет, в журнале — почему
+    net.reset();
+    net.altClients = [{ id: 1, name: "Арман", phone: ph(6201), bd: "1990-10-19" }];
+    net.altJournalFail = 500;
+    const s2 = mk({ ...ENV, DB: d1With("production").db });
+    await autoOn(s2, { birthday: true }, { birthday: { time: "11:00" } });
+    await mkRun(s2.env, at(TODAY, "11:00")); await mkRun(s2.env, at(TODAY, "11:01"));
+    assert.deepEqual(sent(), []);
+    assert.ok(JSON.parse((await s2.kv.api.get("jrl:winchester")) || "[]").some(x => /не удалось собрать получателей/.test(x.why)));
+  } finally { W.gaNoBroadcast = was; net.altJournalFail = 0; }
+});
+
+test("ТЗ v4: реактивация — записался сегодня (после ночного снимка) — не пишем: ни при сборе, ни перед отправкой", { skip }, async () => {
+  net.reset();
+  const was = W.gaNoBroadcast; W.gaNoBroadcast = false;
+  try {
+    const d = d1With("production"), now = at(TODAY, "12:00");
+    const last = n => new Date(now - n * 86400e3 + 5 * 3600e3).toISOString().slice(0, 10);
+    const s = mk({ ...ENV, DB: d.db });
+    const row = i => ({ p: dg(i), n: "Клиент", last: last(45), first: last(100), v: 2, staff: "Тони", svc: "Мужская стрижка" });
+    await s.kv.api.put("crm:winchester:snap", JSON.stringify({ at: now, list: [row(6211), row(6212), row(6213)], futOnly: [] }));
+    await grant(d, [6211, 6212, 6213]);
+    net.altJournal = [rec(ph(6211), TOM, "15:00", { id: 6211 })]; // записался утром, снимок ночью этого не знал
+    await autoOn(s, { reactivate: true }, { reactivate: { days: 45, time: "12:00", cap: 10 } });
+    await mkRun(s.env, now); // собрал очередь: 6212 и 6213; ушло не больше 2 за минуту
+    const first = sent().map(x => x.to);
+    assert.ok(!first.includes(dg(6211)), "записанного утром нет в очереди");
+    const rest = [dg(6212), dg(6213)].filter(p => !first.includes(p));
+    for (const p of rest) net.altJournal.push(rec("+" + p, TOM, "16:00", { id: +p.slice(-4) + 10 })); // ещё один записался после сбора очереди
+    await mkRun(s.env, now + 60e3); await mkRun(s.env, now + 120e3);
+    assert.deepEqual(sent().map(x => x.to).filter(p => rest.includes(p)), [], "записался после сбора очереди — перед отправкой проверили");
+  } finally { W.gaNoBroadcast = was; }
+});
+
+test("ТЗ v4: перенос и отмена, замеченные вечером после часов отправки, уходят утром (раньше пропадали: «время отправки прошло»)", async () => {
+  net.reset();
+  const A = rec(ph(6221), "2026-10-21", "15:00", { id: 6221, name: "Арман" }), B = rec(ph(6222), "2026-10-21", "16:00", { id: 6222, name: "Ерлан" });
+  net.altJournal = [A, B];
+  const s = mk(ENV); await approveAll(s); await autoOn(s, { move: true, cancel: true });
+  await jrRun(s.env, at(TODAY, "22:00"));
+  net.altJournal = [rec(ph(6221), "2026-10-21", "17:00", { id: 6221, name: "Арман" })]; // перенесли A, удалили B — в 22:15
+  await jrRun(s.env, at(TODAY, "22:16"));
+  assert.deepEqual(sent(), [], "ночью не пишем");
+  for (const t of ["23:00", "07:00"]) await jrRun(s.env, t === "23:00" ? at(TODAY, t) : at(TOM, t));
+  assert.deepEqual(sent(), []);
+  await jrRun(s.env, at(TOM, "10:00")); await jrRun(s.env, at(TOM, "10:01"));
+  const out = sent();
+  assert.equal(out.length, 2, JSON.stringify(log(s).filter(x => x.k === "s06" || x.k === "cx")));
+  assert.ok(out.some(x => x.to === dg(6221) && /17:00/.test(x.text)) && out.some(x => x.to === dg(6222) && /отменена/.test(x.text)), JSON.stringify(out));
 });

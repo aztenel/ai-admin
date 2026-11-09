@@ -255,7 +255,7 @@ async function svcQueue(t, svc) {
   const first = (await text(rows.first())).replace(/\s+/g, " ");
   ok(`${t.tag}: ближайшие — первое: Тимур, сегодня в 15:00, в день визита — запись на 17:00`, /Тимур/.test(first) && /сегодня, 15:00/.test(first) && /Напоминание в день визита/.test(first) && /запись на сегодня, 17:00/.test(first), first);
   const all = await text(list);
-  ok(`${t.tag}: ближайшие — номера маской`, ["01", "02", "03"].every((x) => all.includes(`+7 700 *** ** ${x}`)) && /Просьба об отзыве · после визита/.test(all) && /Напоминание накануне · запись на завтра, 12:00/.test(all), all.slice(0, 200));
+  ok(`${t.tag}: ближайшие — номера маской`, ["01", "02", "03"].every((x) => all.includes(`+7 700 *** ** ${x}`)) && /Благодарность за визит · после визита/.test(all) && /Напоминание накануне · запись на завтра, 12:00/.test(all), all.slice(0, 200));
   // запись без имени — вместо имени номер маской
   ok(`${t.tag}: ближайшие — без имени: номер маской вместо имени`, (await list.locator("li p.truncate", { hasText: "+7 700 *** ** 02" }).count()) === 3);
   ok(`${t.tag}: ближайшие — отправлено за 3 дня: 2`, /Отправлено за 3 дня\s*2/.test(await text(svc)));
@@ -417,7 +417,7 @@ async function ownerWinchesterPhone() {
   const svc = page.getByRole("tabpanel");
   await svc.getByRole("heading", { name: "Для записи (сервисные)" }).waitFor({ timeout: 15000 });
   const stext = await text(svc);
-  ok("«Автоматические»: сервисные и реклама — отдельными группами", /Реклама \(только с согласием\)/.test(stext) && (await svc.getByRole("article").count()) === 9);
+  ok("«Автоматические»: сервисные и реклама — отдельными группами", /Реклама \(только с согласием\)/.test(stext) && (await svc.getByRole("article").count()) === 11);
   ok("«Автоматические»: второй номер на связи, всё выключено", /на связи/.test(stext) && /Все сценарии выключены/.test(stext) && !(await svc.getByRole("switch", { checked: true }).count()), stext.slice(0, 300));
   ok("«Автоматические»: «Создать рассылку» здесь нет", !(await svc.getByRole("button", { name: /Создать рассылку/ }).count()) && !(await page.getByRole("button", { name: "Создать рассылку" }).count()));
   await step(t, "auto-tab");

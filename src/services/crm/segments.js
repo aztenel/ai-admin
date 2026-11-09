@@ -13,7 +13,7 @@ import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
 /** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
-/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number, presumed?: boolean }, reasons?: Map<string, string> }} CrmView */
+/** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number, presumed?: boolean }, reasons?: Map<string, string>, booked?: Set<string> }} CrmView */
 
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
@@ -57,23 +57,25 @@ const dayNo = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10))
 export const daysSince = (last, now) => dayNo(isoDay(now)) - dayNo(last);
 
 // снимок и причина «не писать» у каждого: стоп → будущая запись → был недавно → уже писали (первая подходящая).
-// Стоп-лист или отметки не прочитались — ошибка, а не пустой список: иначе написали бы тем, кто просил не писать
-/** @param {Env} env @param {Client} c @param {number} now @returns {Promise<CrmView>} */
-export async function crmView(env, c, now) {
-  const snap = await crmLoad(env, c.id);
-  if (!snap || !Array.isArray(snap.list)) return { snap: null, rows: [] };
+// Стоп-лист или отметки не прочитались — ошибка, а не пустой список: иначе написали бы тем, кто просил не писать.
+// o.booked — номера с будущей записью по журналу Altegio прямо сейчас (crmBookedNow): реклама перед отправкой их тоже не берёт
+/** @param {Env} env @param {Client} c @param {number} now @param {{ booked?: Set<string> }} [o] @returns {Promise<CrmView>} */
+export async function crmView(env, c, now, o = {}) {
+  const snap = await crmLoad(env, c.id), booked = o.booked instanceof Set ? o.booked : null;
+  if (!snap || !Array.isArray(snap.list)) return { snap: null, rows: [], ...(booked ? { booked } : {}) };
   // реклама: 30 дней между рекламными сообщениями (решение владельца 31.10.2026, было 14) и только с подтверждённым согласием
   const days = Array.from({ length: MARKETING_GAP_DAYS }, (_, i) => isoDay(now - i * 86400e3));
   const [stop, marked, gate] = await Promise.all([bcOptouts(env, c.id), bcmRead(env, c.id, days), marketingGate(env, c, now)]);
   const rows = snap.list.map((/** @type {any} */ x) => {
     const d = daysSince(x.last, now);
-    return { ...x, d, why: stop.has(x.p) ? "stop" : !gateAllows(gate, x.p) ? "noconsent" : x.fut ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
+    // booked — будущие записи из журнала прямо сейчас (ТЗ v4: ночной снимок не знает о записях, сделанных сегодня)
+    return { ...x, d, why: stop.has(x.p) ? "stop" : !gateAllows(gate, x.p) ? "noconsent" : x.fut || (booked && booked.has(x.p)) ? "fut" : d < CRM_QUIET_DAYS ? "recent" : marked.has(x.p) ? "marketed" : "" };
   });
   // согласие по умолчанию (gate.presumed): разрешены все номера снимка без отказа — список разрешённых строится по снимку
   const futOnly = (Array.isArray(snap.futOnly) ? snap.futOnly : []).map(String);
   const allow = gate.presumed ? new Set([...snap.list.map((/** @type {any} */ x) => String(x.p)), ...futOnly].filter(p => gateAllows(gate, p))) : gate.phones;
   // marked и futOnly (записан, визита за 90 дней нет) — и тех, кого в списке снимка нет: отправка рассылки проверяет каждого получателя (sender.js)
-  return { snap, rows, marked, stop, allow, gate: { ready: gate.ready, why: gate.why, n: allow.size, presumed: !!gate.presumed }, reasons: gate.reasons, futOnly: new Set(futOnly) };
+  return { snap, rows, marked, stop, allow, gate: { ready: gate.ready, why: gate.why, n: allow.size, presumed: !!gate.presumed }, reasons: gate.reasons, futOnly: new Set(futOnly), ...(booked ? { booked } : {}) };
 }
 
 // Статусы клиента базы (задание владельца 02.11.2026: «0 доступных» не значит «0 клиентов» — показываем всех, а писать рекламу можно только

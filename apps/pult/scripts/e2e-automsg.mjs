@@ -193,11 +193,11 @@ async function owner(scheme) {
 
   // две группы: сервисные и реклама
   const arts = page.getByRole("article");
-  ok("девять сценариев", (await arts.count()) === 9, String(await arts.count()));
+  ok("одиннадцать сценариев (с бонусами, ТЗ v4)", (await arts.count()) === 11, String(await arts.count()));
   const svcSec = page.locator("section", { has: page.getByRole("heading", { name: "Для записи (сервисные)" }) });
   const mkSec = page.locator("section", { has: page.getByRole("heading", { name: "Реклама (только с согласием)" }) });
-  ok("группа «Для записи (сервисные)»: 6 сценариев", (await svcSec.getByRole("article").count()) === 6);
-  ok("группа «Реклама (только с согласием)»: 3 сценария, сказано про согласие", (await mkSec.getByRole("article").count()) === 3 && /подтверждённое согласие/.test(await text(mkSec)));
+  ok("группа «Для записи (сервисные)»: 8 сценариев (с бонусами)", (await svcSec.getByRole("article").count()) === 8);
+  ok("группа «Реклама (только с согласием)»: 3 сценария, сказано про согласие", (await mkSec.getByRole("article").count()) === 3 && /есть согласие на рекламу/.test(await text(mkSec)));
   const status = page.getByRole("region", { name: "Отправка клиентам" });
   ok("сверху: всё выключено — клиентам ничего не уходит", /Все сценарии выключены/.test(await text(status)), (await text(status)).slice(0, 300));
   ok("сверху: часы отправки и предел за сутки", /с 10:00 до 21:00/.test(await text(status)) && /Не больше в сутки/.test(await text(status)));
@@ -239,7 +239,7 @@ async function owner(scheme) {
   await page.getByRole("dialog", { name: "Включить «Напоминание за 3 часа»?" }).getByRole("button", { name: "Включить" }).click();
   await page.waitForFunction(() => document.querySelector('article [role=switch][aria-label="Напоминание за 3 часа"][aria-checked="true"]'), null, { timeout: 10000 }).catch(() => {});
   ok("«Напоминание за 3 часа» включено", (await r3.getByRole("switch").getAttribute("aria-checked")) === "true");
-  ok("сверху: уходит 1 сценарий из 6, которые можно включить", /Уходят сами: 1 из 6/.test(await text(status)), (await text(status)).slice(0, 200));
+  ok("сверху: уходит 1 сценарий из 8, которые можно включить", /Уходят сами: 1 из 8/.test(await text(status)), (await text(status)).slice(0, 200));
   // ближайшие сообщения: в очереди только включённый сценарий (заглушка: записи через бота — напоминания в день визита)
   const upcoming = page.getByRole("list", { name: "Ближайшие сообщения" });
   await upcoming.waitFor({ timeout: 10000 }).catch(() => {});

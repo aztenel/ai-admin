@@ -97,6 +97,7 @@ type MsgRaw = {
   client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string };
   altegio?: { ready?: boolean; why?: string }; db?: string; hold?: { at?: number; why?: string } | null; window?: { from?: number; to?: number }; cap?: number;
   marketing?: { allowed?: boolean; why?: string }; test?: { phone?: string } | null; scenarios?: MsgScenarioRaw[];
+  hook?: { url?: string; last?: { at?: number; res?: string; st?: string; n?: number } | null; on?: boolean; why?: string };
 };
 
 // ---------- перевод в понятия пульта ----------
@@ -220,7 +221,7 @@ function overview(d: ListRaw): CampaignsOverview {
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
 }
 
-const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv"];
+const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv", "bi", "bo"];
 const LOG_STATES: ServiceLogState[] = ["sent", "cancelled", "skipped", "task", "unknown"];
 const MODES: ServiceScenarioMode[] = ["auto", "reply", "task", "off"];
 const DRY: ServiceDryItem["status"][] = ["now", "later", "wait", "skip"];
@@ -309,6 +310,7 @@ function autoMessages(d: MsgRaw): AutoMessages {
     marketing: { allowed: !!d.marketing?.allowed, why: d.marketing?.why || "" },
     test: d.test && d.test.phone ? { phone: d.test.phone } : null,
     scenarios: (d.scenarios || []).filter((x) => x && x.id).map(msgScenario),
+    hook: { url: typeof d.hook?.url === "string" && /^https?:\/\//.test(d.hook.url) ? d.hook.url : "", last: d.hook?.last && n(d.hook.last.at) ? { at: n(d.hook.last.at), res: d.hook.last.res || "", st: d.hook.last.st || "", n: n(d.hook.last.n) } : null, on: d.hook?.on !== false, why: typeof d.hook?.why === "string" ? d.hook.why : "" },
   };
 }
 const ST_KEYS = ["valid", "booked", "service", "marketing", "stopped", "refused", "ready"] as const;

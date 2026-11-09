@@ -3,7 +3,9 @@
 // Winchester — только исходящие сообщения в часы отправки). remindPlan (plan.js) знает только записи, которые бот сделал в чате;
 // здесь — все записи журнала: администратор, сайт, онлайн-запись.
 // С 02.11.2026 (раздел «Автоматические сообщения», services/automsg) у каждого сценария свой выключатель, время и текст: подтверждение
-// (s01), напоминание за 24 часа или накануне (d1), напоминание за несколько часов (h2), перенос (s06), отмена (cx), просьба об отзыве (rv).
+// (s01), напоминание за 24 часа или накануне (d1), напоминание за несколько часов (h2), перенос (s06), отмена (cx), благодарность и отзыв
+// (rv, с ТЗ v4 — через N часов после окончания визита, ссылки «Детали» и «Контроль качества» Altegio), начислено и списано бонусов (bi, bo —
+// ./bonus.js).
 // Всё выключено, пока владелец не включит сценарий в пульте; главный выключатель — Text REMIND_GA_<ID> = 1 (jrOn). Настройки —
 // msgset:<клиент> (db/kv/automsg.js), часы отправки и предел за сутки — там же (по умолчанию из c.jr паспорта).
 // Раз в 15 минут — журнал со вчера на 14 дней вперёд → очередь jrq:<клиент> (только то, что уйдёт в ближайшие 36 часов) и записи,
@@ -20,7 +22,7 @@ import { TZ, local, isoDay } from "../../lib/time.js";
 import { normPhone, maskPhone } from "../../lib/phone.js";
 import { hash } from "../../lib/crypto.js";
 import { altText } from "../integrations/altegio/client.js";
-import { altRecordsRange } from "../integrations/altegio/records-api.js";
+import { altRecordsRange, altRecordsChanged } from "../integrations/altegio/records-api.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaKind, gaWhy, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { notify } from "../integrations/telegram/client.js";
@@ -32,14 +34,24 @@ import { stErr } from "../inbox/status.js";
 import { sendOnce } from "../inbox/send.js";
 import { marketingGate } from "../contacts/gate.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
-import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewed, jrReviewMark, optedOut, rmOk,
-  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals, svVariants } from "../../db/kv/reminders.js";
+import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewedAt, jrReviewMark, optedOut, rmOk,
+  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
+import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
-import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf } from "./templates.js";
+import { KIND_SC, scenario, svText, firstName, approvedVariant, activeOf, linkOf } from "./templates.js";
 import { autoSettings, KIND_IDS } from "../automsg/catalog.js";
+import { bonusScan, sendAt } from "./bonus.js";
+import { svOwn } from "./variants.js";
+import { kvKey } from "../../lib/kv-id.js";
+import { kickPending, kickDone, KICK_COVERS } from "./kick.js";
+import { d1Ready } from "../../db/d1/status.js";
+import { leaseTake, leaseFree } from "../../db/d1/sync.js";
 
 const SYNC_MS = 15 * 60e3;   // журнал — не чаще раза в 15 минут: у Altegio предел 5 запросов в секунду на всех
+// между полными чтениями — раз в минуту только изменённые записи (ТЗ v4, 08.11.2026: подтверждение за 1–2 минуты). Окно 10 минут с запасом:
+// запись, изменённую за это время, увидим несколько раз — в очередь и состояние она попадает один раз (ключ задачи, версия записи)
+const FAST_WIN = 10 * 60e3;
 const AHEAD = 14;            // журнал читаем со вчера на 14 дней вперёд: подтверждение, перенос и отмена — и у записей не на завтра
 const WIN_PAGES = 4;         // 15 дней одной локации — 1–2 страницы по 200 записей (у Winchester ≈15 записей в день)
 const HORIZON = 36 * 3600e3; // в очереди — только то, что уйдёт в ближайшие 36 часов: дальнее спланирует следующее чтение журнала
@@ -53,28 +65,48 @@ const MAX_TRIES = 3;         // Green-API точно не принял (429, п�
 const KNOWN_MS = 30 * 60e3;
 const FRESH_MS = 3600e3;     // перенос и отмену сообщаем, только если видели запись в журнале за последний час (не задним числом после перерыва)
 const WIDE_DAYS = 60;        // запись пропала из окна — ищем её в журнале на 60 дней: перенесли далеко или удалили
-const SVC_NO = new Set(["block", "stop", "review"]); // база контактов D1: полный запрет, «стоп», неоднозначный «стоп» — сервисных тоже не шлём
+const SVC_NO = new Set(["block", "stop", "review"]);
+// перенос и отмену сообщаем через 3 минуты после того, как заметили: администратор часто поправляет запись несколько раз подряд или
+// «переносит» удалением и новой записью — клиенту уходит одно сообщение с последним временем (или ничего, если записали заново).
+// С событиями Altegio изменение видно через секунды, и без паузы клиент получал бы по сообщению на каждую правку (находка проверки 08.11.2026)
+const SETTLE = 3 * 60e3; // база контактов D1: полный запрет, «стоп», неоднозначный «стоп» — сервисных тоже не шлём
 
 /** настройки отправки: с set (настройки «Автоматических сообщений») — выключатели и время из пульта; без set — как в паспорте компании
  *  (так план считают проверки: накануне в 18:00, за 2 часа, отзыв через 3 часа) @param {Client} c @param {any} [set] */
 function opts(c, set) {
   const base = { from: 10, to: 21, eve: "18:00", h2: true, rv: true, cap: 150, s01: false, s06: false, cx: false, noshow: true, ...(c.jr || {}) };
-  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, s01gap: 5, set: /** @type {any} */ (null) };
+  const o = { ...base, d1: !!base.eve, d1mode: "eve", h2h: 2, rvh: 3, rvgap: 60, s01gap: 0, bi: false, bo: false, set: /** @type {any} */ (null), site: /** @type {any} */ (null) };
   if (!set) return o;
   const s = set.s;
-  return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: +s.confirm.t.delay || 5,
+  return { ...o, from: set.win.from, to: set.win.to, cap: set.cap, s01: s.confirm.on, s01gap: Number.isFinite(+s.confirm.t.delay) ? Math.max(0, +s.confirm.t.delay) : 0,
     d1: s.remind24.on, d1mode: s.remind24.t.mode, eve: String(s.remind24.t.eve || "18:00"), h2: s.remind3.on, h2h: +s.remind3.t.hours || 3,
-    s06: s.move.on, cx: s.cancel.on, rv: s.review.on, rvh: +s.review.t.hours || 3, set };
+    s06: s.move.on, cx: s.cancel.on, rv: s.review.on, rvh: Number.isFinite(+s.review.t.hours) ? Math.max(0, +s.review.t.hours) : 1,
+    rvgap: Number.isFinite(+s.review.t.gap) ? Math.max(0, +s.review.t.gap) : 0, bi: !!(s.bonusIn && s.bonusIn.on), bo: !!(s.bonusOut && s.bonusOut.on), set };
 }
-/** до какого опоздания ещё шлём: накануне — до конца часов отправки, за несколько часов — 45 минут, отзыв — 3 часа, подтверждение,
- *  перенос и отмена — 3 часа @param {any} o @param {string} k @param {number} at */
+/** до какого опоздания ещё шлём: накануне — до конца часов отправки, за несколько часов — 45 минут, отзыв — 3 часа @param {any} o @param {string} k @param {number} at */
 function late(o, k, at) {
   if (k === "h2") return H2_LATE;
   if (k === "rv") return REMIND_LATE;
-  if (k === "s01" || k === "s06" || k === "cx") return NEW_LATE;
   const L = local(at), end = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate(), o.to - TZ, 0);
   return Math.max(0, end - at);
 }
+// подтверждение, перенос, отмена, бонусы — о событии: опоздание считается только в часы отправки (находка проверки 08.11.2026: отмена,
+// замеченная в 20:59 и не успевшая уйти — 2 сообщения в минуту, — утром считалась опоздавшей на 13 часов и пропадала)
+const EVENT_K = new Set(["s01", "s06", "cx", "bi", "bo"]);
+/** сколько времени часов отправки прошло между from и to @param {any} o @param {number} from @param {number} to */
+function openMs(o, from, to) {
+  if (!(to > from)) return 0;
+  let sum = 0;
+  const L = local(from);
+  for (let d = 0; d < 8; d++) {
+    const a = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + d, o.from - TZ, 0), b = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + d, o.to - TZ, 0);
+    if (a >= to) break;
+    sum += Math.max(0, Math.min(b, to) - Math.max(a, from));
+  }
+  return sum;
+}
+/** опоздало ли сообщение настолько, что уже не к месту @param {any} o @param {string} k @param {number} at @param {number} now */
+const overdue = (o, k, at, now) => EVENT_K.has(k) ? openMs(o, at, now) > NEW_LATE : now - at > late(o, k, at);
 /** за 24 часа до визита, в часы отправки: раньше начала — в начало, в конце дня — за полчаса до конца (всё равно накануне)
  *  @param {number} t @param {any} o */
 function in24(t, o) {
@@ -107,8 +139,10 @@ export function jrRec(r) {
   const dt = String(r.datetime || ""), date = dt.slice(0, 10), time = dt.slice(11, 16);
   const p = normPhone(String(r.client.phone ?? "")).slice(1);
   const att = +r.attendance === -1 || +r.visit_attendance === -1 ? -1 : +r.attendance === 1 || +r.visit_attendance === 1 ? 1 : 0;
+  // len — длительность записи в секундах (seance_length): благодарность — от конца визита; lk — ссылка Altegio на запись (short_link)
+  const len = +r.seance_length > 0 ? +r.seance_length : +r.length > 0 ? +r.length : 0;
   return { id: String(r.id), date, time, p, att, v: recVer(r), made: Date.parse(String(r.create_date || "")) || 0, n: altText(r.client.name || "", 60),
-    staff: altText((r.staff && r.staff.name) || "", 40),
+    staff: altText((r.staff && r.staff.name) || "", 40), len: Math.min(len, 12 * 3600), lk: linkOf(r.short_link),
     svc: (Array.isArray(r.services) ? r.services : []).map(/** @param {any} s */ s => altText(s && s.title, 60)).filter(Boolean).join(", ") };
 }
 
@@ -116,35 +150,49 @@ export function jrRec(r) {
  *  сделана раньше чем за час до этого; за несколько часов — только если это время в часах отправки и запись сделана заранее; отзыв —
  *  через несколько часов после начала, вне часов отправки — утром (from + 1); подтверждение новой записи — через несколько минут после
  *  записи, в часы отправки и не меньше чем за час до визита. Уже прошедшее и опоздавшее больше допустимого — не планируем.
- *  set — настройки «Автоматических сообщений» (выключатели и время); без них — как в паспорте компании.
- *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] */
-export const jrPlan = (c, records, now, set) => jrPlanAll(c, records, now, set).items;
+ *  set — настройки «Автоматических сообщений» (выключатели и время); без них — как в паспорте компании; site — выбор с сайта.
+ *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] @param {Record<string, { h: number }>} [site] */
+export const jrPlan = (c, records, now, set, site) => jrPlanAll(c, records, now, set, site).items;
 
-/** то же и почему по записям ничего не будет @param {Client} c @param {any[]} records @param {number} now @param {any} [set] */
-export function jrPlanAll(c, records, now, set) {
+/** то же и почему по записям ничего не будет. site — выбор клиента в форме сайта { <номер записи>: { h } } (ТЗ v4): вместо обычных
+ *  напоминаний одно — за столько часов, сколько он выбрал (24 и больше — напоминание накануне, меньше — в день визита; 0 — без напоминаний).
+ *  Нужен включённый сценарий этого вида: текст и одобрение — у него
+ *  @param {Client} c @param {any[]} records @param {number} now @param {any} [set] @param {Record<string, { h: number }>} [site] */
+export function jrPlanAll(c, records, now, set, site) {
   const o = opts(c, set), out = /** @type {any[]} */ ([]), skipped = /** @type {any[]} */ ([]);
   for (const r of records) {
     const why = recWhy(r), v = why ? null : jrRec(r);
     if (!v) { skipped.push({ rec: String((r && r.id) ?? ""), why }); continue; }
     if (v.att === -1) { skipped.push({ rec: v.id, why: "клиент не пришёл" }); continue; }
-    const t = atLocal(v.date, v.time), base = { rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc };
-    const add = (/** @type {string} */ k, /** @type {number} */ at) => { if (now - at <= late(o, k, at)) out.push({ ...base, k, at }); };
+    const t = atLocal(v.date, v.time), base = { rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}) };
+    const add = (/** @type {string} */ k, /** @type {number} */ at) => { if (!overdue(o, k, at, now)) out.push({ ...base, k, at }); };
     if (o.s01 && v.made && v.att !== 1) {
       let s1 = v.made + o.s01gap * 60e3;
       const L = local(s1), lh = L.getUTCHours();
       if (lh < o.from || lh >= o.to) s1 = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (lh >= o.to ? 1 : 0), o.from - TZ, 0);
       if (t - s1 >= 3600e3) add("s01", s1);
     }
-    if (o.d1 && v.att !== 1) {
+    const pick = site && site[v.id];
+    if (pick && v.att !== 1) { // клиент сам выбрал на сайте, когда напомнить
+      const h = Math.max(0, +pick.h || 0);
+      if (!h) skipped.push({ rec: v.id, why: "на сайте клиент выбрал «не напоминать»" });
+      else if (h >= 12 && o.d1) { const d1 = in24(t - (h - 24) * 3600e3, o); if (d1 < t && !(v.made && v.made > d1 - 600e3)) add("d1", d1); }
+      else if (h < 12 && o.h2) {
+        const h2 = t - h * 3600e3, hr = local(h2).getUTCHours();
+        if (hr >= o.from && hr < o.to && !(v.made && v.made > h2 - 600e3)) add("h2", h2);
+        else skipped.push({ rec: v.id, why: `за ${h} ч до визита — вне часов отправки или запись сделана позже` });
+      }
+    }
+    if (o.d1 && v.att !== 1 && !pick) {
       const d1 = o.d1mode === "24h" ? in24(t, o) : atLocal(v.date, o.eve, -1);
       if (t - d1 >= 12 * 3600e3 && !(v.made && v.made > d1 - 3600e3)) add("d1", d1);
     }
-    if (o.h2 && v.att !== 1) {
+    if (o.h2 && v.att !== 1 && !pick) {
       const h2 = t - o.h2h * 3600e3, hr = local(h2).getUTCHours();
       if (hr >= o.from && hr < o.to && !(v.made && t - v.made < (o.h2h + 2) * 3600e3)) add("h2", h2);
     }
-    if (o.rv && c.review) {
-      let rv = t + o.rvh * 3600e3;
+    if (o.rv && c.review) { // благодарность — через rvh часов после окончания визита (начало + длительность записи)
+      let rv = t + v.len * 1000 + o.rvh * 3600e3;
       const L = local(rv), lh = L.getUTCHours();
       if (lh >= o.to || lh < o.from) rv = Date.UTC(L.getUTCFullYear(), L.getUTCMonth(), L.getUTCDate() + (lh >= o.to ? 1 : 0), o.from + 1 - TZ, 0);
       add("rv", rv);
@@ -154,13 +202,18 @@ export function jrPlanAll(c, records, now, set) {
 }
 
 /** @param {any} x */
-const key = x => x.rec + ":" + x.k + ":" + (x.v || "");
+const key = x => x.rec + ":" + x.k + ":" + (x.v || "") + (x.tx ? ":" + x.tx : ""); // бонусы: у записи может быть несколько операций
+/** от двойной отправки — что считается «тем же сообщением» (отметки rms: и D1 send_claims): подтверждение — одно на запись и её время
+ *  (дописали услугу, поправили мастера — второго «Вы записаны» нет; перенесли время — новое), благодарность — одна на запись (правка
+ *  прошедшей записи не повторяет её), бонусы — одна на операцию, какой бы записью визита её ни нашли (у визита бывает несколько записей);
+ *  напоминания, перенос и отмена — на версию записи (находки проверки 08.11.2026) @param {any} x @returns {{ rec: string, ver: string }} */
+const onceOf = x => x.tx ? { rec: "tx", ver: String(x.tx) } : { rec: x.rec, ver: x.k === "s01" ? `${x.date}T${x.time}` : x.k === "rv" ? "1" : x.v || "1" };
 /** запись решения для журнала очереди (раздел «Автоматические сообщения») @param {any} x @param {string} st @param {string} why @param {number} now */
 const entry = (x, st, why, now) => ({ t: now, k: x.k, rec: x.rec, p: x.p, n: x.n || "", date: x.date, time: x.time, st, why });
 /** @type {Record<string, string>} */
-const KIND_WORD = { s01: "подтверждение записи", s06: "сообщение о переносе", cx: "сообщение об отмене", d1: "напоминание накануне", h2: "напоминание в день визита", rv: "просьба об отзыве" };
+const KIND_WORD = { s01: "подтверждение записи", s06: "сообщение о переносе", cx: "сообщение об отмене", d1: "напоминание накануне", h2: "напоминание в день визита", rv: "благодарность за визит", bi: "начислено бонусов", bo: "списано бонусов" };
 /** состояние записи журнала → строка очереди @param {any} p */
-const fromState = p => ({ rec: p.id, v: p.v, p: p.p, n: p.n, date: p.d, time: p.t, staff: p.s, svc: p.sv });
+const fromState = p => ({ rec: p.id, v: p.v, p: p.p, n: p.n, date: p.d, time: p.t, staff: p.s, svc: p.sv, ...(p.lk ? { lk: p.lk } : {}) });
 /** клиент знает об этой записи: мы о ней уже писали, или ей не меньше 30 минут @param {any} p @param {number} now */
 const told = (p, now) => (Array.isArray(p.sent) && p.sent.length > 0) || now - (+p.mk || +p.fs || now) >= KNOWN_MS;
 
@@ -174,9 +227,39 @@ export async function jrRun(env, now) {
   let n = 0;
   for (const c of Object.values(CLIENTS)) {
     if (!jrOn(env, c)) continue;
-    try { n += await jrClient(env, c, now); } catch (/** @type {any} */ e) { console.log("jr", c.id, String((e && e.stack) || e)); }
+    try { n += await jrLocked(env, c, () => jrClient(env, c, now)); } catch (/** @type {any} */ e) { console.log("jr", c.id, String((e && e.stack) || e)); }
   }
   return n;
+}
+
+// Один проход по журналу компании за раз (находка проверки 08.11.2026): два прохода одновременно затирают очередь jrq: друг друга и вместе
+// обходят предел 2 сообщения в минуту. Проход дольше минуты (Altegio медленно отвечает) — следующая фоновая задача его пропускает.
+// В экземпляре Worker — память (по хранилищу, kvKey), между экземплярами — аренда в D1 (sync_state, source 'jr'), если база у адреса есть.
+const LOCK_MS = 5 * 60e3;
+/** @type {WeakMap<object, Set<string>>} */
+const BUSY = new WeakMap();
+/** @param {Env} env @param {Client} c @param {() => Promise<number>} fn */
+async function jrLocked(env, c, fn) {
+  const store = /** @type {object} */ (kvKey(env.KV) || env);
+  let busy = BUSY.get(store);
+  if (!busy) { busy = new Set(); BUSY.set(store, busy); }
+  if (busy.has(c.id)) return 0;
+  busy.add(c.id);
+  /** @type {any} */ let db = null;
+  const token = crypto.randomUUID();
+  try {
+    try { db = await d1Ready(env, Date.now()); } catch (e) { db = null; }
+    if (db) {
+      let got = true;
+      try { got = await leaseTake(db, c.id, "jr", token, Date.now(), LOCK_MS); }
+      catch (/** @type {any} */ e) { console.log("jr lease", c.id, String((e && e.message) || e).slice(0, 120)); db = null; } // база не ответила — без аренды: отправку и так держат отметки D1
+      if (!got) { console.log("jr", c.id, "проход уже идёт в другом экземпляре"); return 0; }
+    }
+    return await fn();
+  } finally {
+    busy.delete(c.id);
+    if (db) { try { await leaseFree(db, c.id, "jr", token); } catch (e) { console.log("jr lease free", String(e)); } }
+  }
 }
 
 /** @param {Env} env @param {Client} c @param {number} now */
@@ -184,11 +267,16 @@ async function jrClient(env, c, now) {
   const user = altUserKey(env, c), loc = altLoc(env, c), route = gaRoute(env, c.id);
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set), logs = /** @type {any[]} */ ([]);
+  o.site = await siteNotifyLoad(env.KV, c.id); // выбор «напомнить за …» из формы сайта
+  // события Altegio (вебхук, kick.js): как читать журнал сейчас — "fast" изменённые записи, "bonus" и бонусы визитов, "full" весь журнал
+  /** @type {{ mode: string, pending: Set<string> }} */ let kick = { mode: "", pending: new Set() };
+  try { kick = await kickPending(env, c.id, now); } catch (/** @type {any} */ e) { console.log("jr kick read", c.id, String((e && e.message) || e).slice(0, 120)); }
+  const force = kick.mode, eager = kick.pending.has("bonus"), covered = /** @type {Set<string>} */ (new Set());
   let q = await jrqLoad(env, c.id), dirty = false;
   /** @type {Record<string, any> | null} */ let bk = null;
   let bkDirty = false;
   const last = await jrSyncAt(env, c.id);
-  if (now - last >= SYNC_MS) {
+  if (force === "full" || now - last >= SYNC_MS) {
     try { await jrSyncMark(env, c.id, now); } catch (e) { console.log("jr sync mark", String(e)); } // не записалась — прочитаем журнал ещё раз через минуту
     try {
       const r = await altRecordsRange(env, user, loc, isoDay(now - 86400e3), isoDay(now + AHEAD * 86400e3), WIN_PAGES);
@@ -199,11 +287,45 @@ async function jrClient(env, c, now) {
       // раньше, задним числом не шлём (ТЗ v3.0: включили сценарий — старые записи не получают сообщений разом)
       if (!last) q = q.filter(x => { if (x.at >= now - 60e3) return true; logs.push(entry(x, "skipped", "отправку только что включили: задним числом не шлём", now)); return false; });
       dirty = true;
+      q = await withBonus(env, c, o, q, r.list, now, { user, loc, full: true, eager }, logs);
+      for (const m of KICK_COVERS.full) covered.add(m);
     } catch (/** @type {any} */ e) { console.log("jr journal", c.id, String((e && e.message) || e).slice(0, 160)); }
+  } else if (force || o.s01 || o.s06 || o.bi || o.bo) { // по событию Altegio — всегда (иначе только с подтверждением, переносом, бонусами)
+    // быстрый проход: только записи, которых ещё не видели или у которых сменилась версия. Ничего нового — ничего не пишем (KV)
+    try {
+      const r = await altRecordsChanged(env, user, loc, now - FAST_WIN, now + 86400e3);
+      const prev = await jrbLoad(env, c.id);
+      const fresh = r.list.filter(x => { const v = jrRec(x); return !!v && (!prev[v.id] || prev[v.id].v !== v.v); });
+      if (fresh.length) {
+        const ch = await jrChanges(env, prev, fresh, true, now, { user, loc }); // cut: остальных записей в ответе нет — не «удалены»
+        bk = ch.state; bkDirty = true;
+        q = await jrMerge(env, c, o, q, fresh, now, logs, ch);
+        dirty = true;
+      }
+      const q0 = q.length;
+      q = await withBonus(env, c, o, q, r.list, now, { user, loc, full: false, eager }, logs); // оплата визита меняет запись — видим её здесь
+      if (q.length !== q0) dirty = true;
+      covered.add("fast");
+    } catch (/** @type {any} */ e) { console.log("jr fast", c.id, String((e && e.message) || e).slice(0, 160)); }
   }
+  // событие об оплате или бонусах (finances_operation, loyalty_card): запись при оплате может не измениться — смотрим бонусы записей с
+  // визитом за последние 8 часов (журнал за сегодня и вчера), не дожидаясь проверки раз в 15 минут
+  if (eager && !covered.has("bonus")) {
+    if (!o.bi && !o.bo) covered.add("bonus"); // сценарии бонусов выключены — смотреть нечего
+    else try {
+      const r = await altRecordsRange(env, user, loc, isoDay(now - 8 * 3600e3), isoDay(now), 2);
+      const q0 = q.length;
+      q = await withBonus(env, c, o, q, r.list, now, { user, loc, full: true, eager: true }, logs);
+      if (q.length !== q0) dirty = true;
+      covered.add("bonus");
+    } catch (/** @type {any} */ e) { console.log("jr bonus kick", c.id, String((e && e.message) || e).slice(0, 160)); }
+  }
+  // события до начала прохода прочитаны; не прочиталось (Altegio не ответил) — отметка остаётся, в следующую минуту ещё раз
+  const done = [...kick.pending].filter(m => covered.has(m));
+  if (done.length) { try { await kickDone(env, c.id, done, now); } catch (/** @type {any} */ e) { console.log("jr kick done", c.id, String((e && e.message) || e).slice(0, 120)); } }
   const drop = new Set(), due = [];
   for (const x of q) {
-    if (now - x.at > late(o, x.k, x.at)) {
+    if (overdue(o, x.k, x.at, now)) {
       drop.add(key(x));
       logs.push(entry(x, "skipped", x.na ? "не ушло: текст не одобрен владельцем" : x.wa ? "в Altegio нет отметки «пришёл», об отзыве не просим" : "время отправки прошло", now));
     }
@@ -215,7 +337,7 @@ async function jrClient(env, c, now) {
   /** @type {[string, string][]} */ const told = [];
   if (due.length && !quiet && !(await jrHold(env, c.id))) {
     const day = isoDay(now), cnt0 = await jrCount(env, c.id, day);
-    const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svVariants(env, c.id), told, blocks: /** @type {Map<string, string> | null} */ (null) };
+    const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svOwn(env, c), told, blocks: /** @type {Map<string, string> | null} */ (null), bk };
     for (const x of due) {
       if (sent >= PER_MIN) break;
       const r = await jrSend(env, c, o, x, now, { route, user, loc }, st);
@@ -237,6 +359,17 @@ async function jrClient(env, c, now) {
   try { await jrLogAdd(env, c.id, logs); } catch (e) { console.log("jr log add", String(e)); }
   try { await autoCountAdd(env, c.id, isoDay(now), countsOf(logs)); } catch (e) { console.log("jr counts", String(e)); }
   return sent;
+}
+/** бонусы по прочитанным записям → в очередь (без повторов по ключу задачи). Сбой — только в журнал Worker: напоминания идут дальше
+ *  @param {Env} env @param {Client} c @param {any} o @param {any[]} q @param {any[]} list @param {number} now @param {{ user: string, loc: number, full: boolean, eager?: boolean }} ctx @param {any[]} logs */
+async function withBonus(env, c, o, q, list, now, ctx, logs) {
+  if (!o.bi && !o.bo) return q;
+  try {
+    const add = await bonusScan(env, c, o, list.map(r => ({ r, v: jrRec(r) })), now, ctx, (x, st, why) => logs.push(entry(x, st, why, now)));
+    if (!add.length) return q;
+    const have = new Set(q.map(key));
+    return q.concat(add.filter(x => !have.has(key(x)))).slice(-QUEUE_MAX);
+  } catch (/** @type {any} */ e) { console.log("jr bonus", c.id, String((e && e.message) || e).slice(0, 160)); return q; }
 }
 /** решения → прибавка к счётчикам дня по сценариям (неявка — задача администратору, не сценарий) @param {any[]} logs */
 function countsOf(logs) {
@@ -263,7 +396,7 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
   const cur = new Map(), moved = [], cancelled = [], gone = [];
   const end = atLocal(isoDay(now + AHEAD * 86400e3), "23:59");
   /** @param {any} v @param {any} p */
-  const row = (v, p) => ({ id: v.id, v: v.v, d: v.date, t: v.time, p: v.p, n: v.n, s: v.staff, sv: v.svc, mk: v.made || (p && p.mk) || 0, fs: (p && p.fs) || now, ls: now, sent: (p && Array.isArray(p.sent)) ? p.sent : [] });
+  const row = (v, p) => ({ id: v.id, v: v.v, d: v.date, t: v.time, p: v.p, n: v.n, s: v.staff, sv: v.svc, ...(v.lk ? { lk: v.lk } : {}), mk: v.made || (p && p.mk) || 0, fs: (p && p.fs) || now, ls: now, sent: (p && Array.isArray(p.sent)) ? p.sent : [] });
   for (const r of list) {
     const v = jrRec(r);
     if (!v || v.att === -1 || atLocal(v.date, v.time) < now - 86400e3) continue;
@@ -303,7 +436,7 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
  *  @param {Env} env @param {Client} c @param {any} o @param {any[]} q @param {any[]} list @param {number} now @param {any[]} logs
  *  @param {{ moved: { p: any, v: any }[], cancelled: any[] }} ch */
 async function jrMerge(env, c, o, q, list, now, logs, ch) {
-  const byId = new Map(list.map(r => [String(r && r.id), r])), plan = jrPlan(c, list, now, o.set).filter(x => x.at <= now + HORIZON);
+  const byId = new Map(list.map(r => [String(r && r.id), r])), plan = jrPlan(c, list, now, o.set, o.site).filter(x => x.at <= now + HORIZON);
   const pk = new Set(plan.map(key)), prk = new Map(plan.map(x => [x.rec + ":" + x.k, x]));
   const gone = new Set(ch.cancelled.map(p => String(p.id)));
   // запись прочитана сейчас. Которой нет в ответе, та остаётся в очереди как была: удалена ли она, решит свежее чтение журнала её дня
@@ -311,14 +444,15 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
   const known = (/** @type {any} */ x) => byId.has(x.rec);
   const keep = [];
   for (const x of q) {
-    if (x.k !== "cx" && gone.has(x.rec)) { if (now - x.at <= late(o, x.k, x.at)) logs.push(entry(x, "cancelled", "запись удалена", now)); continue; }
-    if (x.k === "cx" || !known(x)) { if (now - x.at <= late(o, x.k, x.at)) keep.push(x); continue; }
+    if (x.k !== "cx" && gone.has(x.rec)) { if (!overdue(o, x.k, x.at, now)) logs.push(entry(x, "cancelled", "запись удалена", now)); continue; }
+    // отмена и бонусы не из плана журнала: ждут своей минуты (бонусы снова проверит отправка)
+    if (x.k === "cx" || x.k === "bi" || x.k === "bo" || !known(x)) { if (!overdue(o, x.k, x.at, now)) keep.push(x); continue; }
     if (pk.has(key(x))) continue; // в новом плане то же самое
     const same = prk.get(x.rec + ":" + x.k);
     if (!x.v && same && same.date === x.date && same.time === x.time) continue; // очередь до версий записи — та же запись, тихо заменяем
     const r = byId.get(x.rec), v = jrRec(r);
     if (x.k === "s06" && v && v.v === x.v) { keep.push(x); continue; } // сообщение о переносе ждёт своей минуты
-    if (now - x.at > late(o, x.k, x.at)) continue;
+    if (overdue(o, x.k, x.at, now)) continue;
     const why = r.deleted ? "запись удалена" : !v ? "у записи нет клиента или номера"
       : v.att === -1 ? "клиент не пришёл" : v.att === 1 && x.k !== "rv" ? "клиент уже пришёл"
       : (x.v && v.v !== x.v) || v.date !== x.date || v.time !== x.time ? "запись перенесена"
@@ -333,7 +467,8 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
     if (now - +p.ls > FRESH_MS) { logs.push(entry(x, "skipped", "перенос замечен поздно (журнал долго не читали): не пишем задним числом", now)); continue; }
     if (!told(p, now)) { logs.push(entry(x, "skipped", "запись изменили сразу после создания: клиент узнает новое время из подтверждения", now)); continue; }
     if (out.some(y => y.k === "s01" && y.rec === v.id)) { logs.push(entry(x, "skipped", "подтверждение с новым временем ещё не ушло: о переносе отдельно не пишем", now)); continue; }
-    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, k: "s06", at: now });
+    // замечен после часов отправки — утром (ТЗ v4: ночные переносы пропадали, «время отправки прошло»)
+    out.push({ rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, ...(v.lk ? { lk: v.lk } : {}), k: "s06", at: sendAt(o, now + SETTLE) });
   }
   for (const p of ch.cancelled) { // отмена будущей записи: сообщение — только если владелец включил сценарий и клиент знал о записи
     if (!o.cx) continue;
@@ -341,7 +476,7 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
     if (atLocal(String(p.d), String(p.t)) <= now) continue;
     if (now - +p.ls > FRESH_MS) { logs.push(entry(x, "skipped", "отмена замечена поздно (журнал долго не читали): не пишем задним числом", now)); continue; }
     if (!told(p, now)) { logs.push(entry(x, "skipped", "запись удалили сразу после создания (ошибка администратора): клиенту не пишем", now)); continue; }
-    out.push({ ...x, at: now });
+    out.push({ ...x, ls: +p.ls || now, at: sendAt(o, now + SETTLE) }); // ночью — утром; ls — когда запись видели последний раз (удалили позже)
   }
   if (o.noshow !== false) { // S11: «не пришёл» — только задача администратору в чате, клиенту ничего не пишем
     for (const r of list) {
@@ -358,10 +493,21 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
   return out.filter(x => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true; }).slice(-QUEUE_MAX);
 }
 
+/** данные задачи очереди → данные текста: запись, ссылка Altegio на неё, бонусы @param {any} x */
+const msgOf = x => ({ name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff, link: x.lk || "",
+  ...(x.am !== undefined ? { amount: x.am } : {}), ...(x.bal !== undefined ? { balance: x.bal } : {}) });
+const RV_DAY = 12 * 3600e3; // «после каждого визита» — но не дважды за день: два визита в один день (два мастера) — одна благодарность
+/** благодарность этому номеру уже уходила за последние rvgap дней (0 — после каждого визита, не чаще раза в 12 часов)
+ *  @param {Env} env @param {string} cid @param {string} p @param {any} o @param {number} now */
+async function reviewedRecently(env, cid, p, o, now) {
+  const at = await jrReviewedAt(env, cid, p);
+  return !!at && now - at < Math.max(RV_DAY, (o.rvgap > 0 ? o.rvgap : 0) * 86400e3);
+}
+
 /** одно сообщение → "sent" | "drop" (не шлём и не будем) | "wait" (отзыв: ждём «пришёл»; текст ждёт одобрения) | "stop" (в эту минуту
  *  больше не шлём). Решение — в st.logs. @param {Env} env @param {Client} c @param {any} o @param {any} x @param {number} now
  *  @param {{ route: any, user: string, loc: number }} ctx
- *  @param {{ cnt: number, cache: Map<string, any[]>, logs: any[], dirty: boolean, approvals: Record<string, any>, variants: Record<string, any>, told: [string, string][], blocks: Map<string, string> | null }} st */
+ *  @param {{ cnt: number, cache: Map<string, any[]>, logs: any[], dirty: boolean, approvals: Record<string, any>, variants: Record<string, any>, told: [string, string][], blocks: Map<string, string> | null, bk: Record<string, any> | null }} st */
 async function jrSend(env, c, o, x, now, ctx, st) {
   const skip = (/** @type {string} */ why) => { st.logs.push(entry(x, "skipped", why, now)); return "drop"; };
   // выключатель сценария (раздел «Автоматические сообщения»): выключили — то, что стояло в очереди, не уходит; включили позже, чем
@@ -381,7 +527,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     st.blocks = (g && g.reasons) || new Map();
   }
   if (SVC_NO.has(st.blocks.get(x.p) || "")) return skip("в базе клиентов — «стоп» или запрет писать");
-  if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) return skip("отзыв у этого клиента уже просили (раз в 60 дней)");
+  if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) return skip(o.rvgap > 0 ? `благодарность с просьбой об отзыве этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)` : "благодарность этому клиенту сегодня уже отправляли (два визита в один день — одна благодарность)");
   // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста)
   const sc = scenario(KIND_SC[x.k] || ""), vt = sc && approvedVariant(sc, st.approvals, st.variants), ap = sc && st.approvals[sc.id];
   if (!sc || !vt) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
@@ -400,15 +546,25 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   if (x.k === "cx") { // отмена: запись так и не вернулась в журнал её дня
     if (r && !(r.deleted === true || r.deleted === 1)) return skip("запись снова есть в Altegio: отменять не о чем");
     if (atLocal(x.date, x.time) <= now) return skip("время записи прошло");
+    // запись удалили и клиента записали заново (администратор «переносит» удалением и новой записью; ночью клиент записался сам) —
+    // «отменена» только запутает (находка проверки 08.11.2026)
+    if (!st.bk) { try { st.bk = await jrbLoad(env, c.id); } catch (e) { st.bk = {}; } }
+    const since = (+x.ls || x.at) - 60e3;
+    if (Object.values(st.bk || {}).some(/** @param {any} b */ b => b && b.p === x.p && String(b.id) !== x.rec && +b.mk >= since && atLocal(String(b.d), String(b.t)) > now))
+      return skip("клиент записался заново: об отмене прежней записи не пишем");
+  } else if (x.k === "bi" || x.k === "bo") { // бонусы — об операции, не о времени записи: правка услуг после оплаты не мешает
+    if (!r || !v) return skip("запись удалена");
+    if (v.p !== x.p) return skip("в записи другой номер");
   } else {
     if (!r) return skip("запись удалена из журнала или перенесена на другой день");
     if (!v) return skip("запись удалена");
     if (v.att === -1) return skip("клиент не пришёл");
     if (v.date !== x.date || v.time !== x.time || (x.v && v.v !== x.v)) return skip("запись перенесена");
     if (v.p !== x.p) return skip("в записи другой номер");
+    const after = x.k === "rv"; // после визита: «пришёл» и прошедшее время — не повод не слать
     if (x.k === "rv" && v.att !== 1) { if (!x.wa) { x.wa = 1; st.dirty = true; } return "wait"; }
-    if (x.k !== "rv" && v.att === 1) return skip("клиент уже пришёл");
-    if (x.k !== "rv" && atLocal(x.date, x.time) <= now) return skip("время записи прошло");
+    if (!after && v.att === 1) return skip("клиент уже пришёл");
+    if (!after && atLocal(x.date, x.time) <= now) return skip("время записи прошло");
   }
   const hk = `h:ga:${c.id}:${x.p}`;
   /** @type {any} */ let p = {};
@@ -420,19 +576,19 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     catch (e) { console.log("jr cap note", String(e)); }
     return "stop";
   }
-  const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt);
+  const t = svText(c, x.k, msgOf(x), p.lang, vt);
   if (!t || !t.text) return skip("нет текста сообщения");
-  const ver = x.v || "1";
-  if (!(await jrTry(env, c.id, x.rec, x.k, ver))) return skip("уже отправляли");
+  const { rec: orec, ver } = onceOf(x);
+  if (!(await jrTry(env, c.id, orec, x.k, ver))) return skip("уже отправляли");
   /** @type {Record<string, any>} */ let res = { ok: false, status: 0, code: "ga:net", error: "не отправляли" };
   // атомарная отметка в D1 (если у адреса есть база): одна запись, вид и версия — одно сообщение, даже если две фоновые задачи
   // одновременно взяли одно и то же (отметка rms: в KV согласуется не сразу). Нет базы у адреса — только отметка в KV, как раньше
-  const once = await sendOnceAuto(env, c.id, x.p, `a-${x.k}-${x.rec}-${ver}`, async () => {
+  const once = await sendOnceAuto(env, c.id, x.p, `a-${x.k}-${orec}-${ver}`, async () => {
     try { res = await sendGreen(env, x.p + "@c.us", t.text, ctx.route, true); } catch (e) { res = { ok: false, status: 0, code: "ga:net", error: String(e) }; }
     return res.ok ? { ok: true, ...(res.id ? { id: String(res.id) } : {}) } : gaKind(res.code) === "net" ? { ok: true, unknown: true, ...(res.id ? { id: String(res.id) } : {}) } : { ok: false };
   });
   if (once && "blocked" in once) {
-    await jrUntry(env, c.id, x.rec, x.k, ver);
+    await jrUntry(env, c.id, orec, x.k, ver);
     if (!x.db) { x.db = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "не ушло: база отметок от двойной отправки не ответила, пробуем ещё раз", now)); }
     return "stop";
   }
@@ -441,7 +597,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     const kind = gaKind(res.code), why = gaWhy(res, ctx.route);
     console.log("jr send", c.id, x.k, res.code);
     if (kind === "stop") {
-      await jrUntry(env, c.id, x.rec, x.k, ver);
+      await jrUntry(env, c.id, orec, x.k, ver);
       await jrHoldSet(env, c.id, why, now);
       await notify(env, `⛔ ${c.name}: напоминания со второго номера остановлены на 6 часов.\nGreen-API: ${why}\nПроверьте, не заблокирован ли номер.`, c.id);
       return "stop";
@@ -460,7 +616,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
       return "drop";
     }
     if (kind === "temp") {
-      await jrUntry(env, c.id, x.rec, x.k, ver);
+      await jrUntry(env, c.id, orec, x.k, ver);
       x.tries = (x.tries || 0) + 1; st.dirty = true;
       if (x.tries < MAX_TRIES) return "stop"; // в следующую минуту ещё раз
     }
@@ -511,7 +667,7 @@ export async function jrDry(env, c, now) {
   const from = isoDay(now - 86400e3), to = isoDay(now + 86400e3);
   const { list, pages, cut } = await altRecordsRange(env, user, loc, from, to, 3);
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set);
-  const { items, skipped } = jrPlanAll(c, list, now, set), ap = await svApprovals(env, c.id), own = await svVariants(env, c.id), byId = new Map(list.map(r => [String(r && r.id), r]));
+  const { items, skipped } = jrPlanAll(c, list, now, set, await siteNotifyLoad(env.KV, c.id)), ap = await svApprovals(env, c.id), own = await svOwn(env, c), byId = new Map(list.map(r => [String(r && r.id), r]));
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   /** @type {Map<string, any>} */ const prof = new Map();
   const out = [];
@@ -521,17 +677,17 @@ export async function jrDry(env, c, now) {
     const p = prof.get(x.p);
     let why = "", status = "";
     if (await optedOut(env, c.id, x.p)) why = "клиент просил не писать";
-    else if (x.k === "rv" && await jrReviewed(env, c.id, x.p)) why = "отзыв у этого клиента уже просили (раз в 60 дней)";
+    else if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) why = o.rvgap > 0 ? `благодарность этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)` : "благодарность этому клиенту сегодня уже отправляли";
     else if (!sc || !vt) why = "текст не одобрен владельцем";
     else if (a && +a.at > x.at) why = "текст одобрен позже, чем должно было уйти это сообщение";
     else if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) why = "подтверждение уже в переписке (запись через бота)";
-    else if (await jrTried(env, c.id, x.rec, x.k, x.v)) why = "уже отправляли";
+    else if (await jrTried(env, c.id, onceOf(x).rec, x.k, onceOf(x).ver)) why = "уже отправляли";
     if (why) status = "skip";
     else if (x.k === "rv" && (!v || v.att !== 1)) { status = "wait"; why = "ждёт отметки «пришёл» в Altegio"; }
     else if (x.at > now) status = "later";
     else if (quiet) { status = "later"; why = `уйдёт в часы отправки (с ${o.from}:00 до ${o.to}:00)`; }
     else status = "now";
-    const t = svText(c, x.k, { name: x.n, date: x.date, time: x.time, services: x.svc, staffName: x.staff }, p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
+    const t = svText(c, x.k, msgOf(x), p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
     out.push({ k: x.k, sc: sc ? sc.id : "", at: x.at, name: firstName(x.n), phone: maskPhone(x.p), date: x.date, time: x.time, staff: x.staff, svc: x.svc,
       status, why, text: t ? t.text : "", lang: t ? t.lang : "ru" });
   }

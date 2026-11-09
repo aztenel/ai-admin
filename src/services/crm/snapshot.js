@@ -107,6 +107,8 @@ const altFail = e => {
 /** @param {Env} env @param {Client} c @param {number} nowMs @returns {Promise<Set<string>>} */
 export async function crmBookedNow(env, c, nowMs) {
   const r = await altRecordsRange(env, altUserKey(env, c), altLoc(env, c), isoDay(nowMs), isoDay(nowMs + CRM_FUTURE_DAYS * 86400e3));
+  // журнал прочитан не весь (страниц больше предела) — список записанных неполный: рекламу записавшемуся не шлём («закрыто при сомнении»)
+  if (r.cut) throw new Error("журнал Altegio прочитан не весь");
   const out = new Set();
   for (const x of r.list) {
     if (!x || x.deleted === true || x.deleted === 1 || !x.client || typeof x.client !== "object") continue;

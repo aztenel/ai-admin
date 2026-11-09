@@ -228,7 +228,7 @@ test("реклама по базе — только с подтверждённ�
   await crmBuild0(s.env, W, NOW); // без выдачи согласий
   let sg = await crmSegments(s.env, W, NOW);
   assert.equal(sg.ok, 0, "базы согласий нет — рекламы нет ни для кого");
-  assert.equal(sg.excluded.noconsent, 4); assert.equal(sg.consent.ready, false); assert.match(sg.consent.why, /подтверждённое согласие/);
+  assert.equal(sg.excluded.noconsent, 4); assert.equal(sg.consent.ready, false); assert.match(sg.consent.why, /согласие на рекламу/);
   assert.deepEqual(await crmPick(s.env, W, "pora", NOW), []);
   await grantSnap(s.env, "winchester", [dg(201)]);
   const { contactAdd } = await import("../../src/db/d1/contacts.js");

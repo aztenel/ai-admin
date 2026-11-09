@@ -870,6 +870,11 @@ test("напоминание: notify (часы до визита, как в ви
   }
   assert.equal((await s.book({ notify: "2", time: "18:00", phone: "+77011110025" }, { ip: newIp() })).r.status, 200);
   assert.equal(recs().at(-1).notify_by_sms, 2);
+  // ТЗ v4 (08.11.2026): SMS Altegio у Winchester не подключены — выбор сохраняем себе (sbn:), напоминание уйдёт в WhatsApp
+  const sbn = s.kv.json("sbn:winchester"), ids = Object.keys(sbn);
+  assert.deepEqual(ids.map(k => sbn[k].h).sort(), [0, 1, 2, 24], JSON.stringify(sbn)); // старая форма без поля — не сохраняется
+  assert.ok(ids.every(k => /^7770\d\d$/.test(k)) && ids.every(k => sbn[k].t > Date.now()), JSON.stringify(sbn));
+  assert.equal(sbn[ids.find(k => sbn[k].h === 24)].t, Date.parse(`${dayN(1)}T15:00:00+05:00`));
   const cat = (await s.getJ("catalog")).j;
   assert.deepEqual(cat.notify, { def: 1, options: [0, 1, 2, 3, 4, 5, 6, 9, 12, 15, 18, 21, 24, 48, 72, 120, 168] });
   // режим проверки: в журнал не пишем — напоминание видно администратору в заявке и в Telegram
@@ -877,6 +882,7 @@ test("напоминание: notify (часы до визита, как в ви
   const dry = site();
   const b = await dry.book({ notify: 24 });
   assert.equal(b.r.status, 200, JSON.stringify(b.j));
+  assert.equal(dry.kv.mem.get("sbn:winchester"), undefined, "проверка без записи: записи в журнале нет — напоминать не о чем");
   assert.match(dry.leads("winchester").at(-1).note, /напомнить за 1 день/);
   assert.match(net.tg.map(m => m.text).join("\n"), /Напоминание: за 1 день до визита/);
 });

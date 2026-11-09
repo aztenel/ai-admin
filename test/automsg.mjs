@@ -1,7 +1,8 @@
 // «Автоматические сообщения» в проверках (services/automsg, 02.11.2026): включить сценарии так, как это делает владелец в пульте —
 // настройки msgset:<клиент> в KV. По умолчанию всё выключено, поэтому проверки отправки сначала включают нужные сценарии.
-// LEGACY — время, как работало до раздела: накануне в 18:00, за 2 часа, отзыв через 3 часа после начала.
-export const LEGACY = { remind24: { mode: "eve", eve: "18:00" }, remind3: { hours: 2 }, review: { hours: 3 } };
+// LEGACY — время, как работало до раздела: накануне в 18:00, за 2 часа, отзыв через 3 часа (у записей проверок нет длительности — от начала),
+// одному клиенту не чаще раза в 60 дней.
+export const LEGACY = { remind24: { mode: "eve", eve: "18:00" }, remind3: { hours: 2 }, review: { hours: 3, gap: 60 } };
 
 /** @param {any} s стенд из harness (mk) @param {Record<string, boolean>} on @param {Record<string, any>} [t] время сценариев @param {string} [cid] */
 export async function autoOn(s, on, t = {}, cid = "winchester") {

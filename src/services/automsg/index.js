@@ -20,17 +20,20 @@ import { STOP_RU, DEMO, companyOf } from "../broadcast/library.js";
 import { GA_OFF, bcGaOff } from "../broadcast/sender.js";
 import { jrOn, sendOnceAuto } from "../reminders/journal.js";
 import { serviceVariant } from "../reminders/info.js";
-import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS } from "../reminders/templates.js";
+import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS, SV_SAMPLE } from "../reminders/templates.js";
 import { logTurns } from "../../db/kv/chats.js";
 import { linesRead } from "../../db/kv/inbox.js";
-import { jrLogLoad, jrLogAdd, jrHold, svApprovals, svApprove, svVariants } from "../../db/kv/reminders.js";
+import { jrLogLoad, jrLogAdd, jrHold, svApprovals, svApprove } from "../../db/kv/reminders.js";
 import { autoLoad, autoEdit, autoCounts, autoTestHit } from "../../db/kv/automsg.js";
 import { AUTO, autoDef, autoSettings, timingPatch, windowPatch, timingText, MK_TEXT } from "./catalog.js";
 import { mkLocked, mkPick, mkText, birthdays } from "./marketing.js";
+import { svOwn } from "../reminders/variants.js";
+import { altHookInfo } from "../reminders/hook.js";
+import { altHookLast } from "../../db/kv/reminders.js";
 
 const LOG_MAX = 20;          // последних событий сценария — в пульт
 const TEST_PER_HOUR = 20;    // проверок за час: номер владельца не засыпаем
-const SAMPLE = { name: "Арман", time: "15:00", services: "Мужская стрижка", staffName: "Данияр" };
+const SAMPLE = SV_SAMPLE; // вымышленная запись: ссылки Altegio — пояснением, бонусы 400 и 1 200
 /** @type {Record<string, string>} */
 const SAY = { on: "включил", off: "выключил", edit: "изменил", test: "проверка" };
 
@@ -71,9 +74,9 @@ function textOf(c, d, set, ap, own, now) {
  * Всё для раздела: готовность, часы отправки, номер для проверки, сценарии с выключателем, текстом, временем, счётчиками и журналом.
  * @param {Env} env @param {Client} c @param {number} now @param {boolean} owner
  */
-export async function autoInfo(env, c, now, owner) {
+export async function autoInfo(env, c, now, owner, origin = "") {
   const set = await autoSet(env, c), ready = await readiness(env, c, now);
-  const [ap, own, log] = await Promise.all([svApprovals(env, c.id), svVariants(env, c.id), jrLogLoad(env, c.id)]);
+  const [ap, own, log] = await Promise.all([svApprovals(env, c.id), svOwn(env, c), jrLogLoad(env, c.id)]);
   const days = Array.from({ length: 7 }, (_, i) => isoDay(now - i * 86400e3)), counts = await autoCounts(env, c.id, days);
   const mkBan = mkLocked(env, c);
   /** @type {any} */ let view = null;
@@ -108,7 +111,9 @@ export async function autoInfo(env, c, now, owner) {
   return { client: { id: c.id, name: c.name }, owner, stage: ready.preview ? "preview" : "production", now,
     master: ready.master, sender: ready.sender, altegio: ready.altegio, db: ready.db, hold: ready.hold,
     window: set.win, cap: set.cap, marketing: { allowed: !mkBan, why: mkBan },
-    test: set.test ? { phone: owner ? fmtPhone(set.test.p) : maskPhone(set.test.p) } : null, scenarios };
+    test: set.test ? { phone: owner ? fmtPhone(set.test.p) : maskPhone(set.test.p) } : null, scenarios,
+    // вебхук Altegio (ТЗ v4): адрес с паролем — только владельцу (его вставляют в настройки Altegio); последнее событие — всем
+    hook: owner && origin ? await altHookInfo(env, c, origin) : { url: "", last: await altHookLast(env, c.id).catch(() => null) } };
 }
 
 /** рекламный текст: из чипов вставок, с отказом в конце, без [скобок] → { ru, kk } или { error } @param {any} b */
@@ -162,13 +167,13 @@ export async function autoChange(env, c, b, who, now) {
   }
   if (on && d.group === "marketing" && !mk) { const ck = mkTextCheck(set.tx[d.id]); if ("error" in ck) return { error: ck.error, status: 400 }; }
   const sc = d.group === "service" ? scenario(String(d.sc)) : null;
-  if ((on || b.text != null) && d.group === "service" && !(sc && activeOf(sc, await svVariants(env, c.id)))) return { error: "У сценария нет текста.", status: 400 };
+  if ((on || b.text != null) && d.group === "service" && !(sc && activeOf(sc, await svOwn(env, c)))) return { error: "У сценария нет текста.", status: 400 };
   // запись: текст (сервисный проверяется и пишется одним шагом — первым, до остального), время, выключатель
   if (b.text != null && sc) {
-    const act = /** @type {any} */ (activeOf(sc, await svVariants(env, c.id)));
+    const act = /** @type {any} */ (activeOf(sc, await svOwn(env, c)));
     const r = await serviceVariant(env, c, { id: sc.id, ...(act.builtin ? {} : { variant: act.id }), ru: b.text.ru, kk: b.text.kk ?? "", active: true }, by, now);
     if (!r.ok) return { error: r.error, status: r.status || 400 };
-    const now2 = activeOf(sc, await svVariants(env, c.id));
+    const now2 = activeOf(sc, await svOwn(env, c));
     if (now2) await svApprove(env, c.id, sc.id, now2.v, true, now, now2.id); // правит владелец — новая версия сразу одобрена им
     ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: "edit", why: "текст сообщения" });
   }
@@ -184,7 +189,7 @@ export async function autoChange(env, c, b, who, now) {
   }
   if (on != null) {
     if (on && sc) { // включить — одобрить действующий текст (включает и правит тексты только владелец)
-      const act = activeOf(sc, await svVariants(env, c.id));
+      const act = activeOf(sc, await svOwn(env, c));
       if (act && !approvalFits((await svApprovals(env, c.id))[sc.id], act)) await svApprove(env, c.id, sc.id, act.v, true, now, act.id);
     }
     await autoEdit(env, c.id, o => { o.s = o.s || {}; o.s[d.id] = { ...(o.s[d.id] || {}), on, at: now, by }; });
@@ -208,7 +213,7 @@ export async function autoTest(env, c, b, who, now) {
   const set = await autoSet(env, c), lang = b.lang === "kk" ? "kk" : "ru";
   let text = "";
   if (d.group === "service") {
-    const sc = scenario(String(d.sc)), act = sc && activeOf(sc, await svVariants(env, c.id));
+    const sc = scenario(String(d.sc)), act = sc && activeOf(sc, await svOwn(env, c));
     const t = act ? svText(c, d.kind, { ...SAMPLE, date: isoDay(now + 86400e3) }, lang, act) : null;
     text = t ? t.text : "";
   } else {

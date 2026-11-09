@@ -116,8 +116,73 @@ export async function altProbe(env, c, now) {
     try { const d = await altClientsSearch(env, user, loc, dirBody(["id"], [{ type, state: { value: true } }])); summary.push(`Флаг Altegio ${type}: ${d.total} клиентов (${label})`); fields[type] = d.total; }
     catch (e) { summary.push(`Флаг Altegio ${type}: ${errOf(e)}`); }
   }
+  // 5. ссылки записи (ТЗ v4, 08.11.2026): есть ли в записи поле со ссылкой «Детали» / «Контроль качества», как в уведомлениях
+  // Altegio (openhc.kz). Только имена полей и сколько записей их заполнили — значения могут содержать ключ ссылки
+  if (recs.length) {
+    const links = (fields.record || []).filter((/** @type {any} */ x) => /link|url|short|hash|feedback|review/i.test(x.key));
+    summary.push(`Поля записи, похожие на ссылки: ${links.map((/** @type {any} */ x) => `${x.key} (${x.filled} из ${x.of})`).join(", ") || "нет"}`);
+    fields.recordLinks = links.map((/** @type {any} */ x) => x.key);
+    // вид ссылки short_link без кода: адрес и путь, коды (3 знака и длиннее) — «x» («http://openhc.kz/c/xxxxx/xxxxx/»). По нему видно, совпадает ли
+    // ссылка с «Детали» в уведомлениях Altegio и можно ли из неё получить «Контроль качества» (…/e/<код>/)
+    const shapes = [...new Set(recs.map(r => String((r && r.short_link) || "")).filter(Boolean).map(u => u.replace(/^(https?:\/\/[^/]+)(.*)$/, (_, h, p) => h + p.replace(/[A-Za-z0-9]{3,}/g, (/** @type {string} */ m) => "x".repeat(m.length)))))].slice(0, 3);
+    if (shapes.length) { summary.push(`Вид ссылки short_link: ${shapes.join(", ")}`); fields.shortLink = shapes; }
+  }
+  // 6. бонусы (ТЗ v4): типы карт салона (настройки — не данные клиентов), карты клиентов из журнала (только число и имена полей),
+  // визит и его детали (есть ли список бонусных операций). 403 — у сотрудника, чей ключ в системе, нет права на «Лояльность»
+  fields.loyalty = await loyaltyProbe(env, user, loc, recs, summary);
   const report = { at: now, ok, summary, fields };
   const db = await d1Ready(env, now);
   if (db) { try { await eventPut(db, c.id, `probe:${now}`, "altegio_probe", report, now, "owner"); } catch (e) { console.log("probe save", String(e)); } }
   return report;
+}
+
+/** настройки типа карты: только простые значения (числа, да/нет, короткие строки) — проценты, правила начисления @param {any} t */
+const typeOf = t => Object.fromEntries(Object.entries(t && typeof t === "object" ? t : {}).filter(([, v]) => typeof v === "number" || typeof v === "boolean" || (typeof v === "string" && v.length <= 60)));
+/** ключи объекта и ключи вложенных списков — «loyalty_transactions[3]: amount, type_id…» @param {any} o */
+function shapeOf(o) {
+  const out = [];
+  for (const [k, v] of Object.entries(o && typeof o === "object" ? o : {})) {
+    if (Array.isArray(v)) out.push(`${k}[${v.length}]${v[0] && typeof v[0] === "object" ? ": " + Object.keys(v[0]).join(", ") : ""}`);
+    else if (v && typeof v === "object") out.push(`${k}{${Object.keys(v).join(", ")}}`);
+    else out.push(k);
+  }
+  return out;
+}
+/** @param {Env} env @param {string} user @param {number} loc @param {any[]} recs @param {string[]} summary */
+async function loyaltyProbe(env, user, loc, recs, summary) {
+  /** @type {Record<string, any>} */
+  const out = {};
+  try {
+    const d = await altRead(env, "GET", `/loyalty/card_types/salon/${loc}`, null, user);
+    const types = (Array.isArray(d) ? d : []).filter(x => x && typeof x === "object");
+    out.types = types.slice(0, 5).map(typeOf);
+    summary.push(`Бонусы: типов карт в салоне — ${types.length}${types.length ? `: ${types.slice(0, 5).map(t => String(t.title || t.name || t.id)).join(", ")}` : ""}`);
+    if (types.length) summary.push(`Настройки первого типа карты: ${JSON.stringify(out.types[0]).slice(0, 400)}`);
+  } catch (e) { summary.push(`Бонусы, типы карт: ${errOf(e)}${+(/** @type {any} */ (e).status) === 403 ? " — нет права на «Лояльность» у сотрудника, чей ключ в системе" : ""}`); out.typesError = +(/** @type {any} */ (e).status) || 0; }
+  const ids = [...new Set(recs.map(x => x.client && x.client.id).filter(Boolean))].slice(0, 5);
+  let withCard = 0, read = 0;
+  /** @type {Set<string>} */ const cardKeys = new Set();
+  for (const id of ids) {
+    try {
+      const d = await altRead(env, "GET", `/loyalty/client_cards/${encodeURIComponent(String(id))}`, null, user);
+      const cards = (Array.isArray(d) ? d : []).filter(x => x && typeof x === "object");
+      read++; if (cards.length) withCard++;
+      for (const c of cards) for (const k of Object.keys(c)) cardKeys.add(k);
+    } catch (e) { if (!out.cardsError) { out.cardsError = +(/** @type {any} */ (e).status) || 0; summary.push(`Бонусные карты клиентов: ${errOf(e)}`); } }
+  }
+  if (read) summary.push(`Бонусные карты клиентов: прочитано ${read} из ${ids.length}, с картой — ${withCard}; поля карты: ${[...cardKeys].join(", ") || "нет"}`);
+  out.cards = { read, withCard, keys: [...cardKeys] };
+  // визит с отметкой «пришёл»: есть ли в деталях визита бонусные операции (начислено / списано за этот визит)
+  const past = recs.find(x => +x.attendance === 1 && x.visit_id);
+  if (past) {
+    for (const [label, path] of [["Визит", `/visits/${past.visit_id}`], ["Детали визита", `/visit/details/${loc}/${past.id}/${past.visit_id}`]]) {
+      try {
+        const d = await altRead(env, "GET", path, null, user);
+        const keys = shapeOf(d);
+        summary.push(`${label}: поля ${keys.join("; ").slice(0, 600) || "нет"}`);
+        out[label === "Визит" ? "visit" : "details"] = keys;
+      } catch (e) { summary.push(`${label}: ${errOf(e)}`); }
+    }
+  } else summary.push("Визит с отметкой «пришёл» и visit_id в журнале не найден — детали визита не проверены");
+  return out;
 }

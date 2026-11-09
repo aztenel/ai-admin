@@ -54,7 +54,7 @@ export async function marketingGate(env, c, now) {
   /** @type {Map<string, string>} */
   const none = new Map(), presumed = consentPresumed(env, c);
   const db = await d1Ready(env, now).catch(() => null);
-  if (!db) return { ready: false, presumed, phones: new Set(), reasons: none, deny: none, why: "Нет базы согласий (раздел «Клиенты»): реклама — только тем, кто дал подтверждённое согласие." };
+  if (!db) return { ready: false, presumed, phones: new Set(), reasons: none, deny: none, why: "Нет базы согласий (раздел «Клиенты»): реклама — только тем, у кого есть согласие на рекламу." };
   let g, stops;
   try { stops = await optoutPhones(env, c.id); g = await consentGate(db, c.id, now, stops, GAP_MS); }
   catch (e) { console.log("gate", String(e).slice(0, 120)); return { ready: false, presumed, phones: new Set(), reasons: none, deny: none, why: "База согласий не ответила — рассылка по базе отложена." }; }

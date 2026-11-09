@@ -5,13 +5,15 @@
 // пары «сохранённый текст → пример сервера» (sampleFrom); чего в сохранённом тексте не было — запасные (вымышленная запись).
 
 /** Вставки сервисных сообщений, которые принимает сервер (SV_VARS). */
-export const SV_VARS = ["имя", "дата", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "компания"];
+export const SV_VARS = ["имя", "дата", "дата с годом", "время", "мастер", "услуга", "услуга и мастер", "адрес", "ссылка", "площадка", "компания", "детали", "оценка", "сколько", "баланс"];
 /** Подпись вставки на кнопке: «имя» → «Имя». */
-export const svLabel = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+const SV_LABEL: Record<string, string> = { ссылка: "Ссылка на отзыв", площадка: "Где отзыв", детали: "Ссылка на запись", оценка: "Контроль качества", сколько: "Сколько бонусов", баланс: "Баланс бонусов" };
+export const svLabel = (v: string) => SV_LABEL[v] || v.charAt(0).toUpperCase() + v.slice(1);
 
 /** Запасные значения — вымышленная запись, как пример сервера: Арман, завтра в 15:00, мужская стрижка у мастера Данияра. */
 export function svDefaults(company: string): Record<string, string> {
-  return { имя: "Арман", дата: "завтра", время: "15:00", услуга: "Мужская стрижка", мастер: "Данияр", "услуга и мастер": "Мужская стрижка, мастер Данияр", компания: company, адрес: "", ссылка: "" };
+  return { имя: "Арман", дата: "завтра", "дата с годом": "12 ноября 2026", время: "15:00", услуга: "Мужская стрижка", мастер: "Данияр", "услуга и мастер": "Мужская стрижка, мастер Данияр", компания: company, адрес: "", ссылка: "",
+    площадка: "", детали: "(ссылка на запись из Altegio)", оценка: "(ссылка на оценку визита из Altegio)", сколько: "400", баланс: "1200" };
 }
 export function mkDefaults(company: string): Record<string, string> {
   return { "client.first_name": "Арман", "staff.name": "Данияр", "service.name": "Мужская стрижка", "visit.days_since": "28", "company.name": company, "booking.url": "", "company.address": "" };
@@ -20,7 +22,8 @@ export function mkDefaults(company: string): Record<string, string> {
 /** Как сервер: {вставка}; [[ … ]] пропадает, если в нём пустая вставка. */
 export function svRender(text: string, vars: Record<string, string>): string {
   const sub = (s: string) => s.replace(/\{([^{}]+)\}/g, (_, k: string) => vars[k] ?? "");
-  return sub(text.replace(/\[\[([\s\S]*?)\]\]/g, (_, part: string) => ([...part.matchAll(/\{([^{}]+)\}/g)].some((m) => !(vars[m[1]] ?? "")) ? "" : part)));
+  // первая буква — заглавная, как у сервера: «[[{имя}, ]]благодарим…» без имени
+  return sub(text.replace(/\[\[([\s\S]*?)\]\]/g, (_, part: string) => ([...part.matchAll(/\{([^{}]+)\}/g)].some((m) => !(vars[m[1]] ?? "")) ? "" : part))).replace(/^\p{Ll}/u, (ch) => ch.toUpperCase());
 }
 /** Рекламный текст: {{ключ}} → значение (в примере имя есть всегда, поэтому правила «без имени» сервера здесь не нужны). */
 export function mkRender(text: string, vars: Record<string, string>): string {

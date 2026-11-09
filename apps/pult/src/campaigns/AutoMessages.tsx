@@ -39,7 +39,8 @@ import type { AutoMessages as AutoData, AutoMsgCounts, AutoMsgField, AutoMsgLogI
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { kkVars, mkDefaults, mkRender, newRid, sampleFrom, svDefaults, svLabel, svRender, SV_VARS } from "./autoText";
-import { astanaDay, nf, Notice, Switch, when } from "./base/shared";
+import { astanaDay, nf, Notice, Switch, when, whenText } from "./base/shared";
+import { copyText } from "@/lib/clipboard";
 import { errText, EXCLUDED } from "./common";
 import ServiceMessages, { dayWord, DryRunGroup, ServiceSkeleton, Upcoming, useServiceMessages } from "./ServiceMessages";
 import { useLoad, type Loaded } from "./useLoad";
@@ -56,7 +57,7 @@ const WHY: Record<string, string> = { ...EXCLUDED, noconsent: "нет согла
 // реклама со второго номера закрыта целиком — длинную причину пишем один раз над группой, у сценариев — коротко
 const MK_SHORT = "Включить нельзя: реклама со второго номера выключена.";
 
-type Item = { kind: "edit" | "test" | "log"; id: string } | { kind: "hours" };
+type Item = { kind: "edit" | "test" | "log"; id: string } | { kind: "hours" } | { kind: "hook" };
 /** Открытый лист. Номер для проверки открывают и из листа проверки — после сохранения возвращаемся в него (back). */
 type Layer = Item | { kind: "phone"; back?: Item } | null;
 
@@ -126,7 +127,7 @@ function AutoMessages({ ws, ownerHint, svc, bot, onMarketing }: { ws: string; ow
 
   return (
     <>
-      <StatusCard d={d} bot={bot} owner={owner} onHours={() => setLayer({ kind: "hours" })} onPhone={() => setLayer({ kind: "phone" })} />
+      <StatusCard d={d} bot={bot} owner={owner} onHours={() => setLayer({ kind: "hours" })} onPhone={() => setLayer({ kind: "phone" })} onHook={() => setLayer({ kind: "hook" })} />
       {am.error && (
         <p role="alert" className="-mt-3 mb-4 px-4 text-sm text-critical">
           Не обновилось: {am.error}
@@ -150,7 +151,7 @@ function AutoMessages({ ws, ownerHint, svc, bot, onMarketing }: { ws: string; ow
           Реклама (только с согласием)
         </h2>
         <p className="mt-0.5 px-1 text-ui text-fg-2 pointer-coarse:text-base">
-          Отдельно от сервисных. Уходит только тем, кто дал подтверждённое согласие на рекламу и не писал «стоп», одному клиенту не чаще раза в 30 дней. Без согласия реклама не уходит
+          Отдельно от сервисных. Уходит только тем, у кого есть согласие на рекламу и кто не писал «стоп», одному клиенту не чаще раза в 30 дней. Без согласия реклама не уходит
           никому.
         </p>
         {!d.marketing.allowed && d.marketing.why && (
@@ -189,6 +190,7 @@ function AutoMessages({ ws, ownerHint, svc, bot, onMarketing }: { ws: string; ow
       {cur && layer?.kind === "test" && <TestSheet ws={ws} s={cur} d={d} onClose={() => setLayer(null)} onPhone={() => setLayer({ kind: "phone", back: layer })} onSent={reload} />}
       {cur && layer?.kind === "log" && <LogSheet s={cur} now={now} onClose={() => setLayer(null)} />}
       {layer?.kind === "hours" && <HoursSheet ws={ws} d={d} onClose={() => setLayer(null)} onSaved={reload} />}
+      {layer?.kind === "hook" && <HookSheet d={d} onClose={() => setLayer(null)} />}
       {layer?.kind === "phone" && <PhoneSheet ws={ws} d={d} onClose={() => setLayer(layer.back || null)} onSaved={reload} />}
     </>
   );
@@ -201,7 +203,7 @@ const nb = (s: string) => s.replace(/ /g, " ");
 function ConfirmText({ s, d }: { s: AutoMsgScenario; d: AutoData }) {
   const lines = [
     `Сообщения начнут уходить настоящим клиентам со второго номера${d.sender.phone ? ` ${nb(d.sender.phone)}` : ""}. ${s.who} ${s.timingText}`,
-    s.group === "service" ? "Включая, вы одобряете текст сообщения. Посмотреть его и проверить на своём номере можно кнопками на карточке." : "Реклама уйдёт только тем, кто дал подтверждённое согласие и не писал «стоп».",
+    s.group === "service" ? "Включая, вы одобряете текст сообщения. Посмотреть его и проверить на своём номере можно кнопками на карточке." : "Реклама уйдёт только тем, у кого есть согласие на рекламу и кто не писал «стоп».",
     d.stage === "preview" ? "Это тестовая версия: отсюда сообщения не уходят." : !d.master.on ? "Пока главный выключатель отправки выключен, клиентам ничего не уйдёт: сценарий начнёт работать, когда его включат." : "",
   ].filter(Boolean);
   return (
@@ -218,7 +220,8 @@ function ConfirmText({ s, d }: { s: AutoMsgScenario; d: AutoData }) {
 // ---------------------------------------------------------------------------------------------------------------------------------
 /** Сверху: уходят ли сообщения вообще и почему нет; второй номер, часы отправки, предел за сутки, номер для проверки.
  *  bot — второй номер в обзоре раздела: на связи ли он у Green-API (сервер «Автоматических» знает только, подключён ли). */
-function StatusCard({ d, bot, owner, onHours, onPhone }: { d: AutoData; bot?: BotNumberState | null; owner: boolean; onHours: () => void; onPhone: () => void }) {
+function StatusCard({ d, bot, owner, onHours, onPhone, onHook }: { d: AutoData; bot?: BotNumberState | null; owner: boolean; onHours: () => void; onPhone: () => void; onHook: () => void }) {
+  const now = useNow(60e3), last = d.hook?.last;
   const problems: { text: string; tone: "critical" | "warn" }[] = [];
   if (d.stage === "preview") problems.push({ text: "Это тестовая версия: отсюда сообщения клиентам не уходят.", tone: "warn" });
   // главный выключатель — переменная в Cloudflare: владельцу — как есть (её ставит он), сотруднику — простыми словами
@@ -262,6 +265,7 @@ function StatusCard({ d, bot, owner, onHours, onPhone }: { d: AutoData; bot?: Bo
         <SettingRow label="Часы отправки" value={`с ${d.window.from}:00 до ${d.window.to}:00`} onClick={owner ? onHours : undefined} />
         <SettingRow label="Не больше в сутки" value={`${nf.format(d.cap)} ${plural(d.cap, MESSAGES)}`} onClick={owner ? onHours : undefined} />
         <SettingRow label="Номер для проверки" value={d.test ? d.test.phone : "не указан"} muted={!d.test} onClick={owner ? onPhone : undefined} />
+        <SettingRow label="События Altegio" value={last ? `последнее ${whenText(last.at, now)}` : "не приходили"} muted={!last} onClick={owner && d.hook?.url ? onHook : undefined} />
       </div>
       <p className="border-t border-line px-4 py-2.5 text-sm text-fg-3">
         {owner
@@ -1022,6 +1026,52 @@ function PhoneSheet({ ws, d, onClose, onSaved }: { ws: string; d: AutoData; onCl
             {err}
           </Notice>
         )}
+      </div>
+    </Sheet>
+  );
+}
+
+/** События Altegio (вебхук, ТЗ v4): адрес с паролем для настроек Altegio. С ним сообщения уходят через секунды после записи, переноса,
+ *  отмены и оплаты; без него — по проверке журнала раз в минуту (подтверждение, бонусы) и раз в 15 минут (отмена). Только владельцу. */
+function HookSheet({ d, onClose }: { d: AutoData; onClose: () => void }) {
+  const now = useNow(60e3), url = d.hook?.url || "", last = d.hook?.last;
+  const copy = () => void copyText(url).then((ok) => toast(ok ? "Адрес скопирован" : "Скопируйте адрес вручную"));
+  return (
+    <Sheet
+      open
+      onOpenChange={(x) => !x && onClose()}
+      title="События Altegio"
+      description="Altegio сам сообщает о новой записи, переносе, отмене и оплате — сообщение клиенту уходит в течение минуты. Без этого отмену и бонусы система видит только при полной проверке журнала раз в 15 минут."
+      footer={
+        <div className="flex gap-2 pb-1">
+          <Button className="flex-1" onClick={onClose}>
+            Закрыть
+          </Button>
+          <Button variant="primary" className="flex-1" onClick={copy}>
+            Скопировать адрес
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3 px-4 pb-4 text-ui pointer-coarse:text-base">
+        {d.hook?.why ? (
+          <p role="status" className="rounded-[0.625rem] bg-critical-soft px-3 py-2.5 text-fg">
+            {d.hook.why}
+          </p>
+        ) : null}
+        <p className="break-all rounded-[0.625rem] bg-surface-2 px-3 py-2.5 font-mono text-sm" aria-label="Адрес для Altegio">
+          {url}
+        </p>
+        <ol className="list-decimal space-y-1.5 pl-5 text-fg-2">
+          <li>В Altegio откройте Настройки → «Интеграции и доступы» → «Вебхуки».</li>
+          <li>Добавьте адрес выше и отметьте события о записях (создание, изменение, удаление) и о визитах и оплате.</li>
+          <li>Сохраните. Когда придёт первое событие, ниже появится его время.</li>
+        </ol>
+        <p className="text-fg-2">{last ? `Последнее событие: ${whenText(last.at, now)}. Всего пришло: ${nf.format(last.n)}.` : "Событий пока не было."}</p>
+        <p className="text-sm text-fg-3">
+          Адрес — как пароль: не пересылайте его. Сообщения уходят не чаще 2 в минуту — так номер не заблокируют. Проверка журнала по расписанию остаётся
+          страховкой, если событие не придёт.
+        </p>
       </div>
     </Sheet>
   );

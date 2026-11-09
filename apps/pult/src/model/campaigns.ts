@@ -456,7 +456,7 @@ export type AutoInfo = {
 /** Сервисное сообщение, которое уходит само (не рассылка): d1 — накануне в 18:00, h2 — за 2 часа, rv — просьба об отзыве через 3 часа;
  *  по журналу Altegio со второго номера ещё s01 — подтверждение новой записи, s06 — сообщение о переносе (ТЗ v2.0 §4) и cx — об отмене
  *  (02.11.2026, «Автоматические сообщения»; время и включённость — там). */
-export type ServiceKind = "d1" | "h2" | "rv" | "s01" | "s06" | "cx";
+export type ServiceKind = "d1" | "h2" | "rv" | "s01" | "s06" | "cx" | "bi" | "bo";
 
 /** Вид сервисного сообщения: включён ли у компании. */
 export type ServiceKindState = {
@@ -619,8 +619,9 @@ export type CalendarEventKind = "service" | "campaign" | "approval" | "sent" | "
 export type CalendarEvent = { kind: CalendarEventKind; title: string; n: number; id?: string };
 export type CampaignCalendar = {
   today: string;
-  /** Автосценарий: включён, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы. */
-  auto: { on: boolean; days: number; cap: number; tpl: boolean } | null;
+  /** Реклама по базе: включена, через сколько дней после визита, предел в день, есть ли шаблон. null — у компании нет базы.
+   *  src: "ga" — реактивация «Автоматических сообщений» со второго номера (ТЗ v4), "meta" — автосценарий Meta; locked — почему реклама закрыта. */
+  auto: { on: boolean; days: number; cap: number; tpl: boolean; src?: "ga" | "meta"; title?: string; time?: string; locked?: string } | null;
   /** Когда собрана база клиентов (мс), 0 — не собрана. */
   baseAt: number;
   days: CalendarDay[];
@@ -785,6 +786,8 @@ export type AutoMessages = {
   /** Номер для проверки: владельцу — целиком, сотруднику — маской; null — не указан. */
   test: { phone: string } | null;
   scenarios: AutoMsgScenario[];
+  /** События Altegio (вебхук, ТЗ v4): адрес с паролем — только владельцу ("" у сотрудника), последнее событие — время, ресурс и действие. */
+  hook?: { url: string; last: { at: number; res: string; st: string; n: number } | null; on: boolean; why: string };
 };
 /** Изменить (только владелец): выключатель, время, текст сценария; часы отправки и предел; номер для проверки ("" — убрать). */
 export type AutoMsgPatch =

@@ -52,6 +52,7 @@ export const net = {
   mediaReply: null,            // (url, init) → Response | null: файлы по ссылкам провайдеров (inbox-v2.test.mjs)              // попытки «Добавить клиента» (POST /clients/{локация}) — в пробах и синхронизации их быть не должно
   altClientsNoVisits: false,   // Altegio не принимает поле visits_count (400)
   altClientsBad: "",           // поиск справочника отвечает странно: "nodata" — 200 без data, "short" — total_count больше, чем отдано
+  altLoyalty: null,            // бонусы (проба полей, 08.11.2026): { types: [...], cards: { <client_id>: [...] }, visits: { <visit_id>: {...} }, details: { <visit_id>: {...} } }; null — 403, как без прав на «Лояльность»
   altJournal: null,            // массив сырых записей журнала (/records): с ним заглушка фильтрует по start_date/end_date и отдаёт страницами (count, page), как Altegio; null — журнал из altRecords, как раньше
   ga: [],                      // запросы к Green-API: { url, host, inst, op, token, body, form } (form — поля multipart: файл как { name, size, type })
   gaState: "authorized",       // что отвечает getStateInstance
@@ -63,7 +64,7 @@ export const net = {
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
   push: [],                    // запросы к службам Web Push (Apple, Google, Mozilla, Microsoft): { url, headers, body (байты) }
   pushReply: null,             // функция (rec) → Response | null: свой ответ службы push (410 — подписки нет)
-  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
+  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altLoyalty = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -154,6 +155,14 @@ function altStub(url, init) {
     if (net.altClientsBad === "nodata") return J({ success: true, meta: {} });
     return J({ success: true, data: all.slice((pg - 1) * size, pg * size).map(x => Object.fromEntries(["id", ...fields].filter(k => k in x).map(k => [k, x[k]]))), meta: { total_count: all.length + (net.altClientsBad === "short" ? 1 : 0) } });
   }
+  if (method === "GET" && (m = path.match(/^\/(loyalty\/card_types\/salon\/\d+|loyalty\/client_cards\/(\d+)|visits\/(\d+)|visit\/details\/\d+\/\d+\/(\d+))$/))) { // бонусы и визиты
+    const L = net.altLoyalty, no = () => J({ success: false, data: null, meta: { message: "Нет прав" } }, 403);
+    if (!L) return no();
+    if (m[1].startsWith("loyalty/card_types")) return J({ success: true, data: L.types || [], meta: [] });
+    if (m[2]) return J({ success: true, data: (L.cards || {})[m[2]] || [], meta: [] });
+    const v = m[3] ? (L.visits || {})[m[3]] : (L.details || {})[m[4]];
+    return v ? J({ success: true, data: v, meta: [] }) : J({ success: false, data: null, meta: { message: "Not found" } }, 404);
+  }
   if ((m = path.match(/^\/client\/(\d+)\/(\d+)$/)) && method === "GET") { // карточка клиента
     const x = net.altClients.find(c => String(c.id) === m[2]);
     return x ? J({ success: true, data: { id: x.id, name: x.name, phone: x.phone, sms_not: 0, sms_check: 1, is_newsletter_allowed: !!x.nl, visits: x.visits_count || 0 }, meta: [] }) : J({ success: false, data: null, meta: { message: "Not found" } }, 404);
@@ -163,7 +172,8 @@ function altStub(url, init) {
     if (net.altJournalFail) return J({ success: false, data: null, meta: { message: "Unauthorized" } }, net.altJournalFail);
     if (net.altJournal) { // журнал за период (база клиентов): записи с датой в [start_date, end_date], страница page по count штук
       const q = new URL(url).searchParams, sd = q.get("start_date") || "", ed = q.get("end_date") || "", cnt = Math.max(1, +q.get("count") || 200), pg = Math.max(1, +q.get("page") || 1);
-      const all = net.altJournal.filter(r => { const d = String(r.datetime || "").slice(0, 10); return (!sd || d >= sd) && (!ed || d <= ed); });
+      const ca = q.get("changed_after"), caMs = ca ? Date.parse(ca.length <= 19 ? ca + "Z" : ca) : 0; // изменённые после (как вживую: время без пояса — UTC)
+      const all = net.altJournal.filter(r => { const d = String(r.datetime || "").slice(0, 10); return (!sd || d >= sd) && (!ed || d <= ed) && (!caMs || Date.parse(String(r.last_change_date || r.create_date || "")) >= caMs); });
       return J({ success: true, data: all.slice((pg - 1) * cnt, pg * cnt), meta: { count: all.length } });
     }
     // журнал как вживую: удалённая через API запись помечена deleted, удалённая администратором — пропадает из списка
@@ -277,7 +287,8 @@ export function mk(envExtra = {}) {
   const kv = mkKV();
   const d1 = ALL_D1 && !("DB" in envExtra) && !Object.keys(envExtra).some(k => k.startsWith("CHAT_STORE")) ? { CHAT_STORE: "d1", DB: ALL_D1.d1With(envExtra.STAGE === "preview" ? "preview" : "production").db } : {};
   // CONSENT_PRESUMED_WINCHESTER: проверки по умолчанию — с подтверждённым согласием (как до 03.11.2026); «согласие по умолчанию» включают сами
-  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", CONSENT_PRESUMED_WINCHESTER: "0", ...d1, ...envExtra };
+  // SV_DEFAULT_WINCHESTER: проверки по умолчанию — с прежними текстами (первый вариант, как до 08.11.2026); тексты Altegio включают сами
+  const env = { KV: kv.api, GEMINI_KEY: "stub-key", VERIFY_TOKEN: "vt", LEADS_KEY: "owner-key-123456", TG_TOKEN: "tgtoken", TG_CHAT: "1", MODEL: "gemini-3.5-flash-lite", CONSENT_PRESUMED_WINCHESTER: "0", SV_DEFAULT_WINCHESTER: "0", ...d1, ...envExtra };
   const pending = [], ctx = { waitUntil: p => pending.push(p) };
   const settle = async () => { while (pending.length) await Promise.allSettled(pending.splice(0)); };
   const call = async (path, init = {}) => { const r = await worker.fetch(new Request("https://bot.test" + path, init), env, ctx); await settle(); return r; };

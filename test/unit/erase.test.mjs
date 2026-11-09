@@ -16,13 +16,17 @@ test("владелец удаляет данные клиента: перепи�
   await s.waText("/wa/winchester", from, "Тимур, мужская стрижка завтра в 10:00", { secret: "sec-w" });
   await s.waText("/wa/winchester", other, "Тимур, мужская стрижка завтра в 10:00", { secret: "sec-w" });
   assert.ok(keysWith(s, from.slice(1)).length >= 3, "до удаления данные есть: " + keysWith(s, from.slice(1)));
+  // в очереди автоматических сообщений второго номера — напоминание этому клиенту и другому
+  await s.kv.api.put("jrq:winchester", JSON.stringify([{ rec: "1", k: "d1", at: Date.now() + 3600e3, p: from }, { rec: "2", k: "d1", at: Date.now() + 3600e3, p: other }]));
   const own = await login(s, "owner-key-123456");
   const r = await own.post("/api/inbox/act", { c: "winchester", ch: "wa", id: from, act: "erase" });
   const d = await r.json();
   assert.equal(r.status, 200, JSON.stringify(d));
   assert.ok(d.erased && d.leads >= 1, JSON.stringify(d));
-  assert.deepEqual(keysWith(s, from.slice(1)), [], "номера клиента больше нет в хранилище");
+  // остаётся только отметка «не писать» (ТЗ v4: клиент попросил удалить данные — сообщения ему больше не уходят: ни напоминания, ни реклама)
+  assert.deepEqual(keysWith(s, from.slice(1)), [`optout:winchester:${from}`], "номера клиента больше нет в хранилище, кроме отметки «не писать»");
   assert.ok(keysWith(s, other.slice(1)).length >= 3, "данные другого клиента на месте");
+  assert.deepEqual(s.kv.json("jrq:winchester").map(x => x.p), [other], "автоматические сообщения ему больше не уйдут");
   assert.equal((await own.go(`/api/inbox/chat?c=winchester&ch=wa&id=${from}`)).status, 404);
 });
 

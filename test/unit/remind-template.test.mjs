@@ -39,7 +39,7 @@ test("просьба об отзыве вне окна уходит шаблон
   const out = sends();
   assert.equal(out.length, 1, JSON.stringify(net.wz));
   assert.equal(out[0].template.name, "review_request");
-  assert.deepEqual(out[0].template.components[0].parameters.map(x => x.text), ["Winchester", "https://2gis.kz/astana/firm/70000001038239111/tab/reviews"]);
+  assert.deepEqual(out[0].template.components[0].parameters.map(x => x.text), ["Winchester", "https://go.2gis.com/mrkUN"]);
 });
 
 test("вне окна и без шаблона — не отправляется (как раньше); в окне — обычным текстом, шаблон не нужен", async () => {

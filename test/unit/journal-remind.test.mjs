@@ -52,6 +52,36 @@ test("план: накануне в 18:00, за 2 часа (только с 10 �
   assert.ok(!JSON.stringify(items).includes("XXX"), "скрытый номер не попадает в очередь");
 });
 
+test("ТЗ v4: напоминание по выбору клиента на сайте — одно, в выбранное время; «не напоминать» — без напоминаний; остальные записи как обычно", () => {
+  const now = at(TODAY, "09:00"), set = { win: { from: 10, to: 21 }, cap: 150, s: {
+    confirm: { on: false, t: { delay: 0 } }, remind24: { on: true, t: { mode: "24h", eve: "18:00" } }, remind3: { on: true, t: { hours: 3 } },
+    move: { on: false, t: {} }, cancel: { on: false, t: {} }, review: { on: true, t: { hours: 3 } } } };
+  const list = [rec(ph(301), TOM, "15:00", { id: 31 }), rec(ph(302), TOM, "15:00", { id: 32 }), rec(ph(303), TOM, "15:00", { id: 33 }),
+    rec(ph(304), TOM, "15:00", { id: 34 }), rec(ph(305), TOM, "10:30", { id: 35 })];
+  const site = { 32: { h: 1 }, 33: { h: 24 }, 34: { h: 0 }, 35: { h: 1 } };
+  const all = jrPlan(W, list, now, set, site);
+  assert.deepEqual(kinds(all, 31), ["d1", "h2", "rv"], "без выбора — обычные напоминания");
+  assert.deepEqual(kinds(all, 32), ["h2", "rv"]); assert.equal(all.find(x => x.rec === "32" && x.k === "h2").at, at(TOM, "14:00"), "за 1 час");
+  assert.deepEqual(kinds(all, 33), ["d1", "rv"]); assert.equal(all.find(x => x.rec === "33" && x.k === "d1").at, at(TODAY, "15:00"), "за сутки");
+  assert.deepEqual(kinds(all, 34), ["rv"], "«не напоминать» — без напоминаний, отзыв остаётся");
+  assert.deepEqual(kinds(all, 35), ["rv"], "визит в 10:30, за 1 час — 9:30, раньше часов отправки: не шлём");
+  // сценарий выключен в пульте — по выбору клиента тоже не шлём (текст и одобрение — у сценария)
+  const off = jrPlan(W, list, now, { ...set, s: { ...set.s, remind3: { on: false, t: { hours: 3 } } } }, site);
+  assert.deepEqual(kinds(off, 32), ["rv"]);
+});
+
+test("ТЗ v4: выбор с сайта читается из хранилища — «за 1 час» уходит в 14:00, накануне в 18:00 не уходит", async () => {
+  net.reset();
+  net.altJournal = [rec(ph(311), TOM, "15:00", { id: 41, name: "Арман" })];
+  const s = mk(ENV); await approve(s);
+  await s.kv.api.put("sbn:winchester", JSON.stringify({ 41: { h: 1, t: at(TOM, "15:00") } }));
+  await jrRun(s.env, at(TODAY, "17:59")); await jrRun(s.env, at(TODAY, "18:00")); await jrRun(s.env, at(TODAY, "18:20"));
+  assert.deepEqual(sent(), [], "накануне не шлём: клиент выбрал «за 1 час»");
+  await jrRun(s.env, at(TOM, "14:00"));
+  assert.equal(sent().length, 1, JSON.stringify(s.kv.json("jrq:winchester")));
+  assert.equal(sent()[0].to, dg(311)); assert.match(sent()[0].text, /15:00/);
+});
+
 test("бот на втором номере Winchester выключен по умолчанию, BOT_GA_WINCHESTER = 1 включает; у других компаний — как было", () => {
   assert.equal(botOff({}, W, "ga"), true);
   assert.equal(botOff({ BOT_GA_WINCHESTER: "1" }, W, "ga"), false);
@@ -204,7 +234,7 @@ test("пульт, вкладка «Сервисные»: очередь по ж�
   assert.equal(r.status, 200);
   assert.equal(j.journal, true); assert.equal(j.botOff, false, "бот выключен, но напоминания уходят — предупреждения «не будет» нет");
   assert.equal(j.altegio, true);
-  assert.deepEqual(j.kinds.map(x => [x.k, x.on]), [["s01", false], ["d1", true], ["h2", true], ["s06", false], ["rv", true]], "подтверждение и «перенесли» — выключены, пока владелец не включит");
+  assert.deepEqual(j.kinds.map(x => [x.k, x.on]), [["s01", false], ["d1", true], ["h2", true], ["s06", false], ["cx", false], ["rv", true], ["bi", false], ["bo", false]], "подтверждение, перенос, отмена и бонусы — выключены, пока владелец не включит");
   assert.ok(j.kinds.filter(x => x.on).every(x => x.approved), "тексты одобрены");
   assert.ok(j.queue.length >= 1 && j.queue.every(x => x.name === "Ерлан" && x.phone === "+7 700 *** ** 01" && x.ch === "ga"), JSON.stringify(j.queue));
   assert.ok(!t.includes(dg(301)), "полного номера нет");
@@ -230,5 +260,290 @@ test("без REMIND_GA_WINCHESTER = 1 напоминания выключены:
   await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Finbox" });
   const j = await (await b.go("/api/bc/service?c=winchester")).json();
   assert.equal(j.journal, true); assert.equal(j.enabled, false);
-  assert.deepEqual(j.kinds.map(x => x.on), [false, false, false, false, false]);
+  assert.deepEqual(j.kinds.map(x => x.on), [false, false, false, false, false, false, false, false]);
+});
+
+// ТЗ v4 (08.11.2026): благодарность как в уведомлении Altegio Winchester — через N часов после окончания визита, с «Контролем качества»
+// (ссылка Altegio по записи) и 2ГИС; «Запись подтверждена» со ссылкой «Детали»; бонусы из деталей визита и баланса карты
+const useVariant = async (s, sc, variant) => {
+  const x = SCENARIOS.find(y => y.id === sc);
+  const ap = JSON.parse((await s.kv.api.get("svtpl:winchester")) || "{}");
+  ap[sc] = { v: x.v, at: 1, var: variant };
+  await s.kv.api.put("svtpl:winchester", JSON.stringify(ap));
+  const own = JSON.parse((await s.kv.api.get("svtpl:winchester:var")) || "{}");
+  own[sc] = { active: variant, list: [] };
+  await s.kv.api.put("svtpl:winchester:var", JSON.stringify(own));
+};
+
+test("ТЗ v4: благодарность через 1 час после окончания визита — текст как у Altegio, «Контроль качества» из ссылки записи, 2ГИС; после каждого визита", async () => {
+  net.reset();
+  const v = rec(ph(401), TODAY, "12:00", { id: 4001, att: 1, name: "Кайрат", staff: "Тони (Рауан М.)" });
+  v.seance_length = 3600; v.short_link = "http://openhc.kz/c/OWaqc/qONAj/";
+  net.altJournal = [v];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 1, gap: 0 } });
+  await useVariant(s, "S12", "b3");
+  await jrRun(s.env, at(TODAY, "13:30"));
+  await jrRun(s.env, at(TODAY, "13:59"));
+  assert.deepEqual(sent(), [], "визит кончился в 13:00 — благодарность в 14:00");
+  await jrRun(s.env, at(TODAY, "14:00"));
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].text, "Кайрат, благодарим за визит!\nВаш мастер Тони (Рауан М.) порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\nКонтроль качества: http://openhc.kz/e/OWaqc/\n2ГИС: https://go.2gis.com/mrkUN");
+  // следующий визит через день — снова благодарность (как у Altegio: после каждого визита)
+  const w = rec(ph(401), TOM, "12:00", { id: 4002, att: 1, name: "Кайрат" });
+  w.seance_length = 1800; w.short_link = "javascript:alert(1)";
+  net.altJournal.push(w);
+  await jrRun(s.env, at(TOM, "13:20")); await jrRun(s.env, at(TOM, "13:30")); await jrRun(s.env, at(TOM, "13:31"));
+  assert.equal(sent().length, 2, JSON.stringify(sent()));
+  assert.equal(sent()[1].text, "Кайрат, благодарим за визит!\nВаш мастер Тони порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\n2ГИС: https://go.2gis.com/mrkUN", "чужая ссылка — без строки «Контроль качества»");
+});
+
+test("ТЗ v4: благодарность — «не чаще раза в N дней» из настроек; без имени — с заглавной буквы", async () => {
+  net.reset();
+  const a = rec(ph(411), TODAY, "12:00", { id: 4101, att: 1, name: "89771" }), b = rec(ph(411), TOM, "12:00", { id: 4102, att: 1, name: "89771" });
+  net.altJournal = [a, b];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 0, gap: 30 } });
+  await useVariant(s, "S12", "b3");
+  await jrRun(s.env, at(TODAY, "11:00")); // первое чтение журнала (то, что должно было уйти раньше, задним числом не шлём)
+  await jrRun(s.env, at(TODAY, "12:00")); await jrRun(s.env, at(TODAY, "12:01"));
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].text, /^Благодарим за визит!\nВаш мастер Тони/, sent()[0].text);
+  await jrRun(s.env, at(TOM, "12:30")); await jrRun(s.env, at(TOM, "12:31"));
+  assert.equal(sent().length, 1, "второй визит через день — не чаще раза в 30 дней");
+});
+
+test("ТЗ v4: «Запись подтверждена» со ссылкой «Детали» из записи Altegio — как в уведомлении Altegio", async () => {
+  net.reset();
+  const r = rec(ph(421), TOM, "12:30", { id: 4201, made: `${TODAY}T15:00:00+05:00`, staff: "Тони (Рауан М.)" });
+  r.short_link = "http://openhc.kz/c/OS0oy/HOtyz/";
+  net.altJournal = [r];
+  const s = mk(ENV); await approve(s); await autoOn(s, { confirm: true }, { confirm: { delay: 0 } });
+  await useVariant(s, "S01", "b2");
+  await jrRun(s.env, at(TODAY, "15:01"));
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября 2026 в 12:30.\nДетали: http://openhc.kz/c/OS0oy/HOtyz/");
+});
+
+const paid = (i, time, o = {}) => {
+  const r = rec(ph(i), TODAY, time, { id: o.id, att: 1, name: "Кайрат" });
+  Object.assign(r, { visit_id: o.visit, paid_full: 1, last_change_date: `${TODAY}T${o.changed || time}:00+05:00` });
+  r.client.id = o.client;
+  return r;
+};
+
+test("ТЗ v4: бонусы — «Начислено бонусов» и «Списано бонусов» с балансом карты за 1–2 минуты после оплаты; одна операция — одно сообщение", async () => {
+  net.reset();
+  const r = paid(431, "12:00", { id: 4301, visit: 9301, client: 7301, changed: "13:10" });
+  net.altJournal = [r];
+  net.altLoyalty = { types: [{ id: 31134, title: "Бонусы" }], cards: { 7301: [{ id: 55, balance: 1200 }] }, details: { 9301: { loyalty_transactions: [
+    { id: 8001, card_id: 55, amount: 400, is_loyalty_withdraw: false, is_discount: false, created_date: `${TODAY} 13:09:00` },
+    { id: 8002, card_id: 55, amount: -300, is_loyalty_withdraw: true, created_date: `${TODAY} 13:09:00` },
+    { id: 8003, card_id: 55, amount: 10, is_discount: true, created_date: `${TODAY} 13:09:00` }, // скидка картой — не бонусы
+    { id: 8004, card_id: 0, certificate_id: 3, amount: 5000, created_date: `${TODAY} 13:09:00` }, // сертификат — не бонусы
+  ] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true, bonusOut: true });
+  await jrRun(s.env, at(TODAY, "13:00")); // полное чтение: оплаты ещё нет
+  r.last_change_date = `${TODAY}T13:10:00+05:00`;
+  await jrRun(s.env, at(TODAY, "13:11")); // быстрый проход видит изменённую запись
+  await jrRun(s.env, at(TODAY, "13:12"));
+  const texts = sent().map(x => x.text).sort();
+  assert.deepEqual(texts, ["Начислено бонусов: 400\nДоступно: 1200", "Списано бонусов: 300.\nИтоговый баланс: 1200."], JSON.stringify(sent()));
+  assert.ok(sent().every(x => x.to === dg(431)));
+  for (const t of ["13:13", "13:30", "14:00"]) await jrRun(s.env, at(TODAY, t));
+  assert.equal(sent().length, 2, "повторное чтение журнала — без дублей");
+  assert.ok(!net.alt.some(x => !/^GET /.test(x) && !/clients\/search/.test(x)), "только чтение Altegio: " + net.alt.filter(x => !/^GET /.test(x)).join(", "));
+});
+
+test("ТЗ v4: бонусы — без права «Лояльность» ничего не шлём и пишем почему; старая операция и выключенный сценарий — не шлём", async () => {
+  net.reset();
+  const r = paid(441, "11:00", { id: 4401, visit: 9401, client: 7401, changed: "12:00" });
+  net.altJournal = [r];
+  net.altLoyalty = null; // 403, как у сотрудника без права
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "12:01"));
+  assert.deepEqual(sent(), []);
+  const log = JSON.parse((await s.kv.api.get("jrl:winchester")) || "[]");
+  assert.ok(log.some(x => /права «Лояльность»/.test(x.why)), JSON.stringify(log));
+  // право дали, но операция была 5 часов назад — задним числом не пишем
+  net.altLoyalty = { cards: { 7401: [{ id: 56, balance: 900 }] }, details: { 9401: { loyalty_transactions: [{ id: 8101, card_id: 56, amount: 300, created_date: `${TODAY} 07:00:00` }] } } };
+  r.last_change_date = `${TODAY}T12:20:00+05:00`;
+  await jrRun(s.env, at(TODAY, "12:21"));
+  assert.deepEqual(sent(), []);
+  // списание при выключенном «Списано бонусов» — не шлём, начисление — шлём
+  net.altLoyalty.details[9401].loyalty_transactions.push({ id: 8102, card_id: 56, amount: 200, is_loyalty_withdraw: true, created_date: `${TODAY} 12:29:00` },
+    { id: 8103, card_id: 56, amount: 350, created_date: `${TODAY} 12:29:00` });
+  r.last_change_date = `${TODAY}T12:30:00+05:00`;
+  await jrRun(s.env, at(TODAY, "12:31")); await jrRun(s.env, at(TODAY, "12:32"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 350\nДоступно: 900"]);
+});
+
+test("ТЗ v4: бонусы после 21:00 — утром в начале часов отправки", async () => {
+  net.reset();
+  const r = paid(451, "20:00", { id: 4501, visit: 9501, client: 7501, changed: "21:30" });
+  net.altJournal = [r];
+  net.altLoyalty = { cards: { 7501: [{ id: 57, balance: 700 }] }, details: { 9501: { loyalty_transactions: [{ id: 8201, card_id: 57, amount: 300, created_date: `${TODAY} 21:29:00` }] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "21:31"));
+  assert.deepEqual(sent(), [], "вечером не шлём");
+  await jrRun(s.env, at(TOM, "10:00"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 300\nДоступно: 700"]);
+});
+
+// ТЗ v4, проверка владельца 08.11.2026: «Проверка без отправки» показывала прежние тексты — тексты как у Altegio лежали вторым и третьим
+// вариантом и ждали ручного выбора. У Winchester они действующие по умолчанию (SV_DEFAULT_WINCHESTER = 0 — прежние); дата — с годом, как у Altegio
+test("ТЗ v4: у Winchester по умолчанию действуют тексты как у Altegio — подтверждение с годом и «Детали», благодарность с «Контролем качества»", async () => {
+  net.reset();
+  const { jrDry } = await import("../../src/services/reminders/journal.js");
+  const a = rec(ph(461), TOM, "12:30", { id: 4601, made: `${TODAY}T15:00:00+05:00`, staff: "Тони (Рауан М.)", name: "Кайрат" });
+  a.short_link = "https://openhc.kz/c/OS0oy/HOtyz/";
+  const b = rec(ph(462), TODAY, "12:00", { id: 4602, att: 1, staff: "Тони (Рауан М.)", name: "Кайрат" });
+  b.seance_length = 3600; b.short_link = "https://openhc.kz/c/OWaqc/qONAj/";
+  net.altJournal = [a, b];
+  const s = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "1" });
+  await autoOn(s, { confirm: true, review: true }, { confirm: { delay: 0 }, review: { hours: 1, gap: 0 } });
+  const dry = await jrDry(s.env, W, at(TODAY, "13:30"));
+  const conf = dry.items.find(x => x.k === "s01"), thx = dry.items.find(x => x.k === "rv");
+  assert.equal(conf.text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони (Рауан М.)\nДата: 20 октября 2026 в 12:30.\nДетали: https://openhc.kz/c/OS0oy/HOtyz/", "проверка без отправки — тексты как у Altegio: " + conf.text);
+  assert.equal(thx.text, "Кайрат, благодарим за визит!\nВаш мастер Тони (Рауан М.) порадуется отзыву о своей работе\nУслуга: Мужская стрижка\n\nКонтроль качества: https://openhc.kz/e/OWaqc/\n2ГИС: https://go.2gis.com/mrkUN");
+  // владелец включает сценарий в пульте — одобряется действующий (вариант Altegio), и уходит именно он
+  const own = s.browser();
+  await own.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
+  for (const id of ["confirm", "review"]) assert.equal((await own.post("/api/msg/auto", { c: "winchester", id, on: false })).status, 200);
+  for (const id of ["confirm", "review"]) assert.equal((await own.post("/api/msg/auto", { c: "winchester", id, on: true })).status, 200);
+  const ap = s.kv.json("svtpl:winchester");
+  assert.equal(ap.S01.var, "b2"); assert.equal(ap.S12.var, "b3");
+  // включили позже, чем должно было уйти, — задним числом не шлём; новая запись — уходит текстом Altegio
+  net.altJournal = [a, b, { ...rec(ph(463), TOM, "16:00", { id: 4603, made: new Date(Date.now()).toISOString(), staff: "Айдос" }), short_link: "https://openhc.kz/c/AAAAA/BBBBB/" }];
+  const now = Date.now();
+  await jrRun(s.env, now + 60e3); await jrRun(s.env, now + 120e3);
+  const c3 = sent().find(x => x.to === dg(463));
+  if (c3) assert.match(c3.text, /^Вы записаны на услугу: Мужская стрижка\nБарбер: Айдос\nДата: \d+ [а-я]+ \d{4} в 16:00\.\nДетали: https:\/\/openhc\.kz\/c\/AAAAA\/BBBBB\/$/, c3.text);
+});
+
+test("ТЗ v4: SV_DEFAULT_WINCHESTER = 0 — прежние тексты (первый вариант), выбор владельца важнее умолчания", async () => {
+  net.reset();
+  const { jrDry } = await import("../../src/services/reminders/journal.js");
+  const a = rec(ph(471), TOM, "12:30", { id: 4701, made: `${TODAY}T15:00:00+05:00` });
+  net.altJournal = [a];
+  const s = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "0" });
+  await autoOn(s, { confirm: true }, { confirm: { delay: 0 } });
+  assert.match((await jrDry(s.env, W, at(TODAY, "15:30"))).items.find(x => x.k === "s01").text, /^Здравствуйте/);
+  const s2 = mk({ ...ENV, SV_DEFAULT_WINCHESTER: "1" });
+  await autoOn(s2, { confirm: true }, { confirm: { delay: 0 } });
+  await s2.kv.api.put("svtpl:winchester:var", JSON.stringify({ S01: { active: "b1", list: [] } })); // владелец сам выбрал прежний
+  assert.match((await jrDry(s2.env, W, at(TODAY, "15:30"))).items.find(x => x.k === "s01").text, /^Здравствуйте/);
+});
+
+// ── находки проверки 08.11.2026 (вебхук Altegio делает изменения записи видимыми сразу — дубли и потери, которых раньше почти не было) ──
+const sentTo = i => sent().filter(x => x.to === dg(i));
+
+test("находка 08.11: благодарность — одна на запись, даже если запись поправили после отправки (добавили услугу)", async () => {
+  net.reset();
+  const v = rec(ph(501), TODAY, "12:00", { id: 5001, att: 1, name: "Кайрат" });
+  v.seance_length = 3600;
+  net.altJournal = [v];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 1, gap: 0 } });
+  await jrRun(s.env, at(TODAY, "11:00"));
+  await jrRun(s.env, at(TODAY, "14:00"));
+  assert.equal(sentTo(501).length, 1);
+  v.services.push({ id: 2, title: "Борода" }); // администратор дописал услугу в прошедшую запись
+  for (const t of ["14:20", "14:40", "15:00"]) await jrRun(s.env, at(TODAY, t));
+  assert.equal(sentTo(501).length, 1, "вторая благодарность после правки записи: " + JSON.stringify(sent()));
+});
+
+test("находка 08.11: два визита одного клиента в один день — одна благодарность («после каждого визита», но не дважды за день)", async () => {
+  net.reset();
+  const a = rec(ph(502), TODAY, "12:00", { id: 5011, att: 1 }), b = rec(ph(502), TODAY, "13:00", { id: 5012, att: 1, staff: "Айдос" });
+  a.seance_length = 3600; b.seance_length = 3600;
+  net.altJournal = [a, b];
+  const s = mk(ENV); await approve(s); await autoOn(s, { review: true }, { review: { hours: 1, gap: 0 } });
+  await jrRun(s.env, at(TODAY, "11:00"));
+  for (const t of ["14:00", "15:00", "15:01"]) await jrRun(s.env, at(TODAY, t));
+  assert.equal(sentTo(502).length, 1, JSON.stringify(sent()));
+  const log = JSON.parse((await s.kv.api.get("jrl:winchester")) || "[]");
+  assert.ok(log.some(x => x.k === "rv" && /уже отправляли/.test(x.why)), JSON.stringify(log));
+});
+
+test("находка 08.11: «Запись подтверждена» — одна на запись и время: дописали услугу — второго нет; перенесли время — новое подтверждение", async () => {
+  net.reset();
+  const r = rec(ph(503), TOM, "12:30", { id: 5021, made: `${TODAY}T15:00:00+05:00` });
+  net.altJournal = [r];
+  const s = mk(ENV); await approve(s); await autoOn(s, { confirm: true }, { confirm: { delay: 0 } });
+  await jrRun(s.env, at(TODAY, "15:01"));
+  assert.equal(sentTo(503).length, 1);
+  r.services.push({ id: 2, title: "Борода" }); r.last_change_date = `${TODAY}T15:04:00+05:00`;
+  await jrRun(s.env, at(TODAY, "15:05")); await jrRun(s.env, at(TODAY, "15:06"));
+  assert.equal(sentTo(503).length, 1, "дописали услугу — второго «Вы записаны» нет: " + JSON.stringify(sent()));
+  r.datetime = `${TOM}T14:00:00+05:00`; r.last_change_date = `${TODAY}T15:10:00+05:00`;
+  await jrRun(s.env, at(TODAY, "15:11")); await jrRun(s.env, at(TODAY, "15:12"));
+  assert.equal(sentTo(503).length, 2, "время перенесли — подтверждение с новым временем");
+  assert.match(sentTo(503)[1].text, /14:00/);
+});
+
+test("находка 08.11: бонусы — одна операция визита из двух записей (два мастера) — одно сообщение", async () => {
+  net.reset();
+  const a = paid(504, "12:00", { id: 5031, visit: 9531, client: 7531, changed: "13:10" }), b = paid(504, "12:00", { id: 5032, visit: 9531, client: 7531, changed: "13:10" });
+  b.staff = { id: 2, name: "Айдос" };
+  net.altJournal = [a, b];
+  net.altLoyalty = { cards: { 7531: [{ id: 58, balance: 800 }] }, details: { 9531: { loyalty_transactions: [{ id: 8301, card_id: 58, amount: 400, created_date: `${TODAY} 13:09:00` }] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "13:11")); await jrRun(s.env, at(TODAY, "13:12")); await jrRun(s.env, at(TODAY, "13:30"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 400\nДоступно: 800"]);
+});
+
+test("находка 08.11: операция с бонусами без даты — время окончания визита: старый визит — не пишем задним числом, только что кончился — пишем", async () => {
+  net.reset();
+  const old = paid(505, "12:00", { id: 5041, visit: 9541, client: 7541, changed: "17:20" }), now1 = paid(506, "16:00", { id: 5042, visit: 9542, client: 7542, changed: "17:20" });
+  old.seance_length = 3600; now1.seance_length = 3600;
+  net.altJournal = [old, now1];
+  net.altLoyalty = { cards: { 7541: [{ id: 59, balance: 500 }], 7542: [{ id: 60, balance: 600 }] }, details: {
+    9541: { loyalty_transactions: [{ id: 8401, card_id: 59, amount: 100 }] }, 9542: { loyalty_transactions: [{ id: 8402, card_id: 60, amount: 200, created_date: "" }] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "17:30")); await jrRun(s.env, at(TODAY, "17:31"));
+  assert.deepEqual(sent().map(x => x.to + " " + x.text), [dg(506) + " Начислено бонусов: 200\nДоступно: 600"]);
+});
+
+test("находка 08.11: бонусы, отложенные на утро, уходят, даже если вечером в записи поправили услуги", async () => {
+  net.reset();
+  const r = paid(507, "20:00", { id: 5051, visit: 9551, client: 7551, changed: "21:30" });
+  net.altJournal = [r];
+  net.altLoyalty = { cards: { 7551: [{ id: 61, balance: 900 }] }, details: { 9551: { loyalty_transactions: [{ id: 8501, card_id: 61, amount: 300, created_date: `${TODAY} 21:29:00` }] } } };
+  const s = mk(ENV); await approve(s); await autoOn(s, { bonusIn: true });
+  await jrRun(s.env, at(TODAY, "21:31"));
+  r.services.push({ id: 2, title: "Борода" }); r.last_change_date = `${TODAY}T21:40:00+05:00`;
+  await jrRun(s.env, at(TODAY, "21:41"));
+  await jrRun(s.env, at(TOM, "10:00"));
+  assert.deepEqual(sent().map(x => x.text), ["Начислено бонусов: 300\nДоступно: 900"]);
+});
+
+test("находка 08.11: отмена, замеченная перед концом часов отправки и не успевшая уйти (2 в минуту), уходит утром, а не пропадает", async () => {
+  net.reset();
+  const list = [1, 2, 3].map(i => rec(ph(510 + i), TOM, "15:00", { id: 5060 + i }));
+  net.altJournal = list.slice();
+  const s = mk(ENV); await approve(s); await autoOn(s, { cancel: true });
+  await jrRun(s.env, at(TODAY, "20:36")); // записи видели
+  net.altJournal = [];
+  await jrRun(s.env, at(TODAY, "20:56")); // полное чтение (прошло 20 минут): три отмены — через 3 минуты (вдруг запись вернут)
+  assert.deepEqual(sent(), []);
+  await jrRun(s.env, at(TODAY, "20:59")); // уходят две
+  assert.equal(sent().length, 2);
+  await jrRun(s.env, at(TODAY, "21:00")); await jrRun(s.env, at(TODAY, "23:00"));
+  assert.equal(sent().length, 2, "ночью не шлём");
+  await jrRun(s.env, at(TOM, "10:00"));
+  assert.equal(sent().length, 3, "третья отмена — утром: " + JSON.stringify(sent()));
+  assert.match(sent()[2].text, /отменена/);
+});
+
+test("находка 08.11: запись удалили и клиент тут же записался заново — об отмене не пишем (утром тоже)", async () => {
+  net.reset();
+  const a = rec(ph(521), TOM, "15:00", { id: 5071 }), c2 = rec(ph(522), TOM, "15:00", { id: 5072 });
+  net.altJournal = [a, c2];
+  const s = mk(ENV); await approve(s); await autoOn(s, { cancel: true });
+  await jrRun(s.env, at(TODAY, "20:40"));
+  // администратор «перенёс» запись удалением и новой записью (21:05); у второго клиента — просто отмена
+  net.altJournal = [rec(ph(521), TOM, "16:00", { id: 5073, made: `${TODAY}T21:05:00+05:00` })];
+  await jrRun(s.env, at(TODAY, "21:10"));
+  await jrRun(s.env, at(TOM, "10:00")); await jrRun(s.env, at(TOM, "10:01"));
+  assert.deepEqual(sent().map(x => x.to), [dg(522)], JSON.stringify(sent()));
+  const log = JSON.parse((await s.kv.api.get("jrl:winchester")) || "[]");
+  assert.ok(log.some(x => x.k === "cx" && x.p === dg(521) && /записался заново/.test(x.why)), JSON.stringify(log));
 });

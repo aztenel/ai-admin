@@ -8,7 +8,7 @@
 // Включение, тексты и журнал сценариев компании с журналом Altegio — в AutoMessages.tsx (прежние «Тексты сообщений» с одобрением и
 // «Последние решения» заменены выключателями сценариев и журналом каждого сценария).
 import { useEffect, useRef, useState } from "react";
-import { BellRing, CalendarCheck, CalendarClock, CalendarSync, CalendarX2, CircleCheck, Inbox, RefreshCw, Star, TriangleAlert, type LucideIcon } from "lucide-react";
+import { BellRing, CalendarCheck, CalendarClock, CalendarSync, CalendarX2, CircleCheck, Coins, Gift, Inbox, RefreshCw, Star, TriangleAlert, type LucideIcon } from "lucide-react";
 import { Button, Skeleton } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { cn, useNow } from "@/lib/utils";
@@ -29,7 +29,7 @@ const TIME = "Время по Астане.";
 // «боевой сайт / черновик» — слова владельца (так он выкладывает бота); администраторам компании они ничего не говорят
 const LIVE_ONLY = `${TIME} Сообщения уходят только с боевого сайта: там очередь проверяется раз в минуту. С черновика они не отправляются.`;
 
-const ICON: Record<ServiceKind, LucideIcon> = { s01: CalendarCheck, d1: CalendarClock, h2: BellRing, s06: CalendarSync, cx: CalendarX2, rv: Star };
+const ICON: Record<ServiceKind, LucideIcon> = { s01: CalendarCheck, d1: CalendarClock, h2: BellRing, s06: CalendarSync, cx: CalendarX2, rv: Star, bi: Gift, bo: Coins };
 /** Если сервер не прислал подпись — своя, те же слова. */
 const LABEL: Record<ServiceKind, string> = {
   s01: "Сразу после новой записи: подтверждение",
@@ -37,10 +37,12 @@ const LABEL: Record<ServiceKind, string> = {
   h2: "За 2 часа: напоминание о записи",
   s06: "После переноса: сообщение с новым временем",
   cx: "После отмены: сообщение об отмене",
-  rv: "Через 3 часа после визита: просьба оставить отзыв",
+  rv: "Через час после визита: благодарность и просьба об отзыве",
+  bi: "После оплаты визита: начислено бонусов",
+  bo: "После оплаты визита: списано бонусов",
 };
 /** Коротко — в строке очереди (время напоминания в день визита владелец выбирает сам: 1–6 часов). */
-const SHORT: Record<ServiceKind, string> = { s01: "Подтверждение записи", d1: "Напоминание накануне", h2: "Напоминание в день визита", s06: "Сообщение о переносе", cx: "Сообщение об отмене", rv: "Просьба об отзыве" };
+const SHORT: Record<ServiceKind, string> = { s01: "Подтверждение записи", d1: "Напоминание накануне", h2: "Напоминание в день визита", s06: "Сообщение о переносе", cx: "Сообщение об отмене", rv: "Благодарность за визит", bi: "Начислено бонусов", bo: "Списано бонусов" };
 const MESSAGES: [string, string, string] = ["сообщение", "сообщения", "сообщений"];
 // очередь меняется медленно (фон шлёт раз в минуту) — раз в минуту и перечитываем, пока вкладка открыта
 export const SERVICE_POLL_MS = 60e3;
