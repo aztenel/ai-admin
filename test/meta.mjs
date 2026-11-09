@@ -4,7 +4,8 @@
 // номера и WABA по полю fields, подписанные приложения, номера WABA, шаблоны страницами (paging.next / after), подача и удаление
 // шаблона, отправка текста и шаблона со сверкой имени, языка и параметров с одобренным шаблоном (тело, шапка — текст или файл, кнопки-
 // ссылки с {{1}}). Ключ компании проверяется по умолчанию, у каждой компании свои номер, WABA, ключ и секрет (metaIds). Отказы вставляются
-// правилами (st.fail): код ошибки Meta, «висит» до AbortSignal, обрыв связи (TypeError), ответ потерян после отправки, задержка.
+// правилами (st.fail): код ошибки Meta, «висит» до AbortSignal, обрыв связи (TypeError), задержка, и любое из них после того, как Meta
+// запрос выполнила (lost: сообщение ушло, а до нас дошла ошибка, срок или обрыв). В paging.next — ключ запроса, как у Graph.
 // net.reset() убирает заглушку. Коды и тексты ошибок — по документации Meta (WhatsApp Cloud API, Graph API), вживую не проверены.
 // Номера и ключи — вымышленные.
 
@@ -210,7 +211,10 @@ function checkParams(tpl, comps, out) {
 }
 
 // ---- правила отказов: { on?, times?, status?, code?, subcode?, message?, details?, userMsg?, raw?, hang?, drop?, lost?, delay? }
-// on — «POST /messages» (метод и конец пути; без метода — любой), RegExp по «МЕТОД путь?запрос» или функция (rec) → да/нет; без on — все запросы
+// on — «POST /messages» (метод и конец пути; без метода — любой), RegExp по «МЕТОД путь?запрос» или функция (rec) → да/нет; без on — все запросы.
+// Без lost Meta запрос не выполнила: status/code/raw — отказ, hang — «висит» до AbortSignal, drop — обрыв, delay — ответ позже (оборвали
+// во время задержки — не отправлено). lost — Meta выполнила, а ответ потерян; сочетается с остальными: { status: 500, lost: true } —
+// отправлено, а мы видим 500; { hang: true, lost: true } и { delay, lost: true } с AbortSignal — отправлено, а у нас срок
 /** @param {any} r @param {any} rec */
 function hits(r, rec) {
   const on = r.on;
@@ -311,20 +315,26 @@ export function metaStub(net, o = {}) {
     rec.seq = st.seq = Math.max(net.graph.indexOf(rec) + 1, st.seq + 1);
     const rule = st.fails.find((/** @type {any} */ r) => r.left > 0 && hits(r, rec));
     if (rule && --rule.left <= 0) st.fails.splice(st.fails.indexOf(rule), 1);
-    if (rule && rule.hang) return hang(rec, init);
-    if (rule && rule.drop) throw new TypeError("Network connection lost.");
-    if (rule && rule.delay) await pause(rule.delay, init); // ответ с задержкой (одновременные запросы перекрываются), дальше — как обычно или отказ
-    if (rule && (rule.code !== undefined || rule.status !== undefined || rule.raw !== undefined || !(rule.lost || rule.delay))) return failOf(rule);
-    const res = route(u, rec);
-    if (rule && rule.lost) throw new TypeError("Network connection lost."); // Meta запрос выполнила, а ответ до нас не дошёл
-    return res;
+    if (!rule) return route(u, rec);
+    // lost — Meta запрос выполнила (сообщение ушло и записано в st.sent, шаблон подан), а до нас дошёл не её ответ: с кодом ответа или
+    // raw — этот отказ, с hang — «висит», с delay — срок или обрыв, одно lost — обрыв. Поэтому route() — до любого из них. Находка
+    // второй проверки шага 1, 09.11.2026: route() шёл после отказа, и { status: 500, lost: true } ничего не отправлял — двойную платную
+    // отправку (5xx или срок после того, как Meta приняла шаблон, и повтор вслепую) было не показать. Без lost Meta до отправки не дошла
+    if (rule.lost) route(u, rec); // отклонённое Meta (не тот шаблон, ключ) и с lost не отправлено — ответ всё равно по правилу
+    if (rule.hang) return hang(rec, init);
+    if (rule.drop) throw new TypeError("Network connection lost.");
+    if (rule.delay) await pause(rule.delay, init); // ответ с задержкой (одновременные запросы перекрываются), дальше — как обычно или отказ
+    if (rule.code !== undefined || rule.status !== undefined || rule.raw !== undefined || !(rule.lost || rule.delay)) return failOf(rule);
+    if (rule.lost) throw new TypeError("Network connection lost."); // Meta запрос выполнила, а ответ до нас не дошёл
+    return route(u, rec);
   }
 
   /** @param {URL} u @param {any} rec */
   function route(u, rec) {
     const ver = (u.pathname.match(/^\/v\d+\.\d+/) || [""])[0], parts = rec.path.split("/").filter(Boolean), q = rec.query, m = rec.method;
-    const token = (/^Bearer\s+(.+)$/i.exec(rec.auth || "") || [])[1] || q.access_token || "";
+    const bearer = (/^Bearer\s+(.+)$/i.exec(rec.auth || "") || [])[1] || "", token = bearer || q.access_token || "";
     if (!token) return errOf(104);
+    rec.tokenVia = bearer ? "header" : "query"; // ключ в адресе попадает в журналы — проверки шагов плана видят, как он ушёл
     const id = parts[0] || "", byPhone = st.accounts.find((/** @type {any} */ a) => a.pnid === id), byWaba = st.accounts.find((/** @type {any} */ a) => a.wabaId === id), acc = byPhone || byWaba;
     const kind = m === "GET" ? "get" : m === "DELETE" ? "delete" : "post";
     if (!acc) return noObject(kind, id);
@@ -347,7 +357,7 @@ export function metaStub(net, o = {}) {
       return J({ data: JSON.parse(JSON.stringify(list)), paging: { cursors: { before: "QVFIUmJl", after: "QVFIUmFm" } } });
     }
     if (edge === "message_templates") {
-      if (m === "GET") return list(acc, q, ver);
+      if (m === "GET") return list(acc, q, ver, token);
       if (m === "POST") return create(acc, rec);
       if (m === "DELETE") {
         const name = String(q.name || ""), hsm = String(q.hsm_id || ""), keep = acc.templates.filter((/** @type {any} */ t) => !(t.name === name && (!hsm || t.id === hsm)));
@@ -360,14 +370,17 @@ export function metaStub(net, o = {}) {
   }
 
   // список шаблонов WABA страницами: limit (Graph по умолчанию 25), не больше pageMax; курсор after; next — полный адрес следующей
-  // страницы. Фильтры запроса (name, status, category) заглушка не применяет — код должен отбирать сам
-  /** @param {any} acc @param {any} q @param {string} ver */
-  function list(acc, q, ver) {
+  // страницы с параметрами запроса и ключом access_token, как у Graph (и когда ключ пришёл заголовком). Находка второй проверки шага 1,
+  // 09.11.2026: заглушка ключ из next убирала — код, который кладёт next целиком в KV, журнал или ответ пульту, проходил бы проверки,
+  // а на боевом ключ WA_TOKEN_<ID> оказался бы там; хранить можно только курсор after. Ключ в next — по поведению Graph, для списка
+  // шаблонов вживую не проверено. Фильтры запроса (name, status, category) заглушка не применяет — код должен отбирать сам
+  /** @param {any} acc @param {any} q @param {string} ver @param {string} token ключ, с которым пришёл запрос */
+  function list(acc, q, ver, token) {
     const size = Math.max(1, Math.min(+q.limit || 25, st.pageMax)), cur = (/** @type {string} */ s) => Buffer.from("tpl:" + s).toString("base64");
     const from = q.after ? +(Buffer.from(String(q.after), "base64").toString().replace(/^tpl:/, "")) || 0 : 0, page = acc.templates.slice(from, from + size), to = from + page.length;
     /** @type {any[]} */ const data = [];
     for (const t of page) { const r = pick(t, q.fields, TPL_FIELDS, TPL_DEFAULT, "WhatsAppMessageTemplate"); if (r.err) return r.err; data.push(r.out); }
-    const next = to < acc.templates.length ? (() => { const n = new URL(`https://graph.facebook.com${ver}/${acc.wabaId}/message_templates`); for (const [k, v] of Object.entries(q)) if (k !== "after" && k !== "access_token") n.searchParams.set(k, String(v)); n.searchParams.set("limit", String(size)); n.searchParams.set("after", cur(String(to))); return n.toString(); })() : "";
+    const next = to < acc.templates.length ? (() => { const n = new URL(`https://graph.facebook.com${ver}/${acc.wabaId}/message_templates`); n.searchParams.set("access_token", token); for (const [k, v] of Object.entries(q)) if (k !== "after" && k !== "access_token") n.searchParams.set(k, String(v)); n.searchParams.set("limit", String(size)); n.searchParams.set("after", cur(String(to))); return n.toString(); })() : "";
     return J({ data, ...(page.length ? { paging: { cursors: { before: cur(String(from)), after: cur(String(to)) }, ...(next ? { next } : {}) } } : {}) });
   }
 

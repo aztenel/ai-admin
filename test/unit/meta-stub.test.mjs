@@ -417,3 +417,83 @@ test("metaEnv: у разных компаний разные номер, WABA, �
   r = await metaSignal(S, "/wa/barber", "message_template_status_update", ev, { entryId: ids.waba, secret: ids.secret });
   assert.equal(r.status, 200);
 });
+
+// ---- находки второй проверки шага 1 (09.11.2026): заглушка должна уметь показать двойную платную отправку и ключ в ссылке страницы
+
+const TPL_PROMO = { name: "winchester_promo_v1", category: "MARKETING", body: "Добрый день! Ждём вас в Winchester." };
+const promo = (/** @type {string} */ to) => ({ messaging_product: "whatsapp", to, type: "template", template: { name: TPL_PROMO.name, language: { code: "ru" } } });
+
+test("отказы: lost вместе с кодом ответа, «висит» или задержкой — Meta сообщение отправила, а мы видим ошибку или срок (двойная платная отправка видна)", async () => {
+  net.reset();
+  const st = metaStub(net, { templates: [TPL_PROMO] });
+  // 500 после того, как Meta шаблон уже приняла: слепой повтор (как сейчас у рассылок на 5xx) — два платных шаблона одному клиенту
+  st.fail({ on: "POST /messages", status: 500, lost: true, times: 1 });
+  const env = { WA_TOKEN_WINCHESTER: META.token, PHONE_NUMBER_ID_WINCHESTER: META.pnid }, route = { client: "winchester" };
+  const r1 = await sendTemplate(env, "77000000951", { tpl: TPL_PROMO.name, lang: "ru", params: [] }, "", route);
+  assert.equal(r1.ok, false); assert.equal(r1.status, 500);
+  assert.equal(st.sent.length, 1, "Meta сообщение отправила, хотя ответила 500");
+  const r2 = await sendTemplate(env, "77000000951", { tpl: TPL_PROMO.name, lang: "ru", params: [] }, "", route);
+  assert.equal(r2.ok, true);
+  assert.equal(st.sent.filter(x => x.to === "77000000951").length, 2, "повтор вслепую виден: клиент получил шаблон дважды");
+  // код ошибки Meta и сырой ответ — так же
+  st.sent.length = 0;
+  st.fail({ on: "POST /messages", code: 131000, lost: true, times: 1 });
+  let r = await g(`/${META.pnid}/messages`, { method: "POST", body: promo("77000000952") });
+  assert.equal(r.status, 500); assert.equal(r.j.error.code, 131000); assert.equal(st.sent.length, 1);
+  st.fail({ on: "POST /messages", raw: "<html>Bad gateway</html>", status: 502, lost: true, times: 1 });
+  r = await g(`/${META.pnid}/messages`, { method: "POST", body: promo("77000000953") });
+  assert.equal(r.status, 502); assert.equal(r.j, null); assert.equal(st.sent.length, 2);
+  // «висит» после отправки: код оборвал запрос по сроку, а сообщение у Meta уже есть
+  st.fail({ on: "POST /messages", hang: true, lost: true, times: 1 });
+  await assert.rejects(fetch(GRAPH + `/${META.pnid}/messages`, { method: "POST", headers: AUTH, body: JSON.stringify(promo("77000000954")), signal: AbortSignal.timeout(20) }), e => e.name === "TimeoutError");
+  assert.equal(st.sent.length, 3, "срок вышел, а сообщение ушло");
+  assert.ok(net.graph[net.graph.length - 1].aborted);
+  // задержка после отправки: оборвали — ошибка срока, не оборвали — обрыв (TypeError); сообщение ушло в обоих случаях
+  st.fail({ on: "POST /messages", delay: 200, lost: true, times: 1 });
+  await assert.rejects(fetch(GRAPH + `/${META.pnid}/messages`, { method: "POST", headers: AUTH, body: JSON.stringify(promo("77000000955")), signal: AbortSignal.timeout(20) }), e => e.name === "TimeoutError");
+  assert.equal(st.sent.length, 4);
+  st.fail({ on: "POST /messages", delay: 20, lost: true, times: 1 });
+  await assert.rejects(() => g(`/${META.pnid}/messages`, { method: "POST", body: promo("77000000956") }), TypeError);
+  assert.equal(st.sent.length, 5);
+  // Meta запрос отклонила (не тот шаблон) — отправки нет и с lost: ответ — по правилу
+  st.fail({ on: "POST /messages", status: 500, lost: true, times: 1 });
+  r = await g(`/${META.pnid}/messages`, { method: "POST", body: { ...promo("77000000957"), template: { name: "no_such_tpl", language: { code: "ru" } } } });
+  assert.equal(r.status, 500); assert.equal(st.sent.length, 5, "отклонённое не считается отправленным");
+  // без lost — Meta до отправки не дошла: ни 500, ни «висит», ни задержка с обрывом сообщение не отправляют
+  st.fail({ on: "POST /messages", status: 500, times: 1 });
+  assert.equal((await g(`/${META.pnid}/messages`, { method: "POST", body: promo("77000000958") })).status, 500);
+  st.fail({ on: "POST /messages", hang: true, times: 1 });
+  await assert.rejects(fetch(GRAPH + `/${META.pnid}/messages`, { method: "POST", headers: AUTH, body: JSON.stringify(promo("77000000959")), signal: AbortSignal.timeout(20) }));
+  st.fail({ on: "POST /messages", delay: 200, times: 1 });
+  await assert.rejects(fetch(GRAPH + `/${META.pnid}/messages`, { method: "POST", headers: AUTH, body: JSON.stringify(promo("77000000960")), signal: AbortSignal.timeout(20) }));
+  assert.equal(st.sent.length, 5);
+});
+
+test("шаблоны: в paging.next — ключ, как у Graph (и при ключе в заголовке); переход по next без заголовка работает; как пришёл ключ — rec.tokenVia", async () => {
+  net.reset();
+  const st = metaStub(net, { templates: [{ name: "winchester_a", body: "Текст А для проверки." }, { name: "winchester_b", body: "Текст Б для проверки." }, { name: "winchester_c", body: "Текст В для проверки." }] });
+  // ключ в заголовке
+  let r = await g(`/${META.waba}/message_templates?limit=1&fields=name,status`);
+  assert.equal(r.status, 200);
+  let next = new URL(r.j.paging.next);
+  assert.equal(next.searchParams.get("access_token"), META.token, "Graph кладёт ключ в ссылку следующей страницы: хранить и показывать next целиком нельзя");
+  assert.equal(next.searchParams.get("limit"), "1"); assert.equal(next.searchParams.get("fields"), "name,status"); assert.ok(next.searchParams.get("after"));
+  assert.equal(net.graph[net.graph.length - 1].tokenVia, "header");
+  // ключ в адресе запроса
+  const r1 = await fetch(GRAPH + `/${META.waba}/message_templates?limit=1&access_token=${META.token}`); const j1 = await r1.json();
+  assert.equal(r1.status, 200);
+  assert.equal(new URL(j1.paging.next).searchParams.get("access_token"), META.token);
+  assert.equal(net.graph[net.graph.length - 1].tokenVia, "query", "проверки видят, что ключ ушёл в адресе (адрес попадает в журналы)");
+  // переход по next как есть, без заголовка: ключ в адресе — Graph отвечает
+  const r2 = await fetch(String(next)); const j2 = await r2.json();
+  assert.equal(r2.status, 200); assert.deepEqual(j2.data.map((/** @type {any} */ t) => t.name), ["winchester_b"]);
+  // только курсор after (ключ — заголовком): тот же ответ
+  r = await g(`/${META.waba}/message_templates?limit=1&fields=name,status&after=${encodeURIComponent(String(next.searchParams.get("after")))}`);
+  assert.deepEqual(r.j.data.map((/** @type {any} */ t) => t.name), ["winchester_b"]);
+  // последняя страница — без next; в теле ответа ключа нет нигде, кроме next
+  next = new URL(r.j.paging.next);
+  const last = await g(next.pathname.replace(/^\/v\d+\.\d+/, "") + "?" + [...next.searchParams].filter(([k]) => k !== "access_token").map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&"));
+  assert.deepEqual(last.j.data.map((/** @type {any} */ t) => t.name), ["winchester_c"]); assert.equal(last.j.paging.next, undefined);
+  assert.ok(!JSON.stringify(last.j).includes(META.token));
+  assert.equal(st.templates.length, 3);
+});
