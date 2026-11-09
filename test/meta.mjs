@@ -2,18 +2,41 @@
 // 09.11.2026). Без неё заглушка в test/harness.mjs на любой адрес Graph отвечает как на отправку сообщения: чтение сведений о номере,
 // WABA и списка шаблонов проверить нечем. metaStub(net, …) ставит net.graphReply — разбор по методу и пути, как у Graph: сведения
 // номера и WABA по полю fields, подписанные приложения, номера WABA, шаблоны страницами (paging.next / after), подача и удаление
-// шаблона, отправка текста и шаблона со сверкой имени, языка и параметров с одобренным шаблоном. Отказы вставляются правилами
-// (st.fail): код ошибки Meta, «висит» до AbortSignal, обрыв связи (TypeError), ответ потерян после отправки. net.reset() убирает заглушку.
-// Коды и тексты ошибок — по документации Meta (WhatsApp Cloud API, Graph API), вживую не проверены. Номера и ключи — вымышленные.
+// шаблона, отправка текста и шаблона со сверкой имени, языка и параметров с одобренным шаблоном (тело, шапка — текст или файл, кнопки-
+// ссылки с {{1}}). Ключ компании проверяется по умолчанию, у каждой компании свои номер, WABA, ключ и секрет (metaIds). Отказы вставляются
+// правилами (st.fail): код ошибки Meta, «висит» до AbortSignal, обрыв связи (TypeError), ответ потерян после отправки, задержка.
+// net.reset() убирает заглушку. Коды и тексты ошибок — по документации Meta (WhatsApp Cloud API, Graph API), вживую не проверены.
+// Номера и ключи — вымышленные.
 
 /** вымышленный номер Meta компании: id номера, WABA, ключ, секрет приложения, номер для показа */
 export const META = Object.freeze({ pnid: "900333", waba: "800333", token: "test-meta-token-w", secret: "test-app-secret-w", display: "+7 700 000 03 33", name: "Winchester (тест)", app: "100000000000001" });
 
-/** переменные номера Meta компании для mk(): ключ, секрет приложения, номер, WABA (WABA_ID_<ID> код пока не читает — план, шаг 2)
+// вымышленные номер, WABA, ключ и секрет каждой компании: у Winchester — META, у остальных — свои, постоянные для cid (находка проверки
+// шага 1, 09.11.2026: раньше metaEnv давал всем компаниям значения Winchester — подпись Winchester проходила на адресе другой компании,
+// а по phone_number_id компании было не различить, и проверки изоляции прошли бы или упали не по той причине). Номер — от хэша cid;
+// совпал с уже выданным — следующий свободный
+/** @type {Map<string, Readonly<{ pnid: string, waba: string, token: string, secret: string, display: string, name: string, app: string }>>} */
+const IDS = new Map([["winchester", META]]);
+/** @param {string} [cid] */
+export function metaIds(cid = "winchester") {
+  const k = String(cid).toLowerCase(), have = IDS.get(k);
+  if (have) return { ...have };
+  let h = 2166136261; for (const ch of k) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  const used = new Set([...IDS.values()].map(x => x.pnid));
+  let n = h % 8000; while (used.has(String(910000 + n))) n = (n + 1) % 8000;
+  const d = String(1000 + n); // номер для показа — +7 700 000 10 00 … 89 99: не совпадает ни с META, ни с номерами st.add без cid
+  const ids = Object.freeze({ pnid: String(910000 + n), waba: String(810000 + n), token: "test-meta-token-" + k, secret: "test-app-secret-" + k,
+    display: `+7 700 000 ${d.slice(0, 2)} ${d.slice(2)}`, name: k + " (тест)", app: META.app });
+  IDS.set(k, ids);
+  return { ...ids };
+}
+
+/** переменные номера Meta компании для mk(): ключ, секрет приложения, номер, WABA (WABA_ID_<ID> код пока не читает — план, шаг 2);
+ * у каждой компании свои (metaIds), явные o важнее
  * @param {string} [cid] @param {{ token?: string, secret?: string, pnid?: string, waba?: string }} [o] */
 export function metaEnv(cid = "winchester", o = {}) {
-  const up = String(cid).toUpperCase();
-  return { ["WA_TOKEN_" + up]: o.token || META.token, ["APP_SECRET_" + up]: o.secret || META.secret, ["PHONE_NUMBER_ID_" + up]: o.pnid || META.pnid, ["WABA_ID_" + up]: o.waba || META.waba };
+  const up = String(cid).toUpperCase(), d = metaIds(cid);
+  return { ["WA_TOKEN_" + up]: o.token || d.token, ["APP_SECRET_" + up]: o.secret || d.secret, ["PHONE_NUMBER_ID_" + up]: o.pnid || d.pnid, ["WABA_ID_" + up]: o.waba || d.waba };
 }
 
 // ---- ошибки Graph: код ответа и текст по коду ошибки Meta
@@ -78,6 +101,19 @@ function textComp(type, text, fmt) {
   if (v.length) c.example = fmt === "POSITIONAL" ? { [key]: type === "HEADER" ? v.map(() => "пример") : [v.map(() => "пример")] } : { [key + "_named_params"]: v.map(n => ({ param_name: n, example: "пример" })) };
   return c;
 }
+/** шапка-файл: { format: "IMAGE" | "VIDEO" | "DOCUMENT" | "LOCATION" } — пример, как у поданного шаблона (у места примера нет) @param {any} h */
+function mediaComp(h) {
+  const format = String(h.format || "IMAGE").toUpperCase();
+  return { type: "HEADER", format, ...(format === "LOCATION" ? {} : { example: h.example || { header_handle: ["4::stub-header-" + format.toLowerCase()] } }) };
+}
+/** кнопка: строка — быстрый ответ; ссылка с {{1}} — с примером, как требует Meta @param {any} b */
+function btnOf(b) {
+  if (typeof b === "string") return { type: "QUICK_REPLY", text: b };
+  const x = { ...b, type: String(b.type || "QUICK_REPLY").toUpperCase() };
+  if (x.type === "URL" && URL_VAR.test(String(x.url || "")) && !x.example) x.example = [String(x.url).replace(URL_VAR, "example")];
+  return x;
+}
+const URL_VAR = /\{\{\s*1\s*\}\}/;
 let tplSeq = 0;
 /** @param {any} t */
 function tplOf(t) {
@@ -85,8 +121,8 @@ function tplOf(t) {
   const bodyText = comps ? ((comps.find((/** @type {any} */ c) => String(c.type).toUpperCase() === "BODY") || {}).text || "") : t.body || "";
   const fmt = String(t.parameter_format || (positional(varsOf(bodyText)) ? "POSITIONAL" : "NAMED")).toUpperCase();
   const components = comps || [
-    ...(t.header ? [textComp("HEADER", t.header, fmt)] : []), textComp("BODY", t.body || "", fmt), ...(t.footer ? [{ type: "FOOTER", text: t.footer }] : []),
-    ...(t.buttons && t.buttons.length ? [{ type: "BUTTONS", buttons: t.buttons.map((/** @type {any} */ b) => typeof b === "string" ? { type: "QUICK_REPLY", text: b } : b) }] : [])];
+    ...(t.header ? [typeof t.header === "string" ? textComp("HEADER", t.header, fmt) : mediaComp(t.header)] : []), textComp("BODY", t.body || "", fmt), ...(t.footer ? [{ type: "FOOTER", text: t.footer }] : []),
+    ...(t.buttons && t.buttons.length ? [{ type: "BUTTONS", buttons: t.buttons.map(btnOf) }] : [])];
   const { body, header, footer, buttons, lang, quality, ...rest } = t;
   return { ...rest, id: String(t.id || 7100000000000000 + ++tplSeq), name: String(t.name), language: String(t.language || lang || "ru"), status: String(t.status || "APPROVED").toUpperCase(),
     category: String(t.category || "UTILITY").toUpperCase(), parameter_format: fmt, components, quality_score: t.quality_score || { score: quality || "UNKNOWN" }, rejected_reason: t.rejected_reason || "NONE" };
@@ -95,6 +131,82 @@ function tplOf(t) {
 function partOf(tpl, type) {
   const c = (tpl.components || []).find((/** @type {any} */ x) => String(x.type).toUpperCase() === type && (type !== "HEADER" || String(x.format || "TEXT").toUpperCase() === "TEXT"));
   return c ? { text: String(c.text || ""), vars: varsOf(c.text) } : null;
+}
+
+// ---- сверка отправки шаблона с одобренным, как у Meta: шапка (текст или файл), тело, кнопки. Находки проверки шага 1, 09.11.2026:
+// именованный параметр дважды проходил и оставлял переменную пустой («Вы записаны 11 ноября в . Ждём вас.»), шапка-картинка не
+// узнавалась (верная отправка прежнего кода рассылок получала отказ, а без картинки — проходила), кнопка-ссылка с {{1}} проходила без
+// параметра. Настоящая Meta во всех этих случаях отказывает — заглушка тоже
+const PARAM_SUB = /** @type {Record<string, string>} */ ({ url: "URL", quick_reply: "QUICK_REPLY", copy_code: "COPY_CODE", flow: "FLOW", catalog: "CATALOG" });
+/** ошибка — Response, иначе null; в out — текст, который увидит клиент (text), файл шапки (header), ссылки кнопок (buttons)
+ * @param {any} tpl @param {any[]} comps @param {any} out */
+function checkParams(tpl, comps, out) {
+  /** @param {string} t */
+  const ofType = t => comps.filter(c => c && String(c.type).toLowerCase() === t);
+  /** @param {string} t @returns {any[]} */
+  const params = t => (ofType(t)[0] || {}).parameters || [];
+  /** @param {string} t */
+  const comp = t => (tpl.components || []).find((/** @type {any} */ c) => String(c.type).toUpperCase() === t);
+  const named = tpl.parameter_format === "NAMED", hdr = comp("HEADER");
+  // шапка-файл (картинка, видео, документ, место): ровно один параметр того же вида со ссылкой или id (у места — координаты)
+  const media = hdr && String(hdr.format || "TEXT").toUpperCase() !== "TEXT" ? String(hdr.format).toLowerCase() : "";
+  if (media) {
+    const got = params("header");
+    if (!got.length) return errOf(131008, { details: `header: parameter of type ${media} is missing` });
+    if (got.length > 1) return errOf(132000, { details: `header: number of params (${got.length}) does not match the expected number of params (1)` });
+    const p = got[0] || {}, v = p[media] || {};
+    if (String(p.type || "").toLowerCase() !== media) return errOf(132012, { details: `header: parameter type (${p.type || "—"}) does not match the format in the template (${media})` });
+    const ref = media === "location" ? (v.latitude != null && v.longitude != null ? v.latitude + "," + v.longitude : "") : String(v.link || v.id || "");
+    if (!ref) return errOf(131008, { details: `header: ${media} needs ${media === "location" ? "latitude and longitude" : "link or id"}` });
+    out.header = ref;
+  }
+  /** @type {Record<string, string>} */ const filled = {};
+  for (const [type, label] of [["BODY", "body"], ["HEADER", "header"]]) {
+    if (type === "HEADER" && media) continue;
+    const part = partOf(tpl, type), got = params(label);
+    if (!part) { if (got.length) return errOf(132000, { details: `${label}: number of localizable_params (${got.length}) does not match the expected number of params (0)` }); continue; }
+    if (got.length !== part.vars.length) return errOf(132000, { details: `${label}: number of localizable_params (${got.length}) does not match the expected number of params (${part.vars.length})` });
+    for (let i = 0; i < got.length; i++) {
+      const p = got[i] || {}, key = named ? String(p.parameter_name || "") : part.vars[i], kind = String(p.type || "text").toLowerCase();
+      // в тексте — только text (в теле ещё currency и date_time с fallback_value); картинка вместо текста — не тот вид (имени у неё нет)
+      if (!(kind === "text" || (type === "BODY" && (kind === "currency" || kind === "date_time")))) return errOf(132012, { details: `${label}: parameter ${i + 1} of type ${kind} does not match the format in the template (text)` });
+      if (named && !part.vars.includes(key)) return errOf(132000, { details: `${label}: parameter name (${key || "—"}) is missing or invalid` });
+      if (named && (label + ":" + key) in filled) return errOf(132000, { details: `${label}: parameter name (${key}) is given twice` });
+      const txt = kind === "text" ? String(p.text ?? "") : String((p[kind] || {}).fallback_value ?? "");
+      if (!txt.trim()) return errOf(131008, { details: `${label}: parameter (${key}) text is empty` });
+      if (/[\n\t]| {5,}/.test(txt)) return errOf(100, { details: "Param text cannot have new-line/tab characters or more than 4 consecutive spaces" });
+      filled[label + ":" + key] = txt;
+    }
+    const miss = part.vars.find(v => !((label + ":" + v) in filled));
+    if (miss) return errOf(131008, { details: `${label}: parameter (${miss}) is missing` });
+    if (type === "BODY") out.text = part.text.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, k) => filled["body:" + k] ?? "");
+  }
+  // кнопки: { type: "button", sub_type, index } — вид как у кнопки шаблона с этим номером; ссылке с {{1}} — ровно один текст,
+  // ссылке без переменной параметры не нужны, быстрому ответу — только payload (необязателен)
+  const btns = /** @type {any[]} */ ((comp("BUTTONS") || {}).buttons || []), urlAt = /** @type {Record<number, string>} */ ({}), seen = new Set();
+  for (const c of ofType("button")) {
+    const i = Number(c.index), btn = Number.isInteger(i) ? btns[i] : null, sub = String(c.sub_type || "").toLowerCase(), bt = btn ? String(btn.type).toUpperCase() : "", ps = c.parameters || [];
+    if (!btn) return errOf(131009, { details: `button: index (${c.index ?? "—"}) is not valid` });
+    if (PARAM_SUB[sub] !== bt) return errOf(131009, { details: `button at index ${i} is of type ${bt}, not ${sub || "—"}` });
+    if (seen.has(i)) return errOf(132000, { details: `button at index ${i} is given twice` });
+    seen.add(i);
+    if (bt === "URL") {
+      if (!URL_VAR.test(String(btn.url || ""))) { if (ps.length) return errOf(132000, { details: `button at index ${i} of type Url does not require parameters` }); continue; }
+      if (ps.length !== 1) return errOf(132000, { details: `button at index ${i}: number of params (${ps.length}) does not match the expected number of params (1)` });
+      const p = ps[0] || {}, t = String(p.text ?? "");
+      if (String(p.type || "text").toLowerCase() !== "text") return errOf(132012, { details: `button at index ${i}: parameter must be text` });
+      if (!t.trim()) return errOf(131008, { details: `button at index ${i}: parameter text is empty` });
+      urlAt[i] = String(btn.url).replace(URL_VAR, t);
+    } else if (bt === "QUICK_REPLY" && ps.some((/** @type {any} */ p) => !p || String(p.type).toLowerCase() !== "payload")) return errOf(132012, { details: `button at index ${i}: quick reply takes only payload` });
+  }
+  /** @type {string[]} */ const urls = [];
+  for (let i = 0; i < btns.length; i++) {
+    if (String(btns[i].type).toUpperCase() !== "URL") continue;
+    if (URL_VAR.test(String(btns[i].url || "")) && !(i in urlAt)) return errOf(131008, { details: `button at index ${i} (url): parameter is missing` });
+    urls.push(i in urlAt ? urlAt[i] : String(btns[i].url || ""));
+  }
+  if (urls.length) out.buttons = urls;
+  return null;
 }
 
 // ---- правила отказов: { on?, times?, status?, code?, subcode?, message?, details?, userMsg?, raw?, hang?, drop?, lost?, delay? }
@@ -118,8 +230,9 @@ function failOf(r) {
 
 /**
  * Заглушка Graph: ставит net.graphReply и net.meta, возвращает состояние st (его можно менять по ходу проверки).
- * Первая компания — из o (pnid, wabaId, token, display, name, phone, waba, apps, numbers, templates, unknownFields), следующие — st.add({...}).
- * token — ключ, который принимает Graph для этой компании (без него — любой). checkTemplates: false — шаблоны при отправке не сверяются.
+ * Первая компания — из o (cid, pnid, wabaId, token, display, name, phone, waba, apps, numbers, templates, unknownFields), следующие — st.add({...}).
+ * token — ключ, который принимает Graph для этой компании: по умолчанию META.token у первой, ключ metaIds(cid) у компании с cid, свой
+ * вымышленный у остальных; token: null (или anyToken: true) — любой ключ. checkTemplates: false — шаблоны при отправке не сверяются.
  * @param {any} net объект net из test/harness.mjs
  * @param {any} [o]
  */
@@ -127,7 +240,7 @@ export function metaStub(net, o = {}) {
   /** @type {any} */
   const st = {
     accounts: /** @type {any[]} */ ([]), fails: /** @type {any[]} */ ([]),
-    sent: /** @type {any[]} */ ([]), created: /** @type {any[]} */ ([]), deleted: /** @type {string[]} */ ([]), subscribed: /** @type {any[]} */ ([]),
+    sent: /** @type {any[]} */ ([]), created: /** @type {any[]} */ ([]), deleted: /** @type {string[]} */ ([]), subscribed: /** @type {any[]} */ ([]), seq: 0,
     checkTemplates: o.checkTemplates !== false, pageMax: o.pageMax || 100, hangMs: o.hangMs || 20000,
     /** ещё одна компания (свой номер, WABA, ключ) @param {any} a */
     add(a = {}) { const acc = account(a); st.accounts.push(acc); return acc; },
@@ -149,14 +262,19 @@ export function metaStub(net, o = {}) {
     }
   };
   /** @param {any} a */
+  // ключ проверяется всегда: первая компания — META.token (его же пишет metaEnv), компания по cid — её ключ из metaIds, остальные —
+  // свой вымышленный ключ. Любой ключ — только явно (token: null или anyToken: true). Находка проверки шага 1, 09.11.2026: заглушка
+  // принимала любой ключ, и код, читающий номер или WABA Winchester чужим ключом (общий WA_TOKEN, WA_TOKEN другой компании), проходил проверки
   function account(a) {
-    const first = !st.accounts.length, pnid = String(a.pnid || (first ? META.pnid : 900000 + st.accounts.length)), wabaId = String(a.wabaId || (first ? META.waba : 800000 + st.accounts.length));
-    const display = a.display || (first ? META.display : `+7 700 000 9${st.accounts.length % 10} 00`);
+    const n = st.accounts.length, first = !n, base = a.cid ? metaIds(a.cid) : first ? META : null;
+    const pnid = String(a.pnid || (base ? base.pnid : 900000 + n)), wabaId = String(a.wabaId || (base ? base.waba : 800000 + n));
+    const display = a.display || (base ? base.display : `+7 700 000 9${n % 10} 00`), name = a.name || (base ? base.name : META.name);
+    const token = a.token === null || a.anyToken ? "" : String(a.token || (base ? base.token : "test-meta-token-acc" + n));
     return {
-      pnid, wabaId, token: a.token || "", display, unknown: a.unknownFields || [],
-      phone: { display_phone_number: display, verified_name: a.name || META.name, quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_250", status: "CONNECTED", name_status: "APPROVED",
+      pnid, wabaId, token, display, unknown: a.unknownFields || [],
+      phone: { display_phone_number: display, verified_name: name, quality_rating: "GREEN", whatsapp_business_manager_messaging_limit: "TIER_250", status: "CONNECTED", name_status: "APPROVED",
         code_verification_status: "VERIFIED", platform_type: "CLOUD_API", account_mode: "LIVE", throughput: { level: "STANDARD" }, is_official_business_account: false, ...(a.phone || {}) },
-      waba: { name: a.name || META.name, account_review_status: "APPROVED", business_verification_status: "verified", currency: "USD", timezone_id: "137", message_template_namespace: "stub_ns_" + wabaId,
+      waba: { name, account_review_status: "APPROVED", business_verification_status: "verified", currency: "USD", timezone_id: "137", message_template_namespace: "stub_ns_" + wabaId,
         ownership_type: "SELF", country: "KZ", ...(a.waba || {}) },
       apps: a.apps ? a.apps.slice() : [{ whatsapp_business_api_data: { id: META.app, link: "https://www.facebook.com/games/?app_id=" + META.app, name: "Bot Flow (тест)" } }],
       numbers: a.numbers || null, templates: (a.templates || []).map(tplOf)
@@ -187,6 +305,10 @@ export function metaStub(net, o = {}) {
     const u = new URL(url);
     if (!rec.path) rec.path = u.pathname.replace(/^\/v\d+\.\d+(?=\/|$)/, "") || "/"; // запись не из test/harness.mjs
     if (!rec.query) rec.query = Object.fromEntries(u.searchParams);
+    // номер запроса (из него — wamid) — при записи, до задержки: одновременные отправки с delay получали один wamid (номер брался из
+    // длины net.graph уже после задержки), и отчёты о доставке и отметки двух клиентов сливались (находка проверки шага 1, 09.11.2026).
+    // Обычно номер — место в net.graph, как у прежней заглушки; проверка обрезала net.graph — номер всё равно не повторяется
+    rec.seq = st.seq = Math.max(net.graph.indexOf(rec) + 1, st.seq + 1);
     const rule = st.fails.find((/** @type {any} */ r) => r.left > 0 && hits(r, rec));
     if (rule && --rule.left <= 0) st.fails.splice(st.fails.indexOf(rule), 1);
     if (rule && rule.hang) return hang(rec, init);
@@ -301,23 +423,11 @@ export function metaStub(net, o = {}) {
         if (tpl && tpl.status === "PAUSED") return errOf(132015);
         if (tpl && tpl.status === "DISABLED") return errOf(132016);
         if (!tpl || tpl.status !== "APPROVED") return errOf(132001, { details: `template name (${name}) does not exist in ${lang || "?"}` });
-        /** @type {Record<string, string>} */ const filled = {};
-        for (const [type, label] of [["BODY", "body"], ["HEADER", "header"]]) {
-          const part = partOf(tpl, type), got = params(label);
-          if (!part) { if (got.length) return errOf(132000, { details: `${label}: number of localizable_params (${got.length}) does not match the expected number of params (0)` }); continue; }
-          if (got.length !== part.vars.length) return errOf(132000, { details: `${label}: number of localizable_params (${got.length}) does not match the expected number of params (${part.vars.length})` });
-          for (let i = 0; i < got.length; i++) {
-            const p = got[i] || {}, key = tpl.parameter_format === "NAMED" ? String(p.parameter_name || "") : part.vars[i], txt = p.type === "text" || p.type === undefined ? String(p.text ?? "") : "[" + p.type + "]";
-            if (tpl.parameter_format === "NAMED" && !part.vars.includes(key)) return errOf(132000, { details: `${label}: parameter name (${key || "—"}) is missing or invalid` });
-            if (!txt.trim()) return errOf(131008, { details: `${label}: parameter (${key}) text is empty` });
-            if (/[\n\t]| {5,}/.test(txt)) return errOf(100, { details: "Param text cannot have new-line/tab characters or more than 4 consecutive spaces" });
-            filled[label + ":" + key] = txt;
-          }
-          if (type === "BODY") out.text = part.text.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, k) => filled["body:" + k] ?? "");
-        }
+        const bad = checkParams(tpl, comps, out);
+        if (bad) return bad;
       }
     }
-    out.id = "wamid.out." + net.graph.length; // как у прежней заглушки отправки
+    out.id = "wamid.out." + rec.seq; // номер записи запроса (reply), как у прежней заглушки отправки
     out.body = JSON.parse(JSON.stringify(b));
     st.sent.push(out);
     return J({ messaging_product: "whatsapp", contacts: [{ input: String(b.to), wa_id: to }], messages: [{ id: out.id, message_status: "accepted" }] });

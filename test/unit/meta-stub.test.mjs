@@ -6,7 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
-import { metaStub, metaEnv, metaSignal, metaStatuses, metaEvent, metaMessages, META } from "../meta.mjs";
+import { metaStub, metaEnv, metaIds, metaSignal, metaStatuses, metaEvent, metaMessages, META } from "../meta.mjs";
+import { sendTemplate } from "../../src/services/integrations/meta/templates.js";
 import { GRAPH } from "../../src/config/constants.js";
 
 const AUTH = { authorization: "Bearer " + META.token };
@@ -290,4 +291,129 @@ test("metaMessages: подписанное входящее на номер ко
   assert.equal(r.status, 200);
   const h = S.hist("wa", "winchester", from);
   assert.ok(h && h.turns.some(t => t.role === "user" && t.text === "Здравствуйте"), JSON.stringify(h));
+});
+
+// ---- находки проверки шага 1 (09.11.2026): заглушка не должна пропускать то, на чём споткнётся настоящая Meta, и путать компании
+
+test("отправка: одновременные запросы с задержкой (delay) получают разные wamid — номер выдаётся при записи запроса, а не после задержки", async () => {
+  net.reset();
+  const st = metaStub(net, { fail: { on: "POST /messages", delay: 30, times: 2 } });
+  const send = to => g(`/${META.pnid}/messages`, { method: "POST", body: { messaging_product: "whatsapp", to, type: "text", text: { body: "Ответ" } } });
+  const [a, b] = await Promise.all([send("77000000911"), send("77000000912")]);
+  assert.equal(a.status, 200); assert.equal(b.status, 200);
+  const ids = [a.j.messages[0].id, b.j.messages[0].id];
+  assert.notEqual(ids[0], ids[1], "два клиента — два разных wamid: отчёты о доставке и отметки не сливаются");
+  assert.deepEqual(ids, ["wamid.out.1", "wamid.out.2"], "номер — по порядку записи, как у прежней заглушки");
+  assert.equal(st.sent.find(x => x.to === "77000000911").id, ids[0]);
+  assert.equal(st.sent.find(x => x.to === "77000000912").id, ids[1]);
+  // проверка обрезала net.graph посреди работы (так делают audit-p0 и crm-broadcast) — номера не повторяются
+  net.graph.length = 0;
+  const c = await send("77000000913");
+  assert.ok(!ids.includes(c.j.messages[0].id), c.j.messages[0].id);
+  assert.equal(new Set(st.sent.map(x => x.id)).size, st.sent.length);
+});
+
+test("отправка: именованный параметр дважды — отказ 132000, переменная без значения не уходит пустой", async () => {
+  net.reset();
+  const st = metaStub(net, { templates: [{ name: "winchester_s01_v1", body: "Вы записаны {{date}} в {{time}}. Ждём вас." }] });
+  const r = await g(`/${META.pnid}/messages`, { method: "POST", body: { messaging_product: "whatsapp", to: "77000000914", type: "template",
+    template: { name: "winchester_s01_v1", language: { code: "ru" }, components: [{ type: "body", parameters: [{ type: "text", parameter_name: "date", text: "10 ноября" }, { type: "text", parameter_name: "date", text: "11 ноября" }] }] } } });
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 132000);
+  assert.match(r.j.error.error_data.details, /date/);
+  assert.equal(st.sent.length, 0, "«Вы записаны 11 ноября в . Ждём вас.» не уходит");
+});
+
+test("отправка: шаблон с картинкой в шапке и кнопкой-ссылкой с переменной — нужны параметры шапки и кнопки, как у Meta", async () => {
+  net.reset();
+  const st = metaStub(net, { templates: [
+    { name: "winchester_promo_img", category: "MARKETING", header: { format: "IMAGE" }, body: "Добрый день! Ждём вас в Winchester." },
+    { name: "winchester_book_url", body: "Запишитесь онлайн по кнопке ниже.", buttons: [{ type: "URL", text: "Записаться", url: "https://winchester.kz/b/{{1}}" }, "Стоп"] },
+    { name: "winchester_site", body: "Наш сайт — по кнопке ниже.", buttons: [{ type: "URL", text: "Сайт", url: "https://winchester.kz" }] },
+    { name: "winchester_hdr", header: "Запись {{day}}", body: "Ждём вас {{time}}, мастер рядом." }] });
+  const img = st.template("winchester_promo_img").components.find(c => c.type === "HEADER");
+  assert.equal(img.format, "IMAGE"); assert.ok(img.example && img.example.header_handle, "у шапки-картинки есть пример, как у поданного шаблона");
+  const to = "77000000915";
+  // прежний код рассылок (sendTemplate, b.img) отправляет картинку в шапке — заглушка должна это принять
+  const env = { WA_TOKEN_WINCHESTER: META.token, PHONE_NUMBER_ID_WINCHESTER: META.pnid };
+  const ok = await sendTemplate(env, to, { tpl: "winchester_promo_img", lang: "ru", img: "https://winchester.kz/promo.jpg", params: [] }, "", { client: "winchester" });
+  assert.deepEqual(ok, { ok: true });
+  assert.equal(st.sent.at(-1).header, "https://winchester.kz/promo.jpg");
+  const tplMsg = (name, components) => ({ messaging_product: "whatsapp", to, type: "template", template: { name, language: { code: "ru" }, components } });
+  const send = body => g(`/${META.pnid}/messages`, { method: "POST", body });
+  // без картинки — Meta отказывает (параметр шапки обязателен)
+  let r = await send(tplMsg("winchester_promo_img", []));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 131008);
+  r = await send(tplMsg("winchester_promo_img", [{ type: "header", parameters: [{ type: "document", document: { link: "https://winchester.kz/a.pdf" } }] }]));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 132012, "картинка вместо файла — не тот вид параметра");
+  r = await send(tplMsg("winchester_promo_img", [{ type: "header", parameters: [{ type: "image", image: {} }] }]));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 131008, "картинка без ссылки и без id");
+  // текстовая шапка: картинка вместо текста — не тот вид параметра
+  r = await send(tplMsg("winchester_hdr", [{ type: "header", parameters: [{ type: "image", image: { link: "https://winchester.kz/x.jpg" } }] }, { type: "body", parameters: [{ type: "text", parameter_name: "time", text: "15:00" }] }]));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 132012);
+  r = await send(tplMsg("winchester_hdr", [{ type: "header", parameters: [{ type: "text", parameter_name: "day", text: "завтра" }] }, { type: "body", parameters: [{ type: "text", parameter_name: "time", text: "15:00" }] }]));
+  assert.equal(r.status, 200, "текстовая шапка с текстом — как раньше");
+  // кнопка-ссылка с переменной — без параметра кнопки Meta отказывает
+  r = await send(tplMsg("winchester_book_url", []));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 131008);
+  r = await send(tplMsg("winchester_book_url", [{ type: "button", sub_type: "url", index: "1", parameters: [{ type: "text", text: "abc" }] }]));
+  assert.equal(r.status, 400, "кнопка 1 — быстрый ответ, у неё нет ссылки");
+  r = await send(tplMsg("winchester_book_url", [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "" }] }]));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 131008, "пустая переменная ссылки");
+  r = await send(tplMsg("winchester_book_url", [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "abc" }] }, { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: "STOP" }] }]));
+  assert.equal(r.status, 200, "ссылка с переменной и полезная нагрузка быстрого ответа");
+  assert.deepEqual(st.sent.at(-1).buttons, ["https://winchester.kz/b/abc"], "заглушка собирает ссылку, которую увидит клиент");
+  // ссылка без переменной — параметр кнопки лишний
+  r = await send(tplMsg("winchester_site", [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "abc" }] }]));
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 132000);
+  r = await send(tplMsg("winchester_site", []));
+  assert.equal(r.status, 200);
+  assert.equal(st.sent.length, 4, "отказы в отправленные не попадают");
+});
+
+test("ключ по умолчанию: заглушка принимает только ключ компании — неверный 190, ключ другой компании 100/33; без проверки — только явно (token: null)", async () => {
+  net.reset();
+  const st = metaStub(net);
+  assert.equal(st.token, META.token, "первая компания — с тем же ключом, что пишет metaEnv");
+  let r = await g(`/${META.pnid}?fields=quality_rating`, { token: "garbage" });
+  assert.equal(r.status, 401); assert.equal(r.j.error.code, 190);
+  assert.equal((await g(`/${META.pnid}?fields=quality_rating`)).status, 200);
+  const B = st.add({});
+  assert.ok(B.token && B.token !== META.token, "у второй компании свой вымышленный ключ");
+  r = await g(`/${B.pnid}?fields=display_phone_number`);
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 100); assert.equal(r.j.error.error_subcode, 33, "ключ Winchester к номеру другой компании");
+  r = await g(`/${META.waba}?fields=account_review_status`, { token: B.token });
+  assert.equal(r.status, 400); assert.equal(r.j.error.code, 100); assert.equal(r.j.error.error_subcode, 33, "ключ другой компании к WABA Winchester");
+  r = await g(`/${META.pnid}/messages`, { method: "POST", token: B.token, body: { messaging_product: "whatsapp", to: "77000000916", type: "text", text: { body: "x" } } });
+  assert.equal(r.j.error.code, 100); assert.equal(st.sent.length, 0, "с чужим ключом с номера Winchester ничего не уходит");
+  assert.equal((await g(`/${B.pnid}?fields=display_phone_number`, { token: B.token })).status, 200);
+  const C = st.add({ token: null });
+  assert.equal((await g(`/${C.pnid}?fields=id`, { token: "garbage" })).status, 200, "token: null — проверка ключа выключена явно");
+  net.reset(); metaStub(net, { token: null });
+  assert.equal((await g(`/${META.pnid}?fields=id`, { token: "garbage" })).status, 200);
+});
+
+test("metaEnv: у разных компаний разные номер, WABA, ключ и секрет; st.add({ cid }) — те же значения, что metaEnv", async () => {
+  const w = metaEnv("winchester"), b = metaEnv("barber");
+  for (const [k, v] of [["PHONE_NUMBER_ID", META.pnid], ["WABA_ID", META.waba], ["WA_TOKEN", META.token], ["APP_SECRET", META.secret]]) {
+    assert.equal(w[k + "_WINCHESTER"], v);
+    assert.ok(b[k + "_BARBER"], k); assert.notEqual(b[k + "_BARBER"], v, k + ": у другой компании — своё");
+  }
+  assert.deepEqual(metaEnv("barber"), b, "значения постоянные: тот же cid — те же значения");
+  const ids = metaIds("barber");
+  assert.equal(ids.pnid, b.PHONE_NUMBER_ID_BARBER); assert.equal(ids.waba, b.WABA_ID_BARBER); assert.equal(ids.token, b.WA_TOKEN_BARBER); assert.equal(ids.secret, b.APP_SECRET_BARBER);
+  assert.match(ids.display, /^\+7 700 000 \d\d \d\d$/); assert.notEqual(ids.display, META.display);
+  assert.equal(metaEnv("acme", { pnid: "1", waba: "2" }).PHONE_NUMBER_ID_ACME, "1", "явные значения важнее");
+  // заглушка: компания по cid — тот же номер и ключ; ключ Winchester к её номеру — 100/33
+  net.reset();
+  const st = metaStub(net), B = st.add({ cid: "barber" });
+  assert.equal(B.pnid, ids.pnid); assert.equal(B.wabaId, ids.waba); assert.equal(B.token, ids.token); assert.equal(B.display, ids.display);
+  assert.equal((await g(`/${ids.pnid}?fields=display_phone_number`, { token: ids.token })).j.display_phone_number, ids.display);
+  assert.equal((await g(`/${ids.pnid}?fields=id`)).j.error.error_subcode, 33);
+  // вебхук: подпись секретом Winchester на адресе другой компании не проходит, своим секретом — проходит
+  const S = mk({ ...w, ...b });
+  const ev = { event: "PAUSED", message_template_id: 1, message_template_name: "barber_x", message_template_language: "ru", reason: "NONE" };
+  let r = await metaSignal(S, "/wa/barber", "message_template_status_update", ev, { entryId: ids.waba });
+  assert.equal(r.status, 403, "секрет Winchester — не секрет другой компании");
+  r = await metaSignal(S, "/wa/barber", "message_template_status_update", ev, { entryId: ids.waba, secret: ids.secret });
+  assert.equal(r.status, 200);
 });
