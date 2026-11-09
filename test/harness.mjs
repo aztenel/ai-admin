@@ -44,7 +44,8 @@ export const net = {
   ai: [],                      // очередь ответов ИИ: строка, число (код ошибки), Error или функция (тело запроса) → ответ. Последний ответ повторяется
   gemini: [], tg: [], graph: [], alt: [], other: [],
   tgStatus: 200,               // что отвечает Telegram
-  graphReply: null,            // функция (url, init) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере)
+  graphReply: null,            // функция (url, init, rec) → Response | null: свой ответ Meta (ошибка отправки, сведения о номере); заглушка Graph целиком — metaStub в test/meta.mjs
+  meta: null,                  // состояние заглушки Graph (metaStub): номера, WABA, шаблоны, отправленное, отказы; null — без неё, как раньше
   altData: null,               // функция (loc) → { services, staff, category, times, dates } — расписание Altegio
   altRecords: [], altDeleted: [], altGone: [], altBusy: false, altGetFail: 0, altGetPlain: false, altCheckBusy: false, altAuth: [], altJournalFail: 0, // altGetPlain — чтение записи «успешно», но без поля deleted (как может быть вживую); altGone — записи, удалённые администратором прямо в Altegio
   altClients: [],              // справочник клиентов (POST /locations/{локация}/clients/search): { id, name, surname, phone, first_visit_date, last_visit_date, visits_count, nl (разрешил рассылки), pd }
@@ -64,7 +65,7 @@ export const net = {
   imgReply: null,              // функция (url, init) → Response | null: свой ответ на запрос картинки (не картинка, большая, перенаправление)
   push: [],                    // запросы к службам Web Push (Apple, Google, Mozilla, Microsoft): { url, headers, body (байты) }
   pushReply: null,             // функция (rec) → Response | null: свой ответ службы push (410 — подписки нет)
-  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altLoyalty = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
+  reset() { this.push.length = 0; this.pushReply = null; this.img.length = 0; this.imgReply = null; this.ai = []; this.aiUsage = null; this.gemini.length = 0; this.tg.length = 0; this.graph.length = 0; this.alt.length = 0; this.other.length = 0; this.tgStatus = 200; this.graphReply = null; this.meta = null; this.altRecords.length = 0; this.altDeleted.length = 0; this.ga.length = 0; this.gaState = "authorized"; this.gaReply = null; this.wz.length = 0; this.wzReply = null; this.altJournal = null; this.altLoyalty = null; this.altClients = []; this.altClientsNoVisits = false; this.altClientsBad = ""; this.altCreated = []; this.mediaReply = null; }
 };
 const J = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 const iso = ms => new Date(ms + 5 * 3600e3).toISOString().slice(0, 10);
@@ -226,7 +227,13 @@ globalThis.fetch = async (u, init = {}) => {
     return net.tgStatus === 200 ? J({ ok: true, result: {} }) : J({ ok: false, description: "err" }, net.tgStatus);
   }
   if (url.includes("graph.facebook.com")) {
-    const rec = { url, method: init.method || "GET", auth: (init.headers || {}).authorization || "", body: init.body ? JSON.parse(init.body) : null }; net.graph.push(rec);
+    // запись запроса: путь без версии API и разобранный запрос — проверкам не нужно разбирать адрес; тело не JSON (форма, файл) — как есть
+    const h = init.headers || {}, auth = (typeof h.get === "function" ? h.get("authorization") : h.authorization || h.Authorization) || "", u = new URL(url);
+    let body = null;
+    if (typeof init.body === "string" && init.body) { try { body = JSON.parse(init.body); } catch (e) { body = init.body; } }
+    else if (init.body instanceof URLSearchParams) body = Object.fromEntries(init.body);
+    else if (init.body) body = init.body;
+    const rec = { url, method: String(init.method || "GET").toUpperCase(), auth, body, path: u.pathname.replace(/^\/v\d+\.\d+(?=\/|$)/, "") || "/", query: Object.fromEntries(u.searchParams) }; net.graph.push(rec);
     const own = net.graphReply && net.graphReply(url, init, rec);
     if (own) return own;
     return J({ messaging_product: "whatsapp", messages: [{ id: "wamid.out." + net.graph.length }] });

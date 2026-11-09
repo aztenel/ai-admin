@@ -203,7 +203,9 @@ async function preview(extra = {}) {
   await s.gaText("winchester", INST, from, "Здравствуйте");
   return { s, b, from, d };
 }
-const noOut = () => { assert.equal(net.ga.filter(x => !/^(getStateInstance|getSettings|downloadFile|lastIncomingMessages|lastOutgoingMessages)$/.test(x.op)).length, 0, "ушло в Green-API: " + net.ga.map(x => x.op)); assert.equal(net.graph.filter(g => g.body).length, 0, "ушло в Meta"); assert.equal(net.wz.filter(x => x.method !== "GET").length, 0, "ушло в Wazzapo"); };
+// в Meta — любая запись (POST, DELETE), и без тела: подача и удаление шаблона, подписка приложения (план Meta, шаг 1, 09.11.2026);
+// прежняя проверка ловила только запросы с телом. Чтение (GET) черновику можно
+const noOut = () => { assert.equal(net.ga.filter(x => !/^(getStateInstance|getSettings|downloadFile|lastIncomingMessages|lastOutgoingMessages)$/.test(x.op)).length, 0, "ушло в Green-API: " + net.ga.map(x => x.op)); assert.equal(net.graph.filter(g => g.method !== "GET").length, 0, "ушло в Meta: " + net.graph.map(g => g.method + " " + g.url)); assert.equal(net.wz.filter(x => x.method !== "GET").length, 0, "ушло в Wazzapo"); };
 
 test("B1 черновик: ответ из пульта со второго номера — 409 «тестовая версия», в Green-API ничего", async () => {
   const { b, from } = await preview();
