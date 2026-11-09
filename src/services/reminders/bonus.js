@@ -7,8 +7,10 @@
 // Когда смотрим: запись с отметкой «пришёл» и номером визита, визит не раньше 8 часов назад. Изменилась подпись оплаты записи
 // (оплата, отметка, last_change_date) — смотрим детали сразу (быстрый проход журнала раз в минуту видит изменённые записи); операций
 // ещё нет — смотрим ещё раз не чаще раза в 15 минут (полное чтение журнала), пока не пройдёт 8 часов.
-// Одна операция — одно сообщение: в очередь — с номером операции (версия), отметки rms: и D1 send_claims по нему. Операции старше 3 часов
-// и сделанные до включения сценария — не сообщаем (задним числом не шлём). Вживую не проверено.
+// Одна операция — одно сообщение: в очередь — с номером операции (версия), отметки rms: и D1 send_claims по нему — без номера записи: у визита
+// бывает несколько записей (два мастера), операции визита видны из каждой (находка проверки 08.11.2026 — два сообщения об одной операции);
+// поэтому и детали визита читаем один раз за проход, а увиденные операции помним для всех записей (_tx). Операции старше 3 часов и сделанные
+// до включения сценария — не сообщаем (задним числом не шлём); у операции без даты время — конец визита. Вживую не проверено.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { local, TZ } from "../../lib/time.js";
 import { altRead } from "../integrations/altegio/client.js";
@@ -60,13 +62,16 @@ export function sendAt(o, now) {
  * Новые операции по бонусам в записях журнала → задачи очереди { k: "bi" | "bo", rec, v (версия записи), tx, am, bal, … }.
  * list — записи, которые только что прочитали (полное чтение или изменённые за 10 минут), с разбором jrRec: { r, v }; full — полное чтение (можно смотреть снова
  * записи без операций). Сценарий выключен — ничего. Altegio не дал прав на «Лояльность» — в журнал решений не чаще раза в 6 часов.
- * @param {Env} env @param {Client} c @param {any} o @param {{ r: any, v: any }[]} list @param {number} now @param {{ user: string, loc: number, full: boolean }} ctx
+ * @param {Env} env @param {Client} c @param {any} o @param {{ r: any, v: any }[]} list @param {number} now @param {{ user: string, loc: number, full: boolean, eager?: boolean }} ctx
  * @param {(x: any, st: string, why: string) => void} log
  */
 export async function bonusScan(env, c, o, list, now, ctx, log) {
   if (!o.bi && !o.bo) return [];
   const st = await jrbnLoad(env, c.id), before = JSON.stringify(st), add = /** @type {any[]} */ ([]);
-  for (const [id, x] of Object.entries(st)) if (!x || typeof x !== "object" || now - (+x.t || 0) > 2 * 86400e3) delete st[id];
+  for (const [id, x] of Object.entries(st)) if (!x || typeof x !== "object" || (id !== "_tx" && now - (+x.t || 0) > 2 * 86400e3)) delete st[id];
+  /** @type {Record<string, number>} */ const seenTx = st._tx && typeof st._tx === "object" ? st._tx : {}; // операция → когда увидели, 2 суток
+  for (const [id, t] of Object.entries(seenTx)) if (now - (+t || 0) > 2 * 86400e3) delete seenTx[id];
+  /** @type {Set<string>} */ const visits = new Set();
   const enabled = (/** @type {string} */ id) => (o.set && o.set.s[id] ? +o.set.s[id].at || 0 : 0);
   /** @type {Map<string, any[] | null>} */ const cards = new Map();
   let reads = 0;
@@ -75,9 +80,14 @@ export async function bonusScan(env, c, o, list, now, ctx, log) {
     const t = atLocal(v.date, v.time);
     if (t > now + 3600e3 || now - t > LOOK_MS) continue;
     const sig = sigOf(r), was = st[v.id];
-    if (was && was.s === sig && (was.tx.length || !ctx.full || now - (+was.c || 0) < AGAIN_MS)) continue;
+    // уже смотрели и ничего не изменилось: операции есть — хватит; операций нет — снова не раньше чем через 15 минут, а по событию Altegio
+    // об оплате (eager) — сразу
+    if (was && was.s === sig && (was.tx.length || (!ctx.eager && (!ctx.full || now - (+was.c || 0) < AGAIN_MS)))) continue;
+    const vid = String(+r.visit_id);
+    if (visits.has(vid)) { st[v.id] = { s: sig, tx: was && Array.isArray(was.tx) ? was.tx : [], c: now, t }; continue; } // визит уже смотрели в этом проходе
     if (reads >= MAX_READ) break;
     reads++;
+    visits.add(vid);
     /** @type {any} */ let d;
     try { d = await altRead(env, "GET", `/visit/details/${ctx.loc}/${v.id}/${+r.visit_id}`, null, ctx.user); }
     catch (/** @type {any} */ e) {
@@ -91,12 +101,13 @@ export async function bonusScan(env, c, o, list, now, ctx, log) {
       st[v.id] = { s: sig, tx: was && Array.isArray(was.tx) ? was.tx : [], c: now, t };
       continue;
     }
-    const known = new Set(was && Array.isArray(was.tx) ? was.tx : []), txs = bonusTx(d), fresh = txs.filter(x => !known.has(x.id));
-    st[v.id] = { s: sig, tx: [...known, ...fresh.map(x => x.id)].slice(-20), c: now, t };
+    const known = new Set(was && Array.isArray(was.tx) ? was.tx : []), txs = bonusTx(d), fresh = txs.filter(x => !known.has(x.id) && !seenTx[x.id]);
+    st[v.id] = { s: sig, tx: [...known, ...txs.map(x => x.id).filter(id => !known.has(id))].slice(-20), c: now, t };
+    for (const x of fresh) seenTx[x.id] = now;
     for (const x of fresh) {
       const k = x.out ? "bo" : "bi", on = o[k], sid = x.out ? "bonusOut" : "bonusIn", base = { rec: v.id, v: v.v, p: v.p, n: v.n, date: v.date, time: v.time, staff: v.staff, svc: v.svc, k };
       if (!on) continue;
-      const at = x.at || now;
+      const at = x.at || t + (+v.len || 0) * 1000; // без даты — конец визита (не «сейчас»: иначе старая операция ушла бы задним числом)
       if (now - at > OLD_MS) { log({ ...base, at }, "skipped", "операция с бонусами была больше 3 часов назад: задним числом не пишем"); continue; }
       if (enabled(sid) > at) { log({ ...base, at }, "skipped", "сценарий включили позже операции с бонусами"); continue; }
       let bal = /** @type {number | undefined} */ (undefined);
@@ -112,6 +123,7 @@ export async function bonusScan(env, c, o, list, now, ctx, log) {
       add.push({ ...base, tx: x.id, am: x.amount, ...(bal !== undefined ? { bal } : {}), at: sendAt(o, now) });
     }
   }
+  if (Object.keys(seenTx).length) st._tx = seenTx; else delete st._tx;
   if (JSON.stringify(st) !== before) { try { await jrbnSave(env, c.id, st); } catch (e) { console.log("jr bonus state", String(e)); } }
   return add;
 }

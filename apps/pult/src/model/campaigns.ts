@@ -787,7 +787,7 @@ export type AutoMessages = {
   test: { phone: string } | null;
   scenarios: AutoMsgScenario[];
   /** События Altegio (вебхук, ТЗ v4): адрес с паролем — только владельцу ("" у сотрудника), последнее событие — время, ресурс и действие. */
-  hook?: { url: string; last: { at: number; res: string; st: string; n: number } | null };
+  hook?: { url: string; last: { at: number; res: string; st: string; n: number } | null; on: boolean; why: string };
 };
 /** Изменить (только владелец): выключатель, время, текст сценария; часы отправки и предел; номер для проверки ("" — убрать). */
 export type AutoMsgPatch =

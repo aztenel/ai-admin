@@ -49,3 +49,23 @@ export async function syncFail(db, ws, source, scope, text, now) {
 export function syncClearStmt(db, /** @type {string} */ ws, /** @type {string} */ source, /** @type {string} */ scope) {
   return db.prepare("update sync_state set last_error = null, last_error_at = null where ws = ? and source = ? and scope = ?").bind(ws, source, scope);
 }
+
+// Отметки событий вебхука Altegio (services/reminders/kick.js): строка (ws, 'althook', вид события). last_ok_at — время последнего события
+// этого вида, cursor — до какого времени журнал уже прочитан по этим событиям. Событие и фоновая проверка пишут разные поля: отметка
+// события, пришедшего во время прохода, не стирается.
+/** @param {any} db @param {string} ws @param {string} mode @param {number} at */
+export async function kickWantD1(db, ws, mode, at) {
+  await db.prepare("insert into sync_state (ws, source, scope, last_ok_at) values (?, 'althook', ?, ?) on conflict (ws, source, scope) do update set last_ok_at = max(coalesce(sync_state.last_ok_at, 0), excluded.last_ok_at)")
+    .bind(ws, mode, at).run();
+}
+/** @param {any} db @param {string} ws @returns {Promise<{ mode: string, want: number, done: number }[]>} */
+export async function kickRowsD1(db, ws) {
+  const r = (await db.prepare("select scope, last_ok_at, cursor from sync_state where ws = ? and source = 'althook'").bind(ws).all()).results || [];
+  return r.map((/** @type {any} */ x) => ({ mode: String(x.scope), want: +x.last_ok_at || 0, done: +x.cursor || 0 }));
+}
+/** @param {any} db @param {string} ws @param {string[]} modes @param {number} at */
+export async function kickDoneD1(db, ws, modes, at) {
+  if (!modes.length) return;
+  await db.batch(modes.map(m => db.prepare("update sync_state set cursor = ? where ws = ? and source = 'althook' and scope = ? and (cursor is null or cast(cursor as integer) < ?)")
+    .bind(String(at), ws, m, at)));
+}

@@ -206,6 +206,8 @@ test("перенос: сообщение с новым временем даже
   assert.deepEqual(sent(), [], "первое чтение — только запоминаем записи");
   net.altJournal = [rec(ph(6051), TOM, "17:00", { id: 6051, name: "Арман" })];
   await jrRun(s.env, at(TODAY, "12:16"));
+  assert.deepEqual(sent(), [], "о переносе — через 3 минуты: вдруг запись поправят ещё раз");
+  await jrRun(s.env, at(TODAY, "12:19"));
   assert.equal(sent().length, 1, JSON.stringify(log(s))); assert.match(sent()[0].text, /перенесена на 20 октября, 17:00/);
   await jrRun(s.env, at(TODAY, "12:32")); await jrRun(s.env, at(TODAY, "12:48"));
   assert.equal(sent().length, 1, "тот же журнал — повторов нет");
@@ -216,7 +218,7 @@ test("перенос: сообщение с новым временем даже
   // перенос записи, которую удалили бы из окна, — найден по журналу на 60 дней: тоже перенос, не отмена
   await autoOn(s, { move: true, cancel: true });
   net.altJournal = [rec(ph(6051), "2026-11-20", "15:00", { id: 6051, name: "Арман" })];
-  await jrRun(s.env, at(TODAY, "13:36"));
+  await jrRun(s.env, at(TODAY, "13:36")); await jrRun(s.env, at(TODAY, "13:39"));
   assert.equal(sent().length, 3); assert.match(sent()[2].text, /перенесена на 20 ноября, 15:00/); assert.ok(!/отменена/.test(sent()[2].text));
 });
 
@@ -232,18 +234,18 @@ test("отмена: запись удалили — одно сообщение 
   net.altJournalFail = 0;
   assert.deepEqual(sent(), []);
   net.altJournal = [B, C, D]; // A удалили; E (сегодня в 9:00) уже прошла — о ней не пишем
-  await jrRun(s.env, at(TODAY, "12:32"));
+  await jrRun(s.env, at(TODAY, "12:32")); await jrRun(s.env, at(TODAY, "12:35"));
   assert.equal(sent().length, 1); assert.equal(sent()[0].to, dg(6061));
   assert.match(sent()[0].text, /Ерлан! Ваша запись в Winchester на 20 октября в 15:00 отменена/);
   await jrRun(s.env, at(TODAY, "12:48")); await jrRun(s.env, at(TODAY, "13:04"));
   assert.equal(sent().length, 1, "повторно не пишем");
-  // удалили сразу три записи: две уходят в эту минуту, третью успели вернуть — о ней не пишем
+  // удалили сразу три записи: через 3 минуты две уходят, третью успели вернуть — о ней не пишем
   net.altJournal = [];
-  await jrRun(s.env, at(TODAY, "13:20"));
+  await jrRun(s.env, at(TODAY, "13:20")); await jrRun(s.env, at(TODAY, "13:23"));
   assert.equal(sent().length, 3);
   const left = [B, C, D].find(x => !sent().some(y => y.to === x.client.phone.slice(1)));
   net.altJournal = [left];
-  await jrRun(s.env, at(TODAY, "13:21"));
+  await jrRun(s.env, at(TODAY, "13:24"));
   assert.equal(sent().length, 3, "вернули — не пишем");
   assert.ok(log(s).some(x => x.k === "cx" && /снова есть в Altegio/.test(x.why)), JSON.stringify(log(s).filter(x => x.k === "cx")));
   // запись создали и удалили за несколько минут (ошибка администратора) — клиенту не пишем

@@ -29,8 +29,8 @@ const CHAT_READS = 50;
 // журнал решений (ушло, отменено — запись перенесена, пропущено и почему, задача администратору) — номера маской
 /** @param {Env} env @param {Client} c @param {number} now */
 async function journalInfo(env, c, now) {
-  // включено ли — по выключателям раздела «Автоматические сообщения» (02.11.2026), время — оттуда же. Отмены (cx) здесь нет: прежний
-  // пульт этого вида не знает — новый раздел берёт всё из /api/msg/auto
+  // включено ли — по выключателям раздела «Автоматические сообщения» (02.11.2026), время — оттуда же. С 08.11.2026 здесь и отмена, и бонусы:
+  // без них очередь (и календарь) не показывала сообщения, отложенные на утро (находка проверки)
   const set = autoSettings(c, await autoLoad(env, c.id)), S = set.s, w = set.win;
   const altegio = altLoc(env, c) > 0 && !!altUserKey(env, c), enabled = jrOn(env, c);
   const go = altegio && enabled, rv = go && S.review.on && !!c.review, ap = await svApprovals(env, c.id), own = await svOwn(env, c);
@@ -40,7 +40,10 @@ async function journalInfo(env, c, now) {
     { k: "d1", label: S.remind24.t.mode === "eve" ? `Напоминание накануне в ${S.remind24.t.eve}` : "Напоминание за 24 часа до визита", on: go && S.remind24.on },
     { k: "h2", label: `Напоминание за ${S.remind3.t.hours} ч (только с ${w.from}:00 до ${w.to}:00)`, on: go && S.remind3.on },
     { k: "s06", label: "Новое время после переноса в Altegio", on: go && S.move.on },
-    { k: "rv", label: `Просьба об отзыве через ${S.review.t.hours} ч после визита с отметкой «пришёл» (одному клиенту раз в 60 дней)`, on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "cx", label: "Сообщение об отмене записи в Altegio", on: go && S.cancel.on },
+    { k: "rv", label: `Благодарность через ${S.review.t.hours} ч после визита с отметкой «пришёл»` + (+S.review.t.gap > 0 ? ` (одному клиенту не чаще раза в ${S.review.t.gap} дн.)` : " (после каждого визита)"), on: rv, ...(c.review ? { link: String(c.review) } : {}) },
+    { k: "bi", label: "Начислено бонусов (после оплаты визита)", on: go && !!(S.bonusIn && S.bonusIn.on) },
+    { k: "bo", label: "Списано бонусов (после оплаты визита)", on: go && !!(S.bonusOut && S.bonusOut.on) },
   ].map(x => ({ ...x, sc: KIND_SC[x.k], approved: ok(x.k) }));
   const on = /** @type {Record<string, boolean>} */ (Object.fromEntries(kinds.map(x => [x.k, x.on])));
   const soon = (await jrqLoad(env, c.id)).filter(x => x && on[x.k] && x.at > now - 3600e3).sort((a, b) => a.at - b.at);

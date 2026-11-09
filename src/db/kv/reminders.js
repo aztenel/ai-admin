@@ -7,6 +7,8 @@
 //   jrhold:<клиент> — { at, why }: Green-API отказал (номер заблокирован, ключ не подходит) — 6 часов не шлём
 //   jrv:<клиент>:<номер> — когда просили отзыв (мс), 90 дней: «не чаще раза в N дней» (настройка сценария; 0 — после каждого визита)
 //   alh:<клиент> — последнее событие вебхука Altegio { at, res, st, n } (без данных клиента), 30 дней
+//   jrw:<клиент>:<вид> — время последнего события Altegio этого вида (fast, bonus, full), jrwd:<клиент> — { <вид>: до какого времени журнал
+//     прочитан по событиям }, 2 дня. Только у адреса без базы D1 (с базой — sync_state, source 'althook'): services/reminders/kick.js
 //   jrbn:<клиент> — бонусы (ТЗ v4): по записям с визитом { <запись>: { s: подпись оплаты, tx: [номера операций], c: когда смотрели, t } }, 7 дней
 //   rms:/rmok:<клиент>:<запись>:<вид> — попытка и удачная отправка, 3 дня; общие с напоминаниями бота (services/reminders/send.js).
 //     Значение rms: — версия записи, по которой ушло (у бота и прежнего кода — «1»)
@@ -151,4 +153,22 @@ export async function altHookLast(env, cid) { try { const v = JSON.parse((await 
 export async function altHookSeen(env, cid, x) {
   const was = await altHookLast(env, cid);
   await env.KV.put("alh:" + cid, JSON.stringify({ ...x, n: ((was && +was.n) || 0) + 1 }), { expirationTtl: 30 * DAY });
+}
+
+// отметки событий вебхука Altegio без базы D1 (services/reminders/kick.js): у каждого вида свой ключ — события разных видов не затирают друг друга
+/** @param {Env} env @param {string} cid @param {string} mode @param {number} at */
+export const kickWantKv = (env, cid, mode, at) => env.KV.put(`jrw:${cid}:${mode}`, String(at), { expirationTtl: 2 * DAY });
+/** @param {Env} env @param {string} cid @param {string[]} modes @returns {Promise<{ mode: string, want: number, done: number }[]>} */
+export async function kickRowsKv(env, cid, modes) {
+  /** @type {Record<string, number>} */ let done = {};
+  try { const v = JSON.parse((await env.KV.get("jrwd:" + cid)) || "{}"); if (v && typeof v === "object") done = v; } catch (e) {}
+  const want = await Promise.all(modes.map(m => env.KV.get(`jrw:${cid}:${m}`)));
+  return modes.map((m, i) => ({ mode: m, want: +(want[i] || 0) || 0, done: +done[m] || 0 }));
+}
+/** @param {Env} env @param {string} cid @param {string[]} modes @param {number} at */
+export async function kickDoneKv(env, cid, modes, at) {
+  /** @type {Record<string, number>} */ let done = {};
+  try { const v = JSON.parse((await env.KV.get("jrwd:" + cid)) || "{}"); if (v && typeof v === "object") done = v; } catch (e) {}
+  for (const m of modes) done[m] = Math.max(+done[m] || 0, at);
+  await env.KV.put("jrwd:" + cid, JSON.stringify(done), { expirationTtl: 2 * DAY });
 }

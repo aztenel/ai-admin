@@ -1041,7 +1041,7 @@ function HookSheet({ d, onClose }: { d: AutoData; onClose: () => void }) {
       open
       onOpenChange={(x) => !x && onClose()}
       title="События Altegio"
-      description="Altegio сам сообщает о новой записи, переносе, отмене и оплате — сообщения клиентам уходят через несколько секунд. Без этого система проверяет журнал раз в минуту."
+      description="Altegio сам сообщает о новой записи, переносе, отмене и оплате — сообщение клиенту уходит в течение минуты. Без этого отмену и бонусы система видит только при полной проверке журнала раз в 15 минут."
       footer={
         <div className="flex gap-2 pb-1">
           <Button className="flex-1" onClick={onClose}>
@@ -1054,6 +1054,11 @@ function HookSheet({ d, onClose }: { d: AutoData; onClose: () => void }) {
       }
     >
       <div className="space-y-3 px-4 pb-4 text-ui pointer-coarse:text-base">
+        {d.hook?.why ? (
+          <p role="status" className="rounded-[0.625rem] bg-critical-soft px-3 py-2.5 text-fg">
+            {d.hook.why}
+          </p>
+        ) : null}
         <p className="break-all rounded-[0.625rem] bg-surface-2 px-3 py-2.5 font-mono text-sm" aria-label="Адрес для Altegio">
           {url}
         </p>
@@ -1063,7 +1068,10 @@ function HookSheet({ d, onClose }: { d: AutoData; onClose: () => void }) {
           <li>Сохраните. Когда придёт первое событие, ниже появится его время.</li>
         </ol>
         <p className="text-fg-2">{last ? `Последнее событие: ${whenText(last.at, now)}. Всего пришло: ${nf.format(last.n)}.` : "Событий пока не было."}</p>
-        <p className="text-sm text-fg-3">Адрес — как пароль: не пересылайте его. Проверка журнала по расписанию остаётся страховкой, если событие не придёт.</p>
+        <p className="text-sm text-fg-3">
+          Адрес — как пароль: не пересылайте его. Сообщения уходят не чаще 2 в минуту — так номер не заблокируют. Проверка журнала по расписанию остаётся
+          страховкой, если событие не придёт.
+        </p>
       </div>
     </Sheet>
   );
