@@ -2,9 +2,12 @@
 // Сведения о номере WhatsApp в Meta (план Meta, шаг 2, 09.11.2026): номер и имя для показа, качество, предел получателей за 24 часа,
 // состояние номера и имени, проверка кода, платформа, режим. Раньше то же читал bcHealth прямо через fetch и без срока ответа — теперь
 // через metaGet (срок, один повтор при 429/5xx, причины словами); bcHealth отдаёт из этого прежний вид ответа.
-// Поле предела в Graph менялось: whatsapp_business_manager_messaging_limit (новое), messaging_limit_tier (старое) — лестница полей
-// как у прежнего bcHealth. Поля status, name_status, account_mode и др. — по документации Meta, у нового номера вживую не проверены:
-// неизвестное поле убирается, остальное читается.
+// Поле предела в Graph менялось: whatsapp_business_manager_messaging_limit (новое), messaging_limit_tier (старое). Поля status,
+// name_status, account_mode и др. — по документации Meta, у нового номера вживую не проверены, поэтому они — сверх главного: первый
+// запрос — все поля сразу (обычно он и единственный); неизвестное поле, названное Graph, убирается (новое поле предела — заменяется
+// старым); ошибка без имени поля или неизвестных больше двух — ступени прежнего bcHealth: BASE + новое поле → BASE + старое → BASE.
+// Сбой дополнительного поля так не стоит ни качества, ни предела, а до BASE лестница доходит всегда (находка проверки шага 2,
+// 09.11.2026: прежняя ступень BASE + новое поле не повторялась — предел пропадал, а при пяти неизвестных полях не читалось ничего).
 /** @import { Env } from "../../../lib/types.js" */
 /** @import { MetaCreds, MetaOpts, MetaRes } from "./graph.js" */
 import { clean } from "../../../lib/text.js";
@@ -36,7 +39,7 @@ export async function metaPhone(env, cr, o = {}) {
   const miss = metaNeed(cr, ["token", "pnid"]);
   if (miss) return miss;
   const r = await metaNode(env, cr.token, String(cr.pnid), [...BASE, NEW, ...EXTRA],
-    { ...o, ctx: "phone", up: cr.up, alt: { [NEW]: OLD }, ladder: [[...BASE, OLD, ...EXTRA], [...BASE, OLD], BASE] });
+    { ...o, ctx: "phone", up: cr.up, alt: { [NEW]: OLD }, ladder: [[...BASE, NEW], [...BASE, OLD], BASE] });
   if (!r.ok) { const { fields, j, ...e } = r; return e; }
   const d = r.j || {}, t = tierOf(d[NEW] !== undefined ? d[NEW] : d[OLD]), tp = d.throughput;
   return { ok: true, phone: clean(d.display_phone_number || "", 24), name: clean(d.verified_name || "", 60), quality: upw(d.quality_rating), limit: t.limit, tier: t.tier,

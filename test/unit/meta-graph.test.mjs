@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { net, mkKV } from "../harness.mjs";
 import { metaStub, metaEnv, metaIds as stubIds, META } from "../meta.mjs";
-import { metaGet, metaWrite } from "../../src/services/integrations/meta/graph.js";
+import { metaGet, metaWrite, metaNode } from "../../src/services/integrations/meta/graph.js";
 import { metaPhone, tierOf } from "../../src/services/integrations/meta/phone.js";
 import { metaWaba } from "../../src/services/integrations/meta/waba.js";
 import { tplList, tplCreate, tplView } from "../../src/services/integrations/meta/templates-api.js";
@@ -339,4 +339,73 @@ test("bcHealth: прежний вид ответа через metaPhone; сро�
   h = await bcHealth(env, route);
   assert.equal(h.error, "Meta не отвечает, сведения о номере получить не удалось.");
   assert.notEqual(net.graph[0].noSignal, true, "у запроса номера должен быть срок ответа");
+});
+
+// находки проверки шага 2 (09.11.2026): лестница полей номера не повторяла прежний первый запрос bcHealth (BASE + новое поле предела),
+// и сбой из-за дополнительного поля стоил предела или всей проверки; шести попыток не хватало, когда в версии API нет нескольких полей
+const PH_EXTRA = ["status", "name_status", "code_verification_status", "platform_type", "account_mode", "throughput"];
+test("metaPhone и bcHealth: сбой дополнительного поля не стоит качества и предела; запросов — не больше прежнего с запасом", async () => {
+  const env = envOf(), route = { client: "winchester" };
+  // (A) дополнительное поле Graph отклонил кодом 100 без имени поля, старого поля предела в этой версии нет: прежний bcHealth
+  // первым же запросом (BASE + новое поле) получал предел 250 — новый должен тоже, а не 0
+  net.reset();
+  let st = metaStub(net, { unknownFields: ["messaging_limit_tier"] });
+  st.fail({ on: (/** @type {any} */ g) => g.method === "GET" && String(g.query.fields || "").split(",").includes("throughput"), code: 100, message: "Invalid parameter" });
+  let r = /** @type {any} */ (await metaPhone(env, metaIds(env, "winchester")));
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.limit, 250); assert.equal(r.quality, "GREEN");
+  assert.equal(net.graph.length, 2, "второй запрос — прежний первый запрос bcHealth: " + JSON.stringify(net.graph.map(g => g.query.fields)));
+  assert.equal(net.graph[1].query.fields, "display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit");
+  net.reset();
+  st = metaStub(net, { unknownFields: ["messaging_limit_tier"] });
+  st.fail({ on: (/** @type {any} */ g) => g.method === "GET" && String(g.query.fields || "").split(",").includes("throughput"), code: 100, message: "Invalid parameter" });
+  assert.deepEqual(await bcHealth(env, route), { phone: META.display, name: META.name, quality: "GREEN", limit: 250 });
+  // (B) в версии API нет ни полей предела, ни дополнительных: прежний bcHealth за 3 запроса доходил до BASE — новый тоже доходит, а не
+  // «код 100» после шести попыток (проверка в 10:00 иначе ничего не записывала, автосценарий пропускал день)
+  net.reset();
+  metaStub(net, { unknownFields: ["whatsapp_business_manager_messaging_limit", "messaging_limit_tier", ...PH_EXTRA] });
+  let h = await bcHealth(env, route);
+  assert.deepEqual(h, { phone: META.display, name: META.name, quality: "GREEN", limit: 0 });
+  assert.ok(net.graph.length <= 5, "запросов: " + net.graph.length);
+  // (B') нового поля предела нет, старое есть, и нет пяти дополнительных — предел по старому полю, как у прежнего bcHealth
+  net.reset();
+  metaStub(net, { unknownFields: ["whatsapp_business_manager_messaging_limit", ...PH_EXTRA.slice(0, 5)], phone: { messaging_limit_tier: "TIER_2K" } });
+  h = await bcHealth(env, route);
+  assert.deepEqual(h, { phone: META.display, name: META.name, quality: "GREEN", limit: 2000 });
+  assert.ok(net.graph.length <= 5, "запросов: " + net.graph.length);
+  // два неизвестных дополнительных поля, названных Graph, — убираются по одному, остальные дополнительные на месте
+  net.reset();
+  metaStub(net, { unknownFields: ["status", "account_mode"] });
+  r = await metaPhone(env, metaIds(env, "winchester"));
+  assert.equal(r.ok, true); assert.equal(r.limit, 250); assert.equal(r.nameStatus, "APPROVED"); assert.equal(r.platform, "CLOUD_API"); assert.equal(r.status, ""); assert.equal(net.graph.length, 3);
+  // объект не найден (100/33) — сразу ошибка, без лестницы
+  net.reset();
+  metaStub(net, { pnid: "900999" });
+  r = await metaPhone(env, metaIds(env, "winchester"));
+  assert.equal(r.ok, false); assert.equal(r.sub, 33); assert.equal(net.graph.length, 1);
+});
+
+test("успешный ответ Graph — без ключа: paging.next и previous с access_token не выходят из адаптера", async () => {
+  net.reset();
+  metaStub(net, { pageMax: 1, templates: [{ name: "winchester_a", body: "Текст а." }, { name: "winchester_b", body: "Текст б." }, { name: "winchester_c", body: "Текст в." }] });
+  const env = envOf();
+  const r = await metaGet(env, META.token, `${META.waba}/message_templates?limit=1`);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.j.paging && r.j.paging.next, "признак следующей страницы остаётся: по нему tplList идёт дальше");
+  assert.match(r.j.paging.next, /access_token=\*\*\*/);
+  noToken(r, META.token);
+  assert.equal(r.j.data[0].name, "winchester_a", "остальное тело — как было");
+  const n = await metaNode(env, META.token, `${META.waba}/message_templates`, ["id", "name", "status"], { query: { limit: "1" } });
+  assert.equal(n.ok, true); noToken(n, META.token);
+  // ключ в любом месте успешного тела (не только в paging) — тоже убирается
+  net.reset();
+  const st = metaStub(net);
+  st.phone.verified_name = "Имя " + META.token;
+  const p = await metaGet(env, META.token, `${META.pnid}?fields=display_phone_number,verified_name`);
+  assert.equal(p.ok, true); noToken(p, META.token);
+  assert.equal(p.j.display_phone_number, META.display, "номер в успешном ответе не маскируется: его показывает пульт");
+  // список шаблонов по-прежнему идёт по страницам
+  net.reset();
+  metaStub(net, { pageMax: 1, templates: [{ name: "winchester_a", body: "Текст а." }, { name: "winchester_b", body: "Текст б." }] });
+  const all = await tplList(env, metaIds(env, "winchester"));
+  assert.equal(all.ok, true); assert.equal(all.list.length, 2); noToken(all, META.token);
 });

@@ -7,7 +7,9 @@
 // - запись на черновике (STAGE=preview) не уходит вовсе — 409 preview, как смена вебхука Green-API (lib/stage.js): подача шаблона и
 //   подписка приложения меняют настройки боевого номера, и необратимо;
 // - ключ — только в заголовке authorization: адрес запроса попадает в журналы. Абсолютные адреса (paging.next у Graph несёт ключ в
-//   access_token) metaGet не принимает — следующая страница строится по курсору after;
+//   access_token) metaGet не принимает — следующая страница строится по курсору after. Из успешного тела ключ тоже убирается
+//   (paging.next → access_token=***): тело уходит вызвавшему как есть, и следующий шаг, отдавший или сохранивший его, вынес бы
+//   WA_TOKEN_<ID> в пульт, KV или журнал (находка проверки шага 2, 09.11.2026);
 // - причина ошибки — русскими словами (why), текст Meta (error, user) — без ключа и с номерами под маской (logSafe): ответы Graph с
 //   ошибкой бывают с номером получателя.
 // Вживую не проверено: коды и тексты ошибок — по документации Meta, проверки — на заглушке test/meta.mjs.
@@ -35,6 +37,24 @@ const scrub = (s, token) => {
   let x = String(s ?? "");
   if (token && token.length >= 6) x = x.split(token).join("***");
   return logSafe(x.replace(/access_token=[^&\s"'<>]+/gi, "access_token=***"));
+};
+/** только ключ и access_token=… → «***», без маски номеров: успешное тело (номер для показа нужен пульту как есть). Обратная косая
+ * черта и кавычка ключ не продолжают @param {string} s @param {string} token */
+const unkey = (s, token) => {
+  let x = s;
+  if (token && token.length >= 6 && x.includes(token)) x = x.split(token).join("***");
+  return /access_token=/i.test(x) ? x.replace(/access_token=[^&\s"'<>\\]+/gi, "access_token=***") : x;
+};
+/** успешное тело Graph без ключа: строки на любой глубине (paging.next / previous, эхо ключа). Тело — из JSON.parse, циклов нет;
+ * глубже 64 уровней — null (у Graph такого нет, а стек не переполнится) @param {any} v @param {string} token @param {number} [d] @returns {any} */
+const unkeyed = (v, token, d = 0) => {
+  if (typeof v === "string") return unkey(v, token);
+  if (!v || typeof v !== "object") return v;
+  if (d > 64) return null;
+  if (Array.isArray(v)) return v.map(x => unkeyed(x, token, d + 1));
+  /** @type {Record<string, any>} */ const o = {};
+  for (const [k, x] of Object.entries(v)) o[k] = unkeyed(x, token, d + 1);
+  return o;
 };
 /** @param {any} e */
 const isTimeout = e => !!e && (e.name === "TimeoutError" || e.name === "AbortError");
@@ -80,7 +100,8 @@ async function call(token, method, path, body, ms) {
   try { text = await r.text(); } catch (e) { return { ok: false, status: r.ok ? 0 : r.status, code: r.ok ? 0 : r.status, timeout: isTimeout(e) }; } // тело оборвалось
   /** @type {any} */ let j = null;
   try { j = text ? JSON.parse(text) : {}; } catch (e) {}
-  if (r.ok && j && typeof j === "object" && !j.error) return { ok: true, status: r.status, j };
+  // ключ в теле (paging.next с access_token, эхо ключа) — обходим тело и убираем; без него тело не трогаем (дешевле)
+  if (r.ok && j && typeof j === "object" && !j.error) return { ok: true, status: r.status, j: /access_token=/i.test(text) || (token.length >= 6 && text.includes(token)) ? unkeyed(j, token) : j };
   if (r.ok) return { ok: false, status: r.status, code: /** @type {number|string} */ ("badjson") };
   const e = (j && typeof j === "object" && j.error) || {};
   return { ok: false, status: r.status, code: /** @type {number|string} */ (+e.code || r.status), sub: +e.error_subcode || 0, msg: e.message, user: e.error_user_msg || e.error_user_title };
@@ -155,28 +176,34 @@ export function metaNeed(ids, keys) {
 
 /**
  * Узел Graph с полями (номер, WABA, список шаблонов). Поле, которого нет в этой версии API (код 100 «nonexisting field (x)»), убирается,
- * вместо него — запасное из o.alt, и запрос повторяется; поле не названо — следующая ступень o.ladder (как прежний bcHealth: новое
- * поле предела → старое → без предела). «Объект не найден» (100/33) и другие коды — сразу ошибка.
+ * вместо него — запасное из o.alt, и запрос повторяется — так не больше o.named раз (2): нет сразу нескольких полей — другая версия
+ * API, и по одному полю на запрос лестница не дошла бы до конца. Поле не названо или названных уже было o.named — следующая ступень
+ * o.ladder; в ступени убранное поле заменяется запасным из o.alt. Попыток — 1 + o.named + ступени: нижняя ступень достигается всегда
+ * (находка проверки шага 2, 09.11.2026: шести попыток не хватало, когда в версии API нет пяти полей, и номер не читался вовсе).
+ * «Объект не найден» (100/33) и другие коды — сразу ошибка.
  * @param {Env} env @param {string} token @param {string} node @param {string[]} fields
- * @param {MetaOpts & { alt?: Record<string, string>, ladder?: string[][], query?: Record<string, string> }} [o]
+ * @param {MetaOpts & { alt?: Record<string, string>, ladder?: string[][], named?: number, query?: Record<string, string> }} [o]
  * @returns {Promise<MetaRes & { fields: string[] }>}
  */
 export async function metaNode(env, token, node, fields, o = {}) {
-  let f = fields.slice();
-  const alt = { ...(o.alt || {}) }, ladder = (o.ladder || []).map(x => x.slice()), gone = new Set();
+  let f = fields.slice(), named = o.named ?? 2;
+  const alt0 = { ...(o.alt || {}) }, alt = { ...alt0 }, ladder = (o.ladder || []).map(x => x.slice()), gone = new Set();
   const qs = o.query ? "&" + new URLSearchParams(o.query).toString() : "";
+  /** ступень без убранных полей: убранное — запасным из o.alt, если и его не убрали @param {string[]} s */
+  const rung = s => [...new Set(s.map(x => gone.has(x) && alt0[x] && !gone.has(alt0[x]) ? alt0[x] : x).filter(x => !gone.has(x)))];
   /** @type {MetaRes} */ let r = metaFail("path", "");
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0, max = 1 + named + ladder.length; i < max; i++) {
     r = await metaGet(env, token, `${node}?fields=${f.join(",")}${qs}`, o);
     if (r.ok || r.code !== 100 || r.sub === 33) break;
     const bad = (/nonexisting field \(([a-z_]+)\)/i.exec(r.error || "") || [])[1];
     /** @type {string[] | null} */ let next = null;
-    if (bad && f.includes(bad)) {
-      gone.add(bad); next = f.filter(x => x !== bad);
+    if (bad && f.includes(bad)) gone.add(bad);
+    if (bad && f.includes(bad) && named > 0) {
+      named--; next = f.filter(x => x !== bad);
       const a = alt[bad]; delete alt[bad];
       if (a && !next.includes(a) && !gone.has(a)) next.push(a);
     } else {
-      while (ladder.length && !next) { const s = /** @type {string[]} */ (ladder.shift()).filter(x => !gone.has(x)); if (s.length && s.join() !== f.join()) next = s; }
+      while (ladder.length && !next) { const s = rung(/** @type {string[]} */ (ladder.shift())); if (s.length && s.join() !== f.join()) next = s; }
     }
     if (!next || !next.length) break;
     f = next;
