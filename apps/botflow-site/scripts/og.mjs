@@ -27,7 +27,7 @@ h1{font:600 58px/62px M;letter-spacing:-.025em;color:#161a22;margin-top:96px}
 .s{width:520px;height:500px;border-radius:14px;overflow:hidden;box-shadow:0 0 0 1px rgba(22,26,34,.1),0 16px 32px -20px rgba(22,26,34,.35);background:url(${shot}) top left/cover}
 .a{position:absolute;left:72px;top:64px;width:0}
 </style></head><body><div class="r"><div class="s"></div></div><div class="l"><div class="b">${brand}</div><h1>Сайты и системы под процессы вашей компании</h1></div>
-<div class="f">Студия разработки программного обеспечения<br>в Казахстане · ${legal}</div></body></html>`;
+<div class="f">Разработка и автоматизация бизнес-процессов<br>в Казахстане · ${legal}</div></body></html>`;
 
 const browser = await pw.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });

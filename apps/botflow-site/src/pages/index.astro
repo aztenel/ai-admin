@@ -15,11 +15,11 @@ const contact = canContact();
 <Base description={site.description}>
   <!-- Первый экран: заголовок слева, пояснение и действия справа по нижнему краю -->
   <section class="wrap pt-10 md:pt-16 lg:pt-20" aria-labelledby="hero-title">
-    <p class="t-small mb-4 md:mb-5">Студия разработки программного обеспечения в Казахстане</p>
+    <p class="t-small mb-4 md:mb-5">Студия разработки и автоматизации бизнес-процессов в Казахстане</p>
     <div class="grid gap-6 lg:grid-cols-12 lg:items-end lg:gap-6">
       <h1 id="hero-title" class="t-h1 max-w-[720px] lg:col-span-7">Сайты и системы под процессы вашей компании</h1>
       <div class="max-w-[520px] lg:col-span-4 lg:col-start-9 lg:max-w-none lg:pb-1">
-        <p class="t-lead">Проектируем и разрабатываем сайты и <span class="whitespace-nowrap">веб-приложения</span>, CRM и ERP, интеграции и <span class="whitespace-nowrap">AI-автоматизацию</span>. Начинаем с разбора процесса, который нужно поддержать.</p>
+        <p class="t-lead">Проектируем и разрабатываем сайты и <span class="whitespace-nowrap">веб-приложения</span>, CRM и ERP, интеграции и <span class="whitespace-nowrap">AI-автоматизацию</span>, подключаем WhatsApp для бизнеса. Начинаем с разбора процесса, который нужно поддержать.</p>
         <div class="mt-6 flex flex-col gap-3 sm:flex-row">
           {contact && <Button href="/contacts/">Обсудить проект</Button>}
           <Button href="#work" variant={contact ? "secondary" : "primary"}>Посмотреть работу</Button>
@@ -58,8 +58,8 @@ const contact = canContact();
   <section id="services" class="wrap section" aria-labelledby="services-title">
     <div class="grid gap-8 lg:grid-cols-12 lg:gap-6">
       <div class="lg:col-span-4">
-        <h2 id="services-title" class="t-h2">Что мы разрабатываем</h2>
-        <p class="t-small mt-4 max-w-[400px]">Четыре направления. Их можно заказать по отдельности или собрать из них одну систему.</p>
+        <h2 id="services-title" class="t-h2">Что мы делаем</h2>
+        <p class="t-small mt-4 max-w-[400px]">Пять направлений. Их можно заказать по отдельности или собрать из них одну систему.</p>
         <Button href="/services/" variant="link" class="mt-5">Подробнее об услугах <span aria-hidden="true" class="transition-transform group-hover:translate-x-0.5">→</span></Button>
       </div>
       <ul class="grid md:grid-cols-2 md:gap-x-6 lg:col-span-8">
