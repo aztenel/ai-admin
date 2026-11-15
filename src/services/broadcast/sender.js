@@ -17,6 +17,7 @@ import { gaCall, gaCode, gaWhy, gaKind, gaUnsureNote } from "../integrations/gre
 import { waCreds } from "../integrations/meta/client.js";
 import { sendTemplate } from "../channels/templates.js";
 import { wzOn, wzHealth } from "../channels/wazzapo.js";
+import { poOn } from "../channels/pushon.js";
 import { sendGreen } from "../channels/greenapi.js";
 import { BC_HINT, BC_TEMP, BC_ACCOUNT, BC_PARAM, bcWhy } from "./errors.js";
 import { bcOptouts } from "./segments.js";
@@ -122,6 +123,8 @@ export async function bcTestLog(env, cid, digits, text, r, now) {
 export async function bcHealth(env, route) {
   const cr = waCreds(env, route);
   if (route && wzOn(env, route.client)) return wzHealth(env, cr.token, cr.pnid); // номер через партнёра Meta Wazzapo
+  // Pushon качество и предел номера по API не отдаёт (документация, 15.11.2026): смотреть в кабинете Pushon или WhatsApp Manager
+  if (route && poOn(env, route.client)) return { phone: "", name: "", quality: "", limit: 0 };
   const get = async (/** @type {string} */ f) => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = /** @type {any} */ ({}); try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
   try {
     let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле
@@ -332,7 +335,7 @@ export async function bcTick(env, cid, id, gaBusy) {
         ready = rd.text;
       }
       did = true;
-      const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route);
+      const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route, { staff, svc, days: last ? daysSince(String(last), now) : null });
       if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga || gaCrm) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || ""), ready]); continue; }
       if (ga && gaKind(r.code) === "net") {
         // Green-API мог принять сообщение (ответа нет, обрыв, срок, 5xx): этому клиенту второй раз не пишем. В отчёте — «неизвестно, дошло

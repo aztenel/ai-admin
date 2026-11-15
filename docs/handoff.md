@@ -24,7 +24,7 @@
   `napominanie_nakanune`, `blagodarim_za_vizit`, `bonusy_spisany`. `bonusy_nachisleny_v3` Meta перевела в «Маркетинг» из-за
   фразы «Бонусами можно оплатить следующий визит» — пересоздать как `bonusy_nachisleny_v4` без неё. Ещё не создан `napominanie_segodnya`.
   Тексты — из `src/services/broadcast/library.js` (W01–W28) и `src/services/reminders/templates.js` (S01–S20, у Winchester — как уведомления Altegio).
-- **Переходник к API Pushon в коде не написан** (следующая задача). API свой, не Meta: `https://api.pushon365.ru/api/v1/`,
+- **Переходник к API Pushon написан 15.11.2026 на заглушках** (`WA_VIA_<ID>=pushon`, вебхук `/po/<id>?t=…`, см. CLAUDE.md §3.2), вживую не проверен: нужны API-ключ и channelId от Pushon, затем адрес вебхука в их кабинете. Ниже — что было известно до него. API свой, не Meta: `https://api.pushon365.ru/api/v1/`,
   заголовок `x-api-key`, номер — `channelId`; `send-template-message` (`templateName`, `templateLanguage`, `components` как у Meta),
   `send-session-message` (только текст, окно 24 ч); ответ `{ status, messageId: "wamid…" }`; вебхук на наш адрес:
   `{ type: "message", direction: "inbound", message: { id, from, channelId, payload_type, text } }` и
