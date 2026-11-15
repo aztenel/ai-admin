@@ -3,6 +3,37 @@
 Для следующего помощника (ИИ или человека). Читать вместе с `CLAUDE.md` (главный документ) и `docs/winchester-crm.md`.
 Репозиторий **публичный**: в этом файле нет ключей, ФИО, ИИН и домашних адресов — и не добавляйте их.
 
+## Обновление 15.11.2026: официальный WhatsApp Winchester через Pushon
+
+Проверено вживую владельцем (скриншоты кабинетов Meta и Pushon), отправка сообщений ещё не проверялась.
+
+- **Портфолио Meta** «Winchester Barbershop» — новое, чистое (без ограничений), создано не с аккаунтов владельца.
+  «Сведения о компании» = подвал сайта winchester.kz (ИП A.M.K, юр. адрес, телефон, ИИН — знак в знак).
+  Подвал с реквизитами загружен на hoster.kz руками и **в репозитории его нет** (ИИН в публичный репозиторий не кладём):
+  пересборка `apps/winchester-site` и повторная загрузка вернут старый подвал — тогда загрузить исправленные файлы снова.
+- **Номер** +7 777 114 8659 подключён к Cloud API через **Pushon** (pushon365.kz; в Meta партнёры ODCEM / OneDirect и
+  AlertKont / Gupshup, оплата — кредитная линия Pushon). Канал Pushon «Wichester»: «Всё ок, ограничений нет».
+  Предел — 250 клиентов в сутки; 2 000 — после 1 000 разных начатых переписок за 7 дней без жалоб или подтверждения компании.
+  Имя «Winchester Barbershop» в шапке чата Meta включает только при более высоком пределе (до этого видно в профиле).
+  Номер **не в режиме сосуществования**: приложения WhatsApp на телефоне нет, все ответы клиентов приходят только в Pushon
+  (подключить в Pushon Telegram-группу, пока нет переходника).
+- **Старые портфолио** Bot Flow и Winchester на аккаунтах владельца — с ограничением «подтвердите компанию»; номера клиентов туда не подключать.
+- **Шаблоны** (созданы в Pushon 15.11, на проверке Meta): `pora_obnovit` (без переменных — для рассылки из кабинета Pushon),
+  `pora_obnovit_p`, `w02_svoi_lyudi`, `w09_davno_ne_videlis`, `w14_znakomoe_kreslo`, `w17_kak_vam_u_nas`, `w22_pered_vyhodnymi`,
+  `w26_vremya_dlya_sebya` (с `{{1}}` = имя, у части `{{2}}` = мастер, `{{3}}` = сколько прошло), `zapis_podtverzhdena`,
+  `napominanie_nakanune`, `blagodarim_za_vizit`, `bonusy_spisany`. `bonusy_nachisleny_v3` Meta перевела в «Маркетинг» из-за
+  фразы «Бонусами можно оплатить следующий визит» — пересоздать как `bonusy_nachisleny_v4` без неё. Ещё не создан `napominanie_segodnya`.
+  Тексты — из `src/services/broadcast/library.js` (W01–W28) и `src/services/reminders/templates.js` (S01–S20, у Winchester — как уведомления Altegio).
+- **Переходник к API Pushon написан 15.11.2026 на заглушках** (`WA_VIA_<ID>=pushon`, вебхук `/po/<id>?t=…`, см. CLAUDE.md §3.2), вживую не проверен: нужны API-ключ и channelId от Pushon, затем адрес вебхука в их кабинете. Ниже — что было известно до него. API свой, не Meta: `https://api.pushon365.ru/api/v1/`,
+  заголовок `x-api-key`, номер — `channelId`; `send-template-message` (`templateName`, `templateLanguage`, `components` как у Meta),
+  `send-session-message` (только текст, окно 24 ч); ответ `{ status, messageId: "wamid…" }`; вебхук на наш адрес:
+  `{ type: "message", direction: "inbound", message: { id, from, channelId, payload_type, text } }` и
+  `{ type: "status", messageId, to, channelId, status: queued|sent|delivered|read|failed, error }`, ответ — 200 с пустым телом.
+  Не описано (спросить Pushon): подпись вебхука, нажатия кнопок «Записаться» / «Отписаться» во вебхуке, список отписавшихся,
+  файлы в окне 24 ч, качество номера. План: по образцу Wazzapo (`services/channels/wazzapo.js`, `controllers/webhooks/wazzapo.js`) —
+  `WA_VIA_<ID>=pushon`, вебхук переводится в формат Meta и идёт в `waHook`/`handleWhatsApp`; шаблоны рассылок — с переменными из
+  снимка Altegio (имя, мастер, дни), напоминания по журналу — шаблонами `napominanie_*` вместо второго номера.
+
 ## 0. Кто и как
 
 - Владелец проекта — начинающий интегратор, код не читает, часто с телефона. Писать по-русски, коротко, просто.

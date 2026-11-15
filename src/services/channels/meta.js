@@ -1,6 +1,7 @@
 // @ts-check
 // Канал Meta (WhatsApp Cloud API): отправка текста клиенту (sendWA) с сигналом администратору в Telegram.
-// Номер клиента может быть подключён напрямую к Meta или через партнёра Meta Wazzapo (WA_VIA_<ID>=wazzapo) — для бота это один канал.
+// Номер клиента может быть подключён напрямую к Meta, через партнёра Meta Wazzapo (WA_VIA_<ID>=wazzapo) или Pushon (WA_VIA_<ID>=pushon) —
+// для бота это один канал.
 /** @import { Env } from "../../lib/types.js" */
 import { GRAPH } from "../../config/constants.js";
 import { logSafe } from "../../lib/phone.js";
@@ -9,6 +10,8 @@ import { notifyOnce } from "../notifications/telegram.js";
 import { waCreds, waErr, WA_HINT } from "../integrations/meta/client.js";
 import { WZ_HINT } from "../integrations/wazzapo/client.js";
 import { wzOn, wzSendOwn } from "./wazzapo.js";
+import { poOn } from "./pushon.js";
+import { poSendText, PO_HINT } from "../integrations/pushon/client.js";
 
 // клиент ответа не получил — администратор должен об этом узнать (не чаще раза в 10 минут)
 /** @param {Env} env @param {string} to @param {Record<string, any> | undefined} wx @param {string} what @param {string} hint */
@@ -22,6 +25,14 @@ async function sendFailed(env, to, wx, what, hint) {
 export async function sendWA(env, to, t, wx) {
   if (isPreview(env)) return { ok: false, status: 409, code: "preview", error: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const cr = waCreds(env, wx);
+  if (wx && poOn(env, wx.client)) { // Pushon: текст только в окне 24 часа после сообщения клиента
+    const r = await poSendText(env, cr.token, cr.pnid, String(to), t);
+    if (r.ok) return { ok: true, id: r.id };
+    console.log("PO send", r.status, logSafe(r.error));
+    await waErr(env, "отправка через Pushon " + r.status, r.code, r.error);
+    await sendFailed(env, to, wx, `Pushon: ошибка ${r.status}`, PO_HINT[r.status] || "");
+    return r;
+  }
   if (wx && wzOn(env, wx.client)) {
     const r = await wzSendOwn(env, cr.token, { phone_number_id: cr.pnid, to: String(to).replace(/\D/g, ""), type: "text", text: { body: t.slice(0, 4000) } });
     if (r.ok) return { ok: true, id: r.id };

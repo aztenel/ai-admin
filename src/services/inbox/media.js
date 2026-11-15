@@ -11,6 +11,7 @@ import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaCall } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
 import { wzOn, wzMedia } from "../channels/wazzapo.js";
+import { poOn } from "../channels/pushon.js";
 import { waRoute } from "../channels/index.js";
 
 export const MEDIA_MAX = 100 * 1024 * 1024; // у Green-API файлы до 100 МБ
@@ -76,6 +77,7 @@ export async function mediaFile(env, cid, ch, chatDigits, p, t, range) {
     }
     const route = waRoute(env, cid, p); if (!route || !m.id) return { ok: false, why: "gone" };
     const token = waCreds(env, route).token;
+    if (poOn(env, cid)) return { ok: false, why: "gone" }; // Pushon: как скачать файл клиента, в документации не описано (15.11.2026)
     if (wzOn(env, cid)) { // номер через партнёра Meta Wazzapo: файл отдаёт их API
       const r = await wzMedia(env, token, m.id); if (!r) return { ok: false, why: "gone" };
       const x = relay(r, m); return x ? { ok: true, res: x } : { ok: false, why: "big" };
