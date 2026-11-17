@@ -1,0 +1,9 @@
+{
+  "name": "botflow-crm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check:types": "npx --yes -p typescript@6.0.2 tsc --noEmit --allowJs --checkJs --strict --target es2022 --module esnext --moduleResolution bundler --lib es2022,dom src/worker.js"
+  }
+}
