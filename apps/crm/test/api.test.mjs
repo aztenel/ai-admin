@@ -36,6 +36,16 @@ test("без входа данные не отдаются; неверный к�
   assert.equal(blocked.status, 429, "верный ключ после 10 неудач тоже ждёт");
 });
 
+test("подбор ключа пачкой одновременных запросов: проходит не больше 10 попыток, верные входы попыток не тратят", async () => {
+  const s = mk();
+  const all = await Promise.all(Array.from({ length: 30 }, (_, i) => s.call("/api/login", { method: "POST", body: { key: "guess-number-" + i }, cookie: false })));
+  assert.equal(all.filter(r => r.status === 403).length, 10);
+  assert.equal(all.filter(r => r.status === 429).length, 20);
+  const ok = mk();
+  for (let i = 0; i < 15; i++) assert.equal((await ok.call("/api/login", { method: "POST", body: { key: KEY } })).status, 200);
+  assert.equal(ok.db.raw.prepare("SELECT n FROM login_attempts").get().n, 0);
+});
+
 test("вход: cookie защищённая, подделанная не проходит; без ключа или с коротким ключом CRM закрыта", async () => {
   const s = mk();
   const r = await s.call("/api/login", { method: "POST", body: { key: KEY } });

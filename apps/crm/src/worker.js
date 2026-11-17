@@ -54,16 +54,17 @@ async function login(env, request, now) {
   const key = keyOf(env);
   if (!key) return fail(503, "nokey", "Ключ входа не задан. Добавьте Secret CRM_KEY (не короче 12 знаков) в настройках Worker.");
   const ip = request.headers.get("cf-connecting-ip") || "local", slot = Math.floor(now / LOGIN_SLOT);
-  const tried = await env.DB.prepare("SELECT n FROM login_attempts WHERE ip = ? AND slot = ?").bind(ip, slot).first("n");
-  if ((tried || 0) >= LOGIN_MAX) return fail(429, "rate", "Слишком много попыток. Подождите 15 минут.");
+  // попытка занимается ДО проверки ключа, одним запросом (счётчик растёт атомарно): иначе пачка одновременных запросов
+  // проходила бы проверку «меньше предела» все разом и перебирала ключ быстрее, чем разрешено
+  const r = await env.DB.batch([
+    env.DB.prepare("INSERT INTO login_attempts (ip, slot, n) VALUES (?, ?, 1) ON CONFLICT (ip, slot) DO UPDATE SET n = n + 1 RETURNING n").bind(ip, slot),
+    env.DB.prepare("DELETE FROM login_attempts WHERE slot < ?").bind(slot - 8)
+  ]);
+  if (r[0].results[0].n > LOGIN_MAX) return fail(429, "rate", "Слишком много попыток. Подождите 15 минут.");
   const body = await readJson(request);
-  if (!(await sameStr(String(body.key || ""), key))) {
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO login_attempts (ip, slot, n) VALUES (?, ?, 1) ON CONFLICT (ip, slot) DO UPDATE SET n = n + 1").bind(ip, slot),
-      env.DB.prepare("DELETE FROM login_attempts WHERE slot < ?").bind(slot - 8)
-    ]);
-    return fail(403, "badkey", "Ключ не подошёл.");
-  }
+  if (!(await sameStr(String(body.key || ""), key))) return fail(403, "badkey", "Ключ не подошёл.");
+  // верный вход попытку не тратит
+  await env.DB.prepare("UPDATE login_attempts SET n = n - 1 WHERE ip = ? AND slot = ? AND n > 0").bind(ip, slot).run();
   const exp = now + SESSION_DAYS * DAY;
   return json({ ok: true }, 200, { "set-cookie": setCookie(exp + "." + (await hmac(key, "crm:" + exp)), SESSION_DAYS * 86400) });
 }
