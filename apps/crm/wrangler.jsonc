@@ -1,0 +1,24 @@
+// CRM продаж Bot Flow — отдельный Worker «botflow-crm» (18.11.2026): страница из public/ (Workers Static Assets) и API в src/worker.js.
+// Собирает Cloudflare Workers Builds: отдельный Worker в панели, корень сборки — эта папка (apps/crm), имя Worker в панели должно
+// совпасть с name. Команда сборки не нужна, выкладка — npx wrangler deploy.
+// Ключ входа — Secret CRM_KEY в панели Cloudflare (не здесь и не в репозитории), не короче 12 знаков.
+// База D1 «botflow-crm» создана 18.11.2026, схема migrations/0001_init.sql применена (и записана в d1_migrations).
+// С ai-admin ничего общего: свои данные, свой адрес, свой ключ.
+{
+  "name": "botflow-crm",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "keep_vars": true,
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "botflow-crm",
+      "database_id": "5e894060-0513-40f6-926d-7ea8c935d3e5",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

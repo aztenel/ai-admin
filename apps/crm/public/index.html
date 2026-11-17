@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bot Flow CRM</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#F4F6FA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1220" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="CRM">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/icon-192.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="login wrap" id="login" hidden>
+  <h1>Bot Flow CRM</h1>
+  <p class="note">Вход по ключу владельца.</p>
+  <form id="loginForm" autocomplete="off">
+    <div class="f"><label for="loginKey">Ключ</label><input id="loginKey" type="password" autocomplete="current-password" required></div>
+    <button class="primary" type="submit">Войти</button>
+    <div class="note err" id="loginErr" role="alert"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="wrap">
+    <div class="hrow"><h1 id="ttl">Сегодня</h1><span class="store" id="net"></span></div>
+    <div class="stats" id="stats"></div>
+    <div id="filters" hidden>
+      <div class="tools"><input class="search" id="q" type="search" placeholder="Название, улица, номер, ЛПР" autocomplete="off" enterkeyhint="search"></div>
+      <div class="chips" id="chipsGrade"></div>
+      <div class="chips" id="chipsStage"></div>
+      <div class="tools" id="selects"></div>
+    </div>
+  </header>
+  <main class="wrap"><div id="view"></div></main>
+  <button class="fab" id="fab" aria-label="Добавить лида">+</button>
+  <nav aria-label="Разделы">
+    <button data-tab="today" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Сегодня<span class="badge" id="bToday" hidden></span></button>
+    <button data-tab="leads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Лиды</button>
+    <button data-tab="funnel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 8v6l-4 2v-8z"/></svg>Воронка</button>
+    <button data-tab="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Скрипт</button>
+  </nav>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

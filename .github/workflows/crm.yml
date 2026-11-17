@@ -1,0 +1,22 @@
+name: crm
+
+on:
+  push:
+    paths: ["apps/crm/**", ".github/workflows/crm.yml"]
+  pull_request:
+    paths: ["apps/crm/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm test
+      - run: npm run check:types
+      - run: npx --yes wrangler@4 deploy --dry-run
