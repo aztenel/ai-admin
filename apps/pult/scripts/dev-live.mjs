@@ -35,7 +35,7 @@ export const STAFF_W = "staff-key-winch-0001";
  *  (она есть только на черновике — demo включает stage "preview"), stage — "production" (по умолчанию) или "preview"; gaBroadcast — запуск
  *  рассылок со второго номера Winchester разрешён (как GA_BROADCAST_WINCHESTER = 1 в Cloudflare; по умолчанию выключен, как на сайте):
  *  npm run dev:live -- --ga-broadcast или GA_BROADCAST=1. Проверки включают его и на ходу: S.env.GA_BROADCAST_WINCHESTER = "1". */
-export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production", gaBroadcast = process.env.GA_BROADCAST === "1" || process.argv.includes("--ga-broadcast") } = {}) {
+export async function startDevLive({ port = +(process.env.PORT || 5174), botPort = +(process.env.BOT_PORT || 0), demo = process.env.DEMO === "1" || process.argv.includes("--demo"), stage = process.env.STAGE === "preview" || process.argv.includes("--preview") ? "preview" : "production", gaBroadcast = process.env.GA_BROADCAST === "1" || process.argv.includes("--ga-broadcast"), meta = process.env.META_ONLY === "1" || process.argv.includes("--meta") } = {}) {
   if (demo) stage = "preview";
   // бот и заглушки грузятся здесь, а не при импорте: test/harness.mjs подменяет часы (test/clock.mjs) для всего процесса
   const { start, OWNER } = await import(new URL("../../../test/devserver.mjs", import.meta.url).href);
@@ -60,6 +60,8 @@ export async function startDevLive({ port = +(process.env.PORT || 5174), botPort
     REMIND_GA_WINCHESTER: "1", // напоминания по журналу Altegio со второго номера включены (на сервере по умолчанию выключены)
     KEY_WINCHESTER: STAFF_W,
     ...(gaBroadcast ? { GA_BROADCAST_WINCHESTER: "1" } : {}),
+    // --meta: как на боевом сайте с 19.11.2026 — второй номер Winchester отключён, сервисные сообщения шаблонами Meta через Wazzapo
+    ...(meta ? { GA_LINE_WINCHESTER: "", REMIND_VIA_WINCHESTER: "", REMIND_WA_WINCHESTER: "1", WA_VIA_WINCHESTER: "wazzapo" } : {}),
   });
   const { S } = bot;
 

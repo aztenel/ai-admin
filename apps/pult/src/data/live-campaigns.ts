@@ -66,6 +66,7 @@ type BRaw = RowRaw & {
   results?: ResultsRaw | null;
 };
 type ListRaw = {
+  tpls?: { name: string; lang?: string; params?: unknown[]; body?: string }[];
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
   fail: { n: number; codes: CampaignFail[] } | null; used: number;
   health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string } | null;
@@ -89,12 +90,12 @@ type CountsRaw = { sent?: number; failed?: number; skipped?: number };
 type MsgScenarioRaw = {
   id: string; group?: string; title?: string; who?: string; on?: boolean; live?: boolean; why?: string; locked?: string; at?: number; by?: string;
   timing?: Record<string, string | number>; fields?: AutoMsgField[]; timingText?: string;
-  text?: { ru?: string; kk?: string; v?: number; variant?: string; own?: boolean; approved?: boolean; vars?: string[] } | null; preview?: string;
+  text?: { ru?: string; kk?: string; v?: number; variant?: string; own?: boolean; approved?: boolean; vars?: string[]; tpl?: boolean } | null; preview?: string; tpl?: { name?: string; lang?: string };
   counts?: { today?: CountsRaw; week?: CountsRaw }; log?: { t?: number; st?: string; why?: string; name?: string; phone?: string; date?: string; time?: string }[];
   audience?: { total?: number; allowed?: number; why?: Record<string, number>; base?: boolean } | null;
 };
 type MsgRaw = {
-  client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string };
+  client?: { id: string; name: string }; owner?: boolean; stage?: string; now?: number; master?: { on?: boolean; why?: string }; sender?: { ready?: boolean; phone?: string; why?: string; via?: string };
   altegio?: { ready?: boolean; why?: string }; db?: string; hold?: { at?: number; why?: string } | null; window?: { from?: number; to?: number }; cap?: number;
   marketing?: { allowed?: boolean; why?: string }; test?: { phone?: string } | null; scenarios?: MsgScenarioRaw[];
   hook?: { url?: string; last?: { at?: number; res?: string; st?: string; n?: number } | null; on?: boolean; why?: string };
@@ -218,7 +219,8 @@ function overview(d: ListRaw): CampaignsOverview {
         ...(g.phone ? { phone: g.phone } : {}),
       }
     : null;
-  return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now() };
+  const tpls = Array.isArray(d.tpls) ? d.tpls.filter((t) => t && typeof t.name === "string").map((t) => ({ name: t.name, lang: String(t.lang || "ru"), params: Array.isArray(t.params) ? t.params.map(String) : [], body: String(t.body || "") })) : [];
+  return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now(), tpls };
 }
 
 const KINDS: ServiceKind[] = ["s01", "d1", "h2", "s06", "cx", "rv", "bi", "bo"];
@@ -287,10 +289,11 @@ function msgScenario(x: MsgScenarioRaw): AutoMsgScenario {
     timing: x.timing && typeof x.timing === "object" ? x.timing : {},
     fields: (x.fields || []).filter((f) => f && typeof f.key === "string" && FIELD_KINDS.includes(f.kind)),
     timingText: x.timingText || "",
-    text: t ? { ru: t.ru || "", kk: t.kk || "", v: n(t.v), ...(t.variant ? { variant: t.variant } : {}), own: !!t.own, approved: !!t.approved, vars: Array.isArray(t.vars) ? t.vars.map(String) : [] } : null,
+    text: t ? { ru: t.ru || "", kk: t.kk || "", v: n(t.v), ...(t.variant ? { variant: t.variant } : {}), own: !!t.own, approved: !!t.approved, vars: Array.isArray(t.vars) ? t.vars.map(String) : [], ...(t.tpl ? { tpl: true } : {}) } : null,
     preview: x.preview || "",
     counts: { today: counts(x.counts?.today), week: counts(x.counts?.week) },
     log,
+    ...(x.tpl && x.tpl.name ? { tpl: { name: String(x.tpl.name), lang: String(x.tpl.lang || "") } } : {}),
     ...(x.audience !== undefined ? { audience: x.audience ? { total: n(x.audience.total), allowed: n(x.audience.allowed), why: x.audience.why || {}, base: !!x.audience.base } : null } : {}),
   };
 }
@@ -301,7 +304,7 @@ function autoMessages(d: MsgRaw): AutoMessages {
     stage: d.stage === "preview" ? "preview" : "production",
     now: n(d.now) || Date.now(),
     master: { on: !!d.master?.on, why: d.master?.why || "" },
-    sender: { ready: !!d.sender?.ready, phone: d.sender?.phone || "", why: d.sender?.why || "" },
+    sender: { ready: !!d.sender?.ready, phone: d.sender?.phone || "", why: d.sender?.why || "", via: d.sender?.via === "wa" ? "wa" : "ga" },
     altegio: { ready: d.altegio?.ready !== false, why: d.altegio?.why || "" },
     db: d.db || "",
     hold: d.hold && d.hold.why ? { at: n(d.hold.at), why: d.hold.why } : null,

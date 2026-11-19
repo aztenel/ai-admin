@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import { Banner, Button, Field, IconButton, Segmented, Skeleton, Spinner } from "@/components/ui";
 import { formatPhone, plural, shortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CampaignCheck, CampaignDraft, CampaignsOverview, CrmOverview } from "@/model/campaigns";
+import type { CampaignCheck, CampaignDraft, CampaignsOverview, CrmOverview, MetaTpl } from "@/model/campaigns";
 import { Group } from "@/screens/Page";
 import { store } from "@/state/store";
 import { checkErrors, costEstimate, errText, LANGS, MARKETING_PRICE_KZT, money, QUALITY, segmentTitle } from "../common";
@@ -196,15 +196,31 @@ function ListInput({ f, set, errs }: P) {
 }
 
 // ---------- 2. Сообщение (шаблон Meta) ----------
-export function MessageSection({ f, set, errs }: P) {
+export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl[] }) {
   const vars = templateVars(f.text);
   const n = cleanParams(f.params).length;
   // число переменных и подстановок не совпало — Meta не примет шаблон (#132000), рассылка встанет на первом же сообщении. Чаще всего:
   // текст без {{1}}, а подстановка {имя} осталась по умолчанию (находка проверки 19.10.2026)
   const mismatch = !!f.text.trim() && vars !== n;
   const setParam = (i: number, v: string) => set({ params: f.params.map((p, j) => (j === i ? v : p)) });
+  const pick = (name: string) => {
+    const t = tpls.find((x) => x.name === name);
+    if (t) set({ tpl: t.name, lang: t.lang, text: t.body, params: t.params.length ? [...t.params] : [] });
+  };
   return (
     <>
+      {tpls.length > 0 && (
+        <Group title="Одобренные шаблоны" note="Выберите — название, язык, текст и подстановки заполнятся сами.">
+          <SelectField label="Шаблон" value={tpls.some((x) => x.name === f.tpl) ? f.tpl : ""} onChange={(e) => pick(e.target.value)}>
+            <option value="">— выбрать —</option>
+            {tpls.map((t) => (
+              <option key={t.name} value={t.name}>
+                {t.name}
+              </option>
+            ))}
+          </SelectField>
+        </Group>
+      )}
       <Group>
         <TextField
           label="Название шаблона в Meta"

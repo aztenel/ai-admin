@@ -202,7 +202,7 @@ const nb = (s: string) => s.replace(/ /g, " ");
 /** Вопрос перед включением: кому и когда уйдёт, что включение одобряет текст, и что сейчас мешает отправке. */
 function ConfirmText({ s, d }: { s: AutoMsgScenario; d: AutoData }) {
   const lines = [
-    `Сообщения начнут уходить настоящим клиентам со второго номера${d.sender.phone ? ` ${nb(d.sender.phone)}` : ""}. ${s.who} ${s.timingText}`,
+    `Сообщения начнут уходить настоящим клиентам ${d.sender.via === "wa" ? "с основного номера шаблоном Meta" : "со второго номера"}${d.sender.phone ? ` ${nb(d.sender.phone)}` : ""}. ${s.who} ${s.timingText}`,
     s.group === "service" ? "Включая, вы одобряете текст сообщения. Посмотреть его и проверить на своём номере можно кнопками на карточке." : "Реклама уйдёт только тем, у кого есть согласие на рекламу и кто не писал «стоп».",
     d.stage === "preview" ? "Это тестовая версия: отсюда сообщения не уходят." : !d.master.on ? "Пока главный выключатель отправки выключен, клиентам ничего не уйдёт: сценарий начнёт работать, когда его включат." : "",
   ].filter(Boolean);
@@ -226,8 +226,8 @@ function StatusCard({ d, bot, owner, onHours, onPhone, onHook }: { d: AutoData; 
   if (d.stage === "preview") problems.push({ text: "Это тестовая версия: отсюда сообщения клиентам не уходят.", tone: "warn" });
   // главный выключатель — переменная в Cloudflare: владельцу — как есть (её ставит он), сотруднику — простыми словами
   if (!d.master.on) problems.push({ text: owner ? d.master.why || "Главный выключатель отправки выключен." : "Отправка пока не включена: её включает владелец. Клиентам ничего не уходит.", tone: "critical" });
-  if (!d.sender.ready) problems.push({ text: d.sender.why || "Второй номер не подключён.", tone: "critical" });
-  else if (bot && !bot.ready) problems.push({ text: `Второй номер не на связи: ${bot.why || "Green-API не отвечает."}`, tone: "critical" });
+  if (!d.sender.ready) problems.push({ text: d.sender.why || "Номер отправки не подключён.", tone: "critical" });
+  else if (d.sender.via === "ga" && bot && !bot.ready) problems.push({ text: `Второй номер не на связи: ${bot.why || "Green-API не отвечает."}`, tone: "critical" });
   if (bot?.hold) problems.push({ text: `Сигнал от Green-API: ${bot.hold}`, tone: "critical" });
   if (!d.altegio.ready && d.altegio.why) problems.push({ text: d.altegio.why, tone: "warn" });
   if (d.db) problems.push({ text: d.db, tone: "critical" });
@@ -261,7 +261,11 @@ function StatusCard({ d, bot, owner, onHours, onPhone, onHook }: { d: AutoData; 
         </div>
       </div>
       <div className="px-4 [&>*]:border-t [&>*]:border-line">
-        <SettingRow label="Второй номер" value={!d.sender.ready ? "не подключён" : [d.sender.phone || "подключён", bot ? (bot.ready ? "на связи" : "не на связи") : ""].filter(Boolean).join(" · ")} />
+        {d.sender.via === "wa" ? (
+          <SettingRow label="Основной номер" value={!d.sender.ready ? "не подключён" : [d.sender.phone || "подключён", "шаблоны Meta"].join(" · ")} />
+        ) : (
+          <SettingRow label="Второй номер" value={!d.sender.ready ? "не подключён" : [d.sender.phone || "подключён", bot ? (bot.ready ? "на связи" : "не на связи") : ""].filter(Boolean).join(" · ")} />
+        )}
         <SettingRow label="Часы отправки" value={`с ${d.window.from}:00 до ${d.window.to}:00`} onClick={owner ? onHours : undefined} />
         <SettingRow label="Не больше в сутки" value={`${nf.format(d.cap)} ${plural(d.cap, MESSAGES)}`} onClick={owner ? onHours : undefined} />
         <SettingRow label="Номер для проверки" value={d.test ? d.test.phone : "не указан"} muted={!d.test} onClick={owner ? onPhone : undefined} />
@@ -269,7 +273,7 @@ function StatusCard({ d, bot, owner, onHours, onPhone, onHook }: { d: AutoData; 
       </div>
       <p className="border-t border-line px-4 py-2.5 text-sm text-fg-3">
         {owner
-          ? "Время по Астане. Проверки «на мой номер» и пробные рассылки со второго номера приходят только на номер для проверки."
+          ? `Время по Астане. Проверки «на мой номер»${d.sender.via === "wa" ? "" : " и пробные рассылки со второго номера"} приходят только на номер для проверки.`
           : "Время по Астане. Менять настройки и проверять сообщения может только владелец."}
       </p>
     </section>
@@ -547,7 +551,7 @@ function EditSheet({ ws, s, d, owner, onClose, onSaved }: { ws: string; s: AutoM
     return { ...base, ...(got || {}) };
   }, [mk, d.workspace.name, s.text, s.preview]);
   const text = lang === "kk" && kk.trim() ? kk : ru;
-  const preview = mk ? mkRender(canon(text), sample) : svRender(text, lang === "kk" && kk.trim() ? kkVars(sample) : sample);
+  const preview = s.text?.tpl ? s.preview : mk ? mkRender(canon(text), sample) : svRender(text, lang === "kk" && kk.trim() ? kkVars(sample) : sample);
 
   // вставки: у сервисного — вставки сценария и те, что уже есть в его тексте; у рекламного — подписи словами
   const chips = mk
@@ -645,7 +649,18 @@ function EditSheet({ ws, s, d, owner, onClose, onSaved }: { ws: string; s: AutoM
             )}
         </section>
 
-        {s.text && owner && (
+        {s.text?.tpl && (
+          <section aria-labelledby={`ed-text-${s.id}`}>
+            <h3 id={`ed-text-${s.id}`} className="text-sm font-medium text-fg-3">
+              Текст сообщения
+            </h3>
+            <p className="mt-1.5 text-sm text-fg-2">
+              Уходит одобренным шаблоном Meta{s.tpl ? ` «${s.tpl.name}»` : ""}. Текст меняется только в кабинете Wazzapo, и Meta проверяет его заново. Имя, дату,
+              время, мастера и услугу подставит сервер из записи Altegio.
+            </p>
+          </section>
+        )}
+        {s.text && owner && !s.text.tpl && (
           <section aria-labelledby={`ed-text-${s.id}`}>
             <h3 id={`ed-text-${s.id}`} className="text-sm font-medium text-fg-3">
               Текст сообщения
@@ -764,7 +779,7 @@ function TestSheet({ ws, s, d, onClose, onPhone, onSent }: { ws: string; s: Auto
       open
       onOpenChange={(v) => !v && onClose()}
       title={`Проверка: ${s.title}`}
-      description="Тот же текст, что получит клиент, на вымышленной записи. Придёт со второго номера на ваш номер для проверки, клиентам ничего не уходит."
+      description={`Тот же текст, что получит клиент, на вымышленной записи. Придёт ${d.sender.via === "wa" ? "с основного номера шаблоном Meta" : "со второго номера"} на ваш номер для проверки, клиентам ничего не уходит.`}
       footer={
         <div className="flex gap-2 pb-1">
           <Button className="flex-1" onClick={onClose}>
@@ -784,7 +799,7 @@ function TestSheet({ ws, s, d, onClose, onPhone, onSent }: { ws: string; s: Auto
           </div>
           <div className="flex min-h-11 items-center justify-between gap-3 border-t border-line py-2">
             <dt className="text-ui text-fg-2 pointer-coarse:text-base">С какого номера</dt>
-            <dd className="tnum text-right text-ui text-fg pointer-coarse:text-base">{d.sender.phone ? `второй, ${d.sender.phone}` : "второй номер"}</dd>
+            <dd className="tnum text-right text-ui text-fg pointer-coarse:text-base">{d.sender.via === "wa" ? (d.sender.phone ? `основной, ${d.sender.phone}` : "основной номер") : d.sender.phone ? `второй, ${d.sender.phone}` : "второй номер"}</dd>
           </div>
         </dl>
         {noPhone && (
@@ -814,7 +829,7 @@ function TestSheet({ ws, s, d, onClose, onPhone, onSent }: { ws: string; s: Auto
                   <Icon aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2.25} />
                   <span className="min-w-0">
                     {unsure
-                      ? `Green-API не ответил: не знаем, ушло ли сообщение на ${nb(st.ok.to)}. Проверьте WhatsApp; это нажатие второй раз не отправится.`
+                      ? `${d.sender.via === "wa" ? "Wazzapo" : "Green-API"} не ответил: не знаем, ушло ли сообщение на ${nb(st.ok.to)}. Проверьте WhatsApp; это нажатие второй раз не отправится.`
                       : st.ok.dup
                         ? `Эта проверка уже отправлена на ${nb(st.ok.to)}. Проверьте WhatsApp.`
                         : `Отправлено на ${nb(st.ok.to)}. Проверьте WhatsApp.`}
@@ -937,7 +952,7 @@ function HoursSheet({ ws, d, onClose, onSaved }: { ws: string; d: AutoData; onCl
       open
       onOpenChange={(v) => !v && onClose()}
       title="Часы отправки и предел"
-      description="Клиентам сообщения уходят только в эти часы по Астане. Предел — на все автоматические сообщения со второго номера за сутки."
+      description={`Клиентам сообщения уходят только в эти часы по Астане. Предел — на все автоматические сообщения ${d.sender.via === "wa" ? "" : "со второго номера "}за сутки.`}
       footer={
         <div className="flex gap-2 pb-1">
           <Button className="flex-1" disabled={busy} onClick={onClose}>

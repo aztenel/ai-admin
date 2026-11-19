@@ -72,7 +72,9 @@ export async function bcApi(request, env, url, s) {
         warn: g.error || g.hook ? "" : gaHookWarn(g), used: usedGa, cap: GA_CAP, hold: holdGa, bcOff: bcGaOff(cid, env) ? GA_OFF : "",
         ...(bcGaOff(cid, env) && s.role === "owner" ? { bcHow: gaOnHow(cid) } : {}), ...(CLIENTS[cid].gaNoBroadcast && !bcGaOff(cid, env) ? { bcOn: true } : {}) };
     }
-    return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, ga, list: rows.slice(0, 60), now });
+    // одобренные рекламные шаблоны Meta компании (c.waMk) — выбор в мастере рассылки пульта
+    const tpls = Array.isArray(/** @type {any} */ (c).waMk) ? /** @type {any} */ (c).waMk.map((/** @type {any} */ t) => ({ name: String(t.name), lang: String(t.lang || "ru"), params: (t.params || []).map(String), body: String(t.body || "") })) : [];
+    return jsonP({ client: { id: cid, name: c.name }, owner: s.role === "owner", ready: !route.error, why: route.error || "", stops, hold, fail, used, health, ga, list: rows.slice(0, 60), now, tpls });
   }
   if (M === "GET" && P === "/api/bc/get") {
     const b = await bcGet(env, cid, String(q.get("id") || "").replace(/[^a-z0-9]/g, ""));

@@ -20,7 +20,7 @@ import { CLIENTS } from "../../src/config/builtin-clients.js";
 
 const skip = sqliteOk ? false : "нужна D1 на node:sqlite (Node 22+)";
 const INST = { id: "7105000077", token: "ga-tok-w" };
-const GA_W = { GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
+const GA_W = { GA_LINE_WINCHESTER: "1", GA_ID_WINCHESTER: INST.id, GA_TOKEN_WINCHESTER: INST.token };
 const META_W = { WA_TOKEN_WINCHESTER: "tok-w", APP_SECRET_WINCHESTER: "sec-w", PHONE_NUMBER_ID_WINCHESTER: "900333" };
 const sends = () => net.ga.filter(x => x.op === "sendMessage");
 const uploads = () => net.ga.filter(x => x.op === "sendFileByUpload");

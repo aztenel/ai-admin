@@ -10,6 +10,7 @@
 // Записанным (будущая запись в журнале Altegio прямо сейчас — и при сборе, и перед каждым сообщением: ночной снимок не знает о записях,
 // сделанных сегодня) и бывшим меньше 14 дней назад реклама не уходит (ТЗ v4, 08.11.2026); журнал не прочитался — не шлём.
 /** @import { Env, Client } from "../../lib/types.js" */
+import { jrVia } from "../reminders/watpl.js";
 import { CLIENTS } from "../../config/builtin-clients.js";
 import { local, isoDay } from "../../lib/time.js";
 import { normPhone } from "../../lib/phone.js";
@@ -43,7 +44,10 @@ export const MK_IDS = /** @type {const} */ (["birthday", "reactivate"]);
 const STOP = new Set(["stop"]);
 
 /** реклама со второго номера сейчас разрешена (запрет gaNoBroadcast снят владельцем: GA_BROADCAST_<ID> = 1)? → "" или почему нет @param {Env} env @param {Client} c */
-export const mkLocked = (env, c) => bcGaOff(c.id, env) ? "Реклама со второго номера выключена: массовые сообщения с обычного WhatsApp — главная причина блокировок. Включает владелец отдельным решением." : "";
+// С основного номера (c.jr.via = "wa", Winchester с 19.11.2026) рекламы здесь нет: реклама клиенту без переписки за 24 часа — только
+// шаблоном Meta, рассылкой из «Маркетинга»
+export const mkLocked = (env, c) => jrVia(c, env) === "wa" ? "Рекламные сообщения уходят с основного номера только рассылкой шаблоном Meta — во вкладке «Маркетинг»."
+  : bcGaOff(c.id, env) ? "Реклама со второго номера выключена: массовые сообщения с обычного WhatsApp — главная причина блокировок. Включает владелец отдельным решением." : "";
 
 /** фоновая задача раз в минуту @param {Env} env @param {number} now */
 export async function mkRun(env, now) {

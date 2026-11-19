@@ -18,7 +18,9 @@ import { crmView } from "../crm/segments.js";
 import { VARS, cleanText, toCanonical, textIssues, render as mkRender, dataFor, BRACKETS_ISSUE } from "../broadcast/render.js";
 import { STOP_RU, DEMO, companyOf } from "../broadcast/library.js";
 import { GA_OFF, bcGaOff } from "../broadcast/sender.js";
-import { jrOn, sendOnceAuto } from "../reminders/journal.js";
+import { jrOn, jrRoute, sendOnceAuto } from "../reminders/journal.js";
+import { jrVia, jrTpl, jrTplFill, waKind, waWhy } from "../reminders/watpl.js";
+import { sendTemplate } from "../channels/templates.js";
 import { serviceVariant } from "../reminders/info.js";
 import { scenario, activeOf, approvalFits, svText, svVars, render as svRender, SV_VARS, SV_SAMPLE } from "../reminders/templates.js";
 import { logTurns } from "../../db/kv/chats.js";
@@ -42,20 +44,31 @@ export const autoSet = async (env, c) => autoSettings(c, await autoLoad(env, c.i
 
 /** главный выключатель, номер, Altegio, база отметок — почему сообщения клиентам сейчас не уходят ("" — уходят) @param {Env} env @param {Client} c @param {number} now */
 async function readiness(env, c, now) {
-  const preview = isPreview(env), route = gaRoute(env, c.id), lines = await linesRead(env, c.id).catch(() => null);
+  const via = jrVia(c, env), wa = via === "wa", up = String(c.id).toUpperCase();
+  const preview = isPreview(env), route = c.jr ? jrRoute(env, c) : gaRoute(env, c.id), lines = await linesRead(env, c.id).catch(() => null);
   const master = { on: jrOn(env, c), why: "" };
   if (!c.jr) master.why = "У компании нет автоматических сообщений по журналу Altegio.";
-  else if (!master.on) master.why = `Главный выключатель отправки выключен (переменная REMIND_GA_${String(c.id).toUpperCase()} в Cloudflare). Пока он не включён, клиентам ничего не уходит, даже если сценарий включён здесь.`;
+  else if (!master.on) master.why = `Главный выключатель отправки выключен (переменная ${wa ? "REMIND_WA" : "REMIND_GA"}_${up} в Cloudflare). Пока он не включён, клиентам ничего не уходит, даже если сценарий включён здесь.`;
   const altegio = { ready: !!env.ALTEGIO_PARTNER && altLoc(env, c) > 0 && !!altUserKey(env, c), why: "" };
   if (!altegio.ready) altegio.why = "Не подключён журнал Altegio: без него сервисные сообщения не знают о записях.";
-  const sender = { ready: !!route, phone: route && lines && lines.ga ? fmtPhone(String(lines.ga)) : "", why: route ? "" : "Второй номер (Green-API) не подключён." };
+  // с основного номера (шаблоны Meta через Wazzapo, Winchester с 19.11.2026) или со второго (Green-API)
+  const sender = wa
+    ? { via, ready: !!route, phone: route && lines && lines.wa ? fmtPhone(String(lines.wa)) : "", why: route ? "" : `Основной номер (Meta через Wazzapo) не подключён: в Cloudflare нужны WA_TOKEN_${up}, PHONE_NUMBER_ID_${up} и WA_VIA_${up}=wazzapo.` }
+    : { via, ready: !!route, phone: route && lines && lines.ga ? fmtPhone(String(lines.ga)) : "", why: route ? "" : "Второй номер (Green-API) не подключён." };
   const db = await sendDbOff(env, now).catch(() => "");
   return { preview, master, altegio, sender, db: env.DB ? db : "", hold: await jrHold(env, c.id) };
 }
 
 /** текст сценария для пульта: сервисный — действующий вариант (одобрен ли), рекламный — свой текст или по умолчанию
- *  @param {Client} c @param {any} d @param {any} set @param {Record<string, any>} ap @param {Record<string, any>} own @param {number} now */
-function textOf(c, d, set, ap, own, now) {
+ *  @param {Client} c @param {any} d @param {any} set @param {Record<string, any>} ap @param {Record<string, any>} own @param {number} now @param {Env} env */
+function textOf(c, d, set, ap, own, now, env) {
+  // основной номер: текст — одобренный шаблон Meta (меняется только в кабинете Wazzapo / Meta), вставки — из записи Altegio
+  if (d.group === "service" && jrVia(c, env) === "wa") {
+    const t = jrTpl(env, c, d.kind);
+    if (!t) return { text: null, preview: "", tpl: null };
+    return { text: { ru: t.body, kk: "", v: 1, variant: t.name, own: false, approved: true, vars: [], tpl: true },
+      preview: jrTplFill(c, t, { ...SAMPLE, date: isoDay(now + 86400e3) }).text, tpl: { name: t.name, lang: t.lang } };
+  }
   if (d.group === "service") {
     const sc = scenario(String(d.sc)), act = sc && activeOf(sc, own);
     if (!sc || !act) return { text: null, preview: "" };
@@ -89,12 +102,12 @@ export async function autoInfo(env, c, now, owner, origin = "") {
     };
     const locked = d.id === "campaigns" ? (bcGaOff(c.id, env) ? GA_OFF + " Черновики, одобрение и проверка на ваш номер — в «Маркетинге»." : "Рассылки создаются и запускаются в «Маркетинге».")
       : d.group === "marketing" ? mkBan : "";
-    const tx = textOf(c, d, set, ap, own, now);
+    const tx = /** @type {any} */ (textOf(c, d, set, ap, own, now, env)), noTpl = d.group === "service" && ready.sender.via === "wa" && !tx.text;
     const on = d.id === "campaigns" ? false : s.on;
-    const why = !on ? "" : locked || (ready.preview ? "Тестовая версия: отсюда сообщения не уходят." : "") || ready.master.why || ready.sender.why
+    const why = noTpl ? "Для этого сообщения нет одобренного шаблона Meta: оно не уходит." : !on ? "" : locked || (ready.preview ? "Тестовая версия: отсюда сообщения не уходят." : "") || ready.master.why || ready.sender.why
       || (d.group === "service" ? ready.altegio.why : "") || (d.group === "service" && tx.text && !tx.text.approved ? "Текст не одобрен: сохраните его ещё раз." : "") || "";
     /** @type {any} */ const item = { id: d.id, group: d.group, title: d.title, who: d.who, on, live: on && !why, why, locked,
-      at: s.at || 0, by: s.by || "", timing: s.t, fields: d.fields, timingText: timingText(d, s.t, set.win), text: tx.text, preview: tx.preview,
+      at: s.at || 0, by: s.by || "", timing: s.t, fields: d.fields, timingText: timingText(d, s.t, set.win), text: tx.text, preview: tx.preview, ...(tx.tpl ? { tpl: tx.tpl } : {}),
       counts: { today: sum(counts.slice(0, 1)), week: sum(counts) },
       log: log.filter(x => d.kind && x.k === d.kind).slice(-LOG_MAX).reverse().map(x => ({ t: +x.t || 0, st: String(x.st || ""), why: String(x.why || ""), name: String(x.n || ""),
         phone: x.p ? maskPhone(String(x.p)) : "", date: String(x.date || ""), time: String(x.time || "") })) };
@@ -166,8 +179,11 @@ export async function autoChange(env, c, b, who, now) {
     mk = ck;
   }
   if (on && d.group === "marketing" && !mk) { const ck = mkTextCheck(set.tx[d.id]); if ("error" in ck) return { error: ck.error, status: 400 }; }
-  const sc = d.group === "service" ? scenario(String(d.sc)) : null;
-  if ((on || b.text != null) && d.group === "service" && !(sc && activeOf(sc, await svOwn(env, c)))) return { error: "У сценария нет текста.", status: 400 };
+  const wa = d.group === "service" && jrVia(c, env) === "wa";
+  if (wa && b.text != null) return { error: "Текст шаблона Meta меняется только в кабинете Wazzapo, и Meta проверяет его заново. Здесь его не правят.", status: 409, code: "tpl" };
+  if (wa && on && !jrTpl(env, c, d.kind)) return { error: "Для этого сообщения нет одобренного шаблона Meta: включать нечего.", status: 409, code: "notpl" };
+  const sc = d.group === "service" && !wa ? scenario(String(d.sc)) : null;
+  if ((on || b.text != null) && d.group === "service" && !wa && !(sc && activeOf(sc, await svOwn(env, c)))) return { error: "У сценария нет текста.", status: 400 };
   // запись: текст (сервисный проверяется и пишется одним шагом — первым, до остального), время, выключатель
   if (b.text != null && sc) {
     const act = /** @type {any} */ (activeOf(sc, await svOwn(env, c)));
@@ -212,7 +228,11 @@ export async function autoTest(env, c, b, who, now) {
   if (!d || d.id === "campaigns") return { error: "Проверку рассылки отправляют из мастера рассылки в «Маркетинге».", status: 400 };
   const set = await autoSet(env, c), lang = b.lang === "kk" ? "kk" : "ru";
   let text = "";
-  if (d.group === "service") {
+  const wa = d.group === "service" && jrVia(c, env) === "wa", wt = wa ? jrTpl(env, c, d.kind) : null;
+  const fill = wt ? jrTplFill(c, wt, { ...SAMPLE, date: isoDay(now + 86400e3) }) : null;
+  if (wa && !wt) return { error: "Для этого сообщения нет одобренного шаблона Meta.", status: 409, code: "notpl" };
+  if (fill) text = fill.text;
+  else if (d.group === "service") {
     const sc = scenario(String(d.sc)), act = sc && activeOf(sc, await svOwn(env, c));
     const t = act ? svText(c, d.kind, { ...SAMPLE, date: isoDay(now + 86400e3) }, lang, act) : null;
     text = t ? t.text : "";
@@ -223,22 +243,24 @@ export async function autoTest(env, c, b, who, now) {
   }
   if (!text) return { error: "У сценария нет текста.", status: 400 };
   if (!set.test) return { error: "Сначала укажите номер для проверки (ваш номер) вверху раздела.", status: 409, code: "notest", preview: text };
-  const route = gaRoute(env, c.id);
-  if (!route) return { error: "Второй номер (Green-API) не подключён: проверку отправить не с чего.", status: 409, code: "nosender", preview: text };
+  const route = wa ? jrRoute(env, c) : gaRoute(env, c.id);
+  if (!route) return { error: wa ? "Основной номер (Meta через Wazzapo) не подключён: проверку отправить не с чего." : "Второй номер (Green-API) не подключён: проверку отправить не с чего.", status: 409, code: "nosender", preview: text };
   if (isPreview(env)) return { error: "Это тестовая версия: проверка отсюда не отправляется. Текст показан ниже.", status: 409, code: "preview", preview: text };
   if (await autoTestHit(env, c.id, now) >= TEST_PER_HOUR) return { error: "Слишком много проверок за час. Подождите немного.", status: 429 };
   const p = set.test.p, rid = "t-" + String(b.rid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);
   if (rid.length < 8) return { error: "Обновите страницу пульта: у проверки нет номера отправки.", status: 400 };
   /** @type {Record<string, any>} */ let res = { ok: false, code: "ga:net" };
+  const net = (/** @type {any} */ r) => (wa ? waKind(r) === "net" : gaKind(r.code) === "net");
   const once = await sendOnceAuto(env, c.id, p, rid, async () => {
-    try { res = await sendGreen(env, p + "@c.us", text, route, true); } catch (e) { res = { ok: false, status: 0, code: "ga:net", error: String(e) }; }
-    return res.ok ? { ok: true, ...(res.id ? { id: String(res.id) } : {}) } : gaKind(res.code) === "net" ? { ok: true, unknown: true } : { ok: false };
-  });
+    if (wt && fill) { try { res = await sendTemplate(env, p, { tpl: wt.name, lang: wt.lang, params: fill.params }, "", route); } catch (e) { res = { ok: false, status: 0, code: 0, error: String(e) }; } }
+    else { try { res = await sendGreen(env, p + "@c.us", text, route, true); } catch (e) { res = { ok: false, status: 0, code: "ga:net", error: String(e) }; } }
+    return res.ok ? { ok: true, ...(res.id ? { id: String(res.id) } : {}) } : net(res) ? { ok: true, unknown: true } : { ok: false };
+  }, wa ? "wa" : "ga");
   if (once && "blocked" in once) return { error: once.blocked.error, status: once.blocked.status, code: once.blocked.code, preview: text };
   if (once && "dup" in once) return { ok: true, text, to: fmtPhone(p), dup: true };
-  if (!res.ok && gaKind(res.code) !== "net") return { error: `Green-API не принял сообщение (${gaWhy(res, route)}).`, status: 409, preview: text };
+  if (!res.ok && !net(res)) return { error: wa ? `Meta не приняла шаблон (${waWhy(res)}).` : `Green-API не принял сообщение (${gaWhy(res, route)}).`, status: 409, preview: text };
   const unsure = !res.ok;
-  try { await logTurns(env.KV, `h:ga:${c.id}:${p}`, [{ role: "model", text, t: now, rm: d.kind, test: 1, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: unsure ? "unknown" : "sent" }]); }
+  try { await logTurns(env.KV, `h:${wa ? "wa" : "ga"}:${c.id}:${p}`, [{ role: "model", text, t: now, rm: d.kind, test: 1, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: unsure ? "unknown" : "sent" }]); }
   catch (e) { console.log("auto test log", String(e)); }
   try { await jrLogAdd(env, c.id, [{ t: now, k: d.kind, rec: "", p, n: String(who || "").slice(0, 32), date: "", time: "", st: "test", why: unsure ? "проверка: не знаем, ушло ли" : "проверка на номер владельца" }]); }
   catch (e) { console.log("auto test journal", String(e)); }

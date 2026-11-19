@@ -203,7 +203,7 @@ export function createDemoAutoMsg(role: () => Role) {
         stage: "production",
         now: Date.now(),
         master: { on: w.jr, why: ready.master },
-        sender: { ready: !!w.phone, phone: w.phone, why: ready.sender },
+        sender: { ready: !!w.phone, phone: w.phone, why: ready.sender, via: "ga" },
         altegio: { ready: w.jr, why: w.jr ? "" : "Не подключён журнал Altegio: без него сервисные сообщения не знают о записях." },
         db: "",
         hold: null,

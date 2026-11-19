@@ -169,7 +169,10 @@ export type CampaignsOverview = {
   /** До 60 последних, новые сверху. */
   campaigns: CampaignRow[];
   now: number;
+  /** Одобренные рекламные шаблоны Meta компании: выбор в мастере рассылки (пусто — название вписывают руками). */
+  tpls: MetaTpl[];
 };
+export type MetaTpl = { name: string; lang: string; params: string[]; body: string };
 
 /** Сегмент базы клиентов. id: pora, davno, uhodyat, novye, postoyannye, staff:<имя> (all — вся база, в списке не приходит). */
 export type CrmSegment = {
@@ -729,7 +732,7 @@ export type AutoMsgLogItem = {
 export type AutoMsgCounts = { sent: number; failed: number; skipped: number };
 /** Текст сценария. Сервисный — {имя} {дата} {время} {мастер} {услуга} {услуга и мастер} {адрес} {ссылка} {компания} и [[ … ]] (кусок
  *  пропадает без данных); рекламный — {{client.first_name}} и т. п. (в пульте — словами). own — свой текст владельца; approved — одобрен. */
-export type AutoMsgText = { ru: string; kk: string; v: number; variant?: string; own: boolean; approved: boolean; vars: string[] };
+export type AutoMsgText = { ru: string; kk: string; v: number; variant?: string; own: boolean; approved: boolean; vars: string[]; /** текст — одобренный шаблон Meta: здесь не правится */ tpl?: boolean };
 export type AutoMsgScenario = {
   id: string;
   group: AutoMsgGroup;
@@ -758,6 +761,8 @@ export type AutoMsgScenario = {
   counts: { today: AutoMsgCounts; week: AutoMsgCounts };
   /** Последние события, новые сверху. */
   log: AutoMsgLogItem[];
+  /** Шаблон Meta, которым уходит сообщение с основного номера (Winchester с 19.11.2026). */
+  tpl?: { name: string; lang: string };
   /** Реактивация: сколько клиентов сегодня ровно N дней без визита и скольким можно рекламу; why — причины (код → сколько). */
   audience?: { total: number; allowed: number; why: Record<string, number>; base: boolean } | null;
 };
@@ -769,8 +774,8 @@ export type AutoMessages = {
   now: number;
   /** Главный выключатель отправки (Text REMIND_GA_<ID> в Cloudflare): выключен — не уходит ничего, даже включённое здесь. */
   master: { on: boolean; why: string };
-  /** Второй номер (Green-API): подключён ли и какой. */
-  sender: { ready: boolean; phone: string; why: string };
+  /** Номер отправки: via "wa" — основной (шаблоны Meta через Wazzapo), "ga" — второй (Green-API); подключён ли и какой. */
+  sender: { ready: boolean; phone: string; why: string; via: "wa" | "ga" };
   /** Журнал Altegio: без него сервисные не знают о записях. */
   altegio: { ready: boolean; why: string };
   /** База отметок от двойной отправки не готова — почему ("" — в порядке). */

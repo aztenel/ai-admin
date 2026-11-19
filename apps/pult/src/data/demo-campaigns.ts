@@ -519,6 +519,7 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
         optouts: w.optouts,
         campaigns: [...w.camps].sort((a, b) => b.createdAt - a.createdAt).map(rowOf),
         now,
+        tpls: [],
       };
     },
     async campaign(ws, id) {

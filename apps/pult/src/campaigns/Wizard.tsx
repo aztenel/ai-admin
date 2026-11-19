@@ -347,7 +347,7 @@ export default function Wizard({ ws, preset, onClose, onDone, backRef }: Props) 
   const p = { f, set, r, errs };
   const sections = [
     <RecipientsSection key={0} {...p} crm={crm} base={base} owner={ovd.owner} />,
-    <MessageSection key={1} {...p} />,
+    <MessageSection key={1} {...p} tpls={ov.data?.tpls ?? []} />,
     <HoursSection key={2} {...p} ov={ovd} />,
     <CheckSection key={3} f={f} r={r} res={chk?.res || null} checking={checking} error={chkErr} stale={!!chk && !fresh} onCheck={md ? checkAll : () => void runCheck()} draft={draft} ws={ws} desktop={md} />,
     <LaunchSection key={4} {...p} ov={ovd} res={fresh ? chk!.res : null} name={nameOf(f, r, now)} errors={launchErrs} />,

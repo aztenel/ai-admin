@@ -1,7 +1,7 @@
 // @ts-check
 // Green-API: настройки номера из переменных (gaShared, gaRoute, gaSecret) и пароль вебхука (gaHook = HMAC токена).
 /** @import { Env } from "../../../lib/types.js" */
-import { hasClient } from "../../../config/builtin-clients.js";
+import { hasClient, CLIENTS } from "../../../config/builtin-clients.js";
 import { isPreview } from "../../../lib/stage.js";
 
 // --- Green-API (обычный WhatsApp по QR-коду)
@@ -12,15 +12,23 @@ import { isPreview } from "../../../lib/stage.js";
 // адрес для файлов (mediaUrl из кабинета Green-API, 02.11.2026): только https-адрес без пути, иначе — пусто (тогда client.js ищет сам)
 /** @param {any} v */
 const mediaOf = v => (/^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/?$/i.test(String(v || "").trim()) ? String(v).trim().replace(/\/+$/, "") : "");
+// второй номер компании отключён целиком (Winchester, 19.11.2026: «дальше только по Meta»): c.gaDisabled, Text GA_LINE_<ID> = 1 возвращает,
+// = 0 отключает у любой компании. Тогда у неё нет ни своего, ни закреплённого общего номера: вебхук, отправка, рассылки, напоминания — нет
+/** @param {Env} env @param {any} cid */
+export const gaLineOff = (env, cid) => {
+  if (!cid || !hasClient(cid)) return false;
+  const v = String(env["GA_LINE_" + String(cid).toUpperCase()] ?? "").trim();
+  return v === "1" ? false : v === "0" ? true : !!(/** @type {any} */ (CLIENTS[cid]).gaDisabled);
+};
 /** @param {Env} env */
 // preview — черновик: отправка и смена настроек через этот номер запрещены в gaCall/gaUpload (lib/stage.js)
-export const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", media: mediaOf(env.GA_MEDIA_URL), shared: true, preview: isPreview(env) } : null;
+export const gaShared = env => env.GA_ID && env.GA_TOKEN ? { client: hasClient(env.GA_CLIENT) && !gaLineOff(env, env.GA_CLIENT) ? env.GA_CLIENT : "", id: String(env.GA_ID).trim(), token: String(env.GA_TOKEN), base: env.GA_URL || "", media: mediaOf(env.GA_MEDIA_URL), shared: true, preview: isPreview(env) } : null;
 // номер Green-API клиента: свой (GA_ID_<ID> и GA_TOKEN_<ID>) или общий номер воркера, закреплённый за ним (GA_CLIENT).
 // Общий номер, закреплённый за другой компанией (или ни за кем), этой компании не достаётся: иначе её ответы, файлы и напоминания
 // ушли бы клиентам с чужого номера (аудит 31.10.2026). Отправка из пульта, файлы, скачивание и напоминания берут номер только здесь.
 /** @param {Env} env @param {string} cid */
 export function gaRoute(env, cid) {
-  if (!hasClient(cid)) return null;
+  if (!hasClient(cid) || gaLineOff(env, cid)) return null;
   const up = cid.toUpperCase();
   if (env["GA_ID_" + up] && env["GA_TOKEN_" + up]) return { client: cid, id: String(env["GA_ID_" + up]).trim(), token: String(env["GA_TOKEN_" + up]), base: env["GA_URL_" + up] || "", media: mediaOf(env["GA_MEDIA_URL_" + up]), preview: isPreview(env) };
   const s = gaShared(env);

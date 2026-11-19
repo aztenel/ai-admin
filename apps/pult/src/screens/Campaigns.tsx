@@ -148,10 +148,13 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
   const hasBase = crm.data ? crm.data.available : !!crm.error;
   // второй номер — главный канал рассылок, если он есть и есть база клиентов (мастер второго номера пишет только по базе)
   const gaMain = !!ov.data?.bot && hasBase;
+  // второго номера нет (Winchester с 19.11.2026: «дальше только по Meta») — «Маркетинг» и есть рассылки шаблонами Meta, вкладки «Meta» нет
+  const noGa = !!ov.data && !ov.data.bot;
+  const view: Tab = noGa && tab === "meta" ? "marketing" : tab;
   const loading = ov.loading;
 
   // «Создать рассылку» — всегда мастер второго номера; шаблоном Meta — во вкладке «Meta»
-  const newCampaign = (preset?: GaPreset) => setLayer({ kind: "ga", preset });
+  const newCampaign = (preset?: GaPreset) => (noGa ? newMeta() : setLayer({ kind: "ga", preset }));
   const newMeta = () => setLayer(ov.data && !ov.data.main.ready ? { kind: "nomain" } : { kind: "meta" });
   const refresh = () => {
     void ov.reload();
@@ -186,7 +189,8 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
     { id: "auto" as const, title: "Автоматические", sub: "сообщения" },
     { id: "plan" as const, title: "Календарь", sub: "план и итоги" },
     { id: "meta" as const, title: "Meta", sub: gaMain ? "неактивный канал" : "шаблоны" },
-  ];
+  ].filter((t) => !(noGa && t.id === "meta"))
+    .map((t) => (noGa && t.id === "marketing" ? { ...t, sub: "шаблоны Meta" } : t));
 
   return (
     <Page
@@ -195,7 +199,7 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
       actions={
         <>
           <IconButton icon={RefreshCw} label="Обновить" onClick={refresh} className={cn((ov.refreshing || crm.refreshing) && "[&>svg]:animate-spin")} />
-          {tab === "marketing" && (
+          {view === "marketing" && (
             <Button variant="primary" icon={Plus} className="max-md:hidden" disabled={loading} onClick={() => newCampaign()}>
               Создать рассылку
             </Button>
@@ -203,9 +207,20 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
         </>
       }
     >
-      <Tabs value={tab} onChange={setTab} tabs={tabs} />
+      <Tabs value={view} onChange={setTab} tabs={tabs} />
 
-      {tab === "marketing" ? (
+      {view === "marketing" && noGa ? (
+        <div role="tabpanel" id="cmp-panel-marketing" aria-labelledby="cmp-tab-marketing">
+          {staleError}
+          {ov.data && (
+            <MetaPanel ws={ws} ov={ov.data} owner={owner} gaMain={false} hasBase={hasBase} rev={rev} onChanged={() => void ov.reload()} onCreate={newMeta}>
+              <CampaignList title="Рассылки шаблонами Meta: в работе" rows={metaActive} details={det.details} now={now} onOpen={openCampaign} page={30} />
+              <CampaignList title="Прошедшие рассылки шаблонами Meta" rows={metaPast} details={det.details} now={now} onOpen={openCampaign} />
+              <LinkRow icon={MessageCircleReply} title="Ответы" text="Ответы клиентов на рассылки и напоминания — в «Чатах»" onClick={openReplies} />
+            </MetaPanel>
+          )}
+        </div>
+      ) : view === "marketing" ? (
         <div role="tabpanel" id="cmp-panel-marketing" aria-labelledby="cmp-tab-marketing">
           {loading ? <NumberSkeleton /> : ov.data ? <ChannelCard ov={ov.data} onCreate={() => newCampaign()} /> : loadError}
           {staleError}
@@ -243,12 +258,12 @@ function Hub({ ws, name }: { ws: string; name?: string }) {
             ))}
           {sub === "results" && (loading ? <ListSkeleton /> : <ResultsView rows={visible} details={det.details} load={det.load} now={now} onOpen={openCampaign} onReplies={openReplies} />)}
         </div>
-      ) : tab === "auto" ? (
+      ) : view === "auto" ? (
         <div role="tabpanel" id="cmp-panel-auto" aria-labelledby="cmp-tab-auto">
           {staleError}
           <AutoTab key={`auto${rev}`} ws={ws} owner={owner} bot={ov.data?.bot} overview={ov.loading ? <NumberSkeleton /> : ov.data ? <BotNumber ov={ov.data} /> : failed ? loadError : null} onMarketing={() => setTab("marketing")} />
         </div>
-      ) : tab === "plan" ? (
+      ) : view === "plan" ? (
         <div role="tabpanel" id="cmp-panel-plan" aria-labelledby="cmp-tab-plan">
           <Plan key={`plan${rev}`} ws={ws} />
         </div>

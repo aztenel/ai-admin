@@ -28,6 +28,9 @@ import { gaKind, gaWhy, gaUnsureNote } from "../integrations/greenapi/client.js"
 import { notify } from "../integrations/telegram/client.js";
 import { notifyOnce } from "../notifications/telegram.js";
 import { sendGreen } from "../channels/greenapi.js";
+import { waRoute } from "../channels/index.js";
+import { sendTemplate } from "../channels/templates.js";
+import { jrVia, jrTpl, jrTplFill, waKind, waWhy } from "./watpl.js";
 import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { stErr } from "../inbox/status.js";
@@ -220,7 +223,10 @@ const told = (p, now) => (Array.isArray(p.sent) && p.sent.length > 0) || now - (
 /** главный выключатель: c.jr и Text REMIND_GA_<ID> = 1. По умолчанию выключен — это сообщения настоящим клиентам с неофициального
  *  номера: включает владелец после «отправляй» заказчика (30.10.2026). Кроме него, каждый сценарий включается в пульте отдельно
  *  @param {Env} env @param {Client} c */
-export const jrOn = (env, c) => !!(c && c.jr) && /^(1|on|yes|true|да)$/i.test(String(env["REMIND_GA_" + String(c.id).toUpperCase()] || "").trim());
+// С основного номера шаблонами Meta (c.jr.via = "wa", Winchester с 19.11.2026) — свой выключатель Text REMIND_WA_<ID> = 1
+export const jrOn = (env, c) => !!(c && c.jr) && /^(1|on|yes|true|да)$/i.test(String(env[(jrVia(c, env) === "wa" ? "REMIND_WA_" : "REMIND_GA_") + String(c.id).toUpperCase()] || "").trim());
+/** номер, с которого уходят сообщения: основной (Meta, Wazzapo) или второй (Green-API) @param {Env} env @param {Client} c */
+export const jrRoute = (env, c) => (jrVia(c, env) === "wa" ? waRoute(env, c.id) : gaRoute(env, c.id));
 
 /** фоновая задача раз в минуту: компании с c.jr, ключом журнала и номером Green-API @param {Env} env @param {number} now */
 export async function jrRun(env, now) {
@@ -264,7 +270,7 @@ async function jrLocked(env, c, fn) {
 
 /** @param {Env} env @param {Client} c @param {number} now */
 async function jrClient(env, c, now) {
-  const user = altUserKey(env, c), loc = altLoc(env, c), route = gaRoute(env, c.id);
+  const user = altUserKey(env, c), loc = altLoc(env, c), route = jrRoute(env, c);
   if (!env.ALTEGIO_PARTNER || !user || !(loc > 0) || !route) return 0;
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set), logs = /** @type {any[]} */ ([]);
   o.site = await siteNotifyLoad(env.KV, c.id); // выбор «напомнить за …» из формы сайта
@@ -484,7 +490,7 @@ async function jrMerge(env, c, o, q, list, now, logs, ch) {
       if (!v || v.att !== -1 || atLocal(v.date, v.time) > now) continue;
       try {
         if (!(await jrNoShowMark(env, c.id, v.id))) continue;
-        await logTurns(env.KV, `h:ga:${c.id}:${v.p}`, [], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "noshow" }; if (!p.waName && v.n) p.waName = v.n; });
+        await logTurns(env.KV, `h:${jrVia(c, env)}:${c.id}:${v.p}`, [], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "noshow" }; if (!p.waName && v.n) p.waName = v.n; });
         logs.push(entry({ ...v, rec: v.id, k: "noshow" }, "task", "клиент не пришёл, задача администратору", now));
       } catch (e) { console.log("jr noshow", String(e)); }
     }
@@ -528,14 +534,18 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   }
   if (SVC_NO.has(st.blocks.get(x.p) || "")) return skip("в базе клиентов — «стоп» или запрет писать");
   if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) return skip(o.rvgap > 0 ? `благодарность с просьбой об отзыве этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)` : "благодарность этому клиенту сегодня уже отправляли (два визита в один день — одна благодарность)");
-  // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста)
-  const sc = scenario(KIND_SC[x.k] || ""), vt = sc && approvedVariant(sc, st.approvals, st.variants), ap = sc && st.approvals[sc.id];
-  if (!sc || !vt) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
+  // текст — действующий вариант, одобренный владельцем (ТЗ v3.0: у сценария может быть несколько вариантов текста); с основного номера —
+  // шаблон Meta (его текст одобрила Meta, своего одобрения не нужно; включение сценария — уже решение владельца)
+  const wa = jrVia(c, env) === "wa", wt = wa ? jrTpl(env, c, x.k) : null;
+  const kindOf = (/** @type {any} */ r) => (wa ? waKind(r) : gaKind(r.code));
+  const sc = scenario(KIND_SC[x.k] || ""), vt = sc && !wa ? approvedVariant(sc, st.approvals, st.variants) : null, ap = sc && st.approvals[sc.id];
+  if (wa && !wt) return skip("для этого сообщения нет одобренного шаблона Meta");
+  if (!wa && (!sc || !vt)) { // текст не одобрен: ждём одобрения, пока не опоздали; в журнал — один раз
     if (!x.na) { x.na = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "текст не одобрен владельцем, ждёт одобрения", now)); }
     return "wait";
   }
   // задним числом не шлём: одобрили (или включили) сценарий позже, чем это сообщение должно было уйти, — оно не уходит
-  if (+ap.at > x.at) return skip("текст одобрен позже, чем должно было уйти это сообщение");
+  if (!wa && +ap.at > x.at) return skip("текст одобрен позже, чем должно было уйти это сообщение");
   let list = st.cache.get(x.date);
   if (!list) {
     try { list = (await altRecordsRange(env, ctx.user, ctx.loc, x.date, x.date, WIN_PAGES)).list; }
@@ -566,17 +576,19 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     if (!after && v.att === 1) return skip("клиент уже пришёл");
     if (!after && atLocal(x.date, x.time) <= now) return skip("время записи прошло");
   }
-  const hk = `h:ga:${c.id}:${x.p}`;
+  const hk = `h:${jrVia(c, env)}:${c.id}:${x.p}`;
   /** @type {any} */ let p = {};
   try { const h = await readHist(env, hk); p = (h && h.profile) || {}; } catch (e) { console.log("jr chat read", String(e)); }
   // запись сделал бот в этой переписке — подтверждение клиент уже получил там (S01, S06)
   if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) return skip("подтверждение уже в переписке (запись через бота)");
   if (st.cnt >= o.cap) {
-    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сообщений в сутки со второго номера. Остальные напоминания сегодня не отправлены.`, c.id); }
+    try { if (await jrCapNote(env, c.id, isoDay(now))) await notify(env, `⚠️ ${c.name}: предел ${o.cap} сервисных сообщений в сутки${wa ? "" : " со второго номера"}. Остальные напоминания сегодня не отправлены.`, c.id); }
     catch (e) { console.log("jr cap note", String(e)); }
     return "stop";
   }
-  const t = svText(c, x.k, msgOf(x), p.lang, vt);
+  const fill = wt ? jrTplFill(c, wt, msgOf(x)) : null;
+  if (fill && fill.miss) return skip(`в записи Altegio нет данных для шаблона: ${fill.miss}`);
+  const t = fill ? { text: fill.text } : svText(c, x.k, msgOf(x), p.lang, vt);
   if (!t || !t.text) return skip("нет текста сообщения");
   const { rec: orec, ver } = onceOf(x);
   if (!(await jrTry(env, c.id, orec, x.k, ver))) return skip("уже отправляли");
@@ -584,9 +596,13 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   // атомарная отметка в D1 (если у адреса есть база): одна запись, вид и версия — одно сообщение, даже если две фоновые задачи
   // одновременно взяли одно и то же (отметка rms: в KV согласуется не сразу). Нет базы у адреса — только отметка в KV, как раньше
   const once = await sendOnceAuto(env, c.id, x.p, `a-${x.k}-${orec}-${ver}`, async () => {
-    try { res = await sendGreen(env, x.p + "@c.us", t.text, ctx.route, true); } catch (e) { res = { ok: false, status: 0, code: "ga:net", error: String(e) }; }
-    return res.ok ? { ok: true, ...(res.id ? { id: String(res.id) } : {}) } : gaKind(res.code) === "net" ? { ok: true, unknown: true, ...(res.id ? { id: String(res.id) } : {}) } : { ok: false };
-  });
+    if (wt && fill) {
+      try { res = await sendTemplate(env, x.p, { tpl: wt.name, lang: wt.lang, params: fill.params }, "", ctx.route); } catch (e) { res = { ok: false, status: 0, code: 0, error: String(e) }; }
+    } else {
+      try { res = await sendGreen(env, x.p + "@c.us", t.text, ctx.route, true); } catch (e) { res = { ok: false, status: 0, code: "ga:net", error: String(e) }; }
+    }
+    return res.ok ? { ok: true, ...(res.id ? { id: String(res.id) } : {}) } : kindOf(res) === "net" ? { ok: true, unknown: true, ...(res.id ? { id: String(res.id) } : {}) } : { ok: false };
+  }, jrVia(c, env));
   if (once && "blocked" in once) {
     await jrUntry(env, c.id, orec, x.k, ver);
     if (!x.db) { x.db = 1; st.dirty = true; st.logs.push(entry(x, "skipped", "не ушло: база отметок от двойной отправки не ответила, пробуем ещё раз", now)); }
@@ -594,12 +610,13 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   }
   if (once && "dup" in once) return skip(once.dup === "busy" ? "уже отправляется" : "уже отправляли (отметка в базе)");
   if (!res.ok) {
-    const kind = gaKind(res.code), why = gaWhy(res, ctx.route);
+    const kind = kindOf(res), why = wa ? waWhy(res) : gaWhy(res, ctx.route);
     console.log("jr send", c.id, x.k, res.code);
     if (kind === "stop") {
       await jrUntry(env, c.id, orec, x.k, ver);
       await jrHoldSet(env, c.id, why, now);
-      await notify(env, `⛔ ${c.name}: напоминания со второго номера остановлены на 6 часов.\nGreen-API: ${why}\nПроверьте, не заблокирован ли номер.`, c.id);
+      await notify(env, wa ? `⛔ ${c.name}: сервисные сообщения (шаблоны Meta) остановлены на 6 часов.\nПричина: ${why}\nПроверьте номер и шаблоны в кабинете Wazzapo.`
+        : `⛔ ${c.name}: напоминания со второго номера остановлены на 6 часов.\nGreen-API: ${why}\nПроверьте, не заблокирован ли номер.`, c.id);
       return "stop";
     }
     if (kind === "net") {
@@ -607,7 +624,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
       // задача из очереди уходит). В переписке — «неизвестно» с причиной (номер сообщения, если Green-API его вернул: отчёт о доставке
       // уточнит статус). В «ушло» (rmok:) не считается, в дневной предел — считается; отзыв — как просили (раз в 60 дней). Раньше 5xx
       // был «временным сбоем», и через минуту напоминание уходило ещё раз (01.11.2026, перед приёмкой Winchester)
-      const note = gaUnsureNote(res);
+      const note = wa ? `Нет ответа о сообщении (${waWhy(res)}): оно могло уйти` : gaUnsureNote(res);
       st.cnt++;
       st.told.push([x.rec, x.k]);
       if (x.k === "rv") { try { await jrReviewMark(env, c.id, x.p, now); } catch (e) { console.log("jr review mark", String(e)); } }
@@ -621,7 +638,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
       if (x.tries < MAX_TRIES) return "stop"; // в следующую минуту ещё раз
     }
     // номера нет в WhatsApp, текст не принят, три временных отказа подряд — задача администратору (S18), без новых попыток
-    await adminTask(env, c, x, now, { role: "model", text: t.text, t: now, rm: x.k, st: "failed", se: stErr("failed", why) }, why);
+    await adminTask(env, c, x, now, { role: "model", text: t.text, t: now, rm: x.k, st: "failed", se: stErr("failed", why) }, why, jrVia(c, env));
     st.logs.push(entry(x, "task", `не ушло (${why}), задача администратору`, now));
     return "drop";
   }
@@ -637,22 +654,22 @@ async function jrSend(env, c, o, x, now, ctx, st) {
  * Одна отправка на ключ: у адреса есть база D1 — атомарная отметка send_claims (как у отправки из пульта, services/inbox/send.js);
  * нет базы — просто отправка (отметка попытки в KV уже стоит). → результат fn, { dup } или { blocked }.
  * @template {{ ok: boolean, id?: string, unknown?: boolean }} R
- * @param {Env} env @param {string} cid @param {string} p @param {string} rid @param {() => Promise<R>} fn
+ * @param {Env} env @param {string} cid @param {string} p @param {string} rid @param {() => Promise<R>} fn @param {string} [ch] канал отметки
  */
-export async function sendOnceAuto(env, cid, p, rid, fn) {
+export async function sendOnceAuto(env, cid, p, rid, fn, ch = "ga") {
   if (!env.DB) return fn();
-  return sendOnce(env, cid, "ga", p, rid.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64), fn);
+  return sendOnce(env, cid, ch, p, rid.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64), fn);
 }
 /** сообщение в переписку (его видит администратор в пульте) @param {Env} env @param {string} hk @param {any} x @param {any} tr */
 async function turn(env, hk, x, tr) {
   try { await logTurns(env.KV, hk, [tr], /** @param {any} p */ p => { if (!p.waName && x.n) p.waName = x.n; }); } catch (e) { console.log("jr log", String(e)); }
 }
 /** не ушло: чат — в «Нужен ответ» (ответ не дошёл), Telegram — один раз на сообщение @param {Env} env @param {Client} c @param {any} x
- *  @param {number} now @param {any} tr @param {string} why */
-async function adminTask(env, c, x, now, tr, why) {
-  try { await logTurns(env.KV, `h:ga:${c.id}:${x.p}`, [tr], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "send" }; if (!p.waName && x.n) p.waName = x.n; }); }
+ *  @param {number} now @param {any} tr @param {string} why @param {string} [ch] */
+async function adminTask(env, c, x, now, tr, why, ch = "ga") {
+  try { await logTurns(env.KV, `h:${ch}:${c.id}:${x.p}`, [tr], /** @param {any} p */ p => { if (!p.stop) p.need = { at: now, why: "send" }; if (!p.waName && x.n) p.waName = x.n; }); }
   catch (e) { console.log("jr task", String(e)); }
-  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: со второго номера не ушло сообщение (${KIND_WORD[x.k] || "сообщение"}), клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
+  try { await notifyOnce(env, `jrfail:${c.id}:${x.rec}:${x.k}`, `⚠️ ${c.name}: ${ch === "wa" ? "" : "со второго номера "}не ушло сообщение (${KIND_WORD[x.k] || "сообщение"}), клиент ${maskPhone(x.p)}${firstName(x.n) ? " (" + firstName(x.n) + ")" : ""}.\nПричина: ${why}.\nЧат — в пульте, «Нужен ответ»: напишите или позвоните клиенту.`, c.id); }
   catch (e) { console.log("jr task note", String(e)); }
 }
 
@@ -668,18 +685,20 @@ export async function jrDry(env, c, now) {
   const { list, pages, cut } = await altRecordsRange(env, user, loc, from, to, 3);
   const set = autoSettings(c, await autoLoad(env, c.id)), o = opts(c, set);
   const { items, skipped } = jrPlanAll(c, list, now, set, await siteNotifyLoad(env.KV, c.id)), ap = await svApprovals(env, c.id), own = await svOwn(env, c), byId = new Map(list.map(r => [String(r && r.id), r]));
-  const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
+  const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to, wa = jrVia(c, env) === "wa";
   /** @type {Map<string, any>} */ const prof = new Map();
   const out = [];
   for (const x of items.sort((a, b) => a.at - b.at).slice(0, 200)) {
     const sc = scenario(KIND_SC[x.k] || ""), v = jrRec(byId.get(x.rec)), a = sc && ap[sc.id], vt = sc && approvedVariant(sc, ap, own);
-    if (!prof.has(x.p)) { try { const h = await readHist(env, `h:ga:${c.id}:${x.p}`); prof.set(x.p, (h && h.profile) || {}); } catch (e) { prof.set(x.p, {}); } }
+    if (!prof.has(x.p)) { try { const h = await readHist(env, `h:${jrVia(c, env)}:${c.id}:${x.p}`); prof.set(x.p, (h && h.profile) || {}); } catch (e) { prof.set(x.p, {}); } }
     const p = prof.get(x.p);
     let why = "", status = "";
     if (await optedOut(env, c.id, x.p)) why = "клиент просил не писать";
     else if (x.k === "rv" && await reviewedRecently(env, c.id, x.p, o, now)) why = o.rvgap > 0 ? `благодарность этому клиенту уже отправляли (не чаще раза в ${o.rvgap} дн.)` : "благодарность этому клиенту сегодня уже отправляли";
-    else if (!sc || !vt) why = "текст не одобрен владельцем";
-    else if (a && +a.at > x.at) why = "текст одобрен позже, чем должно было уйти это сообщение";
+    else if (wa && !jrTpl(env, c, x.k)) why = "для этого сообщения нет одобренного шаблона Meta";
+    else if (wa && jrTplFill(c, /** @type {any} */ (jrTpl(env, c, x.k)), msgOf(x)).miss) why = `в записи Altegio нет данных для шаблона: ${jrTplFill(c, /** @type {any} */ (jrTpl(env, c, x.k)), msgOf(x)).miss}`;
+    else if (!wa && (!sc || !vt)) why = "текст не одобрен владельцем";
+    else if (!wa && a && +a.at > x.at) why = "текст одобрен позже, чем должно было уйти это сообщение";
     else if ((x.k === "s01" || x.k === "s06") && (p.bookings || []).some(/** @param {any} b */ b => String(b && b.record_id) === x.rec)) why = "подтверждение уже в переписке (запись через бота)";
     else if (await jrTried(env, c.id, onceOf(x).rec, x.k, onceOf(x).ver)) why = "уже отправляли";
     if (why) status = "skip";
@@ -687,12 +706,13 @@ export async function jrDry(env, c, now) {
     else if (x.at > now) status = "later";
     else if (quiet) { status = "later"; why = `уйдёт в часы отправки (с ${o.from}:00 до ${o.to}:00)`; }
     else status = "now";
-    const t = svText(c, x.k, msgOf(x), p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
+    const wt = wa ? jrTpl(env, c, x.k) : null;
+    const t = wt ? { text: jrTplFill(c, wt, msgOf(x)).text, lang: "ru" } : wa ? null : svText(c, x.k, msgOf(x), p.lang, vt || (sc && activeOf(sc, own))); // не одобрен — показываем действующий вариант
     out.push({ k: x.k, sc: sc ? sc.id : "", at: x.at, name: firstName(x.n), phone: maskPhone(x.p), date: x.date, time: x.time, staff: x.staff, svc: x.svc,
       status, why, text: t ? t.text : "", lang: t ? t.lang : "ru" });
   }
   /** @type {Record<string, number>} */ const why = {};
   for (const s of skipped) why[s.why] = (why[s.why] || 0) + 1;
-  return { ok: true, at: now, from, to, records: list.length, pages, cut, enabled: jrOn(env, c), ga: !!gaRoute(env, c.id), hold: await jrHold(env, c.id), quiet,
+  return { ok: true, at: now, from, to, records: list.length, pages, cut, enabled: jrOn(env, c), ga: !!gaRoute(env, c.id), via: jrVia(c, env), line: !!jrRoute(env, c), hold: await jrHold(env, c.id), quiet,
     items: out, total: items.length, skipped: Object.entries(why).map(([w, n]) => ({ why: w, n })) };
 }
