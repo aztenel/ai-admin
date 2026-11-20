@@ -35,15 +35,16 @@ test("второй номер отключён: в паспорте — нет �
   assert.ok(gaRoute({ GA_ID_BARBER: "1", GA_TOKEN_BARBER: "t" }, "barber"), "у других компаний — как раньше");
 });
 
-test("шаблоны: подстановки по записи журнала, язык как в кабинете (en), без имени — «дорогой гость», нет мастера — не шлём", () => {
+test("шаблоны: подстановки по записи журнала, язык как в кабинете Pushon (ru), без имени — «дорогой гость», нет мастера — не шлём", () => {
   const t = jrTpl({}, W, "s01");
-  assert.equal(t.name, "zapis_podtverzhdena"); assert.equal(t.lang, "en");
+  assert.equal(t.name, "zapis_podtverzhdena_1794696655812"); assert.equal(t.lang, "ru");
   const f = jrTplFill(W, t, { name: "Арман Ерланович", date: "2026-11-21", time: "15:00", services: "Мужская стрижка", staffName: "Тони" });
   assert.deepEqual(f.params, ["Мужская стрижка", "Тони", "21 ноября", "15:00"]);
-  assert.equal(f.text, "Вы записаны на услугу: Мужская стрижка Барбер: Тони Дата: 21 ноября в 15:00. Если нужно перенести или отменить, напишите сюда.");
+  assert.equal(f.text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони\nДата: 21 ноября в 15:00.\nЕсли нужно перенести или отменить, напишите сюда.");
   assert.equal(jrTplFill(W, jrTpl({}, W, "rv"), { name: "", services: "Стрижка", staffName: "Тони" }).params[0], "дорогой гость");
   assert.equal(jrTplFill(W, t, { name: "Арман", date: "2026-11-21", time: "15:00", services: "Стрижка", staffName: "" }).miss, "мастер");
   assert.equal(jrTpl({}, W, "cx"), null, "у отмены шаблона нет");
+  assert.equal(jrTpl({}, W, "h2"), null, "на 777 нет шаблона «сегодня»");
   assert.equal(jrTpl({ TPL_S01_WINCHESTER: "zapis_v2:ru" }, W, "s01").name, "zapis_v2");
   assert.equal(jrTpl({ TPL_S01_WINCHESTER: "zapis_v2:ru" }, W, "s01").lang, "ru");
   assert.equal(waKind({ ok: false, status: 0, code: 0 }), "net");
@@ -60,8 +61,8 @@ test("подтверждение и напоминание уходят шабл
   await autoOn(s, { confirm: true, remind24: true });
   for (const t of ["11:15", "11:30", "18:00", "18:01"]) await jrRun(s.env, at(TODAY, t));
   const got = tpls();
-  assert.deepEqual(got.map(x => x.name), ["zapis_podtverzhdena", "napominanie_nakanune"], JSON.stringify(got));
-  assert.ok(got.every(x => x.type === "template" && x.lang === "en" && x.to === "77000007001"));
+  assert.deepEqual(got.map(x => x.name), ["zapis_podtverzhdena_1794696655812", "napominanie_nakanune_1794697831874"], JSON.stringify(got));
+  assert.ok(got.every(x => x.type === "template" && x.lang === "ru" && x.to === "77000007001"));
   assert.deepEqual(got[0].params, ["Мужская стрижка", "Тони", "21 ноября", "15:00"]);
   assert.deepEqual(got[1].params, ["15:00", "Мужская стрижка", "Тони"]);
   assert.equal(net.ga.filter(x => x.op === "sendMessage").length, 0, "со второго номера — ничего");
@@ -95,7 +96,7 @@ test("пульт: «Автоматические сообщения» — осн
   const j = await (await own.go("/api/msg/auto?c=winchester")).json();
   assert.equal(j.sender.via, "wa"); assert.equal(j.sender.ready, true); assert.equal(j.master.on, true);
   const conf = j.scenarios.find(x => x.id === "confirm");
-  assert.equal(conf.tpl.name, "zapis_podtverzhdena"); assert.equal(conf.text.tpl, true);
+  assert.equal(conf.tpl.name, "zapis_podtverzhdena_1794696655812"); assert.equal(conf.text.tpl, true);
   assert.match(conf.preview, /^Вы записаны на услугу: /);
   assert.match(j.scenarios.find(x => x.id === "cancel").why, /нет одобренного шаблона Meta/);
   assert.match(j.scenarios.find(x => x.id === "birthday").locked, /рассылкой шаблоном Meta/);
@@ -109,6 +110,22 @@ test("пульт: «Автоматические сообщения» — осн
   r = await own.post("/api/msg/test", { c: "winchester", id: "confirm", rid: "test-meta-0001" });
   const tj = await r.json();
   assert.equal(r.status, 200, JSON.stringify(tj));
-  assert.deepEqual(tpls().map(x => [x.name, x.to]), [["zapis_podtverzhdena", "77000007099"]]);
+  assert.deepEqual(tpls().map(x => [x.name, x.to]), [["zapis_podtverzhdena_1794696655812", "77000007099"]]);
   assert.equal(net.ga.length, 0);
+});
+
+test("через Pushon (номер 777, 21.11.2026): подтверждение уходит шаблоном Pushon с полным названием и языком ru, в переписке основного номера", async () => {
+  net.reset();
+  net.altJournal = [rec("+77000007021", TOM, "15:00", { id: 7021, made: `${TODAY}T11:00:00+05:00` })];
+  const s = mk({ ...ENV, WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po-key-test", PHONE_NUMBER_ID_WINCHESTER: "po-channel-1", APP_SECRET_WINCHESTER: "po-hook-pass" });
+  await autoOn(s, { confirm: true });
+  for (const t of ["11:15", "11:30"]) await jrRun(s.env, at(TODAY, t));
+  const sent = net.po.filter(x => x.path === "/send-template-message");
+  assert.equal(sent.length, 1, JSON.stringify(net.po.map(x => x.path)));
+  const b = sent[0].body;
+  assert.equal(b.templateName, "zapis_podtverzhdena_1794696655812"); assert.equal(b.templateLanguage, "ru"); assert.equal(b.channelId, "po-channel-1");
+  assert.deepEqual(b.components[0].parameters.map(p => p.text), ["Мужская стрижка", "Тони", "21 ноября", "15:00"]);
+  assert.equal(net.wz.length, 0, "Wazzapo не трогаем");
+  const h = s.kv.json("h:wa:winchester:77000007021");
+  assert.ok(h && h.turns.some(x => /^Вы записаны на услугу: Мужская стрижка/.test(x.text) && x.st === "sent"));
 });
