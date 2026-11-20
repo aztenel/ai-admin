@@ -554,7 +554,7 @@ function TestSend({ ws, draft }: { ws: string; draft: CampaignDraft }) {
           onChange={(e) => setTo(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void send()}
           placeholder="+7 7XX XXX XX XX"
-          hint="Шаблон придёт с основного номера; вместо имени будет «Айгерим». Так видно, принимает ли Meta шаблон."
+          hint="Шаблон придёт с основного номера; данные вымышленного клиента: «Айгерим», мастер «Данияр», 4 недели. Так видно, принимает ли Meta шаблон."
         />
         <div className="py-3">
           <Button variant="outline" busy={busy} onClick={() => void send()}>

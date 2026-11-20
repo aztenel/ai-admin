@@ -186,7 +186,9 @@ export async function bcApi(request, env, url, s) {
     if (tn >= 20) return jsonP({ error: "Слишком много пробных отправок за час. Подождите немного." }, 429);
     try { await env.KV.put(tk, String(tn + 1), { expirationTtl: 3700 }); } catch (e) {}
     if (ga) { const r = await bcSendGa(env, to.slice(1), f, "Айгерим", rt.ga, gt ? gt.text : ""); return r.ok ? jsonP({ ok: true, text: `Сообщение отправлено на ${to} с номера Green-API. Проверьте WhatsApp.`, preview: gt ? gt.text : "" }) : jsonP({ error: `Green-API не принял сообщение (${gaWhy(r, rt.ga)}).` }, 409); }
-    const r = await sendTemplate(env, to.slice(1), f, "Айгерим", rt);
+    // проба — на вымышленном клиенте целиком: без мастера и дней шаблон «у мастера {{2}} прошло уже {{3}}» читался «у мастера ваш мастер прошло
+    // уже несколько недель» (живая проба через Pushon 21.11.2026)
+    const r = await sendTemplate(env, to.slice(1), f, "Айгерим", rt, { staff: "Данияр", svc: "Мужская стрижка", days: 28 });
     return r.ok ? jsonP({ ok: true, text: `Шаблон отправлен на ${to}. Проверьте WhatsApp: если сообщение не пришло за минуту, этот номер не принимает сообщения от компаний.` }) : jsonP({ error: `Meta не приняла шаблон (${bcWhy(r)}).` }, 409);
   }
   if (P === "/api/bc/create") { // список из браузера или segment — сегмент базы клиентов Altegio (получателей сервер берёт из снимка сам)
