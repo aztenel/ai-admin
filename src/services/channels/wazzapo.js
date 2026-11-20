@@ -35,9 +35,10 @@ export async function wzSendOwn(env, key, payload) {
   return r;
 }
 
-// кто отправил исходящее (поле sender.type): бот, рассылка, автоматика Wazzapo — не человек. Значения в документации не перечислены;
+// кто отправил исходящее (поле sender.type): бот, рассылка, автоматика Wazzapo — не человек. Список из кабинета Wazzapo (20.11.2026):
+// manager, workflow, chatbot, broadcast, api, system — человек только manager;
 // всё остальное (оператор в кабинете, приложение на телефоне) — ответ человека: бот в этом чате замолкает
-const BOT_SENDERS = /^(api|bot|integration|system|automation|workflow|broadcast|campaign|template|external)$/i;
+const BOT_SENDERS = /^(api|bot|chatbot|integration|system|automation|workflow|broadcast|campaign|template|external)$/i;
 
 /** @param {any} v @returns {string} */
 const digits = v => String(v || "").replace(/\D/g, "");
