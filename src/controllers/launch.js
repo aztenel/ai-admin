@@ -19,6 +19,7 @@ import { runCase } from "../services/selftest/run.js";
 import { altDiag } from "./altegio.js";
 import { altBase, tgProbe, gaRoute, gaSecret, gaHook, gaCall, gaCode, gaWhy, gaInfo, WA_HINT } from "../services/launch/deps.js";
 import { wzOn, wzHealth, wzNumbers } from "../services/channels/wazzapo.js";
+import { poOn, poLastRead } from "../services/channels/pushon.js";
 /** @import { Env, Client } from "../lib/types.js" */
 
 // ================= ПРОВЕРКА ЗАПУСКА: автопроверка бота по его паспорту и чек-лист подключений =================
@@ -106,6 +107,13 @@ export async function launchApi(request, env, url, s) {
       add("WhatsApp через Wazzapo: адрес вебхука", null, `${url.origin}/wz/${cid}\nСобытия: message.incoming, message.outgoing, message.status.`, "");
       if (tok && !pn) { const list = await wzNumbers(env, env["WA_TOKEN_" + up]); add("WhatsApp через Wazzapo: phone_number_id", null, list === null ? "Wazzapo не отдал список номеров — проверьте ключ API." : list.length ? "Номера в кабинете Wazzapo: " + list.map(n => `${n.phone || "?"} → ${n.id}`).join("; ") + `. Ответы клиентам работают и без него; для рассылок впишите его в PHONE_NUMBER_ID_${up}.` : "В кабинете Wazzapo нет подключённых номеров.", ""); }
       if (tok && pn) { const h = await wzHealth(env, env["WA_TOKEN_" + up], pn); add("WhatsApp через Wazzapo: номер", !h.error, h.error || `номер ${h.phone || "?"}${h.name ? ", имя «" + h.name + "»" : ""}${h.quality ? ", качество: " + h.quality : ""}`, "Проверьте ключ API и phone_number_id в кабинете Wazzapo."); }
+    }
+    if (poOn(env, cid)) { // номер через Pushon: последнее событие вебхука — доходит ли и понимает ли его код (21.11.2026)
+      const L = await poLastRead(env, cid), when = L ? new Date(+L.at + 5 * 3600e3).toISOString().slice(0, 16).replace("T", " ") + " (Астана)" : "";
+      add("WhatsApp через Pushon: вебхук", L ? !L.bad && L.ok !== false : null,
+        !L ? `событий ещё не было. Адрес: ${url.origin}/po/${cid}?t=<пароль из APP_SECRET_${up}>`
+          : L.bad ? `последний запрос ${when}: отклонён — ${L.why}` : `последнее событие ${when}: вид «${L.type || "?"}», ${L.ok ? "разобрано" : "не разобрано — " + L.why}. Поля: ${L.keys || "—"}${L.mkeys ? "; message: " + L.mkeys : ""}`,
+        L && L.bad ? `Пароль в адресе вебхука в кабинете Pushon должен совпадать с APP_SECRET_${up}.` : "");
     }
     if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
     if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");

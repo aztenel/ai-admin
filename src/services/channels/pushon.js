@@ -4,8 +4,42 @@
 // без отдельной ветки кода (так же сделан Wazzapo, services/channels/wazzapo.js).
 // Исходящие эхо Pushon не присылает (только статусы): ответ человека из кабинета Pushon в пульт не попадает.
 import { poOn } from "../integrations/pushon/client.js";
+import { poLastSave, poLastRead } from "../../db/kv/inbox.js";
+import { kvKey } from "../../lib/kv-id.js";
+/** @import { Env } from "../../lib/types.js" */
 
-export { poOn };
+export { poOn, poLastRead };
+
+/** почему событие вебхука не стало сообщением или статусом (для «Проверки запуска»; без номеров и текстов)
+ *  @param {any} body @param {string} channel @param {any} meta @returns {string} */
+export function poWhy(body, channel, meta) {
+  if (meta) return "";
+  if (!body || typeof body !== "object") return "тело не JSON";
+  const type = String(body.type || "");
+  if (type !== "message" && type !== "status") return `неизвестный вид события «${type.slice(0, 40) || "нет поля type"}»`;
+  if (type === "message") {
+    const m = body.message || {};
+    if (String(body.direction || "inbound") !== "inbound") return "исходящее сообщение (не от клиента)";
+    if (channel && m.channelId && String(m.channelId) !== channel) return "channelId сообщения не совпал с PHONE_NUMBER_ID";
+    return "сообщение без отправителя или вида, который код понимает";
+  }
+  if (channel && body.channelId && String(body.channelId) !== channel) return "channelId статуса не совпал с PHONE_NUMBER_ID";
+  return "статус без номера сообщения или неизвестный статус";
+}
+// запись «неверный пароль» — не чаще раза в минуту на компанию в экземпляре: иначе посторонний мог бы засыпать KV записями
+/** @type {WeakMap<object, Map<string, number>>} */
+const badAt = new WeakMap();
+/** последнее событие вебхука @param {Env} env @param {string} cid @param {Record<string, any>} v */
+export async function poNote(env, cid, v) {
+  const now = Date.now();
+  if (v.bad) { // память — по хранилищу (как seenBefore): у разных KV свой счёт
+    const store = /** @type {object} */ (kvKey(env.KV) || env);
+    let m = badAt.get(store); if (!m) { m = new Map(); badAt.set(store, m); }
+    if (now - (m.get(cid) || 0) < 60e3) return;
+    m.set(cid, now);
+  }
+  try { await poLastSave(env, cid, { at: now, ...v }); } catch (e) { console.log("po note", String(e)); }
+}
 
 /** @param {any} v @returns {string} */
 const digits = v => String(v || "").replace(/\D/g, "");

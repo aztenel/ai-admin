@@ -31,3 +31,10 @@ export async function sendMarkGet(env, cid, ch, chat, rid) { try { return JSON.p
 export async function sendMarkPut(env, cid, ch, chat, rid, v) { await env.KV.put(sndKey(cid, ch, chat, rid), JSON.stringify(v), { expirationTtl: 600 }); }
 /** @param {Env} env @param {string} cid @param {string} ch @param {string} chat @param {string} rid */
 export async function sendMarkDrop(env, cid, ch, chat, rid) { await env.KV.delete(sndKey(cid, ch, chat, rid)); }
+
+// последнее событие вебхука Pushon (21.11.2026: вебхук подключили, а в пульте пусто — нужно видеть, доходят ли события и разбираются ли):
+// только вид события, имена полей и решение кода — без номеров и текстов. 14 дней
+/** @param {Env} env @param {string} cid @param {Record<string, any>} v */
+export async function poLastSave(env, cid, v) { await env.KV.put("pol:" + cid, JSON.stringify(v), { expirationTtl: 14 * 86400 }); }
+/** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
+export async function poLastRead(env, cid) { try { return JSON.parse((await env.KV.get("pol:" + cid)) || "null"); } catch (e) { return null; } }

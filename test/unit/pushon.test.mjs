@@ -105,3 +105,18 @@ test("подстановки шаблона: слово после числа д
   assert.equal(bcParam("{мастер}", "", "", {}), "ваш мастер");
   assert.equal(bcParam("{имя}", "", "друг"), "друг");
 });
+
+test("диагностика вебхука (21.11.2026: вебхук подключили, а в пульте пусто): последнее событие — пароль, вид, разобрано ли; без номеров и текстов", async () => {
+  net.reset();
+  const s = mk(ENV);
+  assert.equal((await hook(s, { type: "message" }, "wrong")).status, 403);
+  let L = s.kv.json("pol:barber");
+  assert.equal(L.bad, 1); assert.match(L.why, /не совпал/);
+  await hook(s, { event: "incoming_message", data: { from: "+77000000001", text: "привет" } });
+  L = s.kv.json("pol:barber");
+  assert.equal(L.ok, false); assert.match(L.why, /неизвестный вид события/); assert.equal(L.keys, "event,data");
+  assert.ok(!JSON.stringify(L).includes("77000000001") && !JSON.stringify(L).includes("привет"), "без номера и текста");
+  await incoming(s, "77000000002", "тест");
+  L = s.kv.json("pol:barber");
+  assert.equal(L.ok, true); assert.equal(L.type, "message"); assert.equal(L.why, "");
+});

@@ -7,7 +7,7 @@
 import { hasClient } from "../../config/builtin-clients.js";
 import { safeEq } from "../../lib/crypto.js";
 import { seenBefore, seenForget } from "../../services/channels/index.js";
-import { poOn, poToMeta } from "../../services/channels/pushon.js";
+import { poOn, poToMeta, poWhy, poNote } from "../../services/channels/pushon.js";
 import { chatMode } from "../../services/chatstore/index.js";
 import { handleWhatsApp, waHook } from "./meta.js";
 /** @import { Env } from "../../lib/types.js" */
@@ -21,15 +21,18 @@ export async function handlePOClient(request, env, ctx, id, url) {
   const up = id.toUpperCase(), secret = String(env["APP_SECRET_" + up] || "");
   if (!secret) return new Response("Webhook password is not set for this client", { status: 403 });
   const given = url.searchParams.get("t") || request.headers.get("x-webhook-secret") || "";
-  if (!given || !safeEq(given, secret)) return new Response("Bad password", { status: 403 });
+  if (!given || !safeEq(given, secret)) { ctx.waitUntil(poNote(env, id, { bad: 1, why: given ? "пароль в адресе не совпал с APP_SECRET" : "в адресе нет пароля ?t=" })); return new Response("Bad password", { status: 403 }); }
   /** @type {any} */ let body = null; try { body = JSON.parse(await request.text()); } catch (e) {}
-  if (!body) return EMPTY();
+  if (!body) { ctx.waitUntil(poNote(env, id, { ok: false, why: "тело не JSON" })); return EMPTY(); }
   const channel = String(env["PHONE_NUMBER_ID_" + up] || ""), wx = { client: id, signed: true, origin: url.origin };
   // повтор доставки: то же сообщение или тот же статус того же сообщения
   const dupKey = body.type === "message" ? "pom:" + String((body.message && body.message.id) || "") : body.type === "status" ? `pos:${body.messageId || ""}:${body.status || ""}` : "";
   const prep = async () => {
     if (dupKey.length > 5 && await seenBefore(env, dupKey)) return null;
-    const meta = poToMeta(body, channel);
+    const meta = poToMeta(body, channel), why = poWhy(body, channel, meta);
+    ctx.waitUntil(poNote(env, id, { type: String(body.type || "").slice(0, 30), ok: !!meta, why, keys: Object.keys(body).slice(0, 15).join(","),
+      mkeys: body.message && typeof body.message === "object" ? Object.keys(body.message).slice(0, 15).join(",") : "" }));
+    if (why) console.log("po skip", why);
     if (!meta && body.type && !/^(message|status)$/.test(String(body.type))) console.log("po event", String(body.type).slice(0, 60));
     return meta;
   };
