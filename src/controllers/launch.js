@@ -115,9 +115,9 @@ export async function launchApi(request, env, url, s) {
           : L.bad ? `последний запрос ${when}: отклонён — ${L.why}` : `последнее событие ${when}: вид «${L.type || "?"}», ${L.ok ? "разобрано" : "не разобрано — " + L.why}. Поля: ${L.keys || "—"}${L.mkeys ? "; message: " + L.mkeys : ""}`,
         L && L.bad ? `Пароль в адресе вебхука в кабинете Pushon должен совпадать с APP_SECRET_${up}.` : "");
     }
-    if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
-    if (!wzOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
-    if (tok && !wzOn(env, cid)) {
+    if (!wzOn(env, cid) && !poOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
+    if (!wzOn(env, cid) && !poOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");
+    if (tok && !wzOn(env, cid) && !poOn(env, cid)) {
       const pn = env["PHONE_NUMBER_ID_" + up] || c.waPhoneId;
       if (!pn) add("WhatsApp: номер", null, "«Phone number ID» в паспорте не указан — бот ответит с того номера, на который напишут. Чтобы проверить номер здесь, впишите его ID в паспорт.", "");
       else {

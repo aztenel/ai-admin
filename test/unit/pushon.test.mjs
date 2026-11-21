@@ -120,3 +120,23 @@ test("диагностика вебхука (21.11.2026: вебхук подкл
   L = s.kv.json("pol:barber");
   assert.equal(L.ok, true); assert.equal(L.type, "message"); assert.equal(L.why, "");
 });
+
+test("настоящий формат вебхука Pushon (живая проверка 21.11.2026): message.incoming с contactPhone и contactName — в пульт; повтор события — один раз; исходящие — мимо; статус — по externalRef", async () => {
+  net.reset();
+  const s = mk(ENV);
+  const ev = (id, type, msg, x = {}) => ({ id, type, version: 1, accountId: "acc-1", occurredAt: new Date().toISOString(), contactName: "Азамат", channelPhone: "77771148659", contactPhone: "77000000099", message: msg, ...x });
+  const inc = ev("ev-1", "message.incoming", { id: "po-msg-1", text: "Здравствуйте, хочу записаться", replyTo: null, direction: "inbound", externalRef: "wamid.real.1", messageType: "text" });
+  assert.equal((await hook(s, inc)).status, 200);
+  assert.equal((await hook(s, inc)).status, 200, "повтор того же события");
+  const h = s.hist("wa", "barber", "77000000099");
+  assert.ok(h, "чат появился");
+  assert.equal(h.turns.filter(t => t.role === "user" && /хочу записаться/.test(t.text)).length, 1, JSON.stringify(h.turns));
+  assert.equal(s.kv.json("pol:barber").ok, true);
+  await hook(s, ev("ev-2", "message.outgoing", { id: "po-msg-2", text: "ответ из кабинета", direction: "outbound", externalRef: "wamid.out.2", messageType: "text" }));
+  assert.match(s.kv.json("pol:barber").why, /исходящее/);
+  assert.equal(s.hist("wa", "barber", "77000000099").turns.filter(t => /ответ из кабинета/.test(t.text)).length, 0);
+  const meta = poToMeta(ev("ev-3", "message.status", { id: "po-msg-3", externalRef: "wamid.sent.3" }, { status: "delivered" }), "chan-1");
+  assert.deepEqual([meta.entry[0].changes[0].value.statuses[0].id, meta.entry[0].changes[0].value.statuses[0].status], ["wamid.sent.3", "delivered"]);
+  const fail = poToMeta(ev("ev-4", "message.failed", { id: "po-msg-4", externalRef: "wamid.sent.4" }, { error: { code: 131049, message: "healthy ecosystem" } }), "chan-1");
+  assert.deepEqual(fail.entry[0].changes[0].value.statuses[0].errors[0].code, 131049);
+});

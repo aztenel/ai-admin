@@ -16,6 +16,9 @@ export function poWhy(body, channel, meta) {
   if (meta) return "";
   if (!body || typeof body !== "object") return "тело не JSON";
   const type = String(body.type || "");
+  if (type === "message.outgoing") return "исходящее сообщение (не от клиента)";
+  if (type === "message.incoming") return "входящее без отправителя (contactPhone) или номера сообщения";
+  if (/^message\./.test(type)) return `событие «${type.slice(0, 40)}» без статуса доставлено/прочитано/ошибка или без номера сообщения`;
   if (type !== "message" && type !== "status") return `неизвестный вид события «${type.slice(0, 40) || "нет поля type"}»`;
   if (type === "message") {
     const m = body.message || {};
@@ -71,6 +74,26 @@ export function poToMeta(body, channel) {
   if (!body || typeof body !== "object") return null;
   const type = String(body.type || "");
   const wrap = (/** @type {string} */ field, /** @type {any} */ value) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field, value: { messaging_product: "whatsapp", metadata: { phone_number_id: channel }, ...value } }] }] });
+  // Настоящий формат Pushon (живая проверка 21.11.2026, «Проверка запуска»): type «message.incoming» (и, видимо, «message.outgoing»,
+  // «message.status»), поля верхнего уровня id, type, message, version, accountId, occurredAt, contactName, channelPhone, contactPhone;
+  // в message — id, text, replyTo, direction, externalRef, messageType. Документация описывала другой вид (type «message»), он ниже
+  if (/^message\./.test(type)) {
+    const m = body.message && typeof body.message === "object" ? body.message : {};
+    const ids = [m.externalRef, m.id, body.messageId].filter(Boolean).map(String), mid = ids.find(x => /^wamid\./.test(x)) || ids[0] || "";
+    if (type === "message.incoming") {
+      const msg = poMsg({ id: mid, from: body.contactPhone || m.from, payload_type: m.messageType || m.type || "text", text: m.text, caption: m.caption,
+        mediaId: m.mediaId || m.media_id, mime_type: m.mimeType || m.mime_type, timestamp: body.occurredAt || m.timestamp });
+      return msg ? wrap("messages", { contacts: [{ wa_id: msg.from, profile: { name: String(body.contactName || "") } }], messages: [msg] }) : null;
+    }
+    // статус исходящего: вид события («message.delivered») или поле status — доставлено, прочитано, ошибка («отправлено» Pushon не шлёт)
+    const st = String(body.status || m.status || type.slice(8)).toLowerCase().replace(/^delivery$/, "delivered");
+    if (/^(sent|delivered|read|failed|error)$/.test(st) && mid) {
+      const ok = st === "error" ? "failed" : st, er = body.error || m.error, e = er && typeof er === "object" ? er : er ? { message: String(er) } : null;
+      return wrap("messages", { statuses: [{ id: mid, status: ok, timestamp: unix(body.occurredAt), recipient_id: digits(body.contactPhone),
+        ...(ok === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message)) || "не доставлено") }] } : {}) }] });
+    }
+    return null; // исходящие (наши же и из кабинета Pushon) и прочее — боту не нужны
+  }
   if (type === "message") {
     const m = body.message || {};
     if (String(body.direction || "inbound") !== "inbound") return null;

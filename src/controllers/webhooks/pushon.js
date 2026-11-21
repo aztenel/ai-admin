@@ -26,7 +26,9 @@ export async function handlePOClient(request, env, ctx, id, url) {
   if (!body) { ctx.waitUntil(poNote(env, id, { ok: false, why: "тело не JSON" })); return EMPTY(); }
   const channel = String(env["PHONE_NUMBER_ID_" + up] || ""), wx = { client: id, signed: true, origin: url.origin };
   // повтор доставки: то же сообщение или тот же статус того же сообщения
-  const dupKey = body.type === "message" ? "pom:" + String((body.message && body.message.id) || "") : body.type === "status" ? `pos:${body.messageId || ""}:${body.status || ""}` : "";
+  // настоящий формат (21.11.2026): у каждого события свой id — повтор доставки того же события отсекаем по нему
+  const dupKey = /^message\./.test(String(body.type || "")) && body.id ? "poe:" + String(body.id).slice(0, 80)
+    : body.type === "message" ? "pom:" + String((body.message && body.message.id) || "") : body.type === "status" ? `pos:${body.messageId || ""}:${body.status || ""}` : "";
   const prep = async () => {
     if (dupKey.length > 5 && await seenBefore(env, dupKey)) return null;
     const meta = poToMeta(body, channel), why = poWhy(body, channel, meta);
