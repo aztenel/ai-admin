@@ -69,7 +69,7 @@ type ListRaw = {
   tpls?: { name: string; lang?: string; params?: unknown[]; body?: string }[];
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
   fail: { n: number; codes: CampaignFail[] } | null; used: number;
-  health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string } | null;
+  health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string; via?: string } | null;
   ga: { ready: boolean; state: string; phone: string; hook: boolean; why: string; warn: string; used: number; cap: [number, number]; hold: string; bcOff?: string; bcHow?: string; bcOn?: boolean } | null;
   list: RowRaw[]; now: number;
 };
@@ -201,6 +201,7 @@ function overview(d: ListRaw): CampaignsOverview {
     ...(h?.phone ? { phone: h.phone } : {}),
     ...(h?.name ? { name: h.name } : {}),
     ...(h?.error ? { infoError: h.error } : {}),
+    ...(h?.via === "pushon" ? { via: "pushon" as const } : {}),
   };
   const g = d.ga;
   const bot: BotNumberState | null = g

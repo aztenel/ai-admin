@@ -124,7 +124,7 @@ export async function bcHealth(env, route) {
   const cr = waCreds(env, route);
   if (route && wzOn(env, route.client)) return wzHealth(env, cr.token, cr.pnid); // номер через партнёра Meta Wazzapo
   // Pushon качество и предел номера по API не отдаёт (документация, 15.11.2026): смотреть в кабинете Pushon или WhatsApp Manager
-  if (route && poOn(env, route.client)) return { phone: "", name: "", quality: "", limit: 0 };
+  if (route && poOn(env, route.client)) return { phone: "", name: "", quality: "", limit: 0, via: "pushon" };
   const get = async (/** @type {string} */ f) => { const r = await fetch(`${GRAPH}/${cr.pnid}?fields=${f}`, { headers: { authorization: "Bearer " + cr.token } }); let j = /** @type {any} */ ({}); try { j = await r.json(); } catch (e) {} return r.ok ? j : { error: { code: +(j.error && j.error.code) || r.status } }; };
   try {
     let j = await get("display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit"); // у старых версий API предел лежит в другом поле

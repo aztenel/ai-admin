@@ -172,7 +172,13 @@ export function MainNumber({ ws, ov, owner, onChanged }: { ws: string; ov: Campa
             </span>
           </p>
         )}
-        {m.ready && m.quality === "unknown" && !m.infoError && <p className="py-3 text-sm text-fg-3">Качество номера Meta не сообщила.</p>}
+        {m.ready && m.quality === "unknown" && !m.infoError && (
+          <p className="py-3 text-sm text-fg-3">
+            {m.via === "pushon"
+              ? "Pushon не передаёт качество и предел номера. Их видно в кабинете Pushon, в карточке канала. Проверяйте качество после каждой рассылки."
+              : "Качество номера Meta не сообщила."}
+          </p>
+        )}
         {m.infoError && (
           <p className="flex gap-2 py-3 text-sm text-fg-2">
             <CircleAlert aria-hidden className="mt-px size-4 shrink-0 text-fg-3" strokeWidth={2} />

@@ -1,7 +1,7 @@
 // Разделы мастера рассылки: кому, сообщение (шаблон Meta), часы и предел, проверка (предпросмотр, стоимость, пробная себе), запуск.
 // На телефоне — по одному на экран, на компьютере — одной формой. Тексты сервера (ошибки, правила, ответ пробной отправки) — как есть.
 import { CircleCheck, FileUp, Plus, RefreshCw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Banner, Button, Field, IconButton, Segmented, Skeleton, Spinner } from "@/components/ui";
 import { formatPhone, plural, shortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -207,6 +207,14 @@ export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl
     const t = tpls.find((x) => x.name === name);
     if (t) set({ tpl: t.name, lang: t.lang, text: t.body, params: t.params.length ? [...t.params] : [] });
   };
+  // название совпало с одобренным шаблоном (выбран из списка, вписан руками или остался в черновике) — язык и подстановки берём из
+  // шаблона сами: живая проба 21.11.2026 — шаблон выбран, а подстановок 0 (черновик с тем же названием, выбор не сработал)
+  const known = tpls.find((x) => x.name === f.tpl.trim());
+  useEffect(() => {
+    if (!known) return;
+    const same = f.lang === known.lang && f.params.length === known.params.length && f.params.every((p, i) => p === known.params[i]);
+    if (!same || !f.text.trim()) set({ lang: known.lang, params: [...known.params], ...(f.text.trim() ? {} : { text: known.body }) });
+  }, [known, f.lang, f.params, f.text]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       {tpls.length > 0 && (
