@@ -77,7 +77,8 @@ test("создание рассылки из сегмента: список на
   assert.ok(![101, 104, 109].some(i => t.includes(dg(i))), "в ответе нет номеров");
   const b = s.kv.json("bc:winchester:" + d.b.id);
   assert.equal(b.src, "crm"); assert.equal(b.segId, "pora"); assert.equal(b.seg, "Пора на стрижку"); assert.equal(b.total, 3); assert.equal(b.by, "staff"); assert.equal(b.status, "ready");
-  assert.deepEqual(s.kv.json(`bcr:winchester:${d.b.id}:0`), [[dg(104), "Данияр"], [dg(101), "Арман"], [dg(109), ""]], "свежие визиты первыми, имя-пометка не подставляется, номера из браузера нет");
+  assert.deepEqual(s.kv.json(`bcr:winchester:${d.b.id}:0`).map(x => x.slice(0, 2)), [[dg(104), "Данияр"], [dg(101), "Арман"], [dg(109), ""]], "свежие визиты первыми, имя-пометка не подставляется, номера из браузера нет");
+  assert.deepEqual(s.kv.json(`bcr:winchester:${d.b.id}:0`)[1].slice(2, 4), ["Тони", "Мужская стрижка"], "мастер и услуга последнего визита — для подстановок шаблона (21.11.2026)");
   const st = await (await sw.post("/api/bc/create", { ...FORM, segment: "staff:Азамат" })).json();
   assert.equal(st.ok, true); assert.equal(s.kv.json(`bcr:winchester:${st.b.id}:0`).length, 1);
   const empty = await (await own.post("/api/bc/create", { ...FORM, segment: { id: "pora", staff: "Азамат" } })).json();
@@ -192,7 +193,7 @@ test("автосценарий: выключен — ничего; включё�
   const [b] = bcs(s);
   assert.equal(b.by, "auto"); assert.equal(b.status, "running"); assert.equal(b.src, "crm"); assert.equal(b.segId, "all"); assert.equal(b.tpl, "pora_na_strizhku");
   assert.deepEqual(b.params, ["{имя}"]); assert.equal(b.from, 11); assert.equal(b.to, 20); assert.equal(b.total, 2); assert.equal(b.name, "Пора на стрижку · 03.10");
-  assert.deepEqual(s.kv.json(`bcr:winchester:${b.id}:0`), [[dg(202), "Данияр"], [dg(201), "Арман"]], "ровно 28 дней, без «стоп», записанного и уже получившего; предел 2 — постоянные первыми");
+  assert.deepEqual(s.kv.json(`bcr:winchester:${b.id}:0`).map(x => x.slice(0, 2)), [[dg(202), "Данияр"], [dg(201), "Арман"]], "ровно 28 дней, без «стоп», записанного и уже получившего; предел 2 — постоянные первыми");
   assert.deepEqual(s.kv.json("bcrun"), [{ c: "winchester", id: b.id }]); assert.ok(/Пора на стрижку/.test(s.kv.json("bclast:winchester").text));
   assert.equal(await autoRun(s.env, AT + 60e3), 0, "второй раз за день — нет"); assert.equal(bcs(s).length, 1);
   await s.cron(); // фоновая отправка (12:00 — в часах 11–20)
@@ -206,7 +207,7 @@ test("автосценарий: выключен — ничего; включё�
   await checked(s, AT + 86400e3);
   const r = await autoOne(s.env, W, AT + 86400e3); // назавтра: 28 дней — у Ерлана (вчера было 27); база — суточной давности
   assert.equal(r.state, "sent"); assert.equal(r.n, 1);
-  assert.deepEqual(s.kv.json(`bcr:winchester:${r.id}:0`), [[dg(207), "Ерлан"]]);
+  assert.deepEqual(s.kv.json(`bcr:winchester:${r.id}:0`).map(x => x.slice(0, 2)), [[dg(207), "Ерлан"]]);
   assert.equal(net.tg.filter(x => /Пора на стрижку/.test(x.text || "") && /не отправлен/.test(x.text)).length, 0, "пропусков не было");
 });
 
@@ -535,4 +536,17 @@ test("ТЗ v4: календарь — реактивация второго но
   if (d40) assert.equal(d40.marketing.allowed, 1, "через 40 дней Арман уже не «был недавно»: " + JSON.stringify(d40.marketing));
   assert.equal(d5.marketing.planned, 0, "реклама со второго номера под запретом gaNoBroadcast — план 0");
   assert.match(r.auto.locked, /выключена/);
+});
+
+test("шаблон Meta по базе с {мастер} и {дней}: каждому — его мастер и дни после визита (живая проверка 21.11.2026: в предпросмотре «Ваш мастер ваш мастер»); в предпросмотре — данные первого клиента", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const form = { ...FORM, tpl: "w09_davno_ne_videlis", params: ["{имя}", "{мастер}", "{дней}"], text: "{{1}}, ваш мастер {{2}}, прошло {{3}}. СТОП — отказ" };
+  const ck = await (await own.post("/api/bc/check", { ...form, segment: "pora" })).json();
+  assert.ok(!ck.preview.includes("ваш мастер") && !ck.preview.includes("несколько недель"), JSON.stringify(ck.preview));
+  const d = await (await own.post("/api/bc/create", { ...form, segment: "pora" })).json();
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
+  await s.cron();
+  const p = to => tpls().find(x => x.body.to === to).body.template.components[0].parameters.map(x => x.text);
+  assert.deepEqual(p(dg(101)), ["Арман", "Тони", "25 дней"]);
+  assert.deepEqual(p(dg(104)).slice(1), ["Тони", "22 дня"]);
 });

@@ -19,7 +19,7 @@ import { bcSeg, bcOptouts } from "./segments.js";
 import { bcRun, bcGaMsg, bcGaText, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "./sender.js";
 import { render, dataFor, normName, textIssues, toCanonical, MISSING_WHY } from "./render.js";
 import { libraryOf, companyOf, DEMO, STOP_RU, STOP_KK } from "./library.js";
-import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel } from "../crm/segments.js";
+import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel, daysSince } from "../crm/segments.js";
 
 /** @typedef {{ list: any[], dup: number, bad: string[], badN: number, cut: number, errors: string[], empty: string, noList: boolean,
  *   seg?: { label: string, out: number, noDate: number }, crm: { id: string, label: string, at: number, total: number } | null,
@@ -138,7 +138,9 @@ async function crmRecipients(env, c, body, now, o) {
   const spec = { id: sp.id, ...(sp.days != null ? { days: sp.days } : {}), ...(sp.from != null ? { from: sp.from } : {}), ...(sp.to != null ? { to: sp.to } : {}), ...(sp.staff ? { staff: sp.staff } : {}) };
   const all = (await crmPick(env, c, sp.id, now, { ...flt, view })) || [], label = crmSegLabel(sp);
   const picked = o.limit ? all.slice(0, o.limit) : all;
-  return { ...none, list: picked.map(x => [x.phone, bcName(x.name)]), errors: [], crm: { id: sp.id, label, at: view.snap.at, total: all.length }, // имя — как из Excel: пометки администратора («Арман должник») в сообщение не попадут
+  // мастер, услуга и последний визит — в строку получателя: без них шаблон Meta уходил с «ваш мастер» и «несколько недель» всем
+  // (живая проверка 21.11.2026, предпросмотр w09 перед первой рассылкой через Pushon)
+  return { ...none, list: picked.map(x => [x.phone, bcName(x.name), String(x.staff || "").slice(0, 60), String(x.svc || "").slice(0, 80), String(x.last || "")]), errors: [], crm: { id: sp.id, label, at: view.snap.at, total: all.length }, // имя — как из Excel: пометки администратора («Арман должник») в сообщение не попадут
     rows: picked, why: crmSegWhy(view, sp.id, flt), view, spec,
     empty: picked.length ? "" : `в сегменте «${label}» сейчас некому писать: остальные просили не писать, без согласия на рекламу, уже записаны, были меньше 14 дней назад или реклама уже была за 30 дней` };
 }
@@ -157,6 +159,25 @@ function gaRows(msg, rows, c) {
   return { list, samples, blocked };
 }
 
+// рассылка шаблоном Meta по базе: подстановка {мастер} или {дней}, а в строке базы их нет — не пишем (иначе «у мастера ваш мастер»)
+/** @param {any} f @param {any[]} list @returns {{ list: any[], blocked: Record<string, number> }} */
+function metaRows(f, list) {
+  const p = (f.params || []).join(" "), needStaff = /\{\s*мастер\s*\}/i.test(p), needDays = /\{\s*дней\s*\}/i.test(p);
+  if (!needStaff && !needDays) return { list, blocked: {} };
+  const out = [], blocked = /** @type {Record<string, number>} */ ({});
+  for (const r of list) {
+    if (needStaff && !r[2]) { blocked.nostaff = (blocked.nostaff || 0) + 1; continue; }
+    if (needDays && !r[4]) { blocked.nodays = (blocked.nodays || 0) + 1; continue; }
+    out.push(r);
+  }
+  return { list: out, blocked };
+}
+// пример подстановок шаблона Meta — на первом клиенте с именем, с его мастером, услугой и днями после визита (как уйдёт при отправке)
+/** @param {any} f @param {any[]} list @param {number} now */
+function metaPreview(f, list, now) {
+  const x = list.find(r => r[1]) || list[0] || [];
+  return f.params.map((/** @type {any} */ t) => bcParam(t, x[1] || "", f.fallback, { staff: x[2], svc: x[3], days: x[4] ? daysSince(String(x[4]), now) : null }));
+}
 // проверка без сохранения: сколько номеров, сколько повторов, кого пропустим, подстановка для первого клиента. Номера базы — маской
 /** @param {Env} env @param {Client} c @param {Record<string, any>} body0 @param {number} now */
 export async function bcCheck(env, c, body0, now) {
@@ -164,14 +185,16 @@ export async function bcCheck(env, c, body0, now) {
   const f = bcFields(body, g ? "none" : "auto"), rc = await bcRecipients(env, c, body, now), errors = f.errors.concat(g ? g.errors : [], rc.errors, rc.crm && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных (смотрите причины ниже)");
-  const list = gr ? gr.list : rc.list, first = (list.find(x => x[1]) || [])[1] || "";
+  const mr = !gr && rc.crm && f.ch !== "ga" ? metaRows(f, rc.list) : null;
+  const list = gr ? gr.list : mr ? mr.list : rc.list, first = (list.find(x => x[1]) || [])[1] || "";
+  if (mr && rc.list.length && !list.length && !errors.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
   let stop = new Set(); if (!rc.crm) { try { stop = await bcOptouts(env, c.id); } catch (e) {} } // в сегменте базы «стоп» уже исключён
   return { ok: list.length > 0 && !errors.length, valid: list.length, named: list.filter(x => x[1]).length, dup: rc.dup, bad: rc.bad, badN: rc.badN, cut: rc.cut, stopped: list.filter(x => stop.has(x[0])).length,
-    ...(rc.seg ? { segOut: rc.seg.out, noDate: rc.seg.noDate, seg: rc.seg.label } : {}), ...(rc.crm ? { segment: rc.crm, excluded: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }) } : {}),
+    ...(rc.seg ? { segOut: rc.seg.out, noDate: rc.seg.noDate, seg: rc.seg.label } : {}), ...(rc.crm ? { segment: rc.crm, excluded: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}), ...(mr ? mr.blocked : {}) }) } : {}),
     ...(g ? { tplId: g.tplId, lang: g.lang, text: f.msg, samples: gr ? gr.samples : [] } : {}),
     ...(body.segment != null && body.segment !== "" ? { funnel: funnelOf(rc, gr ? gr.blocked : {}, list.length) } : {}),
     sample: list.slice(0, 5).map(x => (rc.crm ? maskPhone(x[0]) : "+" + x[0]) + " · " + (x[1] || "без имени")), errors,
-    preview: f.ch === "ga" ? (gr ? gr.samples.slice(0, 1).map(x => x.text) : f.msg ? [bcGaText(f, first)] : []) : f.params.map(t => bcParam(t, first, f.fallback)) };
+    preview: f.ch === "ga" ? (gr ? gr.samples.slice(0, 1).map(x => x.text) : f.msg ? [bcGaText(f, first)] : []) : metaPreview(f, list, now) };
 }
 
 /**
@@ -186,7 +209,9 @@ export async function bcCreate(env, c, body0, now, by, o = {}) {
   const f = bcFields(body, g ? "none" : "auto"), ga = f.ch === "ga", rc = await bcRecipients(env, c, body, now, o), errors = f.errors.concat(g ? g.errors : [], rc.errors, !rc.errors.length && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных");
-  const list = gr ? gr.list : rc.list;
+  const mr = !gr && rc.crm && !ga ? metaRows(f, rc.list) : null;
+  const list = gr ? gr.list : mr ? mr.list : rc.list;
+  if (mr && rc.list.length && !list.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
   const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
   if (name.length < 2) errors.push("дайте рассылке название, для себя");
   if (rc.noList) errors.push("в списке нет ни одного номера");
