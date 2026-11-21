@@ -246,7 +246,10 @@ async function phoneRun(scheme) {
   await tab(page, "Ответы").click();
   ok(`${tag}: «Ответы» — только ответ на напоминание`, (await row(page, "Арман").count()) === 1 && (await page.locator("ul a[href^='#/inbox/']").count()) === 1);
   await tab(page, "Все").click();
-  ok(`${tag}: «Все» — с «спасибо», без чата только с нашим приглашением`, (await row(page, "Тимур").count()) === 1 && /Ещё \d+: писали только мы/.test(await page.locator("section[aria-label='Чаты']").innerText()));
+  await page.waitForFunction(() => /Давно вас не было/.test(document.querySelector("section[aria-label='Чаты']")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
+  const allText = await page.locator("section[aria-label='Чаты']").innerText();
+  // 21.11.2026: владелец хочет видеть и чаты, где писали только мы (рассылка), — они в «Все» сами, без кнопки
+  ok(`${tag}: «Все» — с «спасибо» и с чатом только с нашим приглашением`, (await row(page, "Спасибо 👍").count()) === 1 && /Давно вас не было/.test(allText) && !/Ещё \d+: писали только мы/.test(allText), allText.slice(0, 600));
   await t.shot("1-list-all");
   await tab(page, "Нужен ответ").click();
   await t.shot("1-list-waiting");

@@ -19,7 +19,9 @@ export const filterTest = (me: string): Record<Filter, (c: ConversationSummary) 
   booking: (c) => !!c.attention && (BOOKING_TOPICS.has(c.attention.topic || "") || REQUESTS.has(c.attention.reason)),
   replies: (c) => !!c.attention?.source || (!!c.attention && c.attention.reason === "reply"),
   mine: (c) => !!me && c.assignee === me && (!c.done || !!c.attention),
-  all: (c) => c.inbound,
+  // «Все» — и чаты, где писали только мы (рассылка, напоминание): владелец хочет видеть, что ушло клиенту (21.11.2026);
+  // сервер отдаёт их отдельным списком, пульт подгружает его сам (store.loadOutbound)
+  all: () => true,
   done: (c) => !!c.done && !c.attention,
 });
 

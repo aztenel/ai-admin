@@ -124,6 +124,8 @@ export function parseKey(key: string): ConversationRef | null {
   return i > 0 ? { channelId: key.slice(0, i), externalId: key.slice(i + 1) } : null;
 }
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Что-то пошло не так. Обновите страницу.");
+/** список чатов — новые сверху (чаты рассылки подгружаются отдельно и встают по времени) */
+const byTime = (l: ConversationSummary[]) => l.slice().sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 const CHAT_POLL_MS = 5e3; // открытый чат — чаще списка (15 с): store.tickChat
 const LIST_POLL_D1_MS = 5e3; // список при переписках в D1: «без изменений» стоит один маленький запрос
 const RANK: Record<string, number> = { queued: 0, unknown: 1, sent: 2, delivered: 3, read: 4 }; // как на сервере (services/inbox/status.js)
@@ -204,6 +206,7 @@ class Store {
       navigate({ name: "inbox" }, { replace: true });
     }
     resetNotify();
+    this.outAt = 0;
     for (const k of [...this.pending.keys()]) this.forgetFile(k); // неотправленные файлы прежней компании
     this.set({ wsId: id, phase: "loading", workspace: null, conversations: [], details: {}, outbox: {}, report: null, reportError: undefined, showOut: false, outOnly: 0, operators: [], filter: v && FILTERS.includes(v.filter) ? v.filter : DEFAULT_FILTER, scope: v?.scope || { kind: "all" }, reads: false });
     // адрес с ?c= — как у рабочего пульта (/inbox?c=…): ссылку можно открыть заново и переслать коллеге
@@ -242,7 +245,10 @@ class Store {
     const workspace = { ...snap.workspace, channels: mergeChannels(snap.workspace.channels, report?.channels) };
     // показанные по кнопке чаты только с нашими сообщениями не пропадают при обновлении списка
     const keep = this.state.showOut ? this.state.conversations.filter((c) => !c.inbound && !snap.conversations.some((x) => x.key === c.key)) : [];
-    this.set({ workspace, conversations: this.rowStatus(keep.length ? [...snap.conversations, ...keep] : snap.conversations), truncated: snap.truncated, outOnly: snap.outOnly || 0, operators: snap.operators || [], scope: validScope(workspace, this.state.scope), reads: !!snap.reads });
+    const rest = Math.max(0, (snap.outOnly || 0) - (this.state.showOut ? keep.length : 0));
+    this.set({ workspace, conversations: this.rowStatus(keep.length ? byTime([...snap.conversations, ...keep]) : snap.conversations), truncated: snap.truncated, outOnly: rest, operators: snap.operators || [], scope: validScope(workspace, this.state.scope), reads: !!snap.reads });
+    // чаты только с нашими сообщениями (рассылка) — сразу в списке «Все», без кнопки; новые — не чаще раза в 30 с
+    if (rest && Date.now() - this.outAt > 30_000) { this.outAt = Date.now(); void this.loadOutbound(); }
     if (this.open) this.readMark(this.open);
     if (this.state.mode === "live") notifyWaiting(snap.conversations, this.open, (key) => navigate({ name: "inbox", conv: key }));
   }
@@ -589,13 +595,15 @@ class Store {
     return this.src.bookingCard(ws, ref);
   }
   /** Чаты только с нашими сообщениями — по кнопке под списком «Все». */
+  private outAt = 0;
   async loadOutbound() {
     const ws = this.state.wsId;
     if (!this.src?.outboundOnly || !ws) return;
     try {
       const extra = await this.src.outboundOnly(ws);
+      if (this.state.wsId !== ws) return; // пока шёл запрос, открыли другую компанию
       const have = new Set(this.state.conversations.map((c) => c.key));
-      this.set({ showOut: true, outOnly: 0, conversations: [...this.state.conversations, ...extra.filter((c) => !have.has(c.key))] });
+      this.set({ showOut: true, outOnly: 0, conversations: byTime([...this.state.conversations, ...extra.filter((c) => !have.has(c.key))]) });
     } catch (e) {
       this.set({ reportError: errText(e) });
     }

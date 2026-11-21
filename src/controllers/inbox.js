@@ -99,7 +99,7 @@ export async function inboxApi(request, env, url, s, ctx) {
       const lines = await linesOf(env, cid, lineChans(env, cid), ctx);
       // reads — «прочитано» общее для всех сотрудников (переписки в D1): пульт сообщает серверу, что открыл чат (act: read)
       return jsonP({ client, lines, ops: await opsOf(env, cid), need, total: inb.length, outOnly: out.length, more: more || inb.length > 1000,
-        chats: (q.get("f") === "out" ? out.slice(0, 300) : inb.slice(0, 1000)), now, ...(ver ? { ver } : {}), ...(d1 ? { reads: true } : {}) });
+        chats: (q.get("f") === "out" ? out.slice(0, 1000) : inb.slice(0, 1000)), now, ...(ver ? { ver } : {}), ...(d1 ? { reads: true } : {}) });
     }
     return jsonP({ client, need, total: rows.length, more, chats: (q.get("f") === "need" ? rows.filter(r => r.nd) : rows).slice(0, 200), now });
   }

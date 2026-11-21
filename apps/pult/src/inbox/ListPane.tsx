@@ -145,7 +145,7 @@ export function ListPane({ openKey, onOpen, className, inert }: { openKey?: stri
             Показаны последние {truncated.shown} из {truncated.total}. Ждущие ответа показаны все.
           </p>
         )}
-        {/* чаты, где писали только мы (напоминание, ответ с телефона), — не переписки: в списке их нет, по кнопке — в «Все» */}
+        {/* чаты, где писали только мы (рассылка, напоминание), пульт подгружает в «Все» сам; кнопка — если подгрузка не удалась */}
         {phase === "ready" && !q && filter === "all" && !!outOnly && (
           <p className="px-4 py-4 text-center text-xs text-fg-3">
             Ещё {outOnly}: писали только мы, клиент не отвечал.{" "}
