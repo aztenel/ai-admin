@@ -73,7 +73,7 @@ const unix = ts => { const t = Date.parse(String(ts || "")); return String(Math.
 
 // вид вложения Pushon → вид Meta (handleWAMessage)
 /** @type {Record<string, string>} */
-const KINDS = { image: "image", document: "document", audio: "audio", voice: "audio", video: "video", sticker: "sticker", location: "location", contacts: "contacts" };
+const KINDS = { image: "image", photo: "image", document: "document", file: "document", audio: "audio", voice: "audio", ptt: "audio", video: "video", sticker: "sticker", location: "location", contacts: "contacts" };
 
 // ссылка на файл из вебхука: только https на имя хоста (не IP, не localhost, без порта и логина) — пульт её потом скачивает сервером
 /** @param {string} v */
