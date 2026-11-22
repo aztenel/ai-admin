@@ -103,6 +103,18 @@ function SegmentPicker({ f, set, r, errs, crm, base, owner }: P & { crm?: CrmOve
           </div>
         </Group>
       )}
+      {staff.length > 0 && (
+        <Group title="Не писать клиентам мастеров" note="Мастер в отпуске или больше не работает — его клиентам рассылка не уйдёт (иначе текст «ваш мастер будет рад» придёт про него).">
+          {staff.map((s) => {
+            const m = s.id.slice(6), on = f.away.includes(m);
+            return (
+              <Checkbox key={m} checked={on} onChange={(v) => set({ away: v ? [...f.away, m] : f.away.filter((x) => x !== m) })}>
+                {m}
+              </Checkbox>
+            );
+          })}
+        </Group>
+      )}
       {!f.filters ? (
         <Button variant="ghost" icon={SlidersHorizontal} onClick={() => set({ filters: true })} className="-mt-3 mb-5 text-accent-ink hover:text-accent-ink">
           Уточнить: дни с визита, мастер

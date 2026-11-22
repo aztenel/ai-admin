@@ -550,3 +550,20 @@ test("шаблон Meta по базе с {мастер} и {дней}: кажд�
   assert.deepEqual(p(dg(101)), ["Арман", "Тони", "25 дней"]);
   assert.deepEqual(p(dg(104)).slice(1), ["Тони", "22 дня"]);
 });
+
+test("22.11.2026: «Айдос же в отпуске» — клиентам мастеров из списка away шаблон не уходит; в переписке — полный текст шаблона, а не «[Рассылка…]»", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const form = { ...FORM, tpl: "w09_davno_ne_videlis", params: ["{имя}", "{мастер}"], text: "Добрый день, {{1}}! ⏎ Ваш мастер {{2}} будет рад вас видеть" };
+  const ck = await (await own.post("/api/bc/check", { ...form, segment: "all", away: ["тони"] })).json();
+  assert.ok(ck.excluded.some(x => x.code === "away" && x.n > 0), JSON.stringify(ck.excluded));
+  assert.ok(!ck.preview.includes("Тони"), JSON.stringify(ck.preview));
+  const d = await (await own.post("/api/bc/create", { ...form, segment: "all", away: ["Тони"] })).json();
+  assert.equal(d.ok, true, JSON.stringify(d)); assert.deepEqual(d.b.away, ["тони"]);
+  assert.equal((await (await own.post("/api/bc/act", { c: "winchester", id: d.b.id, act: "start" })).json()).ok, true);
+  await s.cron();
+  const sent = tpls().map(x => x.body.template.components[0].parameters.map(p => p.text));
+  assert.ok(sent.length > 0 && sent.every(p => p[1] !== "Тони"), JSON.stringify(sent));
+  const h = s.hist("wa", "winchester", dg(110));
+  const t = h && h.turns.find(x => x.bc);
+  assert.ok(t && /Ваш мастер Азамат будет рад/.test(t.text) && t.text.includes("\n") && !/\[Рассылка/.test(t.text), JSON.stringify(t));
+});

@@ -18,6 +18,7 @@ import { bcParse, bcName } from "./parse.js";
 import { bcSeg, bcOptouts } from "./segments.js";
 import { bcRun, bcGaMsg, bcGaText, GA_CAP, GA_MSG_MAX, GA_CAPTION_MAX } from "./sender.js";
 import { render, dataFor, normName, textIssues, toCanonical, MISSING_WHY } from "./render.js";
+import { awayList, staffAway } from "./away.js";
 import { libraryOf, companyOf, DEMO, STOP_RU, STOP_KK } from "./library.js";
 import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel, daysSince } from "../crm/segments.js";
 
@@ -28,7 +29,7 @@ import { crmView, crmPick, crmSegSpec, crmSegLabel, crmSegWhy, crmFunnel, daysSi
 // почему человеку из сегмента не пишем — по-человечески (коды — crmView и render.js)
 /** @type {Record<string, string>} */
 export const EXCL_WHY = { stop: "просили не писать", noconsent: "нет согласия на рекламу", fut: "уже записаны", recent: "были меньше 14 дней назад",
-  marketed: "реклама уже была за 30 дней", text: "текст не собрался" };
+  marketed: "реклама уже была за 30 дней", text: "текст не собрался", away: "мастер в отпуске или не работает" };
 const MISSING_CODE = /** @type {Record<string, string>} */ ({ "staff.name": "nostaff", "service.name": "nosvc", "visit.days_since": "nodays", "company.name": "nocompany", "booking.url": "nolink", "company.address": "noaddr" });
 for (const [k, code] of Object.entries(MISSING_CODE)) EXCL_WHY[code] = MISSING_WHY[k];
 /** @param {Record<string, number>} m @returns {{ code: string, why: string, n: number }[]} */
@@ -160,12 +161,13 @@ function gaRows(msg, rows, c) {
 }
 
 // рассылка шаблоном Meta по базе: подстановка {мастер} или {дней}, а в строке базы их нет — не пишем (иначе «у мастера ваш мастер»)
-/** @param {any} f @param {any[]} list @returns {{ list: any[], blocked: Record<string, number> }} */
-function metaRows(f, list) {
+/** @param {any} f @param {any[]} list @param {string[]} [away] мастера, чьим клиентам не пишем @returns {{ list: any[], blocked: Record<string, number> }} */
+function metaRows(f, list, away = []) {
   const p = (f.params || []).join(" "), needStaff = /\{\s*мастер\s*\}/i.test(p), needDays = /\{\s*дней\s*\}/i.test(p);
-  if (!needStaff && !needDays) return { list, blocked: {} };
+  if (!needStaff && !needDays && !away.length) return { list, blocked: {} };
   const out = [], blocked = /** @type {Record<string, number>} */ ({});
   for (const r of list) {
+    if (away.length && staffAway(r[2], away)) { blocked.away = (blocked.away || 0) + 1; continue; }
     if (needStaff && !r[2]) { blocked.nostaff = (blocked.nostaff || 0) + 1; continue; }
     if (needDays && !r[4]) { blocked.nodays = (blocked.nodays || 0) + 1; continue; }
     out.push(r);
@@ -185,7 +187,7 @@ export async function bcCheck(env, c, body0, now) {
   const f = bcFields(body, g ? "none" : "auto"), rc = await bcRecipients(env, c, body, now), errors = f.errors.concat(g ? g.errors : [], rc.errors, rc.crm && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных (смотрите причины ниже)");
-  const mr = !gr && rc.crm && f.ch !== "ga" ? metaRows(f, rc.list) : null;
+  const mr = !gr && rc.crm && f.ch !== "ga" ? metaRows(f, rc.list, awayList(body.away)) : null;
   const list = gr ? gr.list : mr ? mr.list : rc.list, first = (list.find(x => x[1]) || [])[1] || "";
   if (mr && rc.list.length && !list.length && !errors.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
   let stop = new Set(); if (!rc.crm) { try { stop = await bcOptouts(env, c.id); } catch (e) {} } // в сегменте базы «стоп» уже исключён
@@ -209,7 +211,7 @@ export async function bcCreate(env, c, body0, now, by, o = {}) {
   const f = bcFields(body, g ? "none" : "auto"), ga = f.ch === "ga", rc = await bcRecipients(env, c, body, now, o), errors = f.errors.concat(g ? g.errors : [], rc.errors, !rc.errors.length && rc.empty ? [rc.empty] : []);
   const gr = g && rc.rows && f.msg ? gaRows(f.msg, rc.rows, c) : null;
   if (gr && rc.rows && rc.rows.length && !gr.list.length && !errors.length) errors.push("никому из сегмента этот текст не собрать: не хватает данных");
-  const mr = !gr && rc.crm && !ga ? metaRows(f, rc.list) : null;
+  const away = awayList(body.away), mr = !gr && rc.crm && !ga ? metaRows(f, rc.list, away) : null;
   const list = gr ? gr.list : mr ? mr.list : rc.list;
   if (mr && rc.list.length && !list.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
   const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
@@ -229,7 +231,7 @@ export async function bcCreate(env, c, body0, now, by, o = {}) {
   /** @type {Record<string, any>} */
   const b = ga ? { ...base, ch: "ga", msg: f.msg, ...(g ? { render: 1, lang: g.lang, ...(g.tplId ? { tplId: g.tplId } : {}), ...(g.stop ? { stop: 1 } : {}), ...(fn ? { sel: fn.segment } : {}),
     drop: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}) }).slice(0, 12) } : {}) }
-    : { ...base, tpl: f.tpl, lang: f.lang, params: f.params };
+    : { ...base, tpl: f.tpl, lang: f.lang, params: f.params, ...(away.length ? { away } : {}) };
   if (o.start) bcStarting(b, now);
   try { await bcChunksSave(env, c.id, b.id, list); await bcPut(env, c.id, b); }
   catch (e) { console.log("bc create", String(e)); return { ok: false, errors: ["не удалось сохранить список: хранилище не отвечает, попробуйте ещё раз"], status: 500 }; }

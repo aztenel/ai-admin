@@ -15,7 +15,7 @@ import { notify } from "../integrations/telegram/client.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaCall, gaCode, gaWhy, gaKind, gaUnsureNote } from "../integrations/greenapi/client.js";
 import { waCreds } from "../integrations/meta/client.js";
-import { sendTemplate } from "../channels/templates.js";
+import { sendTemplate, bcParam } from "../channels/templates.js";
 import { wzOn, wzHealth } from "../channels/wazzapo.js";
 import { poOn } from "../channels/pushon.js";
 import { sendGreen } from "../channels/greenapi.js";
@@ -24,6 +24,7 @@ import { bcOptouts } from "./segments.js";
 import { crmView, daysSince } from "../crm/segments.js";
 import { crmBookedNow } from "../crm/snapshot.js";
 import { render, dataFor } from "./render.js";
+import { staffAway } from "./away.js";
 import { companyOf } from "./library.js";
 import { bcHold, bcHoldFor, bcFrom, bcHoldEdit, GA_STATE_TEXT, GA_STATE_BAD } from "./holds.js";
 // ================= РАССЫЛКИ: шаблоны WhatsApp по списку клиентов =================
@@ -97,13 +98,23 @@ export async function bcSendGa(env, digits, b, name, r, ready) {
 // сообщением без повода, раздел «Ответы на рассылки» его не видел, а галочки (отчёты Green-API) некуда было ставить. Чат только с нашим
 // сообщением в очередь «Нужен ответ» не встаёт — пульт прячет его под «только наши сообщения». Ключи разные (у каждого клиента
 // свой чат) — по 10 одновременно. Сбой записи рассылку не останавливает
+// текст шаблона Meta так, как его увидел клиент: тело шаблона (b.text, переводы строк — «⏎») с подстановками этого получателя.
+// 22.11.2026 владелец: «рассылка отдаётся шаблоном, а не полным содержимым» — в переписке было «[Рассылка …, шаблон …]». Текста шаблона
+// нет — прежняя пометка
+/** @param {any} b @param {string} name @param {any} x { staff, svc, days } */
+export function bcMetaText(b, name, x) {
+  const body = String(b.text || "").replace(/\s*⏎\s*/g, "\n").trim();
+  if (!body) return `[Рассылка «${String(b.name || "").slice(0, 60)}», шаблон ${String(b.tpl || "").slice(0, 60)}]`;
+  const ps = Array.isArray(b.params) ? b.params : [];
+  return body.replace(/\{\{(\d+)\}\}/g, (/** @type {string} */ all, /** @type {string} */ n) => (ps[+n - 1] != null ? bcParam(String(ps[+n - 1]), name, b.fallback, x) : all));
+}
 /** @param {Env} env @param {string} cid @param {any} b @param {string[][]} list [цифры, имя, номер сообщения, готовый текст, статус, причина]
  *  статус — "sent" (по умолчанию) или "unknown" (Green-API мог принять, причина — в se) @param {number} now */
 async function bcLog(env, cid, b, list, now) {
   const ch = b.ch === "ga" ? "ga" : "wa", bc = String(b.id || "bc").slice(0, 40);
   for (let i = 0; i < list.length; i += 10) {
     await Promise.all(list.slice(i, i + 10).map(([digits, name, mid, ready, st, se]) => {
-      const text = b.ch === "ga" ? ready || bcGaText(b, name) : `[Рассылка «${String(b.name || "").slice(0, 60)}», шаблон ${String(b.tpl || "").slice(0, 60)}]`;
+      const text = b.ch === "ga" ? ready || bcGaText(b, name) : ready || bcMetaText(b, name, {});
       return logTurns(env.KV, `h:${ch}:${cid}:${digits}`, [{ role: "model", text: String(text).slice(0, 1500), t: now, bc, by: "bc", ...(mid ? { mid: mid.slice(0, 80) } : {}), st: st || "sent", ...(se ? { se: String(se).slice(0, 80) } : {}) }])
         .catch(e => console.log("bc log", String(e).slice(0, 120)));
     }));
@@ -328,6 +339,7 @@ export async function bcTick(env, cid, id, gaBusy) {
       if (Date.now() - t0 > 35e3) break; // остаток — в следующую минуту
       if (stop.has(digits)) { b.skipped++; done++; continue; }
       if (no.has(digits) || (allow && !allow.has(digits))) { b.excl = (b.excl || 0) + 1; done++; continue; }
+      if (b.away && staffAway(staff, b.away)) { b.excl = (b.excl || 0) + 1; done++; continue; } // мастер в отпуске — список в рассылке
       let ready = "";
       if (gaCrm) { // текст — из свежей строки базы (мастер, услуга, дни после визита); её нет — из того, что было при создании
         const x = fresh.get(digits), rd = render(b.msg, dataFor(x ? { name: x.n, staff: x.staff, svc: x.svc, d: x.d } : { name, staff, svc, d: last ? daysSince(String(last), now) : null }, co || {}));
@@ -335,7 +347,9 @@ export async function bcTick(env, cid, id, gaBusy) {
         ready = rd.text;
       }
       did = true;
-      const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route, { staff, svc, days: last ? daysSince(String(last), now) : null });
+      const mx = { staff, svc, days: last ? daysSince(String(last), now) : null };
+      if (!ga) ready = bcMetaText(b, name, mx); // в переписку — то, что увидел клиент
+      const r = ga ? await bcSendGa(env, digits, b, name, route.ga, ready) : await sendTemplate(env, digits, b, name, route, mx);
       if (r.ok) { b.sent++; sentNow++; done++; b.streak = 0; b.tmp = 0; if (!ga || gaCrm) marked.push(digits); logged.push([digits, name, String(/** @type {any} */ (r).id || ""), ready]); continue; }
       if (ga && gaKind(r.code) === "net") {
         // Green-API мог принять сообщение (ответа нет, обрыв, срок, 5xx): этому клиенту второй раз не пишем. В отчёте — «неизвестно, дошло

@@ -17,6 +17,8 @@ export type Form = {
   dayFrom: string;
   dayTo: string;
   staff: string;
+  /** Мастера, чьим клиентам не пишем (в отпуске, не работает) — 22.11.2026. */
+  away: string[];
   filters: boolean;
   recipients: string;
   listKind: "" | "idle" | "bday";
@@ -47,6 +49,7 @@ export function initialForm(preset?: { segment?: SegmentSpec }): Form {
     dayFrom: str(s?.from),
     dayTo: str(s?.to),
     staff: s?.staff || "",
+    away: [],
     filters: !!s && (s.from !== undefined || s.to !== undefined || !!s.staff),
     recipients: "",
     listKind: "",
@@ -126,7 +129,10 @@ export function toDraft(f: Form, r: Resolved, now: number): CampaignDraft {
     to: f.to,
     consent: f.consent,
   };
-  if (r.source === "segment") d.segment = r.spec;
+  if (r.source === "segment") {
+    d.segment = r.spec;
+    if (f.away.length) d.away = f.away;
+  }
   else {
     d.recipients = f.recipients;
     if (f.listKind) d.listFilter = { kind: f.listKind, days: Number(f.listDays) };

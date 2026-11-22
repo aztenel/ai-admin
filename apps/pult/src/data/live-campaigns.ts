@@ -342,7 +342,10 @@ export function draftBody(ws: string, d: CampaignDraft): Record<string, unknown>
   if (!bot) Object.assign(b, { tpl: (d.tpl || "").trim(), lang: (d.lang || "ru").trim(), params: d.params || [] });
   // stop — выбор владельца: строка отказа в конце (её добавляет сервер, текст на пульте не меняем)
   else Object.assign(b, { lang: d.lang === "kk" ? "kk" : "ru", stop: d.stop === true, ...(d.tplId ? { tplId: d.tplId } : {}) });
-  if (d.source === "segment") b.segment = d.segment ? segBody(d.segment) : { id: "" };
+  if (d.source === "segment") {
+    b.segment = d.segment ? segBody(d.segment) : { id: "" };
+    if (d.away?.length) b.away = d.away;
+  }
   else {
     b.recipients = d.recipients || "";
     if (d.listFilter) Object.assign(b, { seg: d.listFilter.kind, segDays: d.listFilter.days });

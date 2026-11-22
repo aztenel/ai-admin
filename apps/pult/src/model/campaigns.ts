@@ -287,6 +287,8 @@ export type CampaignDraft = {
   source: "segment" | "list";
   channel: CampaignChannel;
   segment?: SegmentSpec;
+  /** Сегмент базы: мастера, чьим клиентам не пишем (в отпуске, не работает). */
+  away?: string[];
   /** Список: по клиенту на строке, «номер, имя» (вставка из Excel). Разбирает сервер. */
   recipients?: string;
   /** Список: отбор по датам в нём — не были дольше N дней (idle) или день рождения в ближайшие N дней (bday), N 1–365. */
