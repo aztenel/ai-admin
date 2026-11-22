@@ -203,17 +203,23 @@ async function go(tab) { S.tab = tab; render(); window.scrollTo(0, 0); await ref
 
 /* ---------- форма лида (новый и правка) ---------- */
 const seg = (name, opts, cur) => '<div class="grid3">' + opts.map(o => '<button type="button" class="opt" data-seg="' + name + '" data-v="' + o[0] + '" aria-pressed="' + (String(cur ?? "") === String(o[0])) + '">' + o[1] + '</button>').join("") + '</div>';
-function formHtml(l) {
+// Одиночка или сеть (решение владельца 22.11.2026: у сети много адресов и телефонов — вносить их неудобно). Сеть — один лид:
+// один главный номер, число филиалов, адрес не нужен. Одиночка — филиал один, поля «Филиалов» нет. Правка: сеть — если филиалов больше одного.
+const kindOf = l => (l.branches > 1 ? "net" : "one");
+function formHtml(l, kind = kindOf(l)) {
+  const net = kind === "net";
   const f = (id, label, v, ph = "", mode = "") => '<div class="f"><label for="' + id + '">' + label + '</label><input id="' + id + '" value="' + esc(v ?? "") + '" placeholder="' + esc(ph) + '"' + (mode ? ' inputmode="' + mode + '"' : "") + ' autocomplete="off"></div>';
   const dl = (id, arr) => '<datalist id="' + id + '">' + arr.map(o => '<option value="' + esc(o) + '">').join("") + '</datalist>';
-  S.form = { ig_alive: l.ig_alive ?? "", impression: l.impression ?? "" };
+  S.form = { ig_alive: l.ig_alive ?? "", impression: l.impression ?? "", kind };
   return '<div class="scorebox" id="scoreBox"></div>' +
-    f("dName", "Название", l.name, "Barbershop …") + f("dPhone", "Телефон (несколько — через ;)", l.phones, "+7 7__ ___ __ __", "tel") +
+    '<div class="f">' + seg("kind", [["one", "Одиночка"], ["net", "Сеть"]], kind).replace("grid3", "grid2") + '</div>' +
+    f("dName", "Название", l.name, "Barbershop …") + f("dPhone", net ? "Главный номер (один, любого филиала)" : "Телефон", l.phones, "+7 7__ ___ __ __", "tel") +
     '<div class="grid2"><div class="f"><label for="dCity">Город</label><input id="dCity" list="dlCity" value="' + esc(l.city ?? "") + '" placeholder="Астана" autocomplete="off">' + dl("dlCity", S.meta.cities) + '</div>' +
     '<div class="f"><label for="dNiche">Ниша</label><input id="dNiche" list="dlNiche" value="' + esc(l.niche ?? "") + '" placeholder="Барбершоп" autocomplete="off">' + dl("dlNiche", S.meta.niches) + '</div></div>' +
-    f("dAddr", "Адрес", l.address, "Кабанбай батыра, 18") +
+    '<div id="boxAddr"' + (net ? " hidden" : "") + '>' + f("dAddr", "Адрес", l.address, "Кабанбай батыра, 18") + '</div>' +
     '<div class="sec"><div class="lbl">Оценка: 2ГИС</div><div class="grid2">' + f("dReviews", "Отзывов", l.reviews, "380", "numeric") + f("dRating", "Рейтинг", l.rating, "4.9", "decimal") + '</div></div>' +
-    '<div class="sec"><div class="lbl">Оценка: мастера и филиалы</div><div class="grid2">' + f("dMasters", "Мастеров", l.masters, "6", "numeric") + f("dBranches", "Филиалов", l.branches, "1", "numeric") + '</div></div>' +
+    '<div class="sec"><div class="lbl">Оценка: мастера' + (net ? " и филиалы" : "") + '</div><div class="grid2">' + f("dMasters", "Мастеров", l.masters, net ? "20" : "6", "numeric") +
+      '<div id="boxBr"' + (net ? "" : " hidden") + '>' + f("dBranches", "Филиалов", l.branches > 1 ? l.branches : "", "2", "numeric") + '</div></div></div>' +
     '<div class="sec"><div class="lbl">Оценка: Instagram и впечатление</div>' + f("dIg", "Подписчиков", l.ig_followers, "12000", "numeric") +
     '<div class="f"><span class="l">Профиль живой (посты за последний месяц)</span>' + seg("ig_alive", [[1, "Да"], [0, "Нет"], ["", "Не смотрел"]], l.ig_alive) + '</div>' +
     '<div class="f"><span class="l">Ваше впечатление</span>' + seg("impression", IMPRESSIONS, l.impression) + '</div></div>' +
@@ -225,7 +231,8 @@ function formHtml(l) {
 }
 function readForm() {
   const n = id => (val(id) === "" ? null : val(id));
-  return { name: val("dName"), phones: val("dPhone"), city: val("dCity"), niche: val("dNiche"), address: val("dAddr"), reviews: n("dReviews"), rating: n("dRating"), masters: n("dMasters"), branches: n("dBranches"),
+  return { name: val("dName"), phones: val("dPhone"), city: val("dCity"), niche: val("dNiche"), address: val("dAddr"), reviews: n("dReviews"), rating: n("dRating"), masters: n("dMasters"),
+    branches: S.form.kind === "net" ? n("dBranches") : 1,
     ig_followers: n("dIg"), ig_alive: S.form.ig_alive === "" ? null : +S.form.ig_alive, impression: S.form.impression === "" ? null : +S.form.impression, gis_url: val("dGis"), instagram: val("dInsta"),
     booking: val("dBooking"), booking_url: val("dBook"), avg_check: n("dChek"), lpr_name: val("dLpr"), lpr_phone: val("dLprPh"), notes: val("dNote") };
 }
@@ -240,15 +247,23 @@ function markBad(e) { const id = e && e.data && FIELD_IDS[e.data.field]; const e
 function openSheet(html) { $("sheet").innerHTML = html; $("scrim").hidden = false; $("sheet").hidden = false; $("sheet").scrollTop = 0; }
 function closeSheet() { $("scrim").hidden = true; $("sheet").hidden = true; S.cur = null; }
 
-function openNew(keep = {}) {
+// «+» — сначала одиночка или сеть (в 2ГИС это видно сразу: «N филиалов» под адресом)
+function openNew() {
   S.cur = null; S.force = false;
   openSheet('<div class="grab"></div><div class="sh-h"><div><h2>Новый лид</h2></div><button class="x" data-close aria-label="Закрыть">×</button></div>' +
-    formHtml({ city: store.get("city"), niche: store.get("niche"), ...keep }) + '<button class="primary" id="nSave">Сохранить</button><button class="ghost" id="nSaveMore">Сохранить и добавить ещё</button>');
+    '<div class="kinds"><button type="button" class="kind" data-kind="one"><b>Одиночка</b><span>Один адрес</span></button>' +
+    '<button type="button" class="kind" data-kind="net"><b>Сеть</b><span>В 2ГИС «N филиалов»</span></button></div>');
+}
+function openForm(kind) {
+  S.cur = null; S.force = false;
+  openSheet('<div class="grab"></div><div class="sh-h"><div><h2>Новый лид</h2></div><button class="x" data-close aria-label="Закрыть">×</button></div>' +
+    formHtml({ city: store.get("city"), niche: store.get("niche") }, kind) + '<button class="primary" id="nSave">Сохранить</button><button class="ghost" id="nSaveMore">Сохранить и добавить ещё</button>');
   showScore(); $("dName").focus();
 }
 async function saveNew(more) {
   if (S.busy) return; const f = readForm();
   if (!f.name) { $("dName").classList.add("bad"); $("dName").focus(); toast("Впишите название"); return; }
+  if (!netOk(f)) return;
   S.busy = true;
   try {
     const r = await api("/api/leads", { method: "POST", body: { ...f, force: !!S.force } });
@@ -300,9 +315,14 @@ async function saveTouch() {
   try { await api("/api/leads/" + id + "/touch", { method: "POST", body }); closeSheet(); toast((pick ? SN[pick][1] : "Записано") + " · " + name); await refresh(); }
   catch (e) { oops(e); markBad(e); } finally { S.busy = false; }
 }
+// сеть без числа филиалов сохранилась бы одиночкой — спрашиваем число
+function netOk(f) {
+  if (S.form.kind !== "net" || +(f.branches ?? 0) >= 2) return true;
+  $("dBranches").classList.add("bad"); $("dBranches").focus(); toast("Впишите, сколько филиалов (из 2ГИС)"); return false;
+}
 async function saveData() {
-  if (S.busy || !S.cur) return; const id = S.cur.id; S.busy = true;
-  try { await api("/api/leads/" + id, { method: "PATCH", body: readForm() }); toast("Данные сохранены"); await openLead(id); refresh(); }
+  if (S.busy || !S.cur) return; const f = readForm(); if (!netOk(f)) return; const id = S.cur.id; S.busy = true;
+  try { await api("/api/leads/" + id, { method: "PATCH", body: f }); toast("Данные сохранены"); await openLead(id); refresh(); }
   catch (e) { oops(e); markBad(e); } finally { S.busy = false; }
 }
 async function setStage(st) {
@@ -320,7 +340,10 @@ document.addEventListener("click", e => {
     // «перезвонить» и «думает» без срока теряются — подставляем срок, его можно поменять
     const nx = /** @type {HTMLInputElement} */ ($("tNext")); if (!nx.value || nx.dataset.auto) { const v = S.pick === "cb" ? at(1, 11) : S.pick === "think" ? at(2, 12) : 0; nx.value = v ? toInput(v) : ""; nx.dataset.auto = v ? "1" : ""; }
     return; }
-  if ((el = hit("[data-seg]"))) { const k = el.dataset.seg || ""; S.form[k] = el.dataset.v; document.querySelectorAll('[data-seg="' + k + '"]').forEach(b => b.setAttribute("aria-pressed", String(b === el))); showScore(); return; }
+  if ((el = hit("[data-kind]"))) { openForm(el.dataset.kind); return; }
+  if ((el = hit("[data-seg]"))) { const k = el.dataset.seg || ""; S.form[k] = el.dataset.v; document.querySelectorAll('[data-seg="' + k + '"]').forEach(b => b.setAttribute("aria-pressed", String(b === el)));
+    if (k === "kind") { const net = S.form.kind === "net"; $("boxAddr").hidden = net; $("boxBr").hidden = !net; const lb = document.querySelector('label[for="dPhone"]'); if (lb) lb.textContent = net ? "Главный номер (один, любого филиала)" : "Телефон"; }
+    showScore(); return; }
   if ((el = hit("[data-set]"))) { const inp = /** @type {HTMLInputElement} */ ($(el.dataset.set || "")); inp.value = toInput(+(el.dataset.t || 0)); inp.dataset.auto = ""; return; }
   if ((el = hit("[data-copy]"))) { const v = el.dataset.copy || ""; try { navigator.clipboard.writeText(v).then(() => toast("Номер скопирован"), () => toast(v)); } catch (err) { toast(v); } return; }
   if ((el = hit("[data-setst]"))) { setStage(el.dataset.setst); return; }

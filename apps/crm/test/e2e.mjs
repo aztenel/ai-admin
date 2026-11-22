@@ -22,6 +22,9 @@ check("пустая база — подсказка про «+»", /Нажмит
 
 // новый лид: оценка считается на лету
 await p.click("#fab");
+check("«+» — сначала выбор: одиночка или сеть", (await p.locator("[data-kind]").count()) === 2);
+await p.click('[data-kind="one"]');
+check("одиночка — без поля «Филиалов»", await p.locator("#boxBr").isHidden());
 check("без данных — «мало данных»", /Мало данных/.test(await p.textContent("#scoreBox")));
 await p.fill("#dName", "Барбершоп Тигр"); await p.fill("#dPhone", "8 701 111 22 33"); await p.fill("#dCity", "Астана"); await p.fill("#dNiche", "Барбершоп");
 await p.fill("#dReviews", "380"); await p.fill("#dRating", "4,9"); await p.fill("#dMasters", "6"); await p.fill("#dIg", "12000");
@@ -29,6 +32,8 @@ await p.click('[data-seg="ig_alive"][data-v="1"]'); await p.click('[data-seg="im
 check("сильный лид — оценка A, 95", /Оценка 95 из 100/.test(await p.textContent("#scoreBox")) && (await p.textContent("#scoreBox .gr")) === "A");
 await p.fill("#dInsta", "@tigr.barber");
 await p.click("#nSaveMore");
+await p.waitForSelector('[data-kind="net"]');
+await p.click('[data-kind="one"]');
 await p.waitForFunction(() => document.getElementById("dName") && document.getElementById("dName").value === "");
 check("«сохранить и ещё» — форма пустая, город и ниша остались", (await p.inputValue("#dCity")) === "Астана" && (await p.inputValue("#dNiche")) === "Барбершоп");
 await p.fill("#dName", "Слабый салон"); await p.fill("#dPhone", "+7 701 111 22 33"); await p.click("#nSave");
@@ -96,6 +101,18 @@ await p.click('nav [data-tab="script"]');
 check("скрипт: имя подставлено", /Меня зовут Тест/.test(await p.textContent("#view")));
 await p.click('.sc details:has-text("калькулятор") summary'); await p.fill("#cPack", "340000");
 check("калькулятор окупаемости", /вернуть 49 клиентов/.test(await p.textContent("#cOut")));
+
+// сеть: один лид, главный номер, число филиалов обязательно, адреса нет
+await p.click('nav [data-tab="leads"]'); await p.waitForSelector("#fab:not([hidden])");
+await p.click("#fab"); await p.click('[data-kind="net"]');
+check("сеть — поле «Филиалов» есть, адреса нет", (await p.locator("#boxBr").isVisible()) && (await p.locator("#boxAddr").isHidden()) && /Главный номер/.test(await p.textContent('label[for="dPhone"]')));
+await p.fill("#dName", "Сеть Альфа"); await p.fill("#dPhone", "+7 705 000 00 09"); await p.click("#nSave");
+await p.waitForFunction(() => /сколько филиалов/.test(document.getElementById("toast").textContent));
+check("сеть без числа филиалов не сохраняется", await p.locator("#sheet").isVisible());
+await p.fill("#dBranches", "4"); await p.click("#nSave");
+await p.waitForSelector("#sheet", { state: "hidden" });
+check("сеть сохранена с филиалами", (await p.evaluate(() => fetch("/api/leads?q=" + encodeURIComponent("Альфа")).then(r => r.json()))).items.some(l => l.branches === 4));
+if (out) await p.screenshot({ path: out + "/crm-net.png", fullPage: true });
 
 // выход
 await p.click('nav [data-tab="funnel"]'); await p.waitForSelector("#logout"); await p.click("#logout");
