@@ -77,6 +77,8 @@ export interface CampaignSource {
   createCampaign(ws: string, draft: CampaignDraft): Promise<CampaignCreated>;
   /** Запустить / продолжить (start), пауза, остановить совсем, удалить. Сигнал Meta → { kind: "confirm" }: спросить и повторить с force = true. */
   campaignAct(ws: string, id: string, act: CampaignAct, force?: boolean): Promise<CampaignActResult>;
+  /** Предел за 24 часа у рассылки, которая ещё не закончена (только владелец). */
+  campaignCap(ws: string, id: string, cap: number): Promise<CampaignDetail>;
   /** Отправить порцию вручную — только когда campaign.stalled (фон молчит). */
   campaignTick(ws: string, id: string): Promise<CampaignTickResult>;
   /** Пробная отправка черновика на один номер (свой). Ответ — текст сервера «Шаблон отправлен на … — проверьте WhatsApp».

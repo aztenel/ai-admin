@@ -411,6 +411,7 @@ export function createLiveSource(): DataSource {
     checkCampaign: campaignsApi("checkCampaign"),
     createCampaign: campaignsApi("createCampaign"),
     campaignAct: campaignsApi("campaignAct"),
+    campaignCap: campaignsApi("campaignCap"),
     campaignTick: campaignsApi("campaignTick"),
     testSend: campaignsApi("testSend"),
     gaTest: campaignsApi("gaTest"),

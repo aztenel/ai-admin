@@ -20,6 +20,7 @@ import { LaunchControls } from "./launch";
 import { ResultsGrid } from "./Results";
 import { toHuman } from "./vars";
 import { WaBubble } from "./WaBubble";
+import { TextField } from "./wizard/fields";
 
 const nf = new Intl.NumberFormat("ru-RU");
 const TONE: Record<Tone, string> = { ok: "text-positive", run: "text-accent-ink", warn: "text-fg", critical: "text-critical", muted: "text-fg-3" };
@@ -226,6 +227,9 @@ export function CampaignSheet({
               {c.demo && <p className="inline-flex rounded-full border border-brand-gold/50 px-2.5 py-0.5 text-xs font-medium text-fg-2">Демо: вымышленные клиенты</p>}
               {isBot && (c.status === "ready" || planned) ? <Audience c={c} /> : <Progress c={c} />}
               <Notes c={c} now={now} />
+              {owner && c.cap != null && (c.status === "running" || c.status === "paused" || c.status === "ready") && (
+                <CapRow c={c} ws={ws} onChange={onChange} />
+              )}
               {/* у черновика и запланированной итогов ещё нет: сервер отдаёт нули — не показываем их как итоги */}
               {c.results && c.status !== "ready" && !planned && <ResultsGrid r={c.results} onReplies={onReplies} />}
               {!c.results && isBot && c.status !== "ready" && !planned && onReplies && (
@@ -390,6 +394,58 @@ function Progress({ c }: { c: CampaignRow & Partial<CampaignDetail> }) {
       </div>
       {extra.length > 0 && <p className="tnum mt-2 text-sm text-fg-2">{extra.join(" · ")}</p>}
     </section>
+  );
+}
+
+/** Предел за 24 часа — владелец меняет у незаконченной рассылки (22.11.2026: «система сама решает, сколько отправить»). */
+function CapRow({ c, ws, onChange }: { c: CampaignRow & Partial<CampaignDetail>; ws: string; onChange: (x: CampaignDetail) => void }) {
+  const [edit, setEdit] = useState(false), [v, setV] = useState(String(c.cap ?? "")), [busy, setBusy] = useState(false), [err, setErr] = useState("");
+  const max = c.channel === "bot" ? 300 : 100000;
+  const save = async () => {
+    const n = Math.round(+v);
+    if (!(n >= 1 && n <= max)) return setErr(`Число от 1 до ${max.toLocaleString("ru-RU")}`);
+    const src = store.source;
+    if (!src) return;
+    setBusy(true);
+    setErr("");
+    try {
+      onChange(await src.campaignCap(ws, c.id, n));
+      setEdit(false);
+      toast(`Предел: ${n} за 24 часа`);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!edit)
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 text-ui pointer-coarse:text-base">
+        <span>
+          Не больше за 24 часа: <b className="tnum">{c.cap}</b>
+        </span>
+        <Button variant="ghost" size="sm" onClick={() => (setV(String(c.cap ?? "")), setEdit(true))}>
+          Изменить
+        </Button>
+      </p>
+    );
+  return (
+    <div className="space-y-2 rounded-[0.875rem] bg-surface-2 px-4 py-3">
+      <TextField label="Не больше за 24 часа" inputMode="numeric" value={v} onChange={(e) => setV(e.target.value)} error={err || undefined} className="max-w-[12rem]" />
+      <p className="text-sm text-fg-2">
+        {c.channel === "bot"
+          ? "Обычный WhatsApp блокируют за массовые рассылки: не больше 300."
+          : "Считается за скользящие 24 часа по всем рассылкам номера. У Meta свой предел на номер (сейчас 250 новых переписок в сутки) — больше него не уйдёт."}
+      </p>
+      <div className="flex gap-2">
+        <Button busy={busy} onClick={() => void save()}>
+          Сохранить
+        </Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setEdit(false)}>
+          Отмена
+        </Button>
+      </div>
+    </div>
   );
 }
 

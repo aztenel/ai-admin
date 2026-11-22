@@ -102,3 +102,21 @@ test("сигнал Meta: сотрудник не снимает его запу�
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.equal(s.kv.json("bchold:winchester"), null, "владелец снял сигнал");
 });
+
+test("предел за 24 часа: владелец меняет у идущей рассылки (22.11.2026), сотрудник — нет, ожидание пересчитывается", async () => {
+  net.reset();
+  const s = mk(ENV), own = await login(s, OWNER), sw = await login(s, STAFF_W);
+  const made = await (await own.post("/api/bc/create", { ...FORM, name: "Список", cap: 50, recipients: "8 700 000 02 01, Айгерим" })).json();
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const id = made.b.id, key = "bc:winchester:" + id, b0 = s.kv.json(key);
+  await s.kv.api.put(key, JSON.stringify({ ...b0, waitNote: "За последние 24 часа отправлено 50, это предел (50).", waitTill: NOW + 3600e3 }));
+  let r = await sw.post("/api/bc/act", { c: "winchester", id, act: "cap", cap: 150 });
+  assert.equal(r.status, 403);
+  r = await own.post("/api/bc/act", { c: "winchester", id, act: "cap", cap: 0 });
+  assert.equal(r.status, 400);
+  r = await own.post("/api/bc/act", { c: "winchester", id, act: "cap", cap: 150 });
+  const d = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(d)); assert.equal(d.b.cap, 150);
+  const b1 = s.kv.json(key);
+  assert.equal(b1.cap, 150); assert.equal(b1.waitNote, undefined); assert.equal(b1.waitTill, undefined);
+});

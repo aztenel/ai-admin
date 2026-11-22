@@ -258,6 +258,15 @@ export async function bcApi(request, env, url, s) {
       if (plan) cur.at = plan; else delete cur.at;
       await bcPut(env, cid, cur);
       if (!(await bcStarted(env, cid, cur, now))) return jsonP({ error: "Рассылка не попала в очередь отправки: сервер не ответил. Она на паузе, нажмите «Продолжить» через минуту." }, 503);
+    } else if (act === "cap") {
+      // предел за 24 часа у идущей рассылки (22.11.2026, владелец: «система сама решает, сколько отправить»). Только владелец:
+      // предел — защита номера. Номер бота (Green-API) — не больше GA_CAP, как при создании
+      if (s.role !== "owner") return jsonP({ error: "Менять предел может только владелец." }, 403);
+      const cap = Math.round(+body.cap || 0), max = cur.ch === "ga" ? GA_CAP[1] : 100000;
+      if (!(cap >= 1 && cap <= max)) return jsonP({ error: `Предел за 24 часа: число от 1 до ${max.toLocaleString("ru-RU")}.` }, 400);
+      if (cur.status === "done" || cur.status === "stopped") return jsonP({ error: "Рассылка уже закончена." }, 409);
+      cur.cap = cap; delete cur.waitNote; delete cur.waitTill; // ожидание пересчитает следующая порция
+      await bcPut(env, cid, cur);
     } else if (act === "pause") { if (cur.status === "running") { cur.status = "paused"; cur.note = "Остановлена вручную."; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "stop") { if (cur.status !== "done") { cur.status = "stopped"; delete cur.note; await bcPut(env, cid, cur); } await bcRun(env, cid, id, false); }
     else if (act === "delete") { // вместе с рассылкой удаляется и список номеров

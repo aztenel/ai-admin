@@ -587,6 +587,13 @@ export function createDemoCampaigns(role: () => Role): { api: CampaignSource; ro
       w.camps.unshift(c);
       return { campaign: pub(c), dup: r.dup, bad: r.badN, cut: 0 };
     },
+    async campaignCap(ws, id, cap) {
+      await wait(250);
+      const c = camp1(find(ws), id);
+      if (!(cap >= 1 && cap <= (c.channel === "bot" ? 300 : 100000))) throw new ApiError("Предел за 24 часа: число вне допустимого.", 400);
+      c.cap = cap;
+      return pub(c);
+    },
     async campaignAct(ws, id, act, force) {
       await wait(350);
       const w = find(ws), c = camp1(w, id), now = Date.now();

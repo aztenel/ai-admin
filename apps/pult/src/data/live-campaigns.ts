@@ -381,6 +381,9 @@ export const liveCampaigns: CampaignSource = {
       throw e;
     }
   },
+  async campaignCap(ws, id, cap) {
+    return detail((await call<{ b: BRaw }>("/api/bc/act", { c: ws, id, act: "cap", cap, op: getOperator() })).b);
+  },
   async campaignTick(ws, id) {
     const d = await call<{ b: BRaw; state: string }>("/api/bc/tick", { c: ws, id });
     return { campaign: detail(d.b), state: d.state || "" };
