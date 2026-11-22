@@ -10,6 +10,7 @@ import { fixedOf, nicheOf, seenBefore, seenForget, waCoex, markOptout, botOff } 
 import { inboundNeed } from "../../services/inbox/queue.js";
 import { inboundPush } from "../../services/inbox/notify.js";
 import { sendWA } from "../../services/channels/meta.js";
+import { poOn } from "../../services/channels/pushon.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
 import { notifyOnce } from "../../services/notifications/telegram.js";
 import { thinkSafe, dropAsk, STOP } from "../../services/conversation/orchestrator.js";
@@ -275,7 +276,7 @@ export async function handleWAMessage(env, msg, wx) {
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст
   const pressed = msg.type === "button" ? msg.button?.text || msg.button?.payload : msg.type === "interactive" ? msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title : "";
   if (pressed) { await handleWAText(env, "wa", from, String(pressed).trim(), send, wx); return pushAfter(); }
-  if (MEDIA_KIND[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, MEDIA_KIND[msg.type], /^https:\/\//.test(String(o.link || "")) ? String(o.link) : null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
+  if (MEDIA_KIND[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, MEDIA_KIND[msg.type], poOn(env, wx && wx.client) && /^https:\/\//.test(String(o.link || "")) ? String(o.link) : null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
   // реакции и прочее — без ответа
 }
 
