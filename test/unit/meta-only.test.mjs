@@ -43,8 +43,10 @@ test("шаблоны: подстановки по записи журнала, �
   assert.equal(f.text, "Вы записаны на услугу: Мужская стрижка\nБарбер: Тони\nДата: 21 ноября в 15:00.\nЕсли нужно перенести или отменить, напишите сюда.");
   assert.equal(jrTplFill(W, jrTpl({}, W, "rv"), { name: "", services: "Стрижка", staffName: "Тони" }).params[0], "дорогой гость");
   assert.equal(jrTplFill(W, t, { name: "Арман", date: "2026-11-21", time: "15:00", services: "Стрижка", staffName: "" }).miss, "мастер");
-  assert.equal(jrTpl({}, W, "cx"), null, "у отмены шаблона нет");
-  assert.equal(jrTpl({}, W, "h2"), null, "на 777 нет шаблона «сегодня»");
+  // 22.11.2026: на 777 одобрены «сегодня», «перенос», «отмена»
+  assert.deepEqual(jrTplFill(W, jrTpl({}, W, "h2"), { time: "15:00", services: "Мужская стрижка", staffName: "Тони" }).params, ["15:00", "Тони", "Мужская стрижка"]);
+  assert.equal(jrTplFill(W, jrTpl({}, W, "s06"), { date: "2026-11-22", time: "15:00", staffName: "Тони" }).text, "Ваша запись перенесена. Новое время: 22 ноября в 15:00, барбер Тони. Если время не подходит, напишите сюда.");
+  assert.deepEqual(jrTplFill(W, jrTpl({}, W, "cx"), { date: "2026-11-22", time: "15:00" }).params, ["22 ноября", "15:00"]);
   assert.equal(jrTpl({ TPL_S01_WINCHESTER: "zapis_v2:ru" }, W, "s01").name, "zapis_v2");
   assert.equal(jrTpl({ TPL_S01_WINCHESTER: "zapis_v2:ru" }, W, "s01").lang, "ru");
   assert.equal(waKind({ ok: false, status: 0, code: 0 }), "net");
@@ -90,7 +92,7 @@ test("без REMIND_WA_WINCHESTER — ничего; шаблон не приня
   assert.ok(net.tg.some(x => /сервисные сообщения \(шаблоны Meta\) остановлены/.test(x.text)), JSON.stringify(net.tg.map(x => x.text)));
 });
 
-test("пульт: «Автоматические сообщения» — основной номер, тексты шаблонов, текст не правится, у отмены шаблона нет; проверка на свой номер — шаблоном", async () => {
+test("пульт: «Автоматические сообщения» — основной номер, тексты шаблонов, текст не правится, отмена — своим шаблоном (22.11.2026); проверка на свой номер — шаблоном", async () => {
   net.reset();
   const s = mk(ENV), own = await login(s, "owner-key-123456");
   const j = await (await own.go("/api/msg/auto?c=winchester")).json();
@@ -98,12 +100,13 @@ test("пульт: «Автоматические сообщения» — осн
   const conf = j.scenarios.find(x => x.id === "confirm");
   assert.equal(conf.tpl.name, "zapis_podtverzhdena_1794696655812"); assert.equal(conf.text.tpl, true);
   assert.match(conf.preview, /^Вы записаны на услугу: /);
-  assert.match(j.scenarios.find(x => x.id === "cancel").why, /нет одобренного шаблона Meta/);
+  const cx = j.scenarios.find(x => x.id === "cancel");
+  assert.equal(cx.tpl.name, "zapis_otmenena_1795230838630"); assert.match(cx.preview, /^Ваша запись на .+ отменена/);
   assert.match(j.scenarios.find(x => x.id === "birthday").locked, /рассылкой шаблоном Meta/);
   let r = await own.post("/api/msg/auto", { c: "winchester", id: "confirm", text: { ru: "Свой текст" } });
   assert.equal(r.status, 409);
   r = await own.post("/api/msg/auto", { c: "winchester", id: "cancel", on: true });
-  assert.equal(r.status, 409);
+  assert.equal(r.status, 200, await r.text());
   r = await own.post("/api/msg/auto", { c: "winchester", id: "confirm", on: true });
   assert.equal(r.status, 200, await r.text());
   await own.post("/api/msg/auto", { c: "winchester", testPhone: "+7 700 000 70 99" });
