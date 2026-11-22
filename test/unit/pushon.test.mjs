@@ -167,3 +167,13 @@ test("фото клиента через Pushon (22.11.2026, ответ подд
   assert.equal(t.m.url, "https://media.pushon365.ru/files/abc.jpg");
   assert.ok(!/https:/.test(t.text), "ссылка не попадает в текст сообщения");
 });
+
+test("фото клиента — настоящий формат 22.11.2026: message.media.url (filemanager.gupshup.io), text null", async () => {
+  net.reset();
+  const s = mk(ENV);
+  await hook(s, { id: "ev-img2", type: "message.incoming", contactPhone: "77051112255", occurredAt: new Date().toISOString(),
+    message: { id: "m-img2", text: null, media: { url: "https://filemanager.gupshup.io/wa/abc/file?x=1", caption: "мой фейд", filename: null, mimeType: "image/jpeg" }, replyTo: null, direction: "in", externalRef: null, messageType: "image" } });
+  const t = s.hist("wa", "barber", "77051112255").turns.find(x => x.m && x.m.k);
+  assert.equal(t.m.url, "https://filemanager.gupshup.io/wa/abc/file?x=1");
+  assert.equal(t.m.mime, "image/jpeg");
+});

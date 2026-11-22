@@ -79,7 +79,7 @@ const KINDS = { image: "image", document: "document", audio: "audio", voice: "au
 /** @param {string} v */
 const okLink = v => { try { const u = new URL(v); return u.protocol === "https:" && !u.port && !u.username && !u.password && /\.[a-z]{2,}$/i.test(u.hostname) && !/^(localhost|.*\.local|.*\.internal)$/i.test(u.hostname); } catch (e) { return false; } };
 /** @param {string} v */
-const poHost = v => { try { return /(^|\.)pushon365\.(ru|kz)$/i.test(new URL(v).hostname); } catch (e) { return false; } };
+const poHost = v => { try { return /(^|\.)(pushon365\.(ru|kz)|gupshup\.io)$/i.test(new URL(v).hostname); } catch (e) { return false; } };
 /** входящее сообщение Pushon → сообщение в формате Meta, или null @param {any} m @returns {Record<string, any> | null} */
 export function poMsg(m) {
   if (!m || !m.id || !m.from) return null;
@@ -96,7 +96,7 @@ export function poMsg(m) {
     // https://…») стала бы «файлом», который сервер скачает (ревью безопасности 22.11.2026)
     const found = (/https:\/\/[^\s<>"']+/i.exec(raw) || [""])[0], only = raw.trim() === found;
     const link = okLink(found) && (only || poHost(found)) ? found : "", cap = String(m.caption || (text && !m.caption ? String(text).replace(link, "") : "")).trim();
-    return { from, id, timestamp, type: k, [k]: { id: String(m.mediaId || m.media_id || ""), mime_type: String(m.mime_type || ""), caption: cap, ...(link ? { link: link.slice(0, 1000) } : {}) } };
+    return { from, id, timestamp, type: k, [k]: { id: String(m.mediaId || m.media_id || ""), mime_type: String(m.mime_type || ""), caption: cap, ...(link ? { link: link.slice(0, 1000) } : {}), ...(m.filename ? { filename: String(m.filename).slice(0, 120) } : {}) } };
   }
   return { from, id, timestamp, type: kind, [kind]: {} }; // реакции и прочее — общий обработчик их пропускает
 }
@@ -117,8 +117,11 @@ export function poToMeta(body, channel) {
     const m = body.message && typeof body.message === "object" ? body.message : {};
     const ids = [m.externalRef, m.id, body.messageId].filter(Boolean).map(String), mid = ids.find(x => /^wamid\./.test(x)) || ids[0] || "";
     if (type === "message.incoming") {
-      const msg = poMsg({ id: mid, from: body.contactPhone || m.from, payload_type: m.messageType || m.type || "text", text: m.text, caption: m.caption,
-        mediaId: m.mediaId || m.media_id, mime_type: m.mimeType || m.mime_type, timestamp: body.occurredAt || m.timestamp });
+      // файл: message.media = { url, caption, filename, mimeType } (живая проверка 22.11.2026, «Проверка запуска»: ссылка на
+      // filemanager.gupshup.io — Pushon работает через Gupshup)
+      const md = m.media && typeof m.media === "object" ? m.media : {};
+      const msg = poMsg({ id: mid, from: body.contactPhone || m.from, payload_type: m.messageType || m.type || "text", text: m.text, caption: md.caption || m.caption,
+        url: md.url, filename: md.filename, mediaId: m.mediaId || m.media_id, mime_type: md.mimeType || m.mimeType || m.mime_type, timestamp: body.occurredAt || m.timestamp });
       return msg ? wrap("messages", { contacts: [{ wa_id: msg.from, profile: { name: String(body.contactName || "") } }], messages: [msg] }) : null;
     }
     // статус исходящего: вид события («message.delivered») или поле status — доставлено, прочитано, ошибка («отправлено» Pushon не шлёт)
