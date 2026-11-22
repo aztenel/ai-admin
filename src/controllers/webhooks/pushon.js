@@ -7,7 +7,7 @@
 import { hasClient } from "../../config/builtin-clients.js";
 import { safeEq } from "../../lib/crypto.js";
 import { seenBefore, seenForget } from "../../services/channels/index.js";
-import { poOn, poToMeta, poWhy, poNote } from "../../services/channels/pushon.js";
+import { poOn, poToMeta, poWhy, poNote, poFileNote } from "../../services/channels/pushon.js";
 import { chatMode } from "../../services/chatstore/index.js";
 import { handleWhatsApp, waHook } from "./meta.js";
 /** @import { Env } from "../../lib/types.js" */
@@ -34,6 +34,7 @@ export async function handlePOClient(request, env, ctx, id, url) {
     const meta = poToMeta(body, channel), why = poWhy(body, channel, meta);
     ctx.waitUntil(poNote(env, id, { type: String(body.type || "").slice(0, 30), ok: !!meta, why, keys: Object.keys(body).slice(0, 15).join(","),
       mkeys: body.message && typeof body.message === "object" ? Object.keys(body.message).slice(0, 15).join(",") : "" }));
+    ctx.waitUntil(poFileNote(env, id, body));
     if (why) console.log("po skip", why);
     if (!meta && body.type && !/^(message|status)$/.test(String(body.type))) console.log("po event", String(body.type).slice(0, 60));
     return meta;

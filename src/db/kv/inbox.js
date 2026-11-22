@@ -36,5 +36,9 @@ export async function sendMarkDrop(env, cid, ch, chat, rid) { await env.KV.delet
 // только вид события, имена полей и решение кода — без номеров и текстов. 14 дней
 /** @param {Env} env @param {string} cid @param {Record<string, any>} v */
 export async function poLastSave(env, cid, v) { await env.KV.put("pol:" + cid, JSON.stringify(v), { expirationTtl: 14 * 86400 }); }
+/** последний файл от клиента через Pushon — какие поля в событии (22.11.2026: фото клиента не дошло до пульта) @param {Env} env @param {string} cid @param {any} v */
+export async function poFileSave(env, cid, v) { await env.KV.put("polm:" + cid, JSON.stringify(v), { expirationTtl: 30 * 86400 }); }
+/** @param {Env} env @param {string} cid */
+export async function poFileRead(env, cid) { try { return JSON.parse((await env.KV.get("polm:" + cid)) || "null"); } catch (e) { return null; } }
 /** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
 export async function poLastRead(env, cid) { try { return JSON.parse((await env.KV.get("pol:" + cid)) || "null"); } catch (e) { return null; } }

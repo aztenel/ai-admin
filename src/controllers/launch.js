@@ -19,7 +19,7 @@ import { runCase } from "../services/selftest/run.js";
 import { altDiag } from "./altegio.js";
 import { altBase, tgProbe, gaRoute, gaSecret, gaHook, gaCall, gaCode, gaWhy, gaInfo, WA_HINT } from "../services/launch/deps.js";
 import { wzOn, wzHealth, wzNumbers } from "../services/channels/wazzapo.js";
-import { poOn, poLastRead } from "../services/channels/pushon.js";
+import { poOn, poLastRead, poFileRead } from "../services/channels/pushon.js";
 /** @import { Env, Client } from "../lib/types.js" */
 
 // ================= ПРОВЕРКА ЗАПУСКА: автопроверка бота по его паспорту и чек-лист подключений =================
@@ -114,6 +114,8 @@ export async function launchApi(request, env, url, s) {
         !L ? `событий ещё не было. Адрес: ${url.origin}/po/${cid}?t=<пароль из APP_SECRET_${up}>`
           : L.bad ? `последний запрос ${when}: отклонён — ${L.why}` : `последнее событие ${when}: вид «${L.type || "?"}», ${L.ok ? "разобрано" : "не разобрано — " + L.why}. Поля: ${L.keys || "—"}${L.mkeys ? "; message: " + L.mkeys : ""}`,
         L && L.bad ? `Пароль в адресе вебхука в кабинете Pushon должен совпадать с APP_SECRET_${up}.` : "");
+      const F = await poFileRead(env, cid);
+      add("WhatsApp через Pushon: последний файл от клиента", null, F ? `${new Date(+F.at + 5 * 3600e3).toISOString().slice(0, 16).replace("T", " ")} (Астана), вид «${F.kind}». Поля: ${JSON.stringify(F.shape).slice(0, 900)}` : "файлов ещё не было (запись идёт с 22.11.2026)", "");
     }
     if (!wzOn(env, cid) && !poOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: секреты", tok && sec, `токен WA_TOKEN_${up}: ${tok ? "задан" : "нет"}; подпись APP_SECRET_${up}: ${sec ? "задана" : "нет"}`, `Cloudflare → Settings → Variables and Secrets: секрет WA_TOKEN_${up} (постоянный токен системного пользователя Meta) и секрет APP_SECRET_${up} (App secret приложения Meta).`);
     if (!wzOn(env, cid) && !poOn(env, cid) && (!gr || tok || sec)) add("WhatsApp: адрес вебхука", null, `${url.origin}/wa/${cid}\nVerify token — значение VERIFY_TOKEN из Cloudflare. Подписка на поле: messages.`, "");

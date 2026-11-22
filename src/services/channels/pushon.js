@@ -4,11 +4,11 @@
 // без отдельной ветки кода (так же сделан Wazzapo, services/channels/wazzapo.js).
 // Исходящие эхо Pushon не присылает (только статусы): ответ человека из кабинета Pushon в пульт не попадает.
 import { poOn } from "../integrations/pushon/client.js";
-import { poLastSave, poLastRead } from "../../db/kv/inbox.js";
+import { poLastSave, poLastRead, poFileSave, poFileRead } from "../../db/kv/inbox.js";
 import { kvKey } from "../../lib/kv-id.js";
 /** @import { Env } from "../../lib/types.js" */
 
-export { poOn, poLastRead };
+export { poOn, poLastRead, poFileRead };
 
 /** почему событие вебхука не стало сообщением или статусом (для «Проверки запуска»; без номеров и текстов)
  *  @param {any} body @param {string} channel @param {any} meta @returns {string} */
@@ -42,6 +42,28 @@ export async function poNote(env, cid, v) {
     m.set(cid, now);
   }
   try { await poLastSave(env, cid, { at: now, ...v }); } catch (e) { console.log("po note", String(e)); }
+}
+
+// Файл от клиента через Pushon (22.11.2026: фото клиента не дошло до пульта — «Файл не сохранился»). Где Pushon кладёт файл, в
+// документации нет: запоминаем «форму» последнего такого события — имена полей (и вложенных), у строк — ссылка ли это (только хост)
+// и длина. Ни текста, ни номеров, ни самих ссылок.
+/** @param {any} v @param {number} [depth] @returns {any} */
+function shape(v, depth = 0) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") { const m = /^https?:\/\/([^/?#]+)/i.exec(v); return m ? "ссылка " + m[1].slice(0, 60) : /^\+?\d[\d\s()-]{6,}$/.test(v) ? "номер" : "строка " + v.length; }
+  if (typeof v !== "object") return typeof v;
+  if (depth > 2) return "объект";
+  if (Array.isArray(v)) return v.length ? [shape(v[0], depth + 1)] : [];
+  /** @type {Record<string, any>} */ const o = {};
+  for (const k of Object.keys(v).slice(0, 25)) o[k.slice(0, 40)] = shape(v[k], depth + 1);
+  return o;
+}
+/** событие вебхука — файл от клиента? Тогда запомнить его форму @param {Env} env @param {string} cid @param {any} body */
+export async function poFileNote(env, cid, body) {
+  const m = body && body.message && typeof body.message === "object" ? body.message : null;
+  const kind = String((m && (m.messageType || m.type)) || "").toLowerCase();
+  if (String(body && body.type) !== "message.incoming" || !m || !kind || kind === "text") return;
+  try { await poFileSave(env, cid, { at: Date.now(), kind: kind.slice(0, 30), shape: shape({ ...body, contactPhone: undefined, contactName: undefined, channelPhone: undefined }) }); } catch (e) { console.log("po file", String(e)); }
 }
 
 /** @param {any} v @returns {string} */

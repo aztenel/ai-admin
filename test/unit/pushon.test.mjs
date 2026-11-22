@@ -140,3 +140,17 @@ test("настоящий формат вебхука Pushon (живая пров
   const fail = poToMeta(ev("ev-4", "message.failed", { id: "po-msg-4", externalRef: "wamid.sent.4" }, { error: { code: 131049, message: "healthy ecosystem" } }), "chan-1");
   assert.deepEqual(fail.entry[0].changes[0].value.statuses[0].errors[0].code, 131049);
 });
+
+test("файл от клиента (22.11.2026: фото не дошло до пульта): запоминается форма события — поля и хост ссылки, без номеров и текста", async () => {
+  net.reset();
+  const s = mk(ENV);
+  await hook(s, { id: "ev-f1", type: "message.incoming", contactPhone: "77051112233", contactName: "Данияр", channelPhone: "77771148659", occurredAt: new Date().toISOString(),
+    message: { id: "m-1", text: "секретная подпись", messageType: "image", externalRef: "wamid.X1", media: { url: "https://files.pushon.example/abc.jpg?sig=1", mime: "image/jpeg" } } });
+  const F = s.kv.json("polm:barber");
+  assert.equal(F.kind, "image");
+  const j = JSON.stringify(F);
+  assert.match(j, /ссылка files\.pushon\.example/);
+  assert.ok(!/77051112233|Данияр|секретная|abc\.jpg|sig=/.test(j), j);
+  await hook(s, { id: "ev-t1", type: "message.incoming", contactPhone: "77051112233", message: { id: "m-2", text: "ок", messageType: "text" } });
+  assert.equal(s.kv.json("polm:barber").kind, "image", "текст файл не затирает");
+});
