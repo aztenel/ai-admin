@@ -154,3 +154,16 @@ test("файл от клиента (22.11.2026: фото не дошло до п
   await hook(s, { id: "ev-t1", type: "message.incoming", contactPhone: "77051112233", message: { id: "m-2", text: "ок", messageType: "text" } });
   assert.equal(s.kv.json("polm:barber").kind, "image", "текст файл не затирает");
 });
+
+test("фото клиента через Pushon (22.11.2026, ответ поддержки: ссылка на скачивание — в text): в переписке файл со ссылкой, подписи-ссылки нет", async () => {
+  net.reset();
+  const s = mk(ENV);
+  const r = await hook(s, { id: "ev-img1", type: "message.incoming", contactPhone: "77051112244", contactName: "Данияр", occurredAt: new Date().toISOString(),
+    message: { id: "m-img1", text: "https://media.pushon365.ru/files/abc.jpg", messageType: "image", externalRef: "wamid.IMG1" } });
+  assert.equal(r.status, 200);
+  const h = s.hist("wa", "barber", "77051112244");
+  const t = h && h.turns.find(x => x.m && x.m.k);
+  assert.ok(t, JSON.stringify(h && h.turns));
+  assert.equal(t.m.url, "https://media.pushon365.ru/files/abc.jpg");
+  assert.ok(!/https:/.test(t.text), "ссылка не попадает в текст сообщения");
+});

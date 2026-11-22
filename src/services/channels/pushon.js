@@ -83,7 +83,13 @@ export function poMsg(m) {
   // где есть слова (вид button / interactive / quick_reply — на случай, если Pushon пришлёт их отдельно)
   const text = typeof m.text === "string" ? m.text : (m.text && m.text.body) || (m.button && (m.button.text || m.button.payload)) || m.payload || "";
   if (kind === "text" || kind === "button" || kind === "interactive" || kind === "quick_reply") return text ? { from, id, timestamp, type: "text", text: { body: String(text) } } : null;
-  if (KINDS[kind]) { const k = KINDS[kind]; return { from, id, timestamp, type: k, [k]: { id: String(m.mediaId || m.media_id || ""), mime_type: String(m.mime_type || ""), caption: String(m.caption || text || "") } }; }
+  if (KINDS[kind]) {
+    // файл клиента: Pushon кладёт ссылку на скачивание в text (ответ поддержки Pushon 22.11.2026: «передаётся ссылка, где надо файл
+    // скачать»; других полей в событии нет). Ссылка — в m.link (пульт открывает файл по ней), остальной текст — подпись
+    const k = KINDS[kind], raw = String(m.url || m.mediaUrl || m.link || m.fileUrl || "") || String(text || "");
+    const link = (/https:\/\/[^\s<>"']+/i.exec(raw) || [""])[0], cap = String(m.caption || (text && !m.caption ? String(text).replace(link, "") : "")).trim();
+    return { from, id, timestamp, type: k, [k]: { id: String(m.mediaId || m.media_id || ""), mime_type: String(m.mime_type || ""), caption: cap, ...(link ? { link: link.slice(0, 1000) } : {}) } };
+  }
   return { from, id, timestamp, type: kind, [kind]: {} }; // реакции и прочее — общий обработчик их пропускает
 }
 

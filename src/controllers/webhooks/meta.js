@@ -275,7 +275,7 @@ export async function handleWAMessage(env, msg, wx) {
   // нажатие кнопки в шаблоне рассылки («Записаться») или в интерактивном сообщении — это ответ клиента: обрабатываем как текст
   const pressed = msg.type === "button" ? msg.button?.text || msg.button?.payload : msg.type === "interactive" ? msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title : "";
   if (pressed) { await handleWAText(env, "wa", from, String(pressed).trim(), send, wx); return pushAfter(); }
-  if (MEDIA_KIND[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, MEDIA_KIND[msg.type], null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
+  if (MEDIA_KIND[msg.type]) { const o = msg[msg.type] || {}; await handleWAMedia(env, "wa", from, MEDIA_KIND[msg.type], /^https:\/\//.test(String(o.link || "")) ? String(o.link) : null, (o.caption || "").trim(), send, wx, { id: o.id || "", mime: o.mime_type || "", ...(msg.type === "document" && o.filename ? { name: String(o.filename) } : {}) }); return pushAfter(); }
   // реакции и прочее — без ответа
 }
 

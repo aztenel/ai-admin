@@ -70,8 +70,13 @@ export async function mediaFile(env, cid, ch, chatDigits, p, t, range) {
       if (!(r.ok || r.status === 206)) return { ok: false, why: "gone" };
       const x = relay(r, m); return x ? { ok: true, res: x } : { ok: false, why: "big" };
     }
-    if (m.url) { // старые записи Meta: ссылка была сохранена
-      const r = await get(m.url, range);
+    if (m.url) { // старые записи Meta: ссылка была сохранена; Pushon — ссылка на скачивание из вебхука (22.11.2026)
+      let r = await get(m.url, range);
+      // ссылке Pushon может понадобиться ключ API — только для их собственных адресов, чужому хосту ключ не отдаём
+      if ((r.status === 401 || r.status === 403) && poOn(env, cid) && /(^|\.)pushon365\.(ru|kz)$/i.test(new URL(m.url).hostname)) {
+        const route = waRoute(env, cid, p), token = route ? waCreds(env, route).token : "";
+        if (token) { r.body && r.body.cancel(); r = await get(m.url, range, { "x-api-key": token }); }
+      }
       if (!(r.ok || r.status === 206)) return { ok: false, why: "gone" };
       const x = relay(r, m); return x ? { ok: true, res: x } : { ok: false, why: "big" };
     }
