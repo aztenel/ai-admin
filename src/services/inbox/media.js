@@ -43,7 +43,8 @@ function relay(r, m) {
 async function get(url, range, auth) {
   const u = new URL(url);
   if (u.protocol !== "https:") throw new Error("bad url");
-  return fetch(u.href, { headers: { ...(auth || {}), ...(range ? { range } : {}) } });
+  // с ключом — без перехода по перенаправлениям: ключ уходит только на тот адрес, который мы проверили (ревью безопасности 22.11.2026)
+  return fetch(u.href, { headers: { ...(auth || {}), ...(range ? { range } : {}) }, ...(auth ? { redirect: "manual" } : {}) });
 }
 
 /**

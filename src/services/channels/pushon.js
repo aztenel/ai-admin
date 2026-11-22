@@ -75,6 +75,9 @@ const unix = ts => { const t = Date.parse(String(ts || "")); return String(Math.
 /** @type {Record<string, string>} */
 const KINDS = { image: "image", document: "document", audio: "audio", voice: "audio", video: "video", sticker: "sticker", location: "location", contacts: "contacts" };
 
+// ссылка на файл из вебхука: только https на имя хоста (не IP, не localhost, без порта и логина) — пульт её потом скачивает сервером
+/** @param {string} v */
+const okLink = v => { try { const u = new URL(v); return u.protocol === "https:" && !u.port && !u.username && !u.password && /\.[a-z]{2,}$/i.test(u.hostname) && !/^(localhost|.*\.local|.*\.internal)$/i.test(u.hostname); } catch (e) { return false; } };
 /** входящее сообщение Pushon → сообщение в формате Meta, или null @param {any} m @returns {Record<string, any> | null} */
 export function poMsg(m) {
   if (!m || !m.id || !m.from) return null;
@@ -87,7 +90,7 @@ export function poMsg(m) {
     // файл клиента: Pushon кладёт ссылку на скачивание в text (ответ поддержки Pushon 22.11.2026: «передаётся ссылка, где надо файл
     // скачать»; других полей в событии нет). Ссылка — в m.link (пульт открывает файл по ней), остальной текст — подпись
     const k = KINDS[kind], raw = String(m.url || m.mediaUrl || m.link || m.fileUrl || "") || String(text || "");
-    const link = (/https:\/\/[^\s<>"']+/i.exec(raw) || [""])[0], cap = String(m.caption || (text && !m.caption ? String(text).replace(link, "") : "")).trim();
+    const found = (/https:\/\/[^\s<>"']+/i.exec(raw) || [""])[0], link = okLink(found) ? found : "", cap = String(m.caption || (text && !m.caption ? String(text).replace(link, "") : "")).trim();
     return { from, id, timestamp, type: k, [k]: { id: String(m.mediaId || m.media_id || ""), mime_type: String(m.mime_type || ""), caption: cap, ...(link ? { link: link.slice(0, 1000) } : {}) } };
   }
   return { from, id, timestamp, type: kind, [kind]: {} }; // реакции и прочее — общий обработчик их пропускает
