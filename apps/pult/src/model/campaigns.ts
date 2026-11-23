@@ -174,7 +174,8 @@ export type CampaignsOverview = {
   /** Одобренные рекламные шаблоны Meta компании: выбор в мастере рассылки (пусто — название вписывают руками). */
   tpls: MetaTpl[];
 };
-export type MetaTpl = { name: string; lang: string; params: string[]; body: string };
+/** media — ссылка на картинку или видео шапки шаблона по умолчанию (если шапка с медиа). */
+export type MetaTpl = { name: string; lang: string; params: string[]; body: string; media?: string };
 
 /** Сегмент базы клиентов. id: pora, davno, uhodyat, novye, postoyannye, staff:<имя> (all — вся база, в списке не приходит). */
 export type CrmSegment = {

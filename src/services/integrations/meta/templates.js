@@ -16,6 +16,15 @@ export const bcParam = (t, name, fallback, x) => clean(String(t).replace(/\{\s*(
   .replace(/\{\s*мастер\s*\}/gi, String((x && x.staff) || "ваш мастер")).replace(/\{\s*услуга\s*\}/gi, String((x && x.svc) || "стрижка"))
   .replace(/\{\s*дней\s*\}/gi, x && Number.isFinite(+x.days) && +x.days > 0 ? daysWord(+x.days) : "несколько недель")
   .replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   "), 300) || "—"; // Meta не принимает пустые подстановки, переводы строк и 4+ пробела подряд
+// шапка шаблона с медиа: вид — по расширению ссылки (видео mp4/3gp, документ pdf, иначе картинка). 23.11.2026: Кайрат — рекламный шаблон
+// с коротким видео в шапке; вид шапки должен совпасть с одобренным шаблоном, иначе Meta откажет (132012)
+/** @param {string} link */
+export function headerMedia(link) {
+  const path = String(link).split(/[?#]/)[0].toLowerCase();
+  const kind = /\.(mp4|3gp)$/.test(path) ? "video" : /\.pdf$/.test(path) ? "document" : "image";
+  return { type: "header", parameters: [{ type: kind, [kind]: { link } }] };
+}
+
 /**
  * @param {Env} env
  * @param {any} to
@@ -28,7 +37,7 @@ export const bcParam = (t, name, fallback, x) => clean(String(t).replace(/\{\s*(
 export async function sendTemplate(env, to, b, name, route, x) {
   if (isPreview(env)) return { ok: false, status: 409, code: 409, error: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const cr = waCreds(env, route), params = (b.params || []).map(/** @param {any} t */ t => ({ type: "text", text: bcParam(t, name, b.fallback, x) }));
-  const comps = /** @type {any[]} */ ([]).concat(b.img ? [{ type: "header", parameters: [{ type: "image", image: { link: b.img } }] }] : [], params.length ? [{ type: "body", parameters: params }] : []);
+  const comps = /** @type {any[]} */ ([]).concat(b.img ? [headerMedia(b.img)] : [], params.length ? [{ type: "body", parameters: params }] : []);
   let r;
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000);
   try {

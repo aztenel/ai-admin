@@ -160,6 +160,11 @@ function gaRows(msg, rows, c) {
   return { list, samples, blocked };
 }
 
+// шаблон с {мастер}/{дней}/{услуга} — только по базе Altegio: в списке из Excel этих данных нет, и клиент получил бы «Ваш мастер ваш мастер»
+// (живая проверка 23.11.2026, рассылка по списку шаблоном w09)
+const NEEDS_CRM = "в шаблоне есть мастер, услуга или дни после визита — такой шаблон шлите только по базе клиентов (сегменту), в списке этих данных нет";
+/** @param {any} f */
+const needsCrm = f => /\{\s*(мастер|дней|услуга)\s*\}/i.test((f.params || []).join(" "));
 // рассылка шаблоном Meta по базе: подстановка {мастер} или {дней}, а в строке базы их нет — не пишем (иначе «у мастера ваш мастер»)
 /** @param {any} f @param {any[]} list @param {string[]} [away] мастера, чьим клиентам не пишем @returns {{ list: any[], blocked: Record<string, number> }} */
 function metaRows(f, list, away = []) {
@@ -190,6 +195,7 @@ export async function bcCheck(env, c, body0, now) {
   const mr = !gr && rc.crm && f.ch !== "ga" ? metaRows(f, rc.list, awayList(body.away)) : null;
   const list = gr ? gr.list : mr ? mr.list : rc.list, first = (list.find(x => x[1]) || [])[1] || "";
   if (mr && rc.list.length && !list.length && !errors.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
+  if (!rc.crm && f.ch !== "ga" && needsCrm(f) && !errors.length) errors.push(NEEDS_CRM);
   let stop = new Set(); if (!rc.crm) { try { stop = await bcOptouts(env, c.id); } catch (e) {} } // в сегменте базы «стоп» уже исключён
   return { ok: list.length > 0 && !errors.length, valid: list.length, named: list.filter(x => x[1]).length, dup: rc.dup, bad: rc.bad, badN: rc.badN, cut: rc.cut, stopped: list.filter(x => stop.has(x[0])).length,
     ...(rc.seg ? { segOut: rc.seg.out, noDate: rc.seg.noDate, seg: rc.seg.label } : {}), ...(rc.crm ? { segment: rc.crm, excluded: exclList({ ...(rc.why || {}), ...(gr ? gr.blocked : {}), ...(mr ? mr.blocked : {}) }) } : {}),
@@ -214,6 +220,7 @@ export async function bcCreate(env, c, body0, now, by, o = {}) {
   const away = awayList(body.away), mr = !gr && rc.crm && !ga ? metaRows(f, rc.list, away) : null;
   const list = gr ? gr.list : mr ? mr.list : rc.list;
   if (mr && rc.list.length && !list.length) errors.push("никому из сегмента этот шаблон не собрать: в базе нет мастера или даты визита");
+  if (!rc.crm && !ga && needsCrm(f)) errors.push(NEEDS_CRM);
   const name = clean(body.name || "", 60), cap = Math.round(+body.cap || 0), from = Math.round(+body.from), to = Math.round(+body.to);
   if (name.length < 2) errors.push("дайте рассылке название, для себя");
   if (rc.noList) errors.push("в списке нет ни одного номера");

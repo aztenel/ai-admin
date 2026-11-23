@@ -177,3 +177,10 @@ test("фото клиента — настоящий формат 22.11.2026: me
   assert.equal(t.m.url, "https://filemanager.gupshup.io/wa/abc/file?x=1");
   assert.equal(t.m.mime, "image/jpeg");
 });
+
+test("шапка шаблона по ссылке (23.11.2026): .mp4 — видео, .pdf — документ, иначе картинка", async () => {
+  const { headerMedia } = await import("../../src/services/integrations/meta/templates.js");
+  assert.deepEqual(headerMedia("https://winchester.kz/promo.mp4?v=2"), { type: "header", parameters: [{ type: "video", video: { link: "https://winchester.kz/promo.mp4?v=2" } }] });
+  assert.equal(headerMedia("https://x.kz/a.pdf").parameters[0].type, "document");
+  assert.equal(headerMedia("https://x.kz/a.jpg").parameters[0].type, "image");
+});

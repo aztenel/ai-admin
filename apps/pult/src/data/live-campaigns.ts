@@ -66,7 +66,7 @@ type BRaw = RowRaw & {
   results?: ResultsRaw | null;
 };
 type ListRaw = {
-  tpls?: { name: string; lang?: string; params?: unknown[]; body?: string }[];
+  tpls?: { name: string; lang?: string; params?: unknown[]; body?: string; media?: string }[];
   client: { id: string; name: string }; owner: boolean; ready: boolean; why: string; stops: number; hold: string[] | null;
   fail: { n: number; codes: CampaignFail[] } | null; used: number;
   health: { phone?: string; name?: string; quality?: string; limit?: number; error?: string; via?: string } | null;
@@ -220,7 +220,7 @@ function overview(d: ListRaw): CampaignsOverview {
         ...(g.phone ? { phone: g.phone } : {}),
       }
     : null;
-  const tpls = Array.isArray(d.tpls) ? d.tpls.filter((t) => t && typeof t.name === "string").map((t) => ({ name: t.name, lang: String(t.lang || "ru"), params: Array.isArray(t.params) ? t.params.map(String) : [], body: String(t.body || "") })) : [];
+  const tpls = Array.isArray(d.tpls) ? d.tpls.filter((t) => t && typeof t.name === "string").map((t) => ({ name: t.name, lang: String(t.lang || "ru"), params: Array.isArray(t.params) ? t.params.map(String) : [], body: String(t.body || ""), ...(t.media ? { media: String(t.media) } : {}) })) : [];
   return { workspace: d.client, owner: !!d.owner, main, bot, optouts: n(d.stops), campaigns: (d.list || []).map(row), now: d.now || Date.now(), tpls };
 }
 

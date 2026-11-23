@@ -567,3 +567,12 @@ test("22.11.2026: «Айдос же в отпуске» — клиентам м�
   const t = h && h.turns.find(x => x.bc);
   assert.ok(t && /Ваш мастер Азамат будет рад/.test(t.text) && t.text.includes("\n") && !/\[Рассылка/.test(t.text), JSON.stringify(t));
 });
+
+test("шаблон с {мастер} по списку из Excel — отказ (23.11.2026: «Ваш мастер ваш мастер»); по базе — можно", { skip: consentSkip }, async () => {
+  const s = await base(), own = await login(s, OWNER);
+  const form = { ...FORM, tpl: "w09_davno_ne_videlis", params: ["{имя}", "{мастер}"], text: "{{1}}, ваш мастер {{2}} будет рад" };
+  const r = await (await own.post("/api/bc/create", { ...form, recipients: "8 700 000 05 01, Айгерим" })).json();
+  assert.equal(r.ok, false); assert.ok(r.errors.some(e => /только по базе клиентов/.test(e)), JSON.stringify(r));
+  const ok = await (await own.post("/api/bc/create", { ...form, segment: "pora" })).json();
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+});

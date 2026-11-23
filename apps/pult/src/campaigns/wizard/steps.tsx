@@ -217,7 +217,7 @@ export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl
   const setParam = (i: number, v: string) => set({ params: f.params.map((p, j) => (j === i ? v : p)) });
   const pick = (name: string) => {
     const t = tpls.find((x) => x.name === name);
-    if (t) set({ tpl: t.name, lang: t.lang, text: t.body, params: t.params.length ? [...t.params] : [] });
+    if (t) set({ tpl: t.name, lang: t.lang, text: t.body, params: t.params.length ? [...t.params] : [], img: t.media || "" });
   };
   // название совпало с одобренным шаблоном (выбран из списка, вписан руками или остался в черновике) — язык и подстановки берём из
   // шаблона сами: живая проба 21.11.2026 — шаблон выбран, а подстановок 0 (черновик с тем же названием, выбор не сработал)
@@ -319,7 +319,7 @@ export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl
       )}
       <Group>
         <TextField
-          label="Ссылка на картинку"
+          label="Ссылка на картинку или видео"
           optional
           type="url"
           inputMode="url"
@@ -330,7 +330,7 @@ export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl
           onChange={(e) => set({ img: e.target.value })}
           placeholder="https://…"
           error={errs.img}
-          hint="Только если в шаблоне Meta есть картинка в шапке."
+          hint="Только если в шаблоне Meta картинка или видео в шапке. Видео — ссылка на .mp4 (до 16 МБ)."
         />
       </Group>
     </>
