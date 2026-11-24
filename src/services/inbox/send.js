@@ -9,7 +9,9 @@ import { clean, snip } from "../../lib/text.js";
 import { logSafe } from "../../lib/phone.js";
 import { gaRoute } from "../integrations/greenapi/webhook.js";
 import { gaUpload, gaCode, gaWhy, gaUnsure, edgeMiss } from "../integrations/greenapi/client.js";
-import { sendMarkGet, sendMarkPut, sendMarkDrop } from "../../db/kv/inbox.js";
+import { sendMarkGet, sendMarkPut, sendMarkDrop, poOutPut, poOutGet } from "../../db/kv/inbox.js";
+import { waCreds } from "../integrations/meta/client.js";
+import { poSendMedia, PO_HINT } from "../integrations/pushon/client.js";
 import { d1Ready, d1Status } from "../../db/d1/status.js";
 import { claimSend, finishSend, releaseSend, sendTableReady } from "../../db/d1/sends.js";
 import { RISKY, fileName } from "./media.js";
@@ -130,6 +132,58 @@ export async function gaSendFile(env, cid, chatDigits, f, caption, quote) {
   }
   console.log("GA file", x.status, logSafe(x.text.slice(0, 300)));
   return { ok: false, error: `Green-API не принял файл: ${gaWhy({ code: gaCode(x), status: x.status, error: clean((x.j && x.j.message) || x.text || "", 160) }, gr)}.` };
+}
+
+// ---- файл клиенту через Pushon (основной номер Winchester, коллекция методов Pushon 25.11.2026)
+// Pushon принимает файл только ссылкой: кладём его к себе на час под случайным номером (/po/f/<номер>), Pushon скачивает и отправляет.
+// WhatsApp принимает фото только JPEG/PNG до 5 МБ, видео MP4/3GP и аудио до 16 МБ — остальное уходит документом.
+const PO_AUDIO = /^audio\/(ogg|mpeg|mp4|aac|amr)$/;
+/** Как файл уйдёт через Pushon: вид WhatsApp и тип. @param {string} kind @param {string} mime @param {number} size
+ *  @returns {{ type: "image" | "video" | "audio" | "document", mime: string }} */
+export function poMediaOf(kind, mime, size) {
+  const t = String(mime || "").split(";")[0].trim().toLowerCase();
+  if (kind === "image" && /^image\/(jpeg|png)$/.test(t) && size <= 5 * 1024 * 1024) return { type: "image", mime: t };
+  if (kind === "video" && /^video\/(mp4|3gpp)$/.test(t) && size <= 16 * 1024 * 1024) return { type: "video", mime: t };
+  if (kind === "audio" && PO_AUDIO.test(t) && size <= 16 * 1024 * 1024) return { type: "audio", mime: t };
+  return { type: "document", mime: t && /^[a-z]+\/[a-z0-9.+-]+$/.test(t) ? t : "application/octet-stream" };
+}
+/** Тип голосового из пульта: «voice-….ogg» без типа или с codecs — audio/ogg. @param {string} mime @param {string} name */
+const poMime = (mime, name) => {
+  const t = String(mime || "").split(";")[0].trim().toLowerCase();
+  if (t) return t;
+  const e = (/\.([a-z0-9]{1,5})$/i.exec(name) || [])[1] || "";
+  return ({ ogg: "audio/ogg", opus: "audio/ogg", mp3: "audio/mpeg", m4a: "audio/mp4", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", mp4: "video/mp4", pdf: "application/pdf" })[e.toLowerCase()] || "";
+};
+/**
+ * @param {Env} env @param {string} cid @param {string} chatDigits @param {Record<string, any>} route маршрут waRoute
+ * @param {{ blob: Blob, name: string, mime: string, kind: string }} f @param {string} caption @param {string} quote @param {string} origin адрес этого Worker
+ * @returns {Promise<{ ok: true, id?: string, unknown?: boolean, se?: string } | { ok: false, error: string }>}
+ */
+export async function poSendFile(env, cid, chatDigits, route, f, caption, quote, origin) {
+  const cr = waCreds(env, route);
+  if (!cr.token || !cr.pnid) return { ok: false, error: "Pushon не настроен: нет ключа или channelId." };
+  const buf = await f.blob.arrayBuffer(), mt = poMediaOf(f.kind, poMime(f.mime, f.name), buf.byteLength);
+  const token = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join("");
+  try { await poOutPut(env, token, buf, { t: mt.mime, n: f.name.slice(0, 120) }); }
+  catch (e) { console.log("po out put", String(e).slice(0, 120)); return { ok: false, error: "Файл не ушёл: хранилище не ответило. Повторите через минуту." }; }
+  const r = await poSendMedia(env, cr.token, cr.pnid, chatDigits, { url: `${origin}/po/f/${token}`, type: mt.type, mime: mt.mime, name: f.name, caption, size: buf.byteLength }, quote);
+  if (r.ok) return { ok: true, ...(r.id ? { id: String(r.id).slice(0, 80) } : {}) };
+  if (!r.status || r.status >= 500) { // ответа нет или сбой у них: файл мог уйти — сам не повторяется
+    const se = !r.status ? "нет связи с Pushon" : `Pushon ответил ${r.status}${r.error ? ": " + logSafe(r.error).slice(0, 60) : ""}`;
+    console.log("PO file unsure", r.status);
+    return { ok: true, unknown: true, se: se.slice(0, 140) };
+  }
+  console.log("PO file", r.status, logSafe(String(r.error || "").slice(0, 200)));
+  const why = r.code === 131047 ? "клиент писал больше 24 часов назад — WhatsApp разрешает только шаблон" : /QUOTE_NOT_FOUND/i.test(String(r.error || "")) ? "сообщение для ответа не найдено — отправьте без цитаты"
+    : PO_HINT[r.status] || clean(String(r.error || ""), 120) || `ошибка ${r.status}`;
+  return { ok: false, error: `Pushon не принял файл: ${logSafe(why)}.` };
+}
+/** Файл для Pushon по номеру из ссылки → { body, mime } или null (номер неверный или срок прошёл). @param {Env} env @param {string} token */
+export async function poOutFile(env, token) {
+  if (!/^[0-9a-f]{32}$/.test(token)) return null;
+  const x = await poOutGet(env, token);
+  if (!x || !x.value) return null;
+  return { body: x.value, mime: String((x.metadata && x.metadata.t) || "application/octet-stream") };
 }
 
 /** Почему неизвестно, ушёл ли файл, — коротко и без номеров (видна в пульте под сообщением). @param {{ ok?: boolean, status: number, j?: any, err?: string }} x */

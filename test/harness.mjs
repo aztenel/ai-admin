@@ -20,7 +20,7 @@ export function mkKV() {
     put: async (k, v, o) => {
       ops.put++;
       if ((fail.put && fail.put(k)) || tooFast(k)) throw new Error("KV PUT failed: 429 Too Many Requests");
-      if (typeof v !== "string") throw new Error("KV PUT: значение должно быть строкой");
+      if (typeof v !== "string" && !(v instanceof ArrayBuffer)) throw new Error("KV PUT: значение должно быть строкой или ArrayBuffer"); // ArrayBuffer — файл из пульта для Pushon (как в настоящем KV)
       if (o && o.metadata !== undefined && JSON.stringify(o.metadata).length > 1024) throw new Error("KV PUT failed: 413 metadata too large");
       if (o && o.expirationTtl !== undefined && !(o.expirationTtl >= 60)) throw new Error("KV PUT failed: 400 Invalid expiration_ttl");
       mem.set(k, v);

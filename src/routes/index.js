@@ -26,7 +26,7 @@ import { adminPage, diagPage } from "../controllers/admin.js";
 import { cleanSid, handleWebChat } from "../controllers/chat.js";
 import { hookBurst, handleWAClient, waHook } from "../controllers/webhooks/meta.js";
 import { handleWZClient } from "../controllers/webhooks/wazzapo.js";
-import { handlePOClient } from "../controllers/webhooks/pushon.js";
+import { handlePOClient, poOutServe } from "../controllers/webhooks/pushon.js";
 import { handleAltHook } from "../controllers/webhooks/altegio.js";
 import { greenHook } from "../controllers/webhooks/greenapi.js";
 import { pultIcon, pultManifest, pultApp } from "../controllers/pult.js";
@@ -153,6 +153,8 @@ export async function route(request, env, ctx, pult) {
     const zm = /^\/wz\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (zm) return handleWZClient(request, env, ctx, zm[1], url.origin);
     // ---- WhatsApp клиента через Pushon: вебхук /po/<id>?t=<пароль>
+    const pf = /^\/po\/f\/([0-9a-f]{32})$/.exec(P); // файл из пульта, который Pushon скачивает по ссылке
+    if (pf) return poOutServe(request, env, pf[1]);
     const pm = /^\/po\/([a-z][a-z0-9]{1,15})$/.exec(P);
     if (pm) return handlePOClient(request, env, ctx, pm[1], url);
     // ---- события Altegio о записях: вебхук /alt/<id>?t=<пароль> — журнал читается сразу (ТЗ v4)

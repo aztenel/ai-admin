@@ -72,9 +72,21 @@ function poResult(x) {
 /** @param {any} to */
 const phone = to => "+" + String(to || "").replace(/\D/g, "");
 
-/** Текст в окне 24 часа (ответ клиенту). @param {Env} env @param {string} key @param {string} channel @param {string} to @param {string} text */
-export const poSendText = async (env, key, channel, to, text) =>
-  poResult(await poCall(env, key, "/send-session-message", { toPhone: phone(to), text: String(text || "").slice(0, 4000), channelId: channel }));
+/** Текст в окне 24 часа (ответ клиенту); quote — номер сообщения, на которое это ответ (contextMessageId, коллекция Pushon 25.11.2026).
+ * @param {Env} env @param {string} key @param {string} channel @param {string} to @param {string} text @param {string=} quote */
+export const poSendText = async (env, key, channel, to, text, quote) =>
+  poResult(await poCall(env, key, "/send-session-message", { toPhone: phone(to), text: String(text || "").slice(0, 4000), channelId: channel, ...(quote ? { contextMessageId: String(quote) } : {}) }));
+
+/**
+ * Файл в окне 24 часа (коллекция методов Pushon, 25.11.2026): файл Pushon скачивает сам по ссылке mediaUrl и загружает в WhatsApp;
+ * text и mediaUrl вместе нельзя — текст при файле только подписью. Ждём дольше: скачивание и загрузка идут внутри запроса.
+ * @param {Env} env @param {string} key @param {string} channel @param {string} to
+ * @param {{ url: string, type: "image" | "video" | "audio" | "document", mime: string, name?: string, caption?: string, size?: number }} f @param {string=} quote
+ */
+export const poSendMedia = async (env, key, channel, to, f, quote) =>
+  poResult(await poCall(env, key, "/send-session-message", { toPhone: phone(to), channelId: channel, mediaUrl: f.url, mediaType: f.type, mimeType: f.mime,
+    ...(f.type === "document" && f.name ? { filename: String(f.name).slice(0, 200) } : {}), ...(f.caption && f.type !== "audio" ? { caption: String(f.caption).slice(0, 1024) } : {}),
+    ...(f.size ? { fileSize: f.size } : {}), ...(quote ? { contextMessageId: String(quote) } : {}) }, 60000));
 
 /**
  * Шаблон (рассылка, напоминание): components — как у Meta (body, header, button).

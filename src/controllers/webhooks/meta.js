@@ -267,7 +267,8 @@ const noSend = async () => { console.log("wa replay: ответ клиенту �
 /** @param {Env} env @param {any} msg @param {any} wx */
 export async function handleWAMessage(env, msg, wx) {
   if (wx && wx.replay ? await inChat(env, msg, wx) : await seenBefore(env, msg.id)) return;
-  if (wx && wx.ids) wx = { ...wx, msgId: String(msg.id) }; // переписки в D1: номер сообщения у Meta — в реплику (ключ строки в D1)
+  // переписки в D1: номер сообщения у Meta — в реплику (ключ строки в D1); у Pushon — всегда: на него отвечают цитатой (25.11.2026)
+  if (wx && (wx.ids || poOn(env, wx.client))) wx = { ...wx, msgId: String(msg.id) };
   // проигрыш журнала клиенту не пишет: ответ или «спасибо за сообщение» он получил при первой обработке
   const from = String(msg.from).replace(/\D/g, ""), send = wx && wx.replay ? noSend : watchSend(env, "wa", from, wx, t => sendWA(env, from, t, wx));
   if (!from) return;

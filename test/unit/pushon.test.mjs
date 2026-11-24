@@ -184,3 +184,61 @@ test("шапка шаблона по ссылке (23.11.2026): .mp4 — вид�
   assert.equal(headerMedia("https://x.kz/a.pdf").parameters[0].type, "document");
   assert.equal(headerMedia("https://x.kz/a.jpg").parameters[0].type, "image");
 });
+
+// отправка файлов из пульта через Pushon (коллекция методов Pushon, 25.11.2026): send-session-message с mediaUrl — Pushon скачивает
+// файл по нашей ссылке /po/f/<номер> (живёт час); ответ цитатой — contextMessageId. Вживую не проверено.
+import { poMediaOf } from "../../src/services/inbox/send.js";
+test("файлы, голосовое и цитата из пульта через Pushon: ссылка на файл у нас, тип WhatsApp, подпись, contextMessageId; без окна 24 часа — отказ", async () => {
+  net.reset();
+  const s = mk({ WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po_key_w", APP_SECRET_WINCHESTER: "hook-w-123", PHONE_NUMBER_ID_WINCHESTER: "chan-w" });
+  const b = s.browser();
+  await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
+  const from = "77051230001";
+  await s.call("/po/winchester?t=hook-w-123", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "message.incoming", id: "ev-f-1", contactPhone: "+" + from, contactName: "Арман", message: { id: "msg-in-1", text: "Пришлите прайс", messageType: "text" } }) });
+  if (s.settle) await s.settle();
+  let c = await (await b.go(`/api/inbox/chat?c=winchester&ch=wa&id=${from}`)).json();
+  assert.equal(c.canFiles, true, JSON.stringify({ canFiles: c.canFiles, sendOff: c.sendOff }));
+  assert.equal(c.canQuote, true); assert.equal(c.canDelete, false, "«Удалить у всех» у Pushon нет");
+  net.po.length = 0;
+  const fd = new FormData();
+  fd.set("file", new Blob([Uint8Array.from([0x25, 0x50, 0x44, 0x46, 1, 2, 3])], { type: "application/pdf" }), "Прайс.pdf");
+  fd.set("caption", "Вот прайс"); fd.set("rid", "rid-po-file-1");
+  const inMid = (c.turns.find(t => t.r === "u") || {}).mid;
+  assert.ok(inMid, "у сообщения клиента — номер Pushon (на него можно ответить)");
+  fd.set("quote", inMid);
+  const r = await b.go(`/api/inbox/send-file?c=winchester&ch=wa&id=${from}`, { method: "POST", body: fd });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  const x = net.po.find(q => q.path === "/send-session-message");
+  assert.ok(x, "запрос к Pushon не ушёл");
+  assert.equal(x.body.mediaType, "document"); assert.equal(x.body.mimeType, "application/pdf"); assert.equal(x.body.filename, "Прайс.pdf");
+  assert.equal(x.body.caption, "Вот прайс"); assert.equal(x.body.text, undefined, "text и mediaUrl вместе нельзя");
+  if (inMid) assert.equal(x.body.contextMessageId, inMid);
+  const m = /\/po\/f\/([0-9a-f]{32})$/.exec(x.body.mediaUrl);
+  assert.ok(m, x.body.mediaUrl);
+  const got = await s.call("/po/f/" + m[1]);
+  assert.equal(got.status, 200); assert.equal(got.headers.get("content-type"), "application/pdf"); assert.equal(got.headers.get("x-content-type-options"), "nosniff");
+  assert.equal((await got.arrayBuffer()).byteLength, 7);
+  assert.equal((await s.call("/po/f/" + "0".repeat(32))).status, 404, "чужой номер — нет файла");
+  const last = j.chat.turns[j.chat.turns.length - 1];
+  assert.equal(last.m && last.m.k, "document"); assert.ok(last.mid, "номер сообщения Pushon запомнен");
+  // ответ текстом цитатой
+  if (inMid) {
+    net.po.length = 0;
+    const t = await b.go("/api/inbox/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ c: "winchester", ch: "wa", id: from, text: "Да", quote: inMid, rid: "rid-po-q-1" }) });
+    assert.equal(t.status, 200);
+    assert.equal(net.po[0].body.contextMessageId, inMid);
+  }
+  // типы WhatsApp: голосовое Ogg — аудио; webp и mov — документом; большое фото — документом
+  assert.deepEqual(poMediaOf("audio", "audio/ogg", 3000), { type: "audio", mime: "audio/ogg" });
+  assert.equal(poMediaOf("image", "image/webp", 100).type, "document");
+  assert.equal(poMediaOf("video", "video/quicktime", 100).type, "document");
+  assert.equal(poMediaOf("image", "image/jpeg", 6 * 1024 * 1024).type, "document");
+  assert.equal(poMediaOf("image", "image/jpeg", 100).type, "image");
+  // Pushon отказал — «не принял», ничего не помечено как ушедшее
+  net.poReply = rec => rec.path === "/send-session-message" ? new Response(JSON.stringify({ error: "SESSION_WINDOW_CLOSED", code: "SESSION_WINDOW_CLOSED" }), { status: 400, headers: { "content-type": "application/json" } }) : null;
+  const fd2 = new FormData(); fd2.set("file", new Blob([Uint8Array.from([0xff, 0xd8, 0xff, 1])], { type: "image/jpeg" }), "a.jpg"); fd2.set("rid", "rid-po-file-2");
+  const r2 = await b.go(`/api/inbox/send-file?c=winchester&ch=wa&id=${from}`, { method: "POST", body: fd2 });
+  assert.equal(r2.status, 409); assert.match((await r2.json()).error, /Pushon не принял файл/);
+});

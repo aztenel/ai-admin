@@ -26,7 +26,7 @@ export async function sendWA(env, to, t, wx) {
   if (isPreview(env)) return { ok: false, status: 409, code: "preview", error: PREVIEW_SEND }; // черновик клиентам не пишет (lib/stage.js)
   const cr = waCreds(env, wx);
   if (wx && poOn(env, wx.client)) { // Pushon: текст только в окне 24 часа после сообщения клиента
-    const r = await poSendText(env, cr.token, cr.pnid, String(to), t);
+    const r = await poSendText(env, cr.token, cr.pnid, String(to), t, wx.quote ? String(wx.quote) : "");
     if (r.ok) return { ok: true, id: r.id };
     console.log("PO send", r.status, logSafe(r.error));
     await waErr(env, "отправка через Pushon " + r.status, r.code, r.error);

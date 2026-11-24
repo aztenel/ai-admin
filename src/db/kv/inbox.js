@@ -42,3 +42,9 @@ export async function poFileSave(env, cid, v) { await env.KV.put("polm:" + cid, 
 export async function poFileRead(env, cid) { try { return JSON.parse((await env.KV.get("polm:" + cid)) || "null"); } catch (e) { return null; } }
 /** @param {Env} env @param {string} cid @returns {Promise<Record<string, any> | null>} */
 export async function poLastRead(env, cid) { try { return JSON.parse((await env.KV.get("pol:" + cid)) || "null"); } catch (e) { return null; } }
+
+// файл из пульта для Pushon (25.11.2026): Pushon берёт файл по ссылке, поэтому он лежит у нас час под случайным номером
+/** @param {Env} env @param {string} token @param {ArrayBuffer} buf @param {{ t: string, n: string }} meta */
+export async function poOutPut(env, token, buf, meta) { await env.KV.put("pout:" + token, buf, { expirationTtl: 3600, metadata: meta }); }
+/** @param {Env} env @param {string} token @returns {Promise<{ value: any, metadata: any } | null>} */
+export async function poOutGet(env, token) { try { return await env.KV.getWithMetadata("pout:" + token, "arrayBuffer"); } catch (e) { return null; } }

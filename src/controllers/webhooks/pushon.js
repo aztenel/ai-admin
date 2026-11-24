@@ -9,6 +9,7 @@ import { safeEq } from "../../lib/crypto.js";
 import { seenBefore, seenForget } from "../../services/channels/index.js";
 import { poOn, poToMeta, poWhy, poNote, poFileNote } from "../../services/channels/pushon.js";
 import { chatMode } from "../../services/chatstore/index.js";
+import { poOutFile } from "../../services/inbox/send.js";
 import { handleWhatsApp, waHook } from "./meta.js";
 /** @import { Env } from "../../lib/types.js" */
 
@@ -48,4 +49,15 @@ export async function handlePOClient(request, env, ctx, id, url) {
   if (!meta) return EMPTY();
   const ok = await waHook(meta, env, ctx, wx, { forget: async () => { if (dupKey.length > 5) await seenForget(env, dupKey); } });
   return ok ? EMPTY() : new Response("Retry later", { status: 503 });
+}
+
+// файл из пульта, который Pushon скачивает по ссылке (25.11.2026): только GET, только по случайному номеру, живёт час.
+// Показывать в браузере не даём: nosniff, CSP sandbox, скачивание.
+/** @param {Request} request @param {Env} env @param {string} token */
+export async function poOutServe(request, env, token) {
+  if (request.method !== "GET" && request.method !== "HEAD") return new Response("Not found", { status: 404 });
+  const f = await poOutFile(env, token);
+  if (!f) return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
+  return new Response(request.method === "HEAD" ? null : f.body, { status: 200, headers: { "content-type": f.mime, "content-length": String(f.body.byteLength || 0),
+    "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "sandbox", "content-disposition": "attachment", "referrer-policy": "no-referrer" } });
 }

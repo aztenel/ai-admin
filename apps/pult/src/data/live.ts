@@ -43,7 +43,7 @@ type ChatRaw = {
   bookings: string[]; pend: string[]; booked: string;
   need: { why: string; text: string; at: number; tp?: string; src?: { k: "rm" | "bc"; at: number; text: string } } | null; paused: number; stop: boolean; off: boolean;
   assignee?: string; done?: number; line?: { ch: string; label: string }; audit?: { t: number; w: string; a: string; to?: string }[];
-  canSend: boolean; sendOff?: string; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean; rev?: number; same?: 1;
+  canSend: boolean; sendOff?: string; open: boolean; li: number; reqs: ReqRaw[]; now: number; pay?: string; canFiles?: boolean; canQuote?: boolean; canDelete?: boolean; rev?: number; same?: 1;
 };
 type LeadRaw = { id: string; name: string; phone: string; service: string; time: string; note: string; status: string; kind: string; source: string; ts: number };
 type StudioClientRaw = { id: string; name: string; kind: string; niche: string; off: boolean; booking: string };
@@ -230,7 +230,7 @@ function detail(ws: string, d: ChatRaw, warn?: string): ConversationDetail {
     reply,
     canFiles: !!d.canFiles && reply.allowed,
     canQuote: !!d.canQuote && reply.allowed,
-    canDelete: !!d.canFiles, // второй номер, база защиты от повтора есть, не тестовая версия (сервер проверит ещё раз)
+    canDelete: !!(d.canDelete ?? d.canFiles), // второй номер, база защиты от повтора есть, не тестовая версия (сервер проверит ещё раз); Pushon — нет
     payment: d.pay,
     campaign: d.promo || undefined,
     warning: warn,

@@ -17,6 +17,7 @@ import { walKick } from "../services/chatstore/wal.js";
 import { sendGreen } from "../services/channels/greenapi.js";
 import { sendWA } from "../services/channels/meta.js";
 import { waRoute, waBotOff, botOff } from "../services/channels/index.js";
+import { poOn } from "../services/channels/pushon.js";
 import { altLabel } from "../services/booking/replies.js";
 import { altLoc } from "../services/booking/book.js";
 import { growthReport } from "../services/digest.js";
@@ -28,7 +29,7 @@ import { bookingCard } from "../services/inbox/booking-card.js";
 import { linesOf, lineLabel, lineChans, opsOf, oldGaChat, OLD_LINE } from "../services/inbox/lines.js";
 import { opName, opWho } from "../services/inbox/operator.js";
 import { chatAudit, chatTouchOp } from "../services/inbox/audit.js";
-import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, sendOnce, sendDbOff } from "../services/inbox/send.js";
+import { FILE_MAX, FILE_WORD, TOO_BIG, NO_FILES, QUOTE_GONE, BUSY, UNKNOWN_SENT, filePlan, quoteOf, quoteView, gaSendFile, poSendFile, sendOnce, sendDbOff } from "../services/inbox/send.js";
 import { isPreview, PREVIEW_SEND } from "../lib/stage.js";
 import { DEL_WHY, DEL_UNKNOWN, delAllWhy, delRid, findTurn, gaDeleteMsg, turnSel } from "../services/inbox/remove.js";
 /** @import { Env } from "../lib/types.js" */
@@ -137,6 +138,8 @@ export async function inboxApi(request, env, url, s, ctx) {
   let p = h.profile || {};
   // номер Green-API — только свой у компании или общий, закреплённый за ней (gaRoute): чужой общий номер не подставляется (аудит 31.10.2026)
   const gaOn = ch === "ga" && !!gaRoute(env, cid);
+  // основной номер через Pushon (25.11.2026): файлы, голосовые и ответ цитатой — в окне 24 часа, как текст
+  const poFiles = ch === "wa" && poOn(env, cid) && !!waRoute(env, cid, p);
   // переписка прежнего второго номера (GA_SINCE_<ID>, services/inbox/lines.js): ответ отсюда ушёл бы с нового номера — отправка закрыта
   const oldLine = ch === "ga" && oldGaChat(env, cid, p);
   // почему из пульта сейчас нельзя отправить — пульт показывает это заранее, а не после нажатия: черновик клиентам не пишет;
@@ -162,8 +165,8 @@ export async function inboxApi(request, env, url, s, ctx) {
       audit: (p.audit || []).slice(-12), paused: p.pausedUntil > now ? p.pausedUntil : 0, stop: !!p.stop, off: ch === "web" ? !!c.off : botOff(env, c, ch), // выключатель своего номера: иначе в чате «Ведёт бот», а бот молчит (18.10.2026)
       canSend: ch !== "web" && !sendOff && (ch === "ga" ? gaOn : !!waRoute(env, cid, p)), open, li: p.li || 0, reqs, now, ...(c.pay ? { pay: c.pay } : {}),
       ...(sendOff ? { sendOff } : {}),
-      // файлы и ответ на конкретное сообщение — только со второго номера (Green-API): у Meta и чата сайта из пульта этого нет
-      canFiles: gaOn && !sendOff, canQuote: gaOn && !sendOff,
+      // файлы и ответ на конкретное сообщение — второй номер (Green-API) и основной через Pushon; у Meta напрямую и чата сайта — нет
+      canFiles: (gaOn || poFiles) && !sendOff, canQuote: (gaOn || poFiles) && !sendOff, canDelete: gaOn && !sendOff,
       ...(h._rev ? { rev: h._rev } : {}) // ревизия чата в D1: пульт присылает её в since
     };
   };
@@ -189,8 +192,9 @@ export async function inboxApi(request, env, url, s, ctx) {
   if ((P === "/api/inbox/send" || isFile) && isPreview(env)) return jsonP({ error: PREVIEW_SEND, code: "preview" }, 409);
   if ((P === "/api/inbox/send" || isFile) && oldLine) return jsonP({ error: OLD_LINE, code: "oldline" }, 409);
   if (isFile) { // со второго номера (Green-API); у Meta и чата сайта отправки файлов из пульта нет — и тело не читаем
-    if (ch !== "ga") return jsonP({ error: NO_FILES }, 409);
-    if (!gaOn) return jsonP({ error: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." }, 409);
+    if (ch !== "ga" && !poFiles) return jsonP({ error: NO_FILES }, 409);
+    if (poFiles && !(p.li && now - p.li < 24 * 3600e3)) return jsonP({ error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном." }, 409);
+    if (ch === "ga" && !gaOn) return jsonP({ error: "Отправка с этого номера не настроена. Её включает владелец в настройках номеров." }, 409);
     const up = await readUpload(request);
     if (!up.ok) return jsonP({ error: up.error }, up.status);
     file = up.file; b = up.fields;
@@ -211,7 +215,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     const route = waRoute(env, cid, p);
     if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
     if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном. Позвоните клиенту или дождитесь его сообщения." };
-    let r; try { r = await sendWA(env, id, text, route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
+    let r; try { r = await sendWA(env, id, text, quote && poFiles ? { ...route, quote } : route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
     return r && r.ok ? { ok: true, id: String(r.id || "") } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
   };
   const msg = clean(String(b.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " "), 2000);
@@ -241,7 +245,7 @@ export async function inboxApi(request, env, url, s, ctx) {
   // ответ на конкретное сообщение (цитата WhatsApp): только со второго номера и только на сообщение этой переписки
   const qt = quoteId ? quoteOf(h.turns || [], quoteId) : null;
   if ((P === "/api/inbox/send" || isFile) && quoteId) {
-    if (!gaOn) return jsonP({ error: "На этом номере ответить на конкретное сообщение нельзя." }, 400);
+    if (!gaOn && !poFiles) return jsonP({ error: "На этом номере ответить на конкретное сообщение нельзя." }, 400);
     if (!qt) return jsonP({ error: QUOTE_GONE }, 400);
   }
   if (P === "/api/inbox/send") {
@@ -256,7 +260,8 @@ export async function inboxApi(request, env, url, s, ctx) {
     const plan = filePlan(file); // опасный тип — по итоговому имени, исходному имени и типу файла
     if (!plan.ok) return jsonP({ error: plan.error }, plan.status);
     const f = file, { kind, name } = plan;
-    const r = await sendOnce(env, cid, ch, id, rid, () => gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : ""));
+    const r = await sendOnce(env, cid, ch, id, rid, () => ch === "ga" ? gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : "")
+      : poSendFile(env, cid, id, /** @type {any} */ (waRoute(env, cid, p)), { blob: f.blob, name, mime: f.mime, kind }, msg, qt ? qt.mid : "", url.origin));
     if ("blocked" in r) return blockedAnswer(r.blocked);
     if ("dup" in r) return dupAnswer(r);
     if (!r.ok) return jsonP({ error: r.error }, 409);
