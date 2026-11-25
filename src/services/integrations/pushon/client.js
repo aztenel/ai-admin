@@ -36,6 +36,7 @@ export const PO_HINT = {
   401: "API-ключ Pushon неверный — проверьте секрет WA_TOKEN_<ID>",
   403: "ключ не привязан к каналу или канал отключён — проверьте PHONE_NUMBER_ID_<ID> (channelId) в кабинете Pushon",
   404: "канал или шаблон не найден в Pushon — шаблон должен быть одобрен и «подключён» к номеру",
+  402: "в Pushon закончились сообщения этой категории — пополните баланс",
   429: "превышен предел запросов Pushon",
   400: "Pushon не принял параметры (номер, язык, имя шаблона или подстановки)"
 };
@@ -63,7 +64,7 @@ function poResult(x) {
   if (x.status === 0) return { ok: false, status: 0, code: 0, error: "Pushon не ответил" }; // ушло сообщение или нет — неизвестно
   const j = x.j || {};
   if (x.ok && String(j.status || "ok").toLowerCase() !== "error") return { ok: true, id: String(j.messageId || j.message_id || j.id || "") };
-  const app = String(j.code || "").toUpperCase();
+  const app = String(j.code || j.error || "").toUpperCase();
   const code = PO_META[app] || HTTP_META[x.status] || x.status;
   return { ok: false, status: x.status, code, error: clean(String(j.message || j.error || x.text || ""), 200) };
 }

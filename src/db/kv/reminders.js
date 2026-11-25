@@ -50,10 +50,21 @@ export async function jrCapNote(env, cid, day) {
   return true;
 }
 
-/** @param {Env} env @param {string} cid @returns {Promise<{ at: number, why: string } | null>} */
+/** @param {Env} env @param {string} cid @returns {Promise<{ at: number, why: string, till?: number } | null>} */
 export async function jrHold(env, cid) { try { return JSON.parse((await env.KV.get("jrhold:" + cid)) || "null"); } catch (e) { return null; } }
-/** @param {Env} env @param {string} cid @param {string} why @param {number} now */
-export const jrHoldSet = (env, cid, why, now) => kvRetry(() => env.KV.put("jrhold:" + cid, JSON.stringify({ at: now, why: String(why).slice(0, 200) }), { expirationTtl: 6 * 3600 }));
+/** @param {Env} env @param {string} cid @param {string} why @param {number} now @param {number} [ttl] секунд */
+export const jrHoldSet = (env, cid, why, now, ttl = 6 * 3600) => kvRetry(() => env.KV.put("jrhold:" + cid, JSON.stringify({ at: now, till: now + ttl * 1000, why: String(why).slice(0, 200) }), { expirationTtl: ttl }));
+/** Снять отметку попытки без версии (из журнала решений версии нет): не ушло из-за неоплаты — отправить снова. Один раз на запись и вид.
+ *  → true, если отметку сняли @param {Env} env @param {string} cid @param {string} rec @param {string} k */
+export async function jrUntryPaid(env, cid, rec, k) {
+  if (await env.KV.get(`jrpr:${cid}:${rec}:${k}`)) return false;
+  await env.KV.put(`jrpr:${cid}:${rec}:${k}`, "1", { expirationTtl: 2 * DAY });
+  const v = await env.KV.get(`rms:${cid}:${rec}:${k}`);
+  if (v == null) return false;
+  await kvRetry(() => env.KV.delete(`rms:${cid}:ga:${rec}:${k}:${v}`));
+  await kvRetry(() => env.KV.delete(`rms:${cid}:${rec}:${k}`));
+  return true;
+}
 
 /** @param {Env} env @param {string} cid @param {string} p */
 export const jrReviewed = async (env, cid, p) => !!(await env.KV.get(`jrv:${cid}:${p}`));

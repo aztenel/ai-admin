@@ -132,3 +132,52 @@ test("через Pushon (номер 777, 21.11.2026): подтверждение
   const h = s.kv.json("h:wa:winchester:77000007021");
   assert.ok(h && h.turns.some(x => /^Вы записаны на услугу: Мужская стрижка/.test(x.text) && x.st === "sent"));
 });
+
+test("Pushon 402 (закончились сообщения, 25.11.2026): не задача администратору — ждёт и уходит после пополнения; уже упавшие — снова в очередь", async () => {
+  net.reset();
+  net.altJournal = [rec("+77000007031", TOM, "15:00", { id: 7031, made: `${TODAY}T11:00:00+05:00` })];
+  const PO = { ...ENV, WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po-key-test", PHONE_NUMBER_ID_WINCHESTER: "po-channel-1", APP_SECRET_WINCHESTER: "po-hook-pass" };
+  const s = mk(PO);
+  await autoOn(s, { confirm: true });
+  let paid = false;
+  net.poReply = r => !paid && r.path === "/send-template-message" ? new Response(JSON.stringify({ error: "PAYMENT_REQUIRED", details: "quota" }), { status: 402, headers: { "content-type": "application/json" } }) : null;
+  for (const t of ["11:15", "11:30"]) await jrRun(s.env, at(TODAY, t));
+  const sends = () => net.po.filter(x => x.path === "/send-template-message");
+  assert.equal(sends().length, 1, "попытка была");
+  assert.equal(waKind({ ok: false, status: 402, code: 402, error: "PAYMENT_REQUIRED" }), "pay");
+  let h = s.kv.json("h:wa:winchester:77000007031");
+  assert.ok(!h || !(h.profile && h.profile.need), "не «ответ не дошёл» администратору");
+  assert.ok(net.tg.some(x => /закончились служебные сообщения/.test(x.text)), JSON.stringify(net.tg.map(x => x.text)));
+  await jrRun(s.env, at(TODAY, "11:35"));
+  assert.equal(sends().length, 1, "пауза 15 минут — без новых попыток");
+  paid = true;
+  await jrRun(s.env, at(TODAY, "11:50"));
+  assert.equal(sends().length, 2, "после пополнения ушло само");
+  h = s.kv.json("h:wa:winchester:77000007031");
+  assert.ok(h.turns.some(x => x.st === "sent"));
+  await jrRun(s.env, at(TODAY, "12:10"));
+  assert.equal(sends().length, 2, "второй раз не шлём");
+});
+
+test("Pushon 402 до правки: задача администратору в журнале решений → отметка попытки снимается, сообщение уходит, «ответ не дошёл» снимается", async () => {
+  net.reset();
+  net.altJournal = [rec("+77000007041", TOM, "15:00", { id: 7041, made: `${TODAY}T11:00:00+05:00` })];
+  const PO = { ...ENV, WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po-key-test", PHONE_NUMBER_ID_WINCHESTER: "po-channel-1", APP_SECRET_WINCHESTER: "po-hook-pass" };
+  const s = mk(PO);
+  await autoOn(s, { confirm: true });
+  await jrRun(s.env, at(TODAY, "11:15")); // журнал уже читали (как на боевом), подтверждение ещё не пора
+  assert.equal(net.po.length, 0);
+  // как было до правки: отметка попытки стоит, в журнале решений — «задача администратору» с кодом 402, в чате — «ответ не дошёл»
+  const t0 = at(TODAY, "11:16");
+  await s.env.KV.put("rms:winchester:7041:s01", `${TOM}T15:00`, { expirationTtl: 86400 });
+  await s.env.KV.put(`rms:winchester:ga:7041:s01:${TOM}T15:00`, "1", { expirationTtl: 86400 });
+  await s.env.KV.put("jrl:winchester", JSON.stringify([{ t: t0, k: "s01", rec: "7041", p: "77000007041", n: "Арман", date: TOM, time: "15:00", st: "task", why: "не ушло (код 402: PAYMENT_REQUIRED), задача администратору" }]), { expirationTtl: 86400 });
+  await s.env.KV.put("h:wa:winchester:77000007041", JSON.stringify({ turns: [{ role: "model", text: "x", t: t0, st: "failed" }], profile: { need: { at: t0, why: "send" } } }), { expirationTtl: 86400 });
+  await jrRun(s.env, at(TODAY, "11:40"));
+  const sent = net.po.filter(x => x.path === "/send-template-message");
+  assert.equal(sent.length, 1, JSON.stringify(net.po.map(x => x.path)));
+  const h = s.kv.json("h:wa:winchester:77000007041");
+  assert.ok(!h.profile.need, "пометка «ответ не дошёл» снята: " + JSON.stringify(h.profile) + JSON.stringify(h.turns.map(t => [t.st, t.rm])));
+  await jrRun(s.env, at(TODAY, "12:00"));
+  assert.equal(net.po.filter(x => x.path === "/send-template-message").length, 1, "повторно не шлём");
+});

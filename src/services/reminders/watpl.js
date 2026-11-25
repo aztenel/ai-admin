@@ -48,9 +48,12 @@ export function jrTplFill(c, t, b) {
 
 /** ответ Meta (или Wazzapo) на шаблон → как поступить, как у второго номера (gaKind): "net" — неизвестно, ушло ли (второй раз не шлём);
  *  "temp" — точно не ушло, попробуем через минуту; "stop" — дело в номере, ключе или шаблоне (пауза 6 часов, сигнал владельцу);
- *  "fail" — этому клиенту не уйдёт (задача администратору) @param {any} r @returns {"net" | "temp" | "stop" | "fail"} */
+ *  "fail" — этому клиенту не уйдёт (задача администратору); "pay" — закончились оплаченные сообщения (ждём пополнения)
+ *  @param {any} r @returns {"net" | "temp" | "stop" | "fail" | "pay"} */
 export function waKind(r) {
   const code = +(r && r.code) || 0, st = +(r && r.status) || 0;
+  // закончились оплаченные сообщения (Pushon 402 PAYMENT_REQUIRED, 25.11.2026): не ушло точно — ждём пополнения, не задача администратору
+  if (code === 402 || st === 402 || /PAYMENT_REQUIRED/i.test(String((r && r.error) || ""))) return "pay";
   if (BC_TEMP.has(code) || code === 429 || st === 429 || code === 131056) return "temp";
   if (BC_ACCOUNT.has(code) || BC_PARAM.has(code) || code === 401 || code === 403 || code === 404 || code === 409 || st === 401 || st === 403 || st === 409) return "stop";
   if (!code || !st || st === 408 || st === 499 || st >= 500 && !(code >= 1000) || code >= 500 && code < 600) return "net";

@@ -38,7 +38,7 @@ import { sendOnce } from "../inbox/send.js";
 import { marketingGate } from "../contacts/gate.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
 import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewedAt, jrReviewMark, optedOut, rmOk,
-  jrTried, jrTry, jrUntry, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
+  jrTried, jrTry, jrUntry, jrUntryPaid, jrLogLoad, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
 import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
@@ -277,7 +277,15 @@ async function jrClient(env, c, now) {
   // события Altegio (вебхук, kick.js): как читать журнал сейчас — "fast" изменённые записи, "bonus" и бонусы визитов, "full" весь журнал
   /** @type {{ mode: string, pending: Set<string> }} */ let kick = { mode: "", pending: new Set() };
   try { kick = await kickPending(env, c.id, now); } catch (/** @type {any} */ e) { console.log("jr kick read", c.id, String((e && e.message) || e).slice(0, 120)); }
-  const force = kick.mode, eager = kick.pending.has("bonus"), covered = /** @type {Set<string>} */ (new Set());
+  // не ушло из-за неоплаты (Pushon 402) до этой правки — задачей администратору: снимаем отметку попытки, и свежее чтение журнала
+  // снова ставит сообщение в очередь, если его время ещё не прошло (25.11.2026). Бонусы — нет: операцию из журнала решений не восстановить
+  let paid = false;
+  try {
+    for (const e of await jrLogLoad(env, c.id))
+      if (e && e.st === "task" && now - (+e.t || 0) < 86400e3 && e.k !== "bi" && e.k !== "bo" && /402|PAYMENT_REQUIRED|оплат|пополн/i.test(String(e.why || ""))
+        && await jrUntryPaid(env, c.id, String(e.rec), String(e.k))) paid = true;
+  } catch (/** @type {any} */ e) { console.log("jr paid retry", c.id, String((e && e.message) || e).slice(0, 120)); }
+  const force = paid ? "full" : kick.mode, eager = kick.pending.has("bonus"), covered = /** @type {Set<string>} */ (new Set());
   let q = await jrqLoad(env, c.id), dirty = false;
   /** @type {Record<string, any> | null} */ let bk = null;
   let bkDirty = false;
@@ -341,7 +349,8 @@ async function jrClient(env, c, now) {
   const hr = local(now).getUTCHours(), quiet = hr < o.from || hr >= o.to;
   let sent = 0;
   /** @type {[string, string][]} */ const told = [];
-  if (due.length && !quiet && !(await jrHold(env, c.id))) {
+  const hold = due.length && !quiet ? await jrHold(env, c.id) : null;
+  if (due.length && !quiet && !(hold && !(+(hold.till || 0) > 0 && +(hold.till || 0) <= now))) { // пауза номера; till — её конец (KV удаляет ключ с запозданием)
     const day = isoDay(now), cnt0 = await jrCount(env, c.id, day);
     const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svOwn(env, c), told, blocks: /** @type {Map<string, string> | null} */ (null), bk };
     for (const x of due) {
@@ -612,6 +621,12 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   if (!res.ok) {
     const kind = kindOf(res), why = wa ? waWhy(res) : gaWhy(res, ctx.route);
     console.log("jr send", c.id, x.k, res.code);
+    if (kind === "pay") { // закончились оплаченные сообщения: не ушло точно — ждёт в очереди и уйдёт после пополнения (пауза 15 минут)
+      await jrUntry(env, c.id, orec, x.k, ver);
+      await jrHoldSet(env, c.id, why, now, 900);
+      try { await notifyOnce(env, "jrpay:" + c.id, `⚠️ ${c.name}: в Pushon закончились служебные сообщения — напоминания и подтверждения не уходят.\nПополните баланс: сообщения ждут в очереди и уйдут сами (что не опоздало).`, c.id); } catch (e) { console.log("jr pay note", String(e)); }
+      return "stop";
+    }
     if (kind === "stop") {
       await jrUntry(env, c.id, orec, x.k, ver);
       await jrHoldSet(env, c.id, why, now);
@@ -646,7 +661,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   st.told.push([x.rec, x.k]);
   try { await rmOk(env, c.id, x.rec, x.k); } catch (e) { console.log("jr ok mark", String(e)); }
   if (x.k === "rv") { try { await jrReviewMark(env, c.id, x.p, now); } catch (e) { console.log("jr review mark", String(e)); } }
-  await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: "sent" });
+  await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: "sent" }, true);
   st.logs.push(entry(x, "sent", KIND_WORD[x.k] || "", now));
   return "sent";
 }
@@ -660,9 +675,10 @@ export async function sendOnceAuto(env, cid, p, rid, fn, ch = "ga") {
   if (!env.DB) return fn();
   return sendOnce(env, cid, ch, p, rid.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64), fn);
 }
-/** сообщение в переписку (его видит администратор в пульте) @param {Env} env @param {string} hk @param {any} x @param {any} tr */
-async function turn(env, hk, x, tr) {
-  try { await logTurns(env.KV, hk, [tr], /** @param {any} p */ p => { if (!p.waName && x.n) p.waName = x.n; }); } catch (e) { console.log("jr log", String(e)); }
+/** сообщение в переписку (его видит администратор в пульте) @param {Env} env @param {string} hk @param {any} x @param {any} tr @param {boolean} [sent] */
+// sent: сообщение ушло — пометка «ответ не дошёл» от прежней неудачной отправки снимается (после пополнения Pushon, 25.11.2026)
+async function turn(env, hk, x, tr, sent = false) {
+  try { await logTurns(env.KV, hk, [tr], /** @param {any} p */ p => { if (!p.waName && x.n) p.waName = x.n; if (sent && p.need && p.need.why === "send") delete p.need; }); } catch (e) { console.log("jr log", String(e)); }
 }
 /** не ушло: чат — в «Нужен ответ» (ответ не дошёл), Telegram — один раз на сообщение @param {Env} env @param {Client} c @param {any} x
  *  @param {number} now @param {any} tr @param {string} why @param {string} [ch] */
