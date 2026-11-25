@@ -181,3 +181,12 @@ test("Pushon 402 до правки: задача администратору в
   await jrRun(s.env, at(TODAY, "12:00"));
   assert.equal(net.po.filter(x => x.path === "/send-template-message").length, 1, "повторно не шлём");
 });
+
+test("с основного номера (Pushon) — до 20 сообщений в минуту, а не 2 (25.11.2026)", async () => {
+  net.reset();
+  net.altJournal = Array.from({ length: 6 }, (_, i) => rec("+7700000705" + i, TOM, "15:00", { id: 7050 + i, made: `${TODAY}T11:00:00+05:00` }));
+  const s = mk({ ...ENV, WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po-key-test", PHONE_NUMBER_ID_WINCHESTER: "po-channel-1", APP_SECRET_WINCHESTER: "po-hook-pass" });
+  await autoOn(s, { confirm: true });
+  for (const t of ["11:15", "11:30"]) await jrRun(s.env, at(TODAY, t));
+  assert.equal(net.po.filter(x => x.path === "/send-template-message").length, 6, "все шесть подтверждений — за одну минуту");
+});

@@ -59,6 +59,7 @@ const AHEAD = 14;            // журнал читаем со вчера на 1
 const WIN_PAGES = 4;         // 15 дней одной локации — 1–2 страницы по 200 записей (у Winchester ≈15 записей в день)
 const HORIZON = 36 * 3600e3; // в очереди — только то, что уйдёт в ближайшие 36 часов: дальнее спланирует следующее чтение журнала
 const PER_MIN = 2;           // сообщений в минуту со второго номера: неофициальный номер, частые сообщения подряд — повод для блокировки
+const PER_MIN_WA = 20;       // с основного номера шаблонами Meta (Pushon): официальный канал, ждать незачем (решение владельца 25.11.2026)
 const H2_LATE = 45 * 60e3;   // «за несколько часов» позже чем через 45 минут уже не к месту
 const QUEUE_MAX = 600;
 const NEW_LATE = 3 * 3600e3; // подтверждение, перенос, отмена — не позже чем через 3 часа (позже — уже не к месту)
@@ -354,7 +355,7 @@ async function jrClient(env, c, now) {
     const day = isoDay(now), cnt0 = await jrCount(env, c.id, day);
     const st = { cnt: cnt0, cache: new Map(), logs, dirty: false, approvals: await svApprovals(env, c.id), variants: await svOwn(env, c), told, blocks: /** @type {Map<string, string> | null} */ (null), bk };
     for (const x of due) {
-      if (sent >= PER_MIN) break;
+      if (sent >= (jrVia(c, env) === "wa" ? PER_MIN_WA : PER_MIN)) break;
       const r = await jrSend(env, c, o, x, now, { route, user, loc }, st);
       if (r === "sent") { sent++; drop.add(key(x)); }
       else if (r === "drop") drop.add(key(x));
