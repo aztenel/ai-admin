@@ -21,7 +21,9 @@ const REFUSED = new Set(["block", "stop", "review", "denied"]);
 /** @param {Env} env @param {string} cid @param {Record<string, any>} b рассылка @param {number} now */
 export async function bcResults(env, cid, b, now) {
   if (!b || !b.id) return null;
-  if (b.ch === "ga" && b.src === "crm" && !b.demo) return gaResults(env, cid, b, now);
+  // и рассылки шаблонами Meta / Pushon: раньше их итоги читались только из D1 по событиям, которых для них никто не писал — в пульте
+  // «Ушло 0», «Записались после 0» (проверка 26.11.2026)
+  if (!b.demo) return gaResults(env, cid, b, now);
   try {
     const db = await d1Ready(env, now);
     if (!db) return null;

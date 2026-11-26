@@ -256,7 +256,7 @@ export default function AutoScenario({ ws, owner: ownerProp }: { ws: string; own
                 setTplErr("");
               }}
               error={tplErr || undefined}
-              hint="Название как в кабинете Meta или Wazzapo: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta, в нём одна подстановка: имя клиента."
+              hint="Название как в кабинете провайдера (Pushon) или Meta: строчные латинские буквы, цифры и «_». Шаблон должен быть одобрен Meta, в нём одна подстановка: имя клиента."
             />
             <SelectField label="Язык шаблона" value={edit.lang} onChange={(e) => set({ lang: e.target.value })}>
               {langs.map((l) => (

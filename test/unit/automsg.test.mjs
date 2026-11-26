@@ -314,7 +314,7 @@ test("дубли: одна запись, вид и версия — одно с�
   await jrRun(s.env, at(TODAY, "17:00")); await jrRun(s.env, at(TODAY, "18:00"));
   assert.equal(sent().length, 1);
   // в другой точке сети отметка KV ещё не видна: задача снова в очереди, отметки rms: нет
-  for (const k of [...s.kv.mem.keys()].filter(k => k.startsWith("rms:"))) s.kv.mem.delete(k);
+  for (const k of [...s.kv.mem.keys()].filter(k => k.startsWith("rms:") || k.startsWith("rmd:"))) s.kv.mem.delete(k);
   const q = [{ rec: "6081", v: (await jrqLoad(s.env, "winchester"))[0]?.v, k: "d1", at: at(TODAY, "18:00"), p: dg(6081), n: "Клиент", date: TOM, time: "15:00", staff: "Тони", svc: "Мужская стрижка" }];
   const ver = s.kv.json("jrb:winchester")["6081"].v;
   q[0].v = ver;
@@ -595,4 +595,18 @@ test("ТЗ v4: перенос и отмена, замеченные вечеро
   const out = sent();
   assert.equal(out.length, 2, JSON.stringify(log(s).filter(x => x.k === "s06" || x.k === "cx")));
   assert.ok(out.some(x => x.to === dg(6221) && /17:00/.test(x.text)) && out.some(x => x.to === dg(6222) && /отменена/.test(x.text)), JSON.stringify(out));
+});
+
+test("проверка 26.11.2026: администратор дописал услугу (время то же) — не «Ваша запись перенесена»; настоящий перенос — сообщение", async () => {
+  net.reset();
+  net.altJournal = [rec(ph(6231), "2026-10-21", "15:00", { id: 6231 }), rec(ph(6232), "2026-10-21", "16:00", { id: 6232 })];
+  const s = mk(ENV); await approveAll(s); await autoOn(s, { move: true });
+  await jrRun(s.env, at(TOM, "11:00"));
+  const a = rec(ph(6231), "2026-10-21", "15:00", { id: 6231 }); a.services.push({ id: 2, title: "Борода" }); // только услуга
+  net.altJournal = [a, rec(ph(6232), "2026-10-21", "17:00", { id: 6232 })]; // а этого перенесли на 17:00
+  await jrRun(s.env, at(TOM, "11:20"));
+  for (const t of ["11:24", "11:25", "11:26"]) await jrRun(s.env, at(TOM, t));
+  const out = sent();
+  assert.ok(!out.some(x => x.to === dg(6231)), "правка услуги — не перенос: " + JSON.stringify(out));
+  assert.ok(out.some(x => x.to === dg(6232) && /17:00/.test(x.text)), "перенос — сообщение: " + JSON.stringify(out));
 });

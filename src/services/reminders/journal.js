@@ -38,7 +38,7 @@ import { sendOnce } from "../inbox/send.js";
 import { marketingGate } from "../contacts/gate.js";
 import { logTurns, readHist } from "../../db/kv/chats.js";
 import { jrqLoad, jrqSave, jrSyncAt, jrSyncMark, jrCount, jrCountSave, jrCapNote, jrHold, jrHoldSet, jrReviewedAt, jrReviewMark, optedOut, rmOk,
-  jrTried, jrTry, jrUntry, jrUntryPaid, jrLogLoad, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
+  jrTried, jrTry, jrUntry, jrUntryPaid, jrDayMark, jrDayMarked, jrBonusMark, jrBonusSeen, jrLogLoad, jrLogAdd, jrNoShowMark, svApprovals } from "../../db/kv/reminders.js";
 import { autoLoad, autoCountAdd, jrbLoad, jrbSave } from "../../db/kv/automsg.js";
 import { siteNotifyLoad } from "../../db/kv/site.js";
 import { atLocal } from "./plan.js";
@@ -180,11 +180,18 @@ export function jrPlanAll(c, records, now, set, site) {
     if (pick && v.att !== 1) { // клиент сам выбрал на сайте, когда напомнить
       const h = Math.max(0, +pick.h || 0);
       if (!h) skipped.push({ rec: v.id, why: "на сайте клиент выбрал «не напоминать»" });
-      else if (h >= 12 && o.d1) { const d1 = in24(t - (h - 24) * 3600e3, o); if (d1 < t && !(v.made && v.made > d1 - 600e3)) add("d1", d1); }
-      else if (h < 12 && o.h2) {
-        const h2 = t - h * 3600e3, hr = local(h2).getUTCHours();
-        if (hr >= o.from && hr < o.to && !(v.made && v.made > h2 - 600e3)) add("h2", h2);
-        else skipped.push({ rec: v.id, why: `за ${h} ч до визита — вне часов отправки или запись сделана позже` });
+      else {
+        // вид — по календарному дню, а не по числу часов (проверка 26.11.2026): шаблон «накануне» говорит «завтра», поэтому он уходит
+        // только накануне дня визита; «за 12 ч» к визиту в 20:00 — это тот же день (в день визита), «за 48 ч» — всё равно накануне
+        const ts = t - h * 3600e3, same = local(ts).toISOString().slice(0, 10) === v.date;
+        if (same && o.h2) {
+          const hr = local(ts).getUTCHours();
+          if (hr >= o.from && hr < o.to && !(v.made && v.made > ts - 600e3)) add("h2", ts);
+          else skipped.push({ rec: v.id, why: `за ${h} ч до визита — вне часов отправки или запись сделана позже` });
+        } else if (!same && o.d1) {
+          const d1 = h <= 24 ? in24(ts + 24 * 3600e3, o) : in24(t, o); // в его часы отправки, накануне визита
+          if (d1 < t && local(d1).toISOString().slice(0, 10) < v.date && !(v.made && v.made > d1 - 600e3)) add("d1", d1);
+        }
       }
     }
     if (o.d1 && v.att !== 1 && !pick) {
@@ -213,7 +220,7 @@ const key = x => x.rec + ":" + x.k + ":" + (x.v || "") + (x.tx ? ":" + x.tx : ""
  *  напоминания, перенос и отмена — на версию записи (находки проверки 08.11.2026) @param {any} x @returns {{ rec: string, ver: string }} */
 const onceOf = x => x.tx ? { rec: "tx", ver: String(x.tx) } : { rec: x.rec, ver: x.k === "s01" ? `${x.date}T${x.time}` : x.k === "rv" ? "1" : x.v || "1" };
 /** запись решения для журнала очереди (раздел «Автоматические сообщения») @param {any} x @param {string} st @param {string} why @param {number} now */
-const entry = (x, st, why, now) => ({ t: now, k: x.k, rec: x.rec, p: x.p, n: x.n || "", date: x.date, time: x.time, st, why });
+const entry = (x, st, why, now) => ({ t: now, k: x.k, rec: x.rec, p: x.p, n: x.n || "", date: x.date, time: x.time, st, why, ...(x.tx ? { tx: String(x.tx).slice(0, 40), am: x.am } : {}) });
 /** @type {Record<string, string>} */
 const KIND_WORD = { s01: "подтверждение записи", s06: "сообщение о переносе", cx: "сообщение об отмене", d1: "напоминание накануне", h2: "напоминание в день визита", rv: "благодарность за визит", bi: "начислено бонусов", bo: "списано бонусов" };
 /** состояние записи журнала → строка очереди @param {any} p */
@@ -400,6 +407,8 @@ function countsOf(logs) {
   return add;
 }
 
+/** запись действительно перенесена: другой день, время или мастер (у старых строк без мастера — только день и время) @param {any} p @param {any} v */
+const movedRec = (p, v) => p.d !== v.date || p.t !== v.time || (p.s != null && v.staff != null && String(p.s) !== String(v.staff));
 /**
  * Что изменилось в журнале с прошлого чтения (jrb:<клиент>): у записи другая версия — перенос; запись была в прочитанном окне, а теперь
  * её нет — ищем её в журнале на 60 дней: нашлась — перенос (далеко), нет — отмена. Журнал прочитан не весь (cut) или проверка не
@@ -420,7 +429,9 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
   }
   for (const [id, v] of cur) {
     const p = prev[id];
-    if (p && p.v !== v.v) moved.push({ p: { ...p, id }, v });
+    // перенос — только если сменились день, время или мастер: правка услуг тоже меняет версию записи, а клиент получал «Ваша запись
+    // перенесена» с тем же временем (проверка 26.11.2026)
+    if (p && p.v !== v.v && movedRec(p, v)) moved.push({ p: { ...p, id }, v });
     state[id] = row(v, p);
   }
   for (const [id, p] of Object.entries(prev)) {
@@ -438,7 +449,7 @@ async function jrChanges(env, prev, list, cut, now, ctx) {
       const byId = new Map(wide.list.map(/** @param {any} r */ r => [String(r && r.id), r]));
       for (const p of gone) {
         const v = jrRec(byId.get(p.id));
-        if (v && v.att !== -1) { state[p.id] = row(v, p); if (v.v !== p.v) moved.push({ p, v }); }
+        if (v && v.att !== -1) { state[p.id] = row(v, p); if (v.v !== p.v && movedRec(p, v)) moved.push({ p, v }); }
         else if (!byId.has(p.id)) cancelled.push(p);
       }
     }
@@ -601,6 +612,11 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   const t = fill ? { text: fill.text } : svText(c, x.k, msgOf(x), p.lang, vt);
   if (!t || !t.text) return skip("нет текста сообщения");
   const { rec: orec, ver } = onceOf(x);
+  // напоминание о том же дне и времени — одно, даже если версия записи сменилась из-за правки услуг (проверка 26.11.2026)
+  if ((x.k === "d1" || x.k === "h2") && await jrDayMarked(env, c.id, x.rec, x.k, `${x.date}T${x.time}`)) return skip("уже отправляли (то же время записи)");
+  // одно и то же начисление (списание) одному клиенту — одно сообщение за 12 часов, даже если в Altegio операция пересоздана с новым
+  // номером (администратор пересохранил оплату; живой случай 25.11.2026 — «Начислено бонусов: 350» дважды)
+  if ((x.k === "bi" || x.k === "bo") && x.am != null && await jrBonusSeen(env, c.id, x.p, x.k, String(x.am))) return skip(`то же ${x.k === "bi" ? "начисление" : "списание"} (${x.am}) этому клиенту уже сообщали за 12 часов (операция ${String(x.tx || "")})`);
   if (!(await jrTry(env, c.id, orec, x.k, ver))) return skip("уже отправляли");
   /** @type {Record<string, any>} */ let res = { ok: false, status: 0, code: "ga:net", error: "не отправляли" };
   // атомарная отметка в D1 (если у адреса есть база): одна запись, вид и версия — одно сообщение, даже если две фоновые задачи
@@ -625,13 +641,15 @@ async function jrSend(env, c, o, x, now, ctx, st) {
     if (kind === "pay") { // закончились оплаченные сообщения: не ушло точно — ждёт в очереди и уйдёт после пополнения (пауза 15 минут)
       await jrUntry(env, c.id, orec, x.k, ver);
       await jrHoldSet(env, c.id, why, now, 900);
-      try { await notifyOnce(env, "jrpay:" + c.id, `⚠️ ${c.name}: в Pushon закончились служебные сообщения — напоминания и подтверждения не уходят.\nПополните баланс: сообщения ждут в очереди и уйдут сами (что не опоздало).`, c.id); } catch (e) { console.log("jr pay note", String(e)); }
+      // одно сообщение на весь перерыв (KV, 6 часов), а не каждые 15 минут, пока баланс пуст (проверка 26.11.2026)
+      let told = false; try { told = !!(await env.KV.get("jrpayn:" + c.id)); if (!told) await env.KV.put("jrpayn:" + c.id, "1", { expirationTtl: 6 * 3600 }); } catch (e) {}
+      if (!told) try { await notifyOnce(env, "jrpay:" + c.id, `⚠️ ${c.name}: в Pushon закончились служебные сообщения — напоминания и подтверждения не уходят.\nПополните баланс: сообщения ждут в очереди и уйдут сами (что не опоздало).`, c.id); } catch (e) { console.log("jr pay note", String(e)); }
       return "stop";
     }
     if (kind === "stop") {
       await jrUntry(env, c.id, orec, x.k, ver);
       await jrHoldSet(env, c.id, why, now);
-      await notify(env, wa ? `⛔ ${c.name}: сервисные сообщения (шаблоны Meta) остановлены на 6 часов.\nПричина: ${why}\nПроверьте номер и шаблоны в кабинете Wazzapo.`
+      await notify(env, wa ? `⛔ ${c.name}: сервисные сообщения (шаблоны Meta) остановлены на 6 часов.\nПричина: ${why}\nПроверьте номер и шаблоны в кабинете провайдера (Pushon).`
         : `⛔ ${c.name}: напоминания со второго номера остановлены на 6 часов.\nGreen-API: ${why}\nПроверьте, не заблокирован ли номер.`, c.id);
       return "stop";
     }
@@ -643,6 +661,8 @@ async function jrSend(env, c, o, x, now, ctx, st) {
       const note = wa ? `Нет ответа о сообщении (${waWhy(res)}): оно могло уйти` : gaUnsureNote(res);
       st.cnt++;
       st.told.push([x.rec, x.k]);
+  if ((x.k === "bi" || x.k === "bo") && x.am != null) { try { await jrBonusMark(env, c.id, x.p, x.k, String(x.am)); } catch (e) { console.log("jr bonus mark", String(e)); } }
+  if (x.k === "d1" || x.k === "h2") { try { await jrDayMark(env, c.id, x.rec, x.k, `${x.date}T${x.time}`); } catch (e) { console.log("jr day mark", String(e)); } }
       if (x.k === "rv") { try { await jrReviewMark(env, c.id, x.p, now); } catch (e) { console.log("jr review mark", String(e)); } }
       await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: "unknown", se: note });
       st.logs.push(entry(x, "unknown", `${note}. Второй раз не шлём — проверьте переписку`, now));
@@ -660,6 +680,8 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   }
   st.cnt++;
   st.told.push([x.rec, x.k]);
+  if ((x.k === "bi" || x.k === "bo") && x.am != null) { try { await jrBonusMark(env, c.id, x.p, x.k, String(x.am)); } catch (e) { console.log("jr bonus mark", String(e)); } }
+  if (x.k === "d1" || x.k === "h2") { try { await jrDayMark(env, c.id, x.rec, x.k, `${x.date}T${x.time}`); } catch (e) { console.log("jr day mark", String(e)); } }
   try { await rmOk(env, c.id, x.rec, x.k); } catch (e) { console.log("jr ok mark", String(e)); }
   if (x.k === "rv") { try { await jrReviewMark(env, c.id, x.p, now); } catch (e) { console.log("jr review mark", String(e)); } }
   await turn(env, hk, x, { role: "model", text: t.text, t: now, rm: x.k, ...(res.id ? { mid: String(res.id).slice(0, 80) } : {}), st: "sent" }, true);

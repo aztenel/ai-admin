@@ -655,7 +655,7 @@ function EditSheet({ ws, s, d, owner, onClose, onSaved }: { ws: string; s: AutoM
               Текст сообщения
             </h3>
             <p className="mt-1.5 text-sm text-fg-2">
-              Уходит одобренным шаблоном Meta{s.tpl ? ` «${s.tpl.name}»` : ""}. Текст меняется только в кабинете Wazzapo, и Meta проверяет его заново. Имя, дату,
+              Уходит одобренным шаблоном Meta{s.tpl ? ` «${s.tpl.name}»` : ""}. Текст меняется только в кабинете провайдера (Pushon), и Meta проверяет его заново. Имя, дату,
               время, мастера и услугу подставит сервер из записи Altegio.
             </p>
           </section>
@@ -829,7 +829,7 @@ function TestSheet({ ws, s, d, onClose, onPhone, onSent }: { ws: string; s: Auto
                   <Icon aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={2.25} />
                   <span className="min-w-0">
                     {unsure
-                      ? `${d.sender.via === "wa" ? "Wazzapo" : "Green-API"} не ответил: не знаем, ушло ли сообщение на ${nb(st.ok.to)}. Проверьте WhatsApp; это нажатие второй раз не отправится.`
+                      ? `${d.sender.via === "wa" ? "Провайдер WhatsApp" : "Green-API"} не ответил: не знаем, ушло ли сообщение на ${nb(st.ok.to)}. Проверьте WhatsApp; это нажатие второй раз не отправится.`
                       : st.ok.dup
                         ? `Эта проверка уже отправлена на ${nb(st.ok.to)}. Проверьте WhatsApp.`
                         : `Отправлено на ${nb(st.ok.to)}. Проверьте WhatsApp.`}

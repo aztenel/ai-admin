@@ -297,7 +297,7 @@ function StatusStrip({ d, summary, bot, now, me, assignee, onAct, onTake, onClos
     body = (
       <span className="font-medium text-critical">
         {w ? (w === "только что" ? "Ждёт ответа" : `Ждёт ответа ${w}`) : attention.label}
-        {w && what ? ` · ${what}` : ""}
+        {w && what && !/^ждёт ответа$/i.test(what) ? ` · ${what}` : ""}
       </span>
     );
     action =

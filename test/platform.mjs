@@ -681,7 +681,7 @@ section("рассылки");
   id = await fresh("Связь", 3, 800);
   net.graphReply = (u, i, rec) => { if (rec.body && rec.body.type === "template") throw new Error("network down"); return null; };
   await S.cron(); b = bcOf(id);
-  ok("связь с Meta оборвалась → получатель не повторяется (мог получить), пауза 10 минут", b.status === "running" && b.failed === 1 && b.pos === 1 && b.retryAt > Date.now(), JSON.stringify(b));
+  ok("связь с Meta оборвалась → получатель не повторяется (мог получить, «неизвестно»), пауза 10 минут", b.status === "running" && b.unsure === 1 && b.failed === 0 && b.pos === 1 && b.retryAt > Date.now(), JSON.stringify(b)); // «неизвестно, ушло ли», а не «ошибка» (проверка 26.11.2026)
   net.graphReply = null; setBc(id, x => { x.retryAt = Date.now() - 1; }); await S.cron(); b = bcOf(id);
   ok("после обрыва связи остальные получили по одному сообщению", b.status === "done" && b.sent === 2 && new Set(tpls().map(x => x.body.to)).size === 3 && tpls().length === 3, JSON.stringify(b));
 

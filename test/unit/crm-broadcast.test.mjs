@@ -576,3 +576,12 @@ test("шаблон с {мастер} по списку из Excel — отказ
   const ok = await (await own.post("/api/bc/create", { ...form, segment: "pora" })).json();
   assert.equal(ok.ok, true, JSON.stringify(ok));
 });
+
+test("проверка 26.11.2026: «не писать клиентам мастеров» — по полному имени: «Тони (Рауан М.)» не исключает другого Тони", async () => {
+  const { awayList, staffAway } = await import("../../src/services/broadcast/away.js");
+  const away = awayList(["Тони (Рауан М.)"]);
+  assert.equal(staffAway("Тони (Рауан М.)", away), true);
+  assert.equal(staffAway("Тони (Айдос К.)", away), false, "другой мастер с тем же первым словом");
+  assert.equal(staffAway("Айдос", awayList("Айдос")), true, "одно слово — по первому слову, как раньше");
+  assert.equal(staffAway("Айдос Кайратович", awayList("айдос")), true);
+});

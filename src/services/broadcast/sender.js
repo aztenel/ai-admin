@@ -290,6 +290,17 @@ export async function bcTick(env, cid, id, gaBusy) {
   try {
     b = (await bcGet(env, cid, id)) || b; // после замка читаем заново
     if (b.status !== "running") return { b, state: b.status };
+    const cap0 = b.cap;
+    // владелец нажал «Пауза», «Остановить» или сменил предел, пока шла порция: порция сохраняет рассылку целиком и затирала его решение —
+    // рассылка шла дальше или «зависала» на паузе с очередью (проверка 26.11.2026). Перед сохранением берём его решение из свежей записи
+    const owner = async () => {
+      try {
+        const now2 = await bcGet(env, cid, id);
+        if (!now2) return;
+        if (now2.status !== "running" && b.status !== "done") { b.status = now2.status; if (now2.note) b.note = now2.note; else delete b.note; }
+        if (now2.cap !== cap0) b.cap = now2.cap;
+      } catch (e) { console.log("bc reread", String(e).slice(0, 120)); }
+    };
     if (b.cur) { // прошлая порция оборвалась: кто из неё получил сообщение — неизвестно, повторно её не шлём
       b.unsure = (b.unsure || 0) + b.cur[1];
       // шаблон мог уйти любому из неё — отметка «писали маркетинг» всем: иначе следующая рассылка по базе или автосценарий напишут второй раз (находка проверки 19.10.2026)
@@ -362,8 +373,17 @@ export async function bcTick(env, cid, id, gaBusy) {
         logged.push([digits, name, String(rr.id || ""), ready, "unknown", gaUnsureNote(rr)]);
         halt = { kind: "temp", r }; break;
       }
-      if (!ga && r.code === 0) marked.push(digits); // связь оборвалась — шаблон мог уйти: второй раз за 14 дней такому клиенту не пишем
-      const kind = ga ? gaKind(r.code) : r.code === 0 ? "net" : BC_TEMP.has(r.code) || r.status >= 500 ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
+      const rr0 = /** @type {any} */ (r);
+      // явная временная ошибка Meta (131016 «сервис недоступен» и т. п.) — точно не ушло: получатель остаётся в очереди, как раньше
+      if (!ga && (r.code === 0 || rr0.po === "SENDING_ERROR" || (rr0.status >= 500 && !BC_TEMP.has(r.code) && !BC_ACCOUNT.has(r.code)))) {
+        // ответа нет или сбой у провайдера (5xx): шаблон мог уйти — по документации Pushon сообщение «остаётся в очереди и может быть
+        // доставлено». Второй раз этому клиенту не пишем (раньше 5xx возвращал его в очередь — до 6 одинаковых реклам, проверка 26.11.2026)
+        b.unsure = (b.unsure || 0) + 1; sentNow++; done++; marked.push(digits);
+        logged.push([digits, name, "", ready, "unknown", "нет ответа о сообщении: оно могло уйти"]);
+        halt = { kind: "temp", r }; break;
+      }
+      // ошибка в данных одного сообщения (Pushon 400 VALIDATION_ERROR) — не пауза всей рассылки, а этот клиент не получил (пять подряд — пауза)
+      const kind = ga ? gaKind(r.code) : rr0.po === "VALIDATION_ERROR" ? "one" : BC_TEMP.has(r.code) ? "temp" : BC_ACCOUNT.has(r.code) || (BC_PARAM.has(r.code) && b.stuck !== from + done) ? "stop" : "one";
       if (kind === "temp" || kind === "stop") { // получатель ни при чём: он возвращается в очередь
         if (!ga && BC_PARAM.has(r.code)) b.stuck = from + done;
         halt = { kind, r }; break;
@@ -388,7 +408,9 @@ export async function bcTick(env, cid, id, gaBusy) {
     if (marked.length) { try { await bcmAdd(env, cid, isoDay(now), marked); } catch (e) { console.log("bcm", String(e).slice(0, 120)); } }
     if (logged.length) await bcLog(env, cid, b, logged, now);
     // кому ушло — для итогов рассылки по базе («записались после», «отказались»); сбой рассылку не останавливает
-    if (gaCrm && logged.length) { try { await bcSentAdd(env, cid, id, logged.map(x => [x[0], now, String(x[2] || "").slice(0, 80), x[4] || "sent"])); } catch (e) { console.log("bcs", String(e).slice(0, 120)); } }
+    if (logged.length) { try { await bcSentAdd(env, cid, id, logged.map(x => [x[0], now, String(x[2] || "").slice(0, 80), x[4] || "sent"])); } catch (e) { console.log("bcs", String(e).slice(0, 120)); } }
+    await owner();
+    if (b.status !== "running") { await bcPut(env, cid, b); await bcRun(env, cid, id, false); return { b, state: b.status, did }; }
     if (halt && (halt.kind !== "temp" || b.tmp >= 6)) {
       const why = ga ? gaWhy(halt.r, route.ga) : bcWhy(halt.r);
       return await stopFor(halt.kind === "streak" ? `Пять сообщений подряд не отправились (${why}).` : halt.kind === "temp" ? `${bcFrom(b)} больше часа не принимает сообщения (${why}).` : `${ga ? "Green-API отклонил" : "Meta отклонила"} отправку (${why}).`);

@@ -117,10 +117,13 @@ export function poToMeta(body, channel) {
     const m = body.message && typeof body.message === "object" ? body.message : {};
     const ids = [m.externalRef, m.id, body.messageId].filter(Boolean).map(String), mid = ids.find(x => /^wamid\./.test(x)) || ids[0] || "";
     if (type === "message.incoming") {
+      // номер входящего — номер Pushon (message.id): на него отвечают цитатой (contextMessageId принимает messageId Pushon, не wamid;
+      // коллекция методов, проверка 26.11.2026); повтор события отсекается по id события
+      const inId = String(m.id || mid);
       // файл: message.media = { url, caption, filename, mimeType } (живая проверка 22.11.2026, «Проверка запуска»: ссылка на
       // filemanager.gupshup.io — Pushon работает через Gupshup)
       const md = m.media && typeof m.media === "object" ? m.media : {};
-      const msg = poMsg({ id: mid, from: body.contactPhone || m.from, payload_type: m.messageType || m.type || "text", text: m.text, caption: md.caption || m.caption,
+      const msg = poMsg({ id: inId, from: body.contactPhone || m.from, payload_type: m.messageType || m.type || "text", text: m.text, caption: md.caption || m.caption,
         url: md.url, filename: md.filename, mediaId: m.mediaId || m.media_id, mime_type: md.mimeType || m.mimeType || m.mime_type, timestamp: body.occurredAt || m.timestamp });
       return msg ? wrap("messages", { contacts: [{ wa_id: msg.from, profile: { name: String(body.contactName || "") } }], messages: [msg] }) : null;
     }
@@ -128,7 +131,8 @@ export function poToMeta(body, channel) {
     const st = String(body.status || m.status || type.slice(8)).toLowerCase().replace(/^delivery$/, "delivered");
     if (/^(sent|delivered|read|failed|error)$/.test(st) && mid) {
       const ok = st === "error" ? "failed" : st, er = body.error || m.error, e = er && typeof er === "object" ? er : er ? { message: String(er) } : null;
-      return wrap("messages", { statuses: [{ id: mid, status: ok, timestamp: unix(body.occurredAt), recipient_id: digits(body.contactPhone),
+      // ids — все номера этого сообщения (wamid, номер Pushon): в переписке у нашей реплики — номер Pushon из ответа на отправку
+      return wrap("messages", { statuses: [{ id: mid, ids, status: ok, timestamp: unix(body.occurredAt), recipient_id: digits(body.contactPhone),
         ...(ok === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message)) || "не доставлено") }] } : {}) }] });
     }
     return null; // исходящие (наши же и из кабинета Pushon) и прочее — боту не нужны

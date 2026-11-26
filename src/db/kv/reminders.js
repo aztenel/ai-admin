@@ -104,6 +104,14 @@ export async function jrTried(env, cid, rec, k, v) {
   if (old === v || await env.KV.get(`rms:${cid}:ga:${rec}:${k}:${v}`)) return "same";
   return "";
 }
+/** сообщение о бонусах с этой суммой этому номеру — 12 часов @param {Env} env @param {string} cid @param {string} p @param {string} k @param {string} am */
+export const jrBonusMark = (env, cid, p, k, am) => env.KV.put(`rmbn:${cid}:${p}:${k}:${am}`, "1", { expirationTtl: 12 * 3600 });
+/** @param {Env} env @param {string} cid @param {string} p @param {string} k @param {string} am */
+export const jrBonusSeen = async (env, cid, p, k, am) => !!(await env.KV.get(`rmbn:${cid}:${p}:${k}:${am}`));
+/** напоминание о записи на этот день и время уже ушло (или могло уйти) — 3 дня @param {Env} env @param {string} cid @param {string} rec @param {string} k @param {string} dt */
+export const jrDayMark = (env, cid, rec, k, dt) => env.KV.put(`rmd:${cid}:${rec}:${k}:${dt}`, "1", { expirationTtl: 3 * DAY });
+/** @param {Env} env @param {string} cid @param {string} rec @param {string} k @param {string} dt */
+export const jrDayMarked = async (env, cid, rec, k, dt) => !!(await env.KV.get(`rmd:${cid}:${rec}:${k}:${dt}`));
 /** @param {Env} env @param {string} cid @param {string} rec @param {string} k @param {string} v */
 export async function jrTry(env, cid, rec, k, v) {
   if (await jrTried(env, cid, rec, k, v)) return false;

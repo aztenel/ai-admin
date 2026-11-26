@@ -8,7 +8,9 @@ import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
 import { fixedOf, nicheOf, seenBefore, seenForget, waCoex, markOptout, botOff } from "../../services/channels/index.js";
 import { inboundNeed } from "../../services/inbox/queue.js";
-import { inboundPush } from "../../services/inbox/notify.js";
+import { inboundPush, failedPush } from "../../services/inbox/notify.js";
+import { applyStatus, stOf } from "../../services/inbox/status.js";
+import { statStatus } from "../../services/inbox/stats.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { poOn } from "../../services/channels/pushon.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
@@ -219,6 +221,27 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
       const e = fails[0].e;
       await waErr(env, "доставка", e.code, e.title || e.message, e.error_data?.details);
       if (wx.signed) { try { await waFailed(env, wx, fails); } catch (/** @type {any} */ x) { console.log("wa failed", String((x && x.stack) || x)); } }
+    }
+    // галочки наших сообщений основного номера (26.11.2026: у ответов из пульта и сервисных сообщений навсегда одна серая галочка,
+    // в том числе у недоставленных): статус — только вверх (stNext), «не доставлено» — пометка «ответ не дошёл» в чате
+    if (wx.signed && wx.client && hasClient(wx.client)) for (const st of val.statuses || []) {
+      if (!st || !st.recipient_id || !st.status) continue;
+      const to = String(st.recipient_id).replace(/\D/g, ""), hk = `h:wa:${wx.client}:${to}`, e = (st.errors || [])[0] || {};
+      const desc = String(e.title || e.message || "").slice(0, 120) + (e.code ? ` (код ${e.code})` : "");
+      try {
+        for (const id of [...new Set([st.id, ...(Array.isArray(st.ids) ? st.ids : [])].filter(Boolean).map(String))]) {
+          /** @type {any} */ let turn = null;
+          const r = await applyStatus(env, hk, id, String(st.status), desc, t => { turn = t; });
+          if (r === "nochat") break;
+          if (!turn) continue;
+          if (r === "changed" && st.status === "failed") {
+            try { await logTurns(env.KV, hk, [], p => { if (!p.stop) p.need = { at: Date.now(), why: "send" }; }, true); } catch (x) { console.log("wa status need", String(x)); }
+            try { await failedPush(env, "wa", wx.client, to, id); } catch (x) {}
+          }
+          try { await statStatus(env, wx.client, "wa", id, turn, stOf(String(st.status)), Date.now()); } catch (x) {}
+          break;
+        }
+      } catch (/** @type {any} */ x) { console.log("wa status", String((x && x.message) || x).slice(0, 120)); }
     }
     const names = new Map((val.contacts || []).map(/** @param {any} k */ k => [k && k.wa_id, (k && k.profile && k.profile.name) || ""]));
     const pnid = (val.metadata && val.metadata.phone_number_id) || "";

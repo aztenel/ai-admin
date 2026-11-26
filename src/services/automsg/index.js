@@ -62,7 +62,7 @@ async function readiness(env, c, now) {
 /** текст сценария для пульта: сервисный — действующий вариант (одобрен ли), рекламный — свой текст или по умолчанию
  *  @param {Client} c @param {any} d @param {any} set @param {Record<string, any>} ap @param {Record<string, any>} own @param {number} now @param {Env} env */
 function textOf(c, d, set, ap, own, now, env) {
-  // основной номер: текст — одобренный шаблон Meta (меняется только в кабинете Wazzapo / Meta), вставки — из записи Altegio
+  // основной номер: текст — одобренный шаблон Meta (меняется только в кабинете провайдера — Pushon или Wazzapo — и в Meta), вставки — из записи Altegio
   if (d.group === "service" && jrVia(c, env) === "wa") {
     const t = jrTpl(env, c, d.kind);
     if (!t) return { text: null, preview: "", tpl: null };
@@ -180,7 +180,7 @@ export async function autoChange(env, c, b, who, now) {
   }
   if (on && d.group === "marketing" && !mk) { const ck = mkTextCheck(set.tx[d.id]); if ("error" in ck) return { error: ck.error, status: 400 }; }
   const wa = d.group === "service" && jrVia(c, env) === "wa";
-  if (wa && b.text != null) return { error: "Текст шаблона Meta меняется только в кабинете Wazzapo, и Meta проверяет его заново. Здесь его не правят.", status: 409, code: "tpl" };
+  if (wa && b.text != null) return { error: "Текст шаблона Meta меняется только в кабинете провайдера (Pushon), и Meta проверяет его заново. Здесь его не правят.", status: 409, code: "tpl" };
   if (wa && on && !jrTpl(env, c, d.kind)) return { error: "Для этого сообщения нет одобренного шаблона Meta: включать нечего.", status: 409, code: "notpl" };
   const sc = d.group === "service" && !wa ? scenario(String(d.sc)) : null;
   if ((on || b.text != null) && d.group === "service" && !wa && !(sc && activeOf(sc, await svOwn(env, c)))) return { error: "У сценария нет текста.", status: 400 };
@@ -208,7 +208,9 @@ export async function autoChange(env, c, b, who, now) {
       const act = activeOf(sc, await svOwn(env, c));
       if (act && !approvalFits((await svApprovals(env, c.id))[sc.id], act)) await svApprove(env, c.id, sc.id, act.v, true, now, act.id);
     }
-    await autoEdit(env, c.id, o => { o.s = o.s || {}; o.s[d.id] = { ...(o.s[d.id] || {}), on, at: now, by }; });
+    // повторное «включить» уже включённого не сдвигает время включения: иначе всё, что ждало в очереди, отбрасывалось как «включили
+    // позже, чем должно было уйти» (проверка 26.11.2026)
+    await autoEdit(env, c.id, o => { o.s = o.s || {}; const was = o.s[d.id] || {}; o.s[d.id] = { ...was, on, at: on && was.on ? was.at || now : now, by }; });
     ev.push({ t: now, k: d.kind, rec: "", p: "", n: by, date: "", time: "", st: on ? "on" : "off", why: `${SAY[on ? "on" : "off"]} ${by || "владелец"}` });
   }
   if (!ev.length) return { error: "Нечего менять.", status: 400 };
@@ -244,7 +246,7 @@ export async function autoTest(env, c, b, who, now) {
   if (!text) return { error: "У сценария нет текста.", status: 400 };
   if (!set.test) return { error: "Сначала укажите номер для проверки (ваш номер) вверху раздела.", status: 409, code: "notest", preview: text };
   const route = wa ? jrRoute(env, c) : gaRoute(env, c.id);
-  if (!route) return { error: wa ? "Основной номер (Meta через Wazzapo) не подключён: проверку отправить не с чего." : "Второй номер (Green-API) не подключён: проверку отправить не с чего.", status: 409, code: "nosender", preview: text };
+  if (!route) return { error: wa ? "Основной номер WhatsApp не подключён: проверку отправить не с чего." : "Второй номер (Green-API) не подключён: проверку отправить не с чего.", status: 409, code: "nosender", preview: text };
   if (isPreview(env)) return { error: "Это тестовая версия: проверка отсюда не отправляется. Текст показан ниже.", status: 409, code: "preview", preview: text };
   if (await autoTestHit(env, c.id, now) >= TEST_PER_HOUR) return { error: "Слишком много проверок за час. Подождите немного.", status: 429 };
   const p = set.test.p, rid = "t-" + String(b.rid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);

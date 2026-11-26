@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { net, mk } from "../harness.mjs";
 import { sendTemplate } from "../../src/services/channels/templates.js";
 import { poToMeta } from "../../src/services/channels/pushon.js";
+import { waKind } from "../../src/services/reminders/watpl.js";
 import { bcParam } from "../../src/services/integrations/meta/templates.js";
 
 const ENV = { WA_VIA_BARBER: "pushon", WA_TOKEN_BARBER: "po_key_test", APP_SECRET_BARBER: "hook-pass-123", PHONE_NUMBER_ID_BARBER: "chan-1" };
@@ -258,4 +259,40 @@ test("номер телефона в сообщении клиента виде�
   const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=wa&id=${from}`)).json();
   const u = c.turns.find(x => x.r === "u");
   assert.match(u.x, /8 701 234 56 78/, "в пульте номер виден: " + u.x);
+});
+
+test("галочки и ошибки Pushon (проверка 26.11.2026): статусы ответа из пульта — доставлено, прочитано; не доставлено — «ответ не дошёл»; 5xx — «неизвестно», без повтора; 400 сервисного — не пауза всех", async () => {
+  net.reset();
+  const E = { WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po_key_w", APP_SECRET_WINCHESTER: "hook-w-123", PHONE_NUMBER_ID_WINCHESTER: "chan-w" };
+  const s = mk(E);
+  const b = s.browser();
+  await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
+  const from = "77051230077", hk = (t) => s.call("/po/winchester?t=hook-w-123", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(t) });
+  await hk({ type: "message.incoming", id: "ev-st-1", contactPhone: "+" + from, contactName: "Ерлан", message: { id: "po-in-1", text: "Здравствуйте", messageType: "text", externalRef: "wamid.in.1" } });
+  if (s.settle) await s.settle();
+  const send = (text, rid) => b.go("/api/inbox/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ c: "winchester", ch: "wa", id: from, text, rid }) });
+  assert.equal((await send("Добрый день!", "rid-st-1")).status, 200);
+  const mid = s.hist("wa", "winchester", from).turns.at(-1).mid;
+  assert.ok(mid, "номер сообщения Pushon запомнен");
+  await hk({ type: "message.delivered", id: "ev-st-2", contactPhone: "+" + from, message: { id: mid, externalRef: "wamid.out.1" } });
+  await hk({ type: "message.read", id: "ev-st-3", contactPhone: "+" + from, message: { id: mid, externalRef: "wamid.out.1" } });
+  if (s.settle) await s.settle();
+  assert.equal(s.hist("wa", "winchester", from).turns.at(-1).st, "read", "две синие галочки");
+  // второе сообщение не доставлено
+  assert.equal((await send("Ещё вопрос?", "rid-st-2")).status, 200);
+  const mid2 = s.hist("wa", "winchester", from).turns.at(-1).mid;
+  await hk({ type: "message.failed", id: "ev-st-4", contactPhone: "+" + from, message: { id: mid2 }, error: { code: 131049, message: "healthy ecosystem" } });
+  if (s.settle) await s.settle();
+  const h = s.hist("wa", "winchester", from);
+  assert.equal(h.turns.at(-1).st, "failed"); assert.equal(h.profile.need.why, "send", "чат — в «Нужен ответ: ответ не дошёл»");
+  // 5xx Pushon: «неизвестно», «Повторить» с тем же rid второй раз не шлёт
+  net.poReply = rec => rec.path === "/send-session-message" ? new Response(JSON.stringify({ error: "SENDING_ERROR", details: "queued" }), { status: 500, headers: { "content-type": "application/json" } }) : null;
+  const r5 = await (await send("Третье", "rid-st-5")).json();
+  assert.equal(r5.ok, true); assert.ok(r5.warn, "предупреждение «не знаем, ушло ли»");
+  const n = net.po.filter(x => x.path === "/send-session-message").length;
+  await send("Третье", "rid-st-5");
+  assert.equal(net.po.filter(x => x.path === "/send-session-message").length, n, "повтор не отправляет второй раз");
+  // 400 VALIDATION_ERROR — только этот клиент
+  assert.equal(waKind({ ok: false, status: 400, code: 100, po: "VALIDATION_ERROR" }), "fail");
+  assert.equal(waKind({ ok: false, status: 402, code: 402, po: "CHANNEL_STOPPED" }), "stop");
 });

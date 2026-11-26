@@ -215,7 +215,9 @@ export async function inboxApi(request, env, url, s, ctx) {
     const route = waRoute(env, cid, p);
     if (!route) return { ok: false, error: `WhatsApp этого клиента не подключён: в Cloudflare нет секрета WA_TOKEN_${cid.toUpperCase()}.` };
     if (!(p.li && now - p.li < 24 * 3600e3)) return { ok: false, error: "Клиент писал больше 24 часов назад. WhatsApp разрешает написать первым только готовым шаблоном. Позвоните клиенту или дождитесь его сообщения." };
-    let r; try { r = await sendWA(env, id, text, quote && poFiles ? { ...route, quote } : route); } catch (e) { return { ok: false, error: "Не отправилось: " + String(e).slice(0, 120) }; }
+    let r; try { r = await sendWA(env, id, text, quote && poFiles ? { ...route, quote: quote.replace(/^c:/, "") } : route); } catch (e) { return { ok: true, unknown: true, error: "" }; } // сбой после начала отправки — могло уйти
+    // ответа нет или сбой у провайдера (5xx): сообщение могло уйти — «неизвестно», «Повторить» не шлёт второй раз (проверка 26.11.2026)
+    if (r && !r.ok && (!r.status || r.status >= 500)) return { ok: true, unknown: true, error: "" };
     return r && r.ok ? { ok: true, id: String(r.id || "") } : { ok: false, error: "WhatsApp не принял сообщение" + (r && r.code ? ` (код ${r.code})` : "") + (r && WA_HINT[r.code] ? ": " + WA_HINT[r.code] : r && r.error ? ": " + r.error : "") + "." };
   };
   const msg = clean(String(b.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " "), 2000);
@@ -261,7 +263,7 @@ export async function inboxApi(request, env, url, s, ctx) {
     if (!plan.ok) return jsonP({ error: plan.error }, plan.status);
     const f = file, { kind, name } = plan;
     const r = await sendOnce(env, cid, ch, id, rid, () => ch === "ga" ? gaSendFile(env, cid, id, { blob: f.blob, name }, msg, qt ? qt.mid : "")
-      : poSendFile(env, cid, id, /** @type {any} */ (waRoute(env, cid, p)), { blob: f.blob, name, mime: f.mime, kind }, msg, qt ? qt.mid : "", url.origin));
+      : poSendFile(env, cid, id, /** @type {any} */ (waRoute(env, cid, p)), { blob: f.blob, name, mime: f.mime, kind }, msg, qt ? String(qt.mid).replace(/^c:/, "") : "", url.origin));
     if ("blocked" in r) return blockedAnswer(r.blocked);
     if ("dup" in r) return dupAnswer(r);
     if (!r.ok) return jsonP({ error: r.error }, 409);
@@ -344,9 +346,9 @@ export async function inboxApi(request, env, url, s, ctx) {
     else if (act === "take" || act === "assign") { // кто ведёт чат: «Взять себе» — имя этого устройства, «Назначить» — имя из списка
       const to = act === "take" ? op : opName(b.to);
       if (act === "take" && !to) return jsonP({ error: "Укажите своё имя в настройках пульта, тогда чат можно взять себе." }, 400);
-      h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, act === "take" ? "take" : to ? "assign" : "unassign", act === "take" ? "" : to); });
+      h = await logTurns(env.KV, hk, [], pr => { if (to) pr.as = { n: to, at: now, by: who }; else delete pr.as; chatAudit(pr, now, who, act === "take" ? "take" : to ? "assign" : "unassign", act === "take" ? "" : to); }, true); // quiet: чат не поднимается наверх списка (проверка 26.11.2026)
     }
-    else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); });
+    else if (act === "reopen") h = await logTurns(env.KV, hk, [], pr => { delete pr.done; chatAudit(pr, now, who, "reopen"); }, true);
     else if (act === "late") { // клиент предупредил об опоздании (ТЗ v2.0 §4 S09, §7): отметка в чате, мастера предупреждает сотрудник сам
       const min = Math.max(0, Math.min(180, Math.round(+b.min || 0)));
       h = await logTurns(env.KV, hk, [], pr => { pr.late = { at: now, min }; chatAudit(pr, now, who, "late", min ? `${min} мин` : ""); });

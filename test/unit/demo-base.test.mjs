@@ -222,7 +222,9 @@ test("итоги демо-рассылки: по получателям, «за�
   d.raw.prepare("update bookings set deleted = 1 where record_id = ?").run(id);
   assert.ok((await (await own.go("/api/bc/get?c=winchester&id=demo1")).json()).results.booked <= was);
   const k = mk(ENV); await bcPut(k.env, "winchester", { id: "x1", name: "x", status: "done", total: 1, pos: 1, sent: 1, failed: 0, skipped: 0, created: now });
-  assert.equal((await (await (await login(k, OWNER)).go("/api/bc/get?c=winchester&id=x1")).json()).results, null, "без D1 — null");
+  // без D1 — «ушло» из самой рассылки, отчётов нет (с 26.11.2026: раньше null — пульт показывал «Ушло 0» у рассылок шаблонами)
+  const rx = (await (await (await login(k, OWNER)).go("/api/bc/get?c=winchester&id=x1")).json()).results;
+  assert.equal(rx.sent, 1); assert.equal(rx.delivered, null); assert.equal(rx.reports, false);
 });
 
 test("календарь демо: ушло и не дошло по рассылке, черновик ждёт одобрения, изменения аудитории; прежние поля на месте", { skip }, async () => {

@@ -53,7 +53,11 @@ export function jrTplFill(c, t, b) {
 export function waKind(r) {
   const code = +(r && r.code) || 0, st = +(r && r.status) || 0;
   // закончились оплаченные сообщения (Pushon 402 PAYMENT_REQUIRED, 25.11.2026): не ушло точно — ждём пополнения, не задача администратору
+  const po = String((r && r.po) || "");
+  if (po === "CHANNEL_STOPPED") return "stop"; // канал остановлен у Pushon — дело не в балансе, а в настройке (сигнал владельцу)
   if (code === 402 || st === 402 || /PAYMENT_REQUIRED/i.test(String((r && r.error) || ""))) return "pay";
+  // ошибка в данных одного сообщения (номер, подстановка) — только этому клиенту, а не пауза всех сервисных на 6 часов (проверка 26.11.2026)
+  if (po === "VALIDATION_ERROR" || po === "QUOTE_NOT_FOUND") return "fail";
   if (BC_TEMP.has(code) || code === 429 || st === 429 || code === 131056) return "temp";
   if (BC_ACCOUNT.has(code) || BC_PARAM.has(code) || code === 401 || code === 403 || code === 404 || code === 409 || st === 401 || st === 403 || st === 409) return "stop";
   if (!code || !st || st === 408 || st === 499 || st >= 500 && !(code >= 1000) || code >= 500 && code < 600) return "net";

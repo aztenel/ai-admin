@@ -547,3 +547,17 @@ test("находка 08.11: запись удалили и клиент тут �
   const log = JSON.parse((await s.kv.api.get("jrl:winchester")) || "[]");
   assert.ok(log.some(x => x.k === "cx" && x.p === dg(521) && /записался заново/.test(x.why)), JSON.stringify(log));
 });
+
+test("проверка 26.11.2026: «за 12 ч» с сайта к визиту в 20:00 — в день визита, не «завтра»; «за 48 ч» — накануне, а не за двое суток", () => {
+  const now = at(TODAY, "09:00"), set = { win: { from: 10, to: 21 }, cap: 150, s: {
+    confirm: { on: false, t: { delay: 0 } }, remind24: { on: true, t: { mode: "24h", eve: "18:00" } }, remind3: { on: true, t: { hours: 3 } },
+    move: { on: false, t: {} }, cancel: { on: false, t: {} }, review: { on: false, t: { hours: 3 } } } };
+  const AFTER = "2026-10-21";
+  const list = [rec(ph(601), TOM, "20:00", { id: 61 }), rec(ph(602), AFTER, "15:00", { id: 62 })];
+  const all = jrPlan(W, list, now, set, { 61: { h: 12 }, 62: { h: 48 } });
+  // 20:00 − 12 ч = 08:00 того же дня, до часов отправки: ничего (раньше уходило «Напоминаем: завтра в 20:00» в 10:00 того же дня)
+  assert.ok(!kinds(all, 61).includes("d1"), "не «завтра»: " + JSON.stringify(all));
+  const d1 = all.find(x => x.rec === "62" && x.k === "d1");
+  assert.ok(d1, "за 48 ч — «накануне»: " + JSON.stringify(all));
+  assert.equal(new Date(d1.at + 5 * 3600e3).toISOString().slice(0, 10), TOM, "уходит накануне визита, а не за двое суток");
+});

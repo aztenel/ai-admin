@@ -252,7 +252,7 @@ export function MessageSection({ f, set, errs, tpls = [] }: P & { tpls?: MetaTpl
           autoComplete="off"
           spellCheck={false}
           error={errs.tpl}
-          hint="Как в кабинете Meta или Wazzapo. Шаблон должен быть одобрен, категория «Маркетинг»."
+          hint="Как в кабинете провайдера (Pushon) или Meta. Шаблон должен быть одобрен, категория «Маркетинг»."
         />
         <div className="py-3">
           <p id="wz-lang" className="mb-1.5 text-sm font-medium text-fg-2">

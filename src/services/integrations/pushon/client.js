@@ -15,7 +15,7 @@
 import { clean } from "../../../lib/text.js";
 import { isPreview, PREVIEW_SEND } from "../../../lib/stage.js";
 
-export const PO_BASE = "https://api.pushon365.ru/api/v1";
+export const PO_BASE = "https://api.pushon365.kz/api/v1"; // адрес из коллекции методов Pushon (25.11.2026); .ru отвечает так же, но в документации — .kz
 
 // канал клиента — Pushon?
 /** @param {Env} env @param {any} cid @returns {boolean} */
@@ -64,9 +64,11 @@ function poResult(x) {
   if (x.status === 0) return { ok: false, status: 0, code: 0, error: "Pushon не ответил" }; // ушло сообщение или нет — неизвестно
   const j = x.j || {};
   if (x.ok && String(j.status || "ok").toLowerCase() !== "error") return { ok: true, id: String(j.messageId || j.message_id || j.id || "") };
-  const app = String(j.code || j.error || "").toUpperCase();
+  // ошибка Pushon по коллекции методов: { error: "CODE", details, fields } (403 — простой текст); старый вид { code, message } — тоже
+  const app = String(j.error || j.code || "").toUpperCase();
   const code = PO_META[app] || HTTP_META[x.status] || x.status;
-  return { ok: false, status: x.status, code, error: clean(String(j.message || j.error || x.text || ""), 200) };
+  const said = [j.details || j.message, j.fields && typeof j.fields === "object" ? Object.keys(j.fields).slice(0, 3).join(", ") : ""].filter(Boolean).join(" · ");
+  return { ok: false, status: x.status, code, ...(app ? { po: app.slice(0, 40) } : {}), error: clean(String(said || j.error || x.text || ""), 200) };
 }
 
 // номер получателя в формате Pushon: «+» и цифры

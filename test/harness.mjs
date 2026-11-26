@@ -268,8 +268,8 @@ globalThis.fetch = async (u, init = {}) => {
     if (rec.path.startsWith("/phone-numbers/")) return J({ data: { phone_number_id: rec.path.split("/")[2], display_phone_number: "+7 700 000 00 99", verified_name: "Тест", quality_rating: "GREEN", messaging_limit_tier: "TIER_250" } });
     return J({ error: "not found" }, 404);
   }
-  if (url.startsWith("https://api.pushon365.ru/api/v1/")) { // Pushon: ключ в заголовке x-api-key, номер — channelId в теле
-    const h = init.headers || {}, rec = { url, path: url.slice("https://api.pushon365.ru/api/v1".length), method: init.method || "GET", key: h["x-api-key"] || "", body: init.body ? JSON.parse(init.body) : null }; net.po.push(rec);
+  if (url.startsWith("https://api.pushon365.kz/api/v1/")) { // Pushon: ключ в заголовке x-api-key, номер — channelId в теле
+    const h = init.headers || {}, rec = { url, path: url.slice("https://api.pushon365.kz/api/v1".length), method: init.method || "GET", key: h["x-api-key"] || "", body: init.body ? JSON.parse(init.body) : null }; net.po.push(rec);
     const own = net.poReply && net.poReply(rec);
     if (own) return own;
     if (rec.method === "POST" && (rec.path === "/send-session-message" || rec.path === "/send-template-message")) return J({ status: "ok", messageId: "wamid.po." + net.po.length, toPhone: rec.body && rec.body.toPhone, channelId: rec.body && rec.body.channelId, queuedAt: new Date().toISOString() });

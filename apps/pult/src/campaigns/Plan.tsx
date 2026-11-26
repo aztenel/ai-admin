@@ -36,7 +36,7 @@ export default function Plan({ ws }: { ws: string }) {
   return (
     <>
       {cal.loading ? <PlanSkeleton /> : cal.data ? <CalendarGroup d={cal.data} now={now} /> : <Notice tone="critical" role="alert">Календарь не загрузился: {cal.error}</Notice>}
-      <Group title="Итоги" note="По отчётам о доставке, которые присылает Green-API. «Прочитано» не меньше этого числа: у части клиентов отчёты о прочтении выключены.">
+      <Group title="Итоги" note="По отчётам WhatsApp о доставке. «Прочитано» не меньше этого числа: у части клиентов отчёты о прочтении выключены.">
         <Segmented<"7" | "30">
           label="Период итогов"
           value={String(days) as "7" | "30"}
