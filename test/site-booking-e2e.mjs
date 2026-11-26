@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 const { chromium } = await import(process.env.PLAYWRIGHT_PATH || "/opt/node-tools/node_modules/playwright/index.mjs");
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = process.argv[2] || "", SITE = resolve(process.argv[3] || join(ROOT, "apps/site-booking/demo")), ASSETS = process.env.SITE_ASSETS || "";
+// Номер WhatsApp страницы: у сайта Winchester — из data-wa-num (с 27.11.2026 — второй номер +7 777 114 86 59), у демо — номер формы по умолчанию
+const WA_NUM = (() => { try { return /data-wa-num="(\d+)"/.exec(readFileSync(join(SITE, "index.html"), "utf8"))?.[1] || "77005050503"; } catch { return "77005050503"; } })();
 if (OUT) mkdirSync(OUT, { recursive: true });
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png", ".jpg": "image/jpeg" };
 
@@ -290,7 +292,7 @@ try {
     ok("выключено: каталог отвечает 503", cat.status() === 503);
     const [pop] = await Promise.all([p.context().waitForEvent("page", { timeout: 5000 }), p.click(".hero-cta [data-book]")]);
     await pop.waitForLoadState().catch(() => {});
-    ok("выключено: нажатие ведёт в WhatsApp", /^https:\/\/wa\.me\/77005050503/.test(pop.url()) && wa.length > 0, pop.url());
+    ok("выключено: нажатие ведёт в WhatsApp", pop.url().startsWith("https://wa.me/" + WA_NUM) && wa.length > 0, pop.url());
     ok("выключено: окно записи не открылось", (await p.locator(".wbk.wbk-o").count()) === 0);
     await p.context().close();
     mode("dry");
@@ -496,7 +498,7 @@ try {
     await p.evaluate(() => { document.querySelector(".wbk-hp input").value = "http://spam.example"; }); // поле-ловушку заполняют только роботы
     await p.click(".wbk-sb");
     await p.waitForSelector(`${STEP("contacts")} .wbk-al`, { timeout: 15000 });
-    ok("отказ сервера: текст и кнопки «Позвонить» и WhatsApp", /Не получилось отправить заявку/.test(await txt(p, ".wbk-al")) && (await p.locator('.wbk-al a[href="tel:+77005050503"]').count()) === 1 && (await p.locator('.wbk-al a[href^="https://wa.me/77005050503"]').count()) === 1);
+    ok("отказ сервера: текст и кнопки «Позвонить» и WhatsApp", /Не получилось отправить заявку/.test(await txt(p, ".wbk-al")) && (await p.locator('.wbk-al a[href="tel:+77005050503"]').count()) === 1 && (await p.locator(`.wbk-al a[href^="https://wa.me/${WA_NUM}"]`).count()) === 1);
     await shot(p, "phone-08-refused");
     await p.keyboard.press("Escape"); await p.waitForTimeout(400);
     mode("1");
