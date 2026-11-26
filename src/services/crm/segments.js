@@ -5,23 +5,28 @@
 // crmView читает снимок и исключения один раз; crmPick берёт из него получателей — им пользуются список в пульте, рассылка из
 // сегмента и автосценарий «Пора на стрижку» (полные номера — только на сервере, браузеру — маской в controllers/crm.js).
 /** @import { Env, Client } from "../../lib/types.js" */
-import { CRM_QUIET_DAYS, CRM_PAST_DAYS } from "../../config/constants.js";
+import { CRM_QUIET_DAYS, CRM_PAST_DAYS, CRM_RECENT_DAYS } from "../../config/constants.js";
 import { marketingGate, gateAllows } from "../contacts/gate.js";
 import { MARKETING_GAP_DAYS } from "../contacts/segments.js";
 import { isoDay } from "../../lib/time.js";
 import { crmLoad, crmErrLoad, bcmRead } from "../../db/kv/crm.js";
 import { bcOptouts } from "../broadcast/segments.js";
 
-/** @typedef {{ p: string, n: string, last: string, first: string, v: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
+/** @typedef {{ p: string, n: string, last: string, first: string, v: number, v90?: number, staff: string, svc: string, fut?: number, d: number, why: string }} CrmRow */
 /** @typedef {{ snap: any, rows: CrmRow[], marked?: Set<string>, stop?: Set<string>, futOnly?: Set<string>, allow?: Set<string>, gate?: { ready: boolean, why: string, n: number, presumed?: boolean }, reasons?: Map<string, string>, booked?: Set<string> }} CrmView */
 
+// визитов за 90 дней; у снимка до 28.11.2026 поля нет — там все визиты и были за 90 дней
+/** @param {{ v: number, v90?: number }} x */
+const v90 = x => x.v90 ?? x.v;
 // сегменты-кнопки. «all» (все, кому можно писать) и «staff:<имя>» (последний визит у мастера) — тоже сегменты, см. crmSegTest
 export const CRM_SEGS = /** @type {{ id: string, label: string, rule: string, test: (x: CrmRow) => boolean }[]} */ ([
   { id: "pora", label: "Пора на стрижку", rule: "последний визит 21–35 дней назад", test: x => x.d >= 21 && x.d <= 35 },
   { id: "davno", label: "Давно не были", rule: "36–60 дней", test: x => x.d >= 36 && x.d <= 60 },
   { id: "uhodyat", label: "Уходят", rule: "61–90 дней", test: x => x.d >= 61 && x.d <= 90 },
-  { id: "novye", label: "Новые", rule: "1 визит за 90 дней", test: x => x.v === 1 },
-  { id: "postoyannye", label: "Постоянные", rule: "3 и больше визитов за 90 дней", test: x => x.v >= 3 }
+  // 3–6 месяцев (ТЗ Кайрата 28.11.2026): база с тех пор — визиты за 180 дней
+  { id: "polgoda", label: "3–6 месяцев", rule: "последний визит 91–180 дней назад", test: x => x.d >= 91 && x.d <= 180 },
+  { id: "novye", label: "Новые", rule: "1 визит за 90 дней", test: x => x.d <= CRM_RECENT_DAYS && v90(x) === 1 },
+  { id: "postoyannye", label: "Постоянные", rule: "3 и больше визитов за 90 дней", test: x => v90(x) >= 3 }
 ]);
 /** @param {any} seg @returns {((x: CrmRow) => boolean) | null} null — сегмент неизвестен */
 export function crmSegTest(seg) {
@@ -151,7 +156,7 @@ function crmMetrics(view, st, invalid) {
   };
   for (const x of rows) one(x.p, crmStatus(view, x));
   for (const p of view.futOnly || []) one(p, crmStatus(view, { p, fut: 1, why: "fut" }));
-  return { total: st.valid + invalid, valid: st.valid, invalid, regular: rows.filter(x => x.v >= 3).length, once: rows.filter(x => x.v === 1).length,
+  return { total: st.valid + invalid, valid: st.valid, invalid, regular: rows.filter(x => v90(x) >= 3).length, once: rows.filter(x => x.d <= CRM_RECENT_DAYS && v90(x) === 1).length,
     d30_60: rows.filter(x => x.d >= 30 && x.d <= 60).length, d61_90: rows.filter(x => x.d >= 61 && x.d <= 90).length, booked: st.booked,
     marketing, refused, noperm };
 }

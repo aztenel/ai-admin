@@ -60,7 +60,7 @@ const JOURNAL = 140;
 /** @param {number} i */
 export const demoRole = i => ({
   journal: i < JOURNAL,
-  futOnly: i < JOURNAL && i % 28 === 27,            // визита за 90 дней нет, а запись впереди
+  futOnly: i < JOURNAL && i % 28 === 27,            // визита за 180 дней нет, а запись впереди
   future: i < JOURNAL && i % 7 === 3,               // будущая запись
   cancelled: i % 42 === 3,                          // будущую запись отменили в Altegio (пауза рекламы 14 дней)
   moved: i % 42 === 10,                             // будущую запись перенесли (та же запись, другое время)
@@ -102,7 +102,7 @@ export function demoPlan(now) {
   const put = (r, b) => { after.push(r); before.push(b || r); };
   for (let i = 0; i < JOURNAL; i++) {
     const R = demoRole(i), r = rnd(1000 + i), k = i % 14, name = R.shortName ? FIRST[(i * 11) % FIRST.length] : fullName(i), master = DEMO_MASTERS[i % 5];
-    const [lo, hi] = R.futOnly ? [100, 150] : k === 0 ? [3, 13] : k === 1 ? [14, 20] : k <= 4 ? [21, 35] : k <= 7 ? [36, 60] : k <= 9 ? [61, 90] : k <= 11 ? [91, 175] : k === 12 ? [4, 30] : [7, 40];
+    const [lo, hi] = R.futOnly ? [190, 240] : k === 0 ? [3, 13] : k === 1 ? [14, 20] : k <= 4 ? [21, 35] : k <= 7 ? [36, 60] : k <= 9 ? [61, 90] : k <= 11 ? [91, 175] : k === 12 ? [4, 30] : [7, 40];
     const L = lo + Math.floor(r() * (hi - lo + 1)), g = k === 12 ? 21 + Math.floor(r() * 8) : 21 + Math.floor(r() * 15), n = k === 12 ? 5 + Math.floor(r() * 3) : k === 13 || R.futOnly ? 1 : 1 + Math.floor(r() * 4);
     const svc = () => { let x = r() * 100; for (let s = 0; s < SVC_W.length; s++) { if ((x -= SVC_W[s]) < 0) return DEMO_SERVICES[s]; } return DEMO_SERVICES[0]; };
     for (let v = 0; v < n; v++) {
@@ -215,7 +215,7 @@ export async function demoLoad(env, c, now) {
   // 6. рассылки: KV (как настоящие, с demo: 1), отчёты и отправки — D1, отметки «писали рекламу» — KV bcm:
   const cr = await campaignsSave(env, db, c, plan, now);
   for (const x of cr.stops) { await stopRecord(env, { ws, phone: x.p, kind: "stop", source: "chat_stop", eventKey: x.key, text: "стоп", at: x.at }); stops++; }
-  // 7. снимок базы для рассылок — как «Обновить базу»: журнал за 90 дней назад и 60 вперёд
+  // 7. снимок базы для рассылок — как «Обновить базу»: журнал за 180 дней назад и 60 вперёд
   const from = isoDay(now - CRM_PAST_DAYS * 86400e3), to = isoDay(now + CRM_FUTURE_DAYS * 86400e3);
   const inRange = plan.after.filter(r => { const d = String(r.datetime || "").slice(0, 10); return d >= from && d <= to; }), f = crmFold(inRange, now);
   await crmSave(env, ws, { at: now, from, to, records: inRange.length, visits: f.visits, clients: f.list.length, masked: f.masked, bad: f.bad, att: f.att, cut: false, demo: 1, list: f.list, futOnly: f.futOnly });

@@ -41,7 +41,7 @@ test("снимок: визиты, неявки, удалённые, будущи
     rec("+7 700 XXX-X1-05", 20, { cid: 5 }), rec("+7 700 XXX-X1-05", 60, { cid: 5 }),                                           // скрытый номер — один клиент
     rec("12345", 15, { cid: 6 }),                                                                                                // неверный номер
     rec(ph(107), 12, { svc: "Мужская стрижка" }), rec(ph(107), 12, { t: "13:00", svc: "Моделирование бороды" }),                // две записи одного дня — один визит
-    rec(ph(108), 100),                                                                                                           // старше 90 дней — вне окна
+    rec(ph(108), 200),                                                                                                           // старше 180 дней — вне окна
     rec(ph(109), 8, { att: 0, va: -1 }),                                                                                         // visit_attendance = -1 — не пришёл
     ...Array.from({ length: 450 }, (_, i) => rec(ph(1000 + i), 1 + (i % 89)))                                                   // ещё 450 клиентов — три страницы по 200
   ];
@@ -49,15 +49,15 @@ test("снимок: визиты, неявки, удалённые, будущи
   const meta = await crmBuild(s.env, W, NOW);
   const pages = net.alt.filter(x => /^GET \/records\/133486\?/.test(x));
   assert.equal(pages.length, 3, pages.join("\n"));
-  assert.ok(pages.every(x => x.includes(`start_date=${day(90)}`) && x.includes(`end_date=${day(-60)}`) && x.includes("count=200")), pages[0]);
-  assert.equal(meta.records, net.altJournal.length - 1, "запись старше 90 дней Altegio не отдал");
+  assert.ok(pages.every(x => x.includes(`start_date=${day(180)}`) && x.includes(`end_date=${day(-60)}`) && x.includes("count=200")), pages[0]);
+  assert.equal(meta.records, net.altJournal.length - 1, "запись старше 180 дней Altegio не отдал");
   assert.equal(meta.masked, 1); assert.equal(meta.bad, 1); assert.equal(meta.cut, false);
   assert.equal(meta.clients, 4 + 450, JSON.stringify(meta)); // 101, 102, 104, 107 и 450 других
   assert.ok(meta.att["1"] > 450 && meta.att["-1"] === 1 && meta.att["0"] === 1, JSON.stringify(meta.att));
   assert.ok(!("list" in meta), "мета-данные — без списка");
   const snap = s.kv.json("crm:winchester:snap"), by = Object.fromEntries(snap.list.map(x => [x.p, x]));
   assert.ok(s.kv.ttl.get("crm:winchester:snap") >= 29 * 86400);
-  assert.deepEqual({ ...by[dg(101)] }, { p: dg(101), n: "Арман К.", last: day(25), first: day(50), v: 2, staff: "Азамат", svc: "Premium" });
+  assert.deepEqual({ ...by[dg(101)] }, { p: dg(101), n: "Арман К.", last: day(25), first: day(50), v: 2, v90: 2, staff: "Азамат", svc: "Premium" });
   assert.equal(by[dg(102)].v, 1); assert.equal(by[dg(102)].last, day(30));
   assert.ok(!by[dg(103)] && !by[dg(108)] && !by[dg(109)], "удалённая, вне окна, неявка — не в базе");
   assert.equal(by[dg(104)].fut, 1); assert.ok(!("fut" in by[dg(101)]));
@@ -117,7 +117,7 @@ test("сегменты: числа по правилам и исключения
   const s = await segBase();
   const sg = await crmSegments(s.env, W, NOW);
   const n = Object.fromEntries(sg.segments.map(x => [x.id, x.n]));
-  assert.deepEqual(n, { pora: 2, davno: 2, uhodyat: 1, novye: 4, postoyannye: 1, "staff:Азамат": 1, "staff:Тони": 4 }, JSON.stringify(sg.segments));
+  assert.deepEqual(n, { pora: 2, davno: 2, uhodyat: 1, polgoda: 0, novye: 4, postoyannye: 1, "staff:Азамат": 1, "staff:Тони": 4 }, JSON.stringify(sg.segments));
   assert.deepEqual(sg.excluded, { stop: 1, noconsent: 0, fut: 1, recent: 1, marketed: 2 });
   assert.equal(sg.clients, 10); assert.equal(sg.ok, 5);
   assert.equal(sg.info.clients, 10); assert.ok(!("list" in sg.info));
@@ -190,7 +190,7 @@ test("API: обновить базу — только владелец и тол
   const r2 = await own.post("/api/crm/refresh", { c: "barber" }), j2 = await r2.json();
   assert.equal(r2.status, 409); assert.ok(/ALTEGIO_LOC_BARBER/.test(j2.error), j2.error);
   const sg = await (await own.go("/api/crm/segments?c=barber")).json();
-  assert.equal(sg.at, 0); assert.ok(sg.why); assert.deepEqual(sg.segments.map(x => x.n), [0, 0, 0, 0, 0]);
+  assert.equal(sg.at, 0); assert.ok(sg.why); assert.deepEqual(sg.segments.map(x => x.n), [0, 0, 0, 0, 0, 0]);
 });
 
 test("ночью в 04:00 — снимок Winchester раз в день; в другой час и без ключа журнала — ничего", async () => {

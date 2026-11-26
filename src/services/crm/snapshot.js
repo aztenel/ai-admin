@@ -5,7 +5,7 @@
 // Не проверено вживую: журнал Winchester за 90 дней постранично, какие значения attendance ставят администраторы, число ≈ 1 120.
 /** @import { Env, Client } from "../../lib/types.js" */
 import { CLIENTS } from "../../config/builtin-clients.js";
-import { CRM_PAST_DAYS, CRM_FUTURE_DAYS, CRM_HOUR } from "../../config/constants.js";
+import { CRM_PAST_DAYS, CRM_FUTURE_DAYS, CRM_HOUR, CRM_RECENT_DAYS } from "../../config/constants.js";
 import { normPhone, logSafe } from "../../lib/phone.js";
 import { local, isoDay } from "../../lib/time.js";
 import { altText } from "../integrations/altegio/client.js";
@@ -35,6 +35,7 @@ export function crmWhy(env, c) {
 /** @param {any[]} records @param {number} nowMs */
 export function crmFold(records, nowMs) {
   const L = local(nowMs), nowS = `${isoDay(nowMs)} ${String(L.getUTCHours()).padStart(2, "0")}:${String(L.getUTCMinutes()).padStart(2, "0")}`;
+  const cut = isoDay(nowMs - CRM_RECENT_DAYS * 86400e3); // v90 — визиты за последние 90 дней («Новые», «Постоянные»)
   const masked = new Set(), bad = new Set(), /** @type {Record<string, number>} */ att = {}, rows = [];
   for (const r of records) {
     if (!r || typeof r !== "object" || r.deleted === true || r.deleted === 1 || !r.client || typeof r.client !== "object") continue;
@@ -49,14 +50,14 @@ export function crmFold(records, nowMs) {
   const by = new Map();
   let visits = 0;
   for (const { r, when, p } of rows) {
-    const x = by.get(p) || { p, n: "", last: "", first: "", v: 0, staff: "", svc: "", fut: 0 }, name = altText(r.client.name || "", 60);
+    const x = by.get(p) || { p, n: "", last: "", first: "", v: 0, v90: 0, staff: "", svc: "", fut: 0 }, name = altText(r.client.name || "", 60);
     by.set(p, x);
     if (when > nowS) { x.fut = 1; if (!x.n) x.n = name; continue; }
     const a = r.attendance == null ? "нет" : String(r.attendance);
     att[a] = (att[a] || 0) + 1; // какие отметки ставят администраторы — для проверки владельцем (вживую не проверено)
     if (+r.attendance === -1 || +r.visit_attendance === -1) continue; // не пришёл
     const day = when.slice(0, 10), svc = (Array.isArray(r.services) ? r.services : []).map(/** @param {any} s */ s => altText(s && s.title, 60)).filter(Boolean);
-    if (x.last !== day) { x.v++; visits++; x.svc = ""; }
+    if (x.last !== day) { x.v++; if (day >= cut) x.v90++; visits++; x.svc = ""; }
     x.last = day; if (!x.first) x.first = day;
     if (name) x.n = name;
     x.staff = altText((r.staff && r.staff.name) || "", 60) || x.staff;
