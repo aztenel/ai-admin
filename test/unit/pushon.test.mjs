@@ -242,3 +242,20 @@ test("файлы, голосовое и цитата из пульта чере�
   const r2 = await b.go(`/api/inbox/send-file?c=winchester&ch=wa&id=${from}`, { method: "POST", body: fd2 });
   assert.equal(r2.status, 409); assert.match((await r2.json()).error, /Pushon не принял файл/);
 });
+
+test("номер телефона в сообщении клиента виден в пульте, а в тексте для ИИ скрыт (26.11.2026: «[телефон указан]» вместо номера для оплаты)", async () => {
+  net.reset();
+  const s = mk({ WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po_key_w", APP_SECRET_WINCHESTER: "hook-w-123", PHONE_NUMBER_ID_WINCHESTER: "chan-w" });
+  const b = s.browser();
+  await b.go("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "key=owner-key-123456&next=%2Fapp%2F" });
+  const from = "77051230099";
+  await s.call("/po/winchester?t=hook-w-123", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "message.incoming", id: "ev-ph-1", contactPhone: "+" + from, contactName: "Адам", message: { id: "msg-ph-1", text: "оплата на номер 8 701 234 56 78", messageType: "text" } }) });
+  if (s.settle) await s.settle();
+  const h = s.hist("wa", "winchester", from);
+  const t = h.turns.find(x => x.role === "user");
+  assert.match(t.text, /\[телефон указан\]/, "текст для ИИ — без номера");
+  const c = await (await b.go(`/api/inbox/chat?c=winchester&ch=wa&id=${from}`)).json();
+  const u = c.turns.find(x => x.r === "u");
+  assert.match(u.x, /8 701 234 56 78/, "в пульте номер виден: " + u.x);
+});

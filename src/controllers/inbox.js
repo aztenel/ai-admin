@@ -418,10 +418,11 @@ export async function inboxApi(request, env, url, s, ctx) {
 // реплика для пульта: кто (u — клиент, a — сотрудник, b — бот или автоматическое сообщение), имя сотрудника, файл, статус отправки,
 // вид автоматического сообщения (rm — напоминание или отзыв, bc — рассылка), номер сообщения у провайдера (mid — на него можно
 // ответить цитатой) и цитата, если реплика — ответ на другое сообщение (q: { mid, x — начало текста, r — чьё })
+// x: у сообщения клиента pv — тот же текст с номерами телефонов (только пульту; ИИ видит text без них, 26.11.2026)
 /** @param {any} t @param {any[]} turns */
 function turnView(t, turns) {
   const q = quoteView(turns, t);
-  return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.text, t: t.t || 0, ...(t.mid ? { mid: String(t.mid) } : {}), ...(q ? { q } : {}),
+  return { r: t.role === "user" ? "u" : t.by === "admin" ? "a" : "b", x: t.role === "user" && t.pv ? String(t.pv) : t.text, t: t.t || 0, ...(t.mid ? { mid: String(t.mid) } : {}), ...(q ? { q } : {}),
     ...(t.m ? { m: { k: t.m.k, id: t.m.id || "", f: !!(t.m.id || t.m.url), ...(t.m.name ? { name: String(t.m.name).slice(0, 120) } : {}), ...(t.m.size ? { size: +t.m.size || 0 } : {}), ...(t.m.mime ? { mime: String(t.m.mime).slice(0, 60) } : {}),
       ...(t.m.v ? { v: 1 } : {}), ...(t.m.d ? { d: +t.m.d || 0 } : {}) } } : {}),
     ...(t.op ? { op: t.op } : {}), ...(t.st ? { st: t.st } : {}), ...(t.st && t.sa ? { sa: +t.sa || 0 } : {}), ...(t.se ? { se: t.se } : {}), ...(t.rm ? { auto: "service" } : t.bc ? { auto: "campaign" } : {}),

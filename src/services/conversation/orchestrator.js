@@ -10,7 +10,7 @@ import { dowsIn, MON_RU, MON_KK, MON_EN_RE, altDateOf, tidyTags, PAY_TAG_G, PAY_
 import { altWhen, altLabel, altSay } from "../booking/replies.js";
 import { AI_BUDGET_MS, PL_MAX, MAX_LEN, HIST_KEEP, MAX_MSGS_PER_SESSION, WA_MAX_DAY, PAUSE_MS, MAX_TURNS, ALT_MAX_ACTIVE, ALT_MAX_ADMIN_LEADS, LEAD_TTL } from "../../config/constants.js";
 import { hasClient, CLIENTS } from "../../config/builtin-clients.js";
-import { redact, phonesIn, maskPhones, normPhone, logSafe } from "../../lib/phone.js";
+import { redact, phonesIn, maskPhones, phoneView, normPhone, logSafe } from "../../lib/phone.js";
 import { mergeProfile, putHist, readForgot, applyForget, keepAfterForget } from "../../db/kv/chats.js";
 import { detectLang } from "./language.js";
 import { safeText, safeAsk, fallbackText, cutOffText } from "./fallbacks.js";
@@ -245,7 +245,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   // номер сообщения клиента у Green-API и его цитата: на это сообщение сотрудник отвечает из пульта цитатой, по номеру приходят правки (31.10.2026)
   const inMeta = { ...(opts.mid ? { mid: String(opts.mid).slice(0, 80) } : {}), ...(opts.cap ? { cap: 1 } : {}), ...(opts.qt ? { qt: opts.qt } : {}) }; // cap — подпись к файлу (ключ строки D1)
   const save = async (userText, reply) => {
-    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), t: nowMs, ...inMeta }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
+    const add = [].concat(userText ? [{ role: "user", text: maskPhones(userText), ...phoneView(userText), t: nowMs, ...inMeta }] : [], reply ? [{ role: "model", text: reply, t: nowMs }] : []);
     const put = async () => {
       let n = saved.n + 1, t = saved.turns.concat(add), prof = saved.profile, cur = null;
       try { cur = opts.test ? null : JSON.parse((await store.get(histKey)) || "null"); } catch (e) {}
@@ -355,7 +355,7 @@ export async function think(env, store, clientId, histKey, rawText, source, opts
   // lastBot и lastUser — защите ответа: ИИ прошлым ответом предложил другого мастера, а клиент согласился, не назвав его (проверка 19.10.2026)
   const ctx = { ...ctxT, phoneKnown: opts.phone || null, profile: saved.profile, lastBot, lastUser: text };
 
-  const userTurn = { role: "user", text: maskPhones(text), t: nowMs, ...inMeta };
+  const userTurn = { role: "user", text: maskPhones(text), ...phoneView(text), t: nowMs, ...inMeta };
   let turns = saved.turns.concat([userTurn]).slice(-MAX_TURNS); // это уходит в ИИ; в хранилище остаётся вся история (HIST_KEEP)
   while (turns.length && turns[0].role !== "user") turns.shift();
   const userAll = turns.filter(t => t.role === "user").map(t => t.text).join(" \n ");

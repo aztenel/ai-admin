@@ -2,7 +2,7 @@
 // Вебхуки и обработчики сообщений WhatsApp (Meta Cloud API) и общая логика текста/медиа для обоих каналов.
 import { CLIENTS, hasClient } from "../../config/builtin-clients.js";
 import { MAX_LEN, WA_BATCH } from "../../config/constants.js";
-import { normPhone, redact, maskPhones } from "../../lib/phone.js";
+import { normPhone, redact, maskPhones, phoneView } from "../../lib/phone.js";
 import { snip } from "../../lib/text.js";
 import { metaSigOk } from "../../lib/crypto.js";
 import { ipKey } from "../../services/booking/limits.js";
@@ -92,7 +92,7 @@ export async function waText(env, channel, fromDigits, text, send, phone, wx) {
     const now = Date.now();
     await stopSeen(env, niche, fromDigits, text); // «стоп» на рассылку записываем и при выключенном боте (неоднозначный — «ждёт решения», только D1)
     const said = maskPhones(redact(String(text).slice(0, MAX_LEN)));
-    await logTurns(env.KV, histKey(), [{ role: "user", text: said, t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => {
+    await logTurns(env.KV, histKey(), [{ role: "user", text: said, ...phoneView(String(text).slice(0, MAX_LEN)), t: now, ...(wx && wx.msgId ? { mid: String(wx.msgId).slice(0, 80) } : {}), ...(wx && wx.cap ? { cap: 1 } : {}), ...(wx && wx.qt ? { qt: wx.qt } : {}) }], (p, h) => {
       const why = off ? "off" : +(p.pausedUntil || 0) > now ? "human" : "ai"; // чат ведёт человек — как у бота на паузе; иначе «Сбой бота»
       p.li = now; inboundNeed(p, h.turns.slice(0, -1), { text: said, why, at: now }); if (!p.phone) p.phone = phone; if (wx && wx.name && !p.waName) p.waName = snip(wx.name, 40);
       if (late && STOP.test(String(text).trim())) { p.stop = true; p.pausedUntil = Math.max(+(p.pausedUntil || 0), now + 30 * 86400e3); } // «стоп» — как его записал бы бот: 30 дней без автоответов
@@ -242,7 +242,7 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
         const niche = await nicheOf(env, "wa", j.msg.from, j.wx);
         if (!niche) continue;
         const t = j.msg.type === "text" ? (j.msg.text?.body || "") : j.msg.type === "button" ? (j.msg.button?.text || "") : `[${j.msg.type}]`, now = Date.now();
-        await logTurns(env.KV, `h:wa:${niche}:${j.msg.from}`, [{ role: "user", text: maskPhones(redact(String(t).slice(0, MAX_LEN))), t: now, ...(wx.ids ? { mid: String(j.msg.id).slice(0, 80) } : {}) }], p => { p.li = now; p.need = { at: now, why: "limit" }; if (j.wx.name && !p.waName) p.waName = snip(j.wx.name, 40); });
+        await logTurns(env.KV, `h:wa:${niche}:${j.msg.from}`, [{ role: "user", text: maskPhones(redact(String(t).slice(0, MAX_LEN))), ...phoneView(String(t).slice(0, MAX_LEN)), t: now, ...(wx.ids ? { mid: String(j.msg.id).slice(0, 80) } : {}) }], p => { p.li = now; p.need = { at: now, why: "limit" }; if (j.wx.name && !p.waName) p.waName = snip(j.wx.name, 40); });
       } catch (e) { console.log("wa rest", String(e)); oops(e); }
     }
     if (!wx.replay) { try { await notifyOnce(env, "waburst:" + (wx.client || ""), `⚠️ В WhatsApp пришло сразу ${jobs.length} сообщений — на ${jobs.length - WA_BATCH} бот не ответил. Они лежат в пульте чатов с пометкой — ответьте клиентам сами.`, wx.client); } catch (e) {} } // проигрыш: сигнал ушёл при первой обработке
