@@ -296,3 +296,16 @@ test("галочки и ошибки Pushon (проверка 26.11.2026): ст�
   assert.equal(waKind({ ok: false, status: 400, code: 100, po: "VALIDATION_ERROR" }), "fail");
   assert.equal(waKind({ ok: false, status: 402, code: 402, po: "CHANNEL_STOPPED" }), "stop");
 });
+test("реклама не дошла (27.11.2026: рассылка «3–6 месяцев» — «Нужен ответ 17» без сообщений клиентов): чат не в очереди, причина без «не доставлено: не доставлено»", async () => {
+  net.reset();
+  const E = { WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po_key_w", APP_SECRET_WINCHESTER: "hook-w-123", PHONE_NUMBER_ID_WINCHESTER: "chan-w" };
+  const s = mk(E), to = "77051239911";
+  await s.kv.api.put(`h:wa:winchester:${to}`, JSON.stringify({ n: 1, turns: [{ role: "model", text: "Давно не виделись", t: Date.now(), bc: "bc1", by: "bc", mid: "po-bc-1", st: "sent" }], profile: {} }));
+  const hk = (t) => s.call("/po/winchester?t=hook-w-123", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(t) });
+  await hk({ type: "message.failed", id: "ev-bc-f", contactPhone: "+" + to, message: { id: "po-bc-1" } });
+  if (s.settle) await s.settle();
+  const h = s.hist("wa", "winchester", to);
+  assert.equal(h.turns.at(-1).st, "failed", "у рекламы — «не доставлено»");
+  assert.ok(!h.profile.need, "чат рекламы в «Нужен ответ» не попал");
+  assert.ok(!/не доставлено/.test(h.turns.at(-1).se || ""), "без причины — пусто, пульт пишет просто «Не доставлено»: " + h.turns.at(-1).se);
+});

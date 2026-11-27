@@ -234,7 +234,9 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
           const r = await applyStatus(env, hk, id, String(st.status), desc, t => { turn = t; });
           if (r === "nochat") break;
           if (!turn) continue;
-          if (r === "changed" && st.status === "failed") {
+          // реклама не дошла — это итог рассылки, а не вопрос клиента: в «Нужен ответ» не ставим (27.11.2026: рассылка «3–6 месяцев»
+          // положила в очередь пульта все недоставленные, у администраторов «Нужен ответ 17» без единого сообщения клиента)
+          if (r === "changed" && st.status === "failed" && !(turn && /** @type {any} */ (turn).bc)) {
             try { await logTurns(env.KV, hk, [], p => { if (!p.stop) p.need = { at: Date.now(), why: "send" }; }, true); } catch (x) { console.log("wa status need", String(x)); }
             try { await failedPush(env, "wa", wx.client, to, id); } catch (x) {}
           }

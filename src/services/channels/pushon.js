@@ -130,10 +130,11 @@ export function poToMeta(body, channel) {
     // статус исходящего: вид события («message.delivered») или поле status — доставлено, прочитано, ошибка («отправлено» Pushon не шлёт)
     const st = String(body.status || m.status || type.slice(8)).toLowerCase().replace(/^delivery$/, "delivered");
     if (/^(sent|delivered|read|failed|error)$/.test(st) && mid) {
-      const ok = st === "error" ? "failed" : st, er = body.error || m.error, e = er && typeof er === "object" ? er : er ? { message: String(er) } : null;
+      const ok = st === "error" ? "failed" : st, er = body.error || m.error || body.reason || m.reason || body.errorMessage || m.errorMessage || body.failureReason || m.failureReason;
+      const e = er && typeof er === "object" ? er : er ? { message: String(er), code: body.errorCode || m.errorCode } : (body.errorCode || m.errorCode) ? { code: body.errorCode || m.errorCode } : null;
       // ids — все номера этого сообщения (wamid, номер Pushon): в переписке у нашей реплики — номер Pushon из ответа на отправку
       return wrap("messages", { statuses: [{ id: mid, ids, status: ok, timestamp: unix(body.occurredAt), recipient_id: digits(body.contactPhone),
-        ...(ok === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message)) || "не доставлено") }] } : {}) }] });
+        ...(ok === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message || e.reason || e.description)) || "") }] } : {}) }] });
     }
     return null; // исходящие (наши же и из кабинета Pushon) и прочее — боту не нужны
   }
@@ -150,7 +151,7 @@ export function poToMeta(body, channel) {
     if (!/^(sent|delivered|read|failed)$/.test(st) || !body.messageId) return null;
     const e = body.error && typeof body.error === "object" ? body.error : body.error ? { message: String(body.error) } : null;
     return wrap("messages", { statuses: [{ id: String(body.messageId), status: st, timestamp: unix(body.timestamp), recipient_id: digits(body.to),
-      ...(st === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message)) || "не доставлено") }] } : {}) }] });
+      ...(st === "failed" ? { errors: [{ code: +((e && e.code) || 0) || 0, title: String((e && (e.title || e.message || e.reason)) || "") }] } : {}) }] });
   }
   return null;
 }
