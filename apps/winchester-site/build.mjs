@@ -24,7 +24,8 @@ const LEGAL_ADDRESS = "";
 // (28.10.2026: на сайте уже новые файлы, а у владельца — прежние). Форма — по содержимому файлов; фото мастеров в репозитории нет —
 // поменяли или добавили фото мастера в zip — поднимите PHOTOS_V.
 const PHOTOS_V = "20261028";
-// Карусель работ (ТЗ v5): файл, размер, ключ подписи в словаре. На сайте — фото работ от Кайрата (work-1.jpg …, только в zip:
+// Карусель работ (ТЗ v5): файл, размер, ключ подписи в словаре; v — ролик (вертикальный 720×900–1080×1350, 5–8 с, без звука,
+// до 1 МБ; f — его первый кадр). На сайте — фото работ от Кайрата (work-1.jpg …, только в zip:
 // живые люди); пока их нет, в репозитории — стоковые кадры. Пришли фото — заменить список и поднять PHOTOS_V.
 const WORKS = [
   { f: "cut.jpg", w: 1400, h: 770, alt: "alt_cut" },
@@ -82,7 +83,8 @@ function render(p) {
     hero_src_v: HAS_V ? `      <source media="(max-width: 860px)" srcset="${p.base}assets/photos/hero-v.jpg?v=${vidV()}" width="720" height="1280">\n` : "",
     hero_pre_v: HAS_V ? `<link rel="preload" href="${p.base}assets/photos/hero-v.jpg?v=${vidV()}" as="image" media="(max-width: 860px)" fetchpriority="high">\n` : "",
     vid_v_attr: HAS_V ? `data-v="${p.base}assets/video/hero-v.mp4?v=${vidV()}"` : "",
-    works: WORKS.map(x => `        <figure class="car-item"><img src="${p.base}assets/photos/${x.f}?v=${PHOTOS_V}" width="${x.w}" height="${x.h}" loading="lazy" decoding="async" alt="${esc(p.dict[x.alt])}"></figure>`).join("\n") };
+    // карточка-ролик (v): картинка f — кадр до загрузки и без видео; ролик грузит и включает скрипт, только когда карточка на экране
+    works: WORKS.map(x => `        <figure class="car-item${x.v ? " car-vid" : ""}"><img src="${p.base}assets/photos/${x.f}?v=${PHOTOS_V}" width="${x.w}" height="${x.h}" loading="lazy" decoding="async" alt="${esc(p.dict[x.alt])}">${x.v ? `<video muted loop playsinline preload="none" aria-hidden="true" tabindex="-1" data-src="${p.base}assets/video/${x.v}?v=${PHOTOS_V}"></video>` : ""}</figure>`).join("\n") };
   const used = new Set(["ld_description", "ld_street", "legal_addr", ...WORKS.map(x => x.alt)]);
   const get = k => { if (!(k in vals)) throw new Error(`${p.out}: в словаре нет ключа «${k}»`); used.add(k); return vals[k]; };
   let html = template

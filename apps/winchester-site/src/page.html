@@ -219,6 +219,9 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .car-track::-webkit-scrollbar{display:none}
 .car-item{flex:0 0 calc((100% - 32px) / 3);margin:0;scroll-snap-align:start;aspect-ratio:4/5;overflow:hidden;background:var(--walnut)}
 .car-item img{width:100%;height:100%;object-fit:cover}
+.car-item{position:relative}
+.car-vid video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s}
+.car-vid video.on{opacity:1}
 .car-btn{position:absolute;top:calc(50% - 46px);width:48px;height:48px;border-radius:50%;border:0;background:rgba(33,15,15,.78);color:var(--ivory);display:grid;place-items:center;cursor:pointer;transition:opacity .2s}
 .car-btn svg{width:20px;height:20px}
 .car-btn.prev{left:12px}.car-btn.next{right:12px}
@@ -704,6 +707,19 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     tr.addEventListener('scroll',function(){requestAnimationFrame(sync);},{passive:true});
     addEventListener('resize',build);
     build();
+    // Ролики в карусели: грузятся и играют, только пока карточка видна больше чем наполовину; экономия трафика,
+    // 2G/3G и «уменьшить движение» — остаётся кадр
+    var cv=navigator.connection||{}, still2=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if('IntersectionObserver' in window&&!still2&&!cv.saveData&&!/(^|-)2g|3g/.test(cv.effectiveType||'')){
+      var vio=new IntersectionObserver(function(es){es.forEach(function(e){
+        var v=e.target.querySelector('video'); if(!v)return;
+        if(e.isIntersecting&&!d.hidden){
+          if(!v.src){v.src=v.getAttribute('data-src');v.addEventListener('playing',function(){v.classList.add('on');},{once:true});v.addEventListener('error',function(){v.remove();});}
+          var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});
+        } else v.pause();
+      });},{threshold:.55});
+      tr.querySelectorAll('.car-vid').forEach(function(f){vio.observe(f);});
+    }
   });
 
   // Шапка и меню телефона
