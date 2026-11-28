@@ -191,3 +191,21 @@ export async function kickDoneKv(env, cid, modes, at) {
   for (const m of modes) done[m] = Math.max(+done[m] || 0, at);
   await env.KV.put("jrwd:" + cid, JSON.stringify(done), { expirationTtl: 2 * DAY });
 }
+
+// недоставленные сервисные сообщения одному номеру подряд (28.11.2026: Алексу за день ушло пять шаблонов, ни один не дошёл — номер
+// заблокирован или без WhatsApp). { n, at }, 7 дней; любое доставленное или прочитанное сообщение этому номеру — сброс
+/** @param {string} cid @param {string} p */
+const wflKey = (cid, p) => `wafl:${cid}:${String(p).replace(/\D/g, "")}`;
+/** @param {Env} env @param {string} cid @param {string} p @param {number} now @returns {Promise<{ n: number, at: number }>} */
+export async function waFailAdd(env, cid, p, now) {
+  let v = { n: 0, at: 0 }; try { v = JSON.parse((await env.KV.get(wflKey(cid, p))) || "null") || v; } catch (e) {}
+  const nv = { n: (+v.n || 0) + 1, at: now };
+  await env.KV.put(wflKey(cid, p), JSON.stringify(nv), { expirationTtl: 7 * 86400 });
+  return nv;
+}
+/** @param {Env} env @param {string} cid @param {string} p */
+export async function waFailClear(env, cid, p) { try { await env.KV.delete(wflKey(cid, p)); } catch (e) {} }
+/** @param {Env} env @param {string} cid @param {string} p @returns {Promise<number>} сколько подряд не дошло (0 — нет отметки или сбой чтения) */
+export async function waFailCount(env, cid, p) {
+  try { const v = JSON.parse((await env.KV.get(wflKey(cid, p))) || "null"); return v ? +v.n || 0 : 0; } catch (e) { return 0; }
+}

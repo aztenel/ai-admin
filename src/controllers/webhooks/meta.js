@@ -11,6 +11,7 @@ import { inboundNeed } from "../../services/inbox/queue.js";
 import { inboundPush, failedPush } from "../../services/inbox/notify.js";
 import { applyStatus, stOf } from "../../services/inbox/status.js";
 import { statStatus } from "../../services/inbox/stats.js";
+import { undelivNote } from "../../services/reminders/undeliv.js";
 import { sendWA } from "../../services/channels/meta.js";
 import { poOn } from "../../services/channels/pushon.js";
 import { waSignal, waFailed } from "../../services/broadcast/holds.js";
@@ -227,7 +228,7 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
     if (wx.signed && wx.client && hasClient(wx.client)) for (const st of val.statuses || []) {
       if (!st || !st.recipient_id || !st.status) continue;
       const to = String(st.recipient_id).replace(/\D/g, ""), hk = `h:wa:${wx.client}:${to}`, e = (st.errors || [])[0] || {};
-      const desc = String(e.title || e.message || "").slice(0, 120) + (e.code ? ` (код ${e.code})` : "");
+      const t0 = String(e.title || e.message || "").trim(), desc = (/^(failed|error|undelivered|not delivered|не доставлено)$/i.test(t0) ? "" : t0).slice(0, 120) + (e.code ? ` (код ${e.code})` : "");
       try {
         for (const id of [...new Set([st.id, ...(Array.isArray(st.ids) ? st.ids : [])].filter(Boolean).map(String))]) {
           /** @type {any} */ let turn = null;
@@ -241,6 +242,8 @@ export async function handleWhatsApp(body, env, wx = /** @type {any} */ ({})) {
             try { await failedPush(env, "wa", wx.client, to, id); } catch (x) {}
           }
           try { await statStatus(env, wx.client, "wa", id, turn, stOf(String(st.status)), Date.now()); } catch (x) {}
+          // сервисные, которые не доходят: два подряд — пауза этому номеру (services/reminders/undeliv.js); повтор отчёта не считаем
+          if (r === "changed" || st.status !== "failed") { try { await undelivNote(env, wx.client, to, String(st.status), turn, Date.now()); } catch (x) {} }
           break;
         }
       } catch (/** @type {any} */ x) { console.log("wa status", String((x && x.message) || x).slice(0, 120)); }

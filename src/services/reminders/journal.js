@@ -31,6 +31,7 @@ import { sendGreen } from "../channels/greenapi.js";
 import { waRoute } from "../channels/index.js";
 import { sendTemplate } from "../channels/templates.js";
 import { jrVia, jrTpl, jrTplFill, waKind, waWhy } from "./watpl.js";
+import { undelivHold, UNDELIV_WHY } from "./undeliv.js";
 import { altUserKey } from "../booking/journal.js";
 import { altLoc } from "../booking/book.js";
 import { stErr } from "../inbox/status.js";
@@ -543,6 +544,7 @@ async function jrSend(env, c, o, x, now, ctx, st) {
   if (o.set && son && !son.on) return skip("сценарий выключен");
   if (son && son.at > x.at) return skip("сценарий включили позже, чем должно было уйти это сообщение");
   if (await optedOut(env, c.id, x.p)) return skip("клиент просил не писать");
+  if (jrVia(c, env) === "wa" && await undelivHold(env, c.id, x.p)) return skip(UNDELIV_WHY);
   if (!st.blocks) {
     // «стоп» и запреты базы контактов D1. База у адреса есть, но не ответила — не шлём в эту минуту (закрыто при сомнении: полный
     // запрет владельца есть только в D1, не в KV); базы у адреса нет — только «стоп» из KV, как раньше

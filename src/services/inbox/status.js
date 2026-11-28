@@ -32,7 +32,7 @@ export function stNext(cur, next) {
   return !cur || (RANK[n] ?? -1) > (RANK[cur] ?? -1) ? n : null;
 }
 /** Причина ошибки — коротко и без номеров. @param {string} status @param {string} [desc] */
-export const stErr = (status, desc) => String(status === "failed" ? desc || "failed" : status).replace(/\+?\d[\d\s()-]{6,}\d/g, "…").slice(0, 80);
+export const stErr = (status, desc) => String(status === "failed" ? desc || "" : status).replace(/\+?\d[\d\s()-]{6,}\d/g, "…").slice(0, 80);
 
 // ---- статус из вебхука провайдера → реплика в переписке (одна запись в KV только при смене статуса: повтор вебхука ничего не пишет)
 

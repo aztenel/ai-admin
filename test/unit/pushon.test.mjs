@@ -309,3 +309,24 @@ test("реклама не дошла (27.11.2026: рассылка «3–6 ме�
   assert.ok(!h.profile.need, "чат рекламы в «Нужен ответ» не попал");
   assert.ok(!/не доставлено/.test(h.turns.at(-1).se || ""), "без причины — пусто, пульт пишет просто «Не доставлено»: " + h.turns.at(-1).se);
 });
+test("сервисные не доходят (28.11.2026, Алекс: пять «не доставлено» за день): два подряд — пауза номеру; доставленное снимает; причина «failed» — не причина", async () => {
+  net.reset();
+  const { undelivHold } = await import("../../src/services/reminders/undeliv.js");
+  const E = { WA_VIA_WINCHESTER: "pushon", WA_TOKEN_WINCHESTER: "po_key_w", APP_SECRET_WINCHESTER: "hook-w-123", PHONE_NUMBER_ID_WINCHESTER: "chan-w" };
+  const s = mk(E), to = "77051239922", now = Date.now();
+  await s.kv.api.put(`h:wa:winchester:${to}`, JSON.stringify({ n: 3, turns: ["s1", "s2", "s3"].map((m, i) => ({ role: "model", text: "Напоминаем", t: now + i, rm: "h2", mid: m, st: "sent" })), profile: {} }));
+  const hk = (t) => s.call("/po/winchester?t=hook-w-123", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(t) });
+  await hk({ type: "message.failed", id: "ev-u1", contactPhone: "+" + to, message: { id: "s1" }, error: "failed" });
+  if (s.settle) await s.settle();
+  assert.equal(await undelivHold(s.env, "winchester", to), false, "одна неудача — ещё не пауза");
+  assert.ok(!/failed/.test(s.hist("wa", "winchester", to).turns[0].se || ""), "«failed» вместо причины не показываем");
+  await hk({ type: "message.failed", id: "ev-u1", contactPhone: "+" + to, message: { id: "s1" }, error: "failed" }); // повтор того же отчёта
+  if (s.settle) await s.settle();
+  assert.equal(await undelivHold(s.env, "winchester", to), false, "повтор отчёта не считается второй неудачей");
+  await hk({ type: "message.failed", id: "ev-u2", contactPhone: "+" + to, message: { id: "s2" } });
+  if (s.settle) await s.settle();
+  assert.equal(await undelivHold(s.env, "winchester", to), true, "две подряд — пауза");
+  await hk({ type: "message.delivered", id: "ev-u3", contactPhone: "+" + to, message: { id: "s3" } });
+  if (s.settle) await s.settle();
+  assert.equal(await undelivHold(s.env, "winchester", to), false, "доставлено — пауза снята");
+});
