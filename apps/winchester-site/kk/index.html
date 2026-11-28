@@ -174,6 +174,9 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .hero-pic{position:relative;margin:0;background:var(--walnut)}
 /* кадр зала: мастер за работой и кольцевая лампа — в левой половине кадра, их и оставляем при обрезке */
 .hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:32% 50%}
+/* Видео первого экрана (ТЗ v5): лежит поверх фото и проявляется, только когда уже играет — до этого и без него видно фото */
+.hero-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .8s ease-out;pointer-events:none}
+.hero-vid.on{opacity:1}
 /* Одно движение на всю страницу — при открытии (идея «Hero Stagger» из примеров Motion, без библиотеки):
    фото медленно приближается, строки заголовка выезжают по очереди, за ними текст, кнопки, телефон.
    Без JS и при «уменьшить движение» класса intro нет — всё сразу на месте. */
@@ -238,6 +241,25 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
+/* Команда (ТЗ v5): общее фото после цен */
+.team{background:var(--obsidian)}
+.team-pic{margin:0;aspect-ratio:16/9;overflow:hidden;background:var(--walnut)}
+.team-pic img{width:100%;height:100%;object-fit:cover}
+/* Карусель работ (ТЗ v5): свайп, стрелки, точки по центру внизу; без библиотек — прокрутка с привязкой */
+.car{position:relative}
+.car-track{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;overscroll-behavior-x:contain;outline-offset:4px}
+.car-track::-webkit-scrollbar{display:none}
+.car-item{flex:0 0 calc((100% - 32px) / 3);margin:0;scroll-snap-align:start;aspect-ratio:4/5;overflow:hidden;background:var(--walnut)}
+.car-item img{width:100%;height:100%;object-fit:cover}
+.car-btn{position:absolute;top:calc(50% - 46px);width:48px;height:48px;border-radius:50%;border:0;background:rgba(33,15,15,.78);color:var(--ivory);display:grid;place-items:center;cursor:pointer;transition:opacity .2s}
+.car-btn svg{width:20px;height:20px}
+.car-btn.prev{left:12px}.car-btn.next{right:12px}
+.car-btn:disabled{opacity:0;pointer-events:none}
+.car-dots{display:flex;justify-content:center;gap:0;margin-top:12px}
+.car-dots button{width:32px;height:44px;border:0;background:none;padding:0;display:grid;place-items:center;cursor:pointer}
+.car-dots button::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--ink-soft);opacity:.35;transition:opacity .2s,transform .2s}
+.car-dots button[aria-current=true]::after{opacity:1;transform:scale(1.25)}
+@media (prefers-reduced-motion:reduce){.car-track{scroll-behavior:auto}}
 .m-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px}
 .master{display:flex;flex-direction:column;align-items:flex-start;padding-top:24px;border-top:1px solid rgba(243,235,221,.2)}
 .av{position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;background:var(--burgundy);box-shadow:inset 0 0 0 1px rgba(201,166,107,.55);flex:none}
@@ -326,6 +348,10 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .master .btn{margin-top:0;padding:0 16px}
   .m-note{margin-top:28px}
   .more-pic{margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .team-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
+  .car-track{margin:0 calc(var(--gutter) * -1);padding:0 var(--gutter);scroll-padding:0 var(--gutter);gap:12px}
+  .car-item{flex-basis:82%}
+  .car-btn{display:none}
   .cont dl{grid-template-columns:minmax(0,1fr);gap:20px}
   .cont-l .btn{width:100%}
   .dock{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;gap:10px;padding:12px var(--gutter) calc(12px + env(safe-area-inset-bottom));background:rgba(33,15,15,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid rgba(243,235,221,.14);transform:translateY(110%);transition:transform .3s}
@@ -360,6 +386,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     <nav class="nav" id="nav" aria-label="Негізгі мәзір">
       <a href="#services">Қызметтер</a>
       <a href="#masters">Шеберлер</a>
+      <a href="#works">Жұмыстар</a>
       <a href="#contacts">Байланыс</a>
       <a class="btn btn-brass" data-book data-wa="Сәлеметсіз бе! Winchester-ге жазылғым келеді" href="https://wa.me/77771148659">Жазылу</a>
     </nav>
@@ -384,6 +411,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   </div>
   <figure class="hero-pic">
     <img src="../assets/photos/hero-800.jpg" srcset="../assets/photos/hero-800.jpg 800w, ../assets/photos/hero-1200.jpg 1200w, ../assets/photos/hero.jpg 1276w" sizes="(max-width: 860px) 100vw, 1220px" width="1276" height="718" alt="Winchester залы: кірпіш қабырға және шеберлердің жұмыс орындары" fetchpriority="high" decoding="async">
+    <video class="hero-vid" muted loop playsinline preload="none" aria-hidden="true" tabindex="-1" data-h="../assets/video/hero-h.mp4?v=9f8c7ec6" data-v="../assets/video/hero-v.mp4?v=9f8c7ec6"></video>
   </figure>
 </section>
 <section class="sec light" id="services" aria-labelledby="svc-h">
@@ -399,7 +427,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     </div>
     <div class="menu">
       <div class="grp">
-        <figure class="grp-pic"><img src="../assets/photos/cut.jpg" width="1400" height="770" loading="lazy" decoding="async" alt="Шебер клиенттің шашын қиып жатыр, артынан көрініс"></figure>
         <h3>Шаш қию</h3>
         <ul>
           <li class="row"><span class="n">Ерлер шаш қиюы</span><span class="dots"></span><span class="p" data-b="7 000 ₸" data-c="9 000 ₸">7 000 ₸</span></li>
@@ -410,7 +437,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         </ul>
       </div>
       <div class="grp">
-        <figure class="grp-pic"><img src="../assets/photos/beard.jpg" width="1400" height="788" loading="lazy" decoding="async" alt="Шебер сақалды қайшымен түзетіп жатыр"></figure>
         <h3>Сақал және камуфляж</h3>
         <ul>
           <li class="row"><span class="n">Сақалды пішіндеу</span><span class="dots"></span><span class="p" data-b="4 500 ₸" data-c="5 000 ₸">4 500 ₸</span></li>
@@ -443,6 +469,15 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         </div>
       </div>
     </div>
+  </div>
+</section>
+<section class="sec team" id="team" aria-labelledby="t-h">
+  <div class="wrap">
+    <div class="m-head">
+      <h2 class="h2" id="t-h">Команда</h2>
+      <p class="lead">Winchester шеберлері мен әкімшілері. Сізді қарсы алып, шашыңызды қиып, келесі жолға жазатындар.</p>
+    </div>
+    <figure class="team-pic"><img src="../assets/photos/team.jpg?v=20261028" width="1600" height="900" loading="lazy" decoding="async" alt="Winchester командасы барбершоп залында"></figure>
   </div>
 </section>
 <section class="sec prem" id="premium" aria-labelledby="prem-h">
@@ -501,6 +536,25 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
       </article>
     </div>
     <p class="note m-note">Кімге барсаңыз да бәрібір ме? Онлайн жазылуда «Любой специалист» (кез келген шебер) нұсқасын таңдаңыз — барлық бос уақыт көрінеді.</p>
+  </div>
+</section>
+<section class="sec light" id="works" aria-labelledby="w-h">
+  <div class="wrap">
+    <div class="m-head">
+      <h2 class="h2" id="w-h">Біздің жұмыстар</h2>
+      <p class="lead">Winchester шеберлері жасаған шаш үлгілері мен сақалдар. Оңға қарай сырғытыңыз.</p>
+    </div>
+    <div class="car" data-car>
+      <div class="car-track" tabindex="0" role="region" aria-roledescription="карусель" aria-label="Біздің жұмыстар">
+        <figure class="car-item"><img src="../assets/photos/cut.jpg?v=20261028" width="1400" height="770" loading="lazy" decoding="async" alt="Шебер клиенттің шашын қиып жатыр, артынан көрініс"></figure>
+        <figure class="car-item"><img src="../assets/photos/beard.jpg?v=20261028" width="1400" height="788" loading="lazy" decoding="async" alt="Шебер сақалды қайшымен түзетіп жатыр"></figure>
+        <figure class="car-item"><img src="../assets/photos/shelf.jpg?v=20261028" width="1276" height="718" loading="lazy" decoding="async" alt="Winchester залындағы сәндеу құралдары тұрған сөрелер"></figure>
+        <figure class="car-item"><img src="../assets/photos/hero.jpg?v=20261028" width="1276" height="718" loading="lazy" decoding="async" alt="Кірпіш қабырға жанындағы шеберлердің жұмыс орындары"></figure>
+      </div>
+      <button type="button" class="car-btn prev" aria-label="Алдыңғы жұмыстар"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button type="button" class="car-btn next" aria-label="Келесі жұмыстар"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg></button>
+      <div class="car-dots" role="group" aria-label="Карусель бетін таңдау"></div>
+    </div>
   </div>
 </section>
 <section class="sec light" id="care" aria-label="Күтім құралдары және оқыту">
@@ -616,6 +670,47 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     tog.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
     prices.forEach(function(p){var v=p.getAttribute('data-'+t);flip(p,v,p.getAttribute('data-b')===p.getAttribute('data-c')?0:k++);});
   });});
+  // Видео первого экрана: не тормозит загрузку (после load), не тратит трафик (экономия, 2G/3G), не двигается при «уменьшить движение»;
+  // за экраном и в свёрнутой вкладке — на паузе. Не загрузилось — остаётся фото.
+  var vid=pic&&pic.querySelector('video'), cn=navigator.connection||{};
+  var calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(vid&&!calm&&!cn.saveData&&!/(^|-)2g|3g/.test(cn.effectiveType||'')){
+    var vgo=function(){
+      vid.src=pic.clientHeight>pic.clientWidth?vid.getAttribute('data-v'):vid.getAttribute('data-h');
+      vid.addEventListener('playing',function(){vid.classList.add('on');},{once:true});
+      vid.addEventListener('error',function(){vid.remove();});
+      var run=function(){var p=vid.play();if(p&&p.catch)p.catch(function(){});};
+      if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting&&!d.hidden?run():vid.pause();}).observe(pic);else run();
+      d.addEventListener('visibilitychange',function(){d.hidden?vid.pause():run();});
+    };
+    if(d.readyState==='complete')setTimeout(vgo,300);else addEventListener('load',function(){setTimeout(vgo,300);});
+  }
+  // Карусель работ: точки и стрелки по положению прокрутки; свайп — сама прокрутка браузера
+  d.querySelectorAll('[data-car]').forEach(function(car){
+    var tr=car.querySelector('.car-track'), dots=car.querySelector('.car-dots'), prev=car.querySelector('.prev'), next=car.querySelector('.next');
+    function items(){return tr.querySelectorAll('.car-item');}
+    tr.querySelectorAll('img').forEach(function(i){i.addEventListener('error',function(){var f=i.closest('.car-item');if(f)f.remove();build();});});
+    function step(){var it=items();return it.length>1?it[1].offsetLeft-it[0].offsetLeft:tr.clientWidth;}
+    function pages(){return Math.max(1,Math.round((tr.scrollWidth-tr.clientWidth)/step())+1);}
+    function cur(){return Math.round(tr.scrollLeft/step());}
+    function go(i){tr.scrollTo({left:i*step()});}
+    function build(){
+      dots.textContent='';
+      var n=pages();
+      for(var i=0;i<n;i++){var b=d.createElement('button');b.type='button';b.setAttribute('aria-label',(i+1)+' / '+n);(function(k){b.addEventListener('click',function(){go(k);});})(i);dots.appendChild(b);}
+      dots.hidden=n<2;sync();
+    }
+    function sync(){
+      var c=cur(), n=pages();
+      dots.querySelectorAll('button').forEach(function(b,i){b.setAttribute('aria-current',String(i===c));});
+      prev.disabled=c<=0;next.disabled=c>=n-1;
+    }
+    prev.addEventListener('click',function(){go(cur()-1);});
+    next.addEventListener('click',function(){go(cur()+1);});
+    tr.addEventListener('scroll',function(){requestAnimationFrame(sync);},{passive:true});
+    addEventListener('resize',build);
+    build();
+  });
   // Шапка и меню телефона
   var hdr=d.getElementById('hdr'), nav=d.getElementById('nav'), burger=d.getElementById('burger');
   function onScroll(){hdr.classList.toggle('solid',window.scrollY>24);}

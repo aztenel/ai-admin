@@ -24,6 +24,16 @@ const LEGAL_ADDRESS = "";
 // (28.10.2026: на сайте уже новые файлы, а у владельца — прежние). Форма — по содержимому файлов; фото мастеров в репозитории нет —
 // поменяли или добавили фото мастера в zip — поднимите PHOTOS_V.
 const PHOTOS_V = "20261028";
+// Карусель работ (ТЗ v5): файл, размер, ключ подписи в словаре. На сайте — фото работ от Кайрата (work-1.jpg …, только в zip:
+// живые люди); пока их нет, в репозитории — стоковые кадры. Пришли фото — заменить список и поднять PHOTOS_V.
+const WORKS = [
+  { f: "cut.jpg", w: 1400, h: 770, alt: "alt_cut" },
+  { f: "beard.jpg", w: 1400, h: 788, alt: "alt_beard" },
+  { f: "shelf.jpg", w: 1276, h: 718, alt: "alt_shelf_work" },
+  { f: "hero.jpg", w: 1276, h: 718, alt: "alt_hero_work" },
+];
+// Видео первого экрана: версия в адресе — по содержимому роликов (хостинг без cache-control)
+const vidV = () => createHash("sha1").update(readFileSync(join(DIR, "assets/video/hero-h.mp4"))).update(readFileSync(join(DIR, "assets/video/hero-v.mp4"))).digest("hex").slice(0, 8);
 const ver = f => createHash("sha1").update(readFileSync(join(DIR, "../site-booking", f))).digest("hex").slice(0, 8);
 
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -66,8 +76,9 @@ function render(p) {
     alt_href: p.alt_href, alt_lang: p.alt_lang, preload_extra: p.preload_extra, sprite, jsonld: jsonld(p),
     fb_verify: FB_DOMAIN_VERIFICATION ? `<meta name="facebook-domain-verification" content="${esc(FB_DOMAIN_VERIFICATION)}">` : "",
     legal_line: LEGAL_ADDRESS ? `, ${p.dict.legal_addr} ${LEGAL_ADDRESS}` : "",
-    bk_v: ver("booking.js"), bkc_v: ver("booking.css"), ph_v: PHOTOS_V };
-  const used = new Set(["ld_description", "ld_street", "legal_addr"]);
+    bk_v: ver("booking.js"), bkc_v: ver("booking.css"), ph_v: PHOTOS_V, vid_v: vidV(),
+    works: WORKS.map(x => `        <figure class="car-item"><img src="${p.base}assets/photos/${x.f}?v=${PHOTOS_V}" width="${x.w}" height="${x.h}" loading="lazy" decoding="async" alt="${esc(p.dict[x.alt])}"></figure>`).join("\n") };
+  const used = new Set(["ld_description", "ld_street", "legal_addr", ...WORKS.map(x => x.alt)]);
   const get = k => { if (!(k in vals)) throw new Error(`${p.out}: в словаре нет ключа «${k}»`); used.add(k); return vals[k]; };
   let html = template
     .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*\n/gm, "") // комментарий на отдельных строках — вместе со строками
