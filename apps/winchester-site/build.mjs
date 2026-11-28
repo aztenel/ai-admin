@@ -2,7 +2,7 @@
 // Так русская и казахская страницы не расходятся по вёрстке. Готовые страницы лежат в репозитории и загружаются на hoster.kz.
 // Запуск: node apps/winchester-site/build.mjs           — собрать
 //         node apps/winchester-site/build.mjs --check   — проверить, что index.html и kk/index.html собраны из текущих исходников
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,9 @@ const WORKS = [
   { f: "hero.jpg", w: 1276, h: 718, alt: "alt_hero_work" },
 ];
 // Видео первого экрана: версия в адресе — по содержимому роликов (хостинг без cache-control)
-const vidV = () => createHash("sha1").update(readFileSync(join(DIR, "assets/video/hero-h.mp4"))).update(readFileSync(join(DIR, "assets/video/hero-v.mp4"))).digest("hex").slice(0, 8);
+// Вертикального ролика может не быть (у Winchester пока только горизонтальный): тогда на телефоне горизонтальный полосой 16:9.
+const HAS_V = existsSync(join(DIR, "assets/video/hero-v.mp4"));
+const vidV = () => { const h = createHash("sha1").update(readFileSync(join(DIR, "assets/video/hero-h.mp4"))); if (HAS_V) h.update(readFileSync(join(DIR, "assets/video/hero-v.mp4"))); return h.digest("hex").slice(0, 8); };
 const ver = f => createHash("sha1").update(readFileSync(join(DIR, "../site-booking", f))).digest("hex").slice(0, 8);
 
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -77,6 +79,9 @@ function render(p) {
     fb_verify: FB_DOMAIN_VERIFICATION ? `<meta name="facebook-domain-verification" content="${esc(FB_DOMAIN_VERIFICATION)}">` : "",
     legal_line: LEGAL_ADDRESS ? `, ${p.dict.legal_addr} ${LEGAL_ADDRESS}` : "",
     bk_v: ver("booking.js"), bkc_v: ver("booking.css"), ph_v: PHOTOS_V, vid_v: vidV(),
+    hero_src_v: HAS_V ? `      <source media="(max-width: 860px)" srcset="${p.base}assets/photos/hero-v.jpg?v=${vidV()}" width="720" height="1280">\n` : "",
+    hero_pre_v: HAS_V ? `<link rel="preload" href="${p.base}assets/photos/hero-v.jpg?v=${vidV()}" as="image" media="(max-width: 860px)" fetchpriority="high">\n` : "",
+    vid_v_attr: HAS_V ? `data-v="${p.base}assets/video/hero-v.mp4?v=${vidV()}"` : "",
     works: WORKS.map(x => `        <figure class="car-item"><img src="${p.base}assets/photos/${x.f}?v=${PHOTOS_V}" width="${x.w}" height="${x.h}" loading="lazy" decoding="async" alt="${esc(p.dict[x.alt])}"></figure>`).join("\n") };
   const used = new Set(["ld_description", "ld_street", "legal_addr", ...WORKS.map(x => x.alt)]);
   const get = k => { if (!(k in vals)) throw new Error(`${p.out}: в словаре нет ключа «${k}»`); used.add(k); return vals[k]; };

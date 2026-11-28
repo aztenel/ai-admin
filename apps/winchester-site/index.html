@@ -26,7 +26,8 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/oswald-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/manrope-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/photos/hero-800.jpg" as="image" imagesrcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1276w" imagesizes="(max-width: 860px) 100vw, 1220px" fetchpriority="high">
+<link rel="preload" href="assets/photos/hero-v.jpg?v=9f8c7ec6" as="image" media="(max-width: 860px)" fetchpriority="high">
+<link rel="preload" href="assets/photos/hero-1200.jpg?v=9f8c7ec6" as="image" media="(min-width: 861px)" imagesrcset="assets/photos/hero-1200.jpg?v=9f8c7ec6 1200w, assets/photos/hero.jpg?v=9f8c7ec6 1276w" imagesizes="100vw" fetchpriority="high">
 <link rel="preconnect" href="https://ai-admin.azikonps4.workers.dev" crossorigin>
 <script>if(window.matchMedia&&!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('intro');</script>
 <script type="application/ld+json">
@@ -155,9 +156,9 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .burger[aria-expanded=true] i:nth-child(1){top:21px;transform:rotate(45deg)}
 .burger[aria-expanded=true] i:nth-child(2){opacity:0}
 .burger[aria-expanded=true] i:nth-child(3){top:21px;transform:rotate(-45deg)}
-/* Первый экран: текст слева, фото справа до края окна */
-.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:min(100svh,880px);padding-top:var(--hdr)}
-.hero-txt{display:flex;flex-direction:column;justify-content:center;padding:clamp(40px,7vh,88px) clamp(24px,4vw,64px) clamp(40px,7vh,88px) max(var(--gutter),calc((100vw - var(--max)) / 2 + var(--gutter)))}
+/* Первый экран (ТЗ v5): горизонтальное видео зала на весь экран, текст слева поверх затемнения */
+.hero{position:relative;display:flex;align-items:center;min-height:min(100svh,900px);padding-top:var(--hdr);overflow:hidden}
+.hero-txt{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:center;width:min(100%,760px);padding:clamp(40px,7vh,88px) clamp(24px,4vw,64px) clamp(40px,7vh,88px) max(var(--gutter),calc((100vw - var(--max)) / 2 + var(--gutter)))}
 .hero h1{font-size:clamp(2.5rem,5vw,4.9rem);line-height:1.08} /* меньше — «й» и «Қ» задевают соседнюю строку */
 /* казахские слова длиннее: заголовок мельче, чтобы на компьютере был в 3–4 строки, а не в 5 */
 @media (min-width:861px){html[lang=kk] .hero h1{font-size:clamp(2.3rem,4.1vw,4rem)}}
@@ -167,9 +168,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .hero-meta a{display:inline-flex;align-items:center;gap:10px;min-height:44px;color:var(--ivory);font-weight:600;text-decoration:none}
 .hero-meta a:hover{color:var(--brass)}
 .hero-meta svg{width:18px;height:18px;color:var(--brass);flex:none}
-.hero-pic{position:relative;margin:0;background:var(--walnut)}
+.hero-pic{position:absolute;inset:0;margin:0;background:var(--walnut)}
+.hero-pic::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(90deg,rgba(26,12,12,.94) 0,rgba(26,12,12,.82) 30%,rgba(26,12,12,.35) 58%,rgba(26,12,12,.12) 100%),linear-gradient(to bottom,rgba(26,12,12,.5) 0,rgba(26,12,12,0) 22%,rgba(26,12,12,0) 80%,rgba(26,12,12,.55) 100%)}
+.hero-pic picture{display:contents}
 /* кадр зала: мастер за работой и кольцевая лампа — в левой половине кадра, их и оставляем при обрезке */
-.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:32% 50%}
+.hero-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 50%}
 /* Видео первого экрана (ТЗ v5): лежит поверх фото и проявляется, только когда уже играет — до этого и без него видно фото */
 .hero-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .8s ease-out;pointer-events:none}
 .hero-vid.on{opacity:1}
@@ -322,11 +325,13 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .lng{font-size:15px}
   /* Телефон (ТЗ v5, большая часть посетителей): вертикальное видео на весь экран, текст и кнопки внизу поверх затемнения —
      как сторис в Instagram. До видео и без него на этом месте фото. */
-  .hero{position:relative;display:flex;flex-direction:column;justify-content:flex-end;min-height:100svh;padding-top:var(--hdr)}
-  .hero-pic{position:absolute;inset:0;height:auto}
-  .hero-pic::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(to bottom,rgba(26,12,12,.55) 0,rgba(26,12,12,0) 18%,rgba(26,12,12,0) 34%,rgba(26,12,12,.7) 58%,rgba(26,12,12,.94) 78%,var(--obsidian) 100%)}
-  .hero-pic img{object-position:50% 50%}
-  .hero-txt{position:relative;z-index:2;padding:32px var(--gutter) 28px}
+  .hero{flex-direction:column;justify-content:flex-end;align-items:stretch;min-height:100svh}
+  .hero-pic::after{background:linear-gradient(to bottom,rgba(26,12,12,.55) 0,rgba(26,12,12,0) 18%,rgba(26,12,12,0) 34%,rgba(26,12,12,.7) 58%,rgba(26,12,12,.94) 78%,var(--obsidian) 100%)}
+  .hero-txt{width:auto;padding:32px var(--gutter) 28px}
+  /* Есть только горизонтальный ролик: на телефоне он чёткой полосой 16:9 под шапкой, вокруг — размытый кадр (вырезка
+     9:16 из горизонтального видео мыльная). Класс band ставит скрипт, когда видео уже играет. */
+  .hero-pic.band img{inset:-40px;width:calc(100% + 80px);height:calc(100% + 80px);filter:blur(22px) brightness(.6)}
+  .hero-pic.band .hero-vid{top:var(--hdr);bottom:auto;height:auto;aspect-ratio:16/9}
   .hero-sub{color:#e6d9c6}
   .hero h1{font-size:clamp(2.3rem,10.5vw,3.4rem);max-width:none}
   .hero-sub{margin-top:16px}
@@ -411,7 +416,10 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     </p>
   </div>
   <figure class="hero-pic">
-    <img src="assets/photos/hero-800.jpg" srcset="assets/photos/hero-800.jpg 800w, assets/photos/hero-1200.jpg 1200w, assets/photos/hero.jpg 1276w" sizes="(max-width: 860px) 100vw, 1220px" width="1276" height="718" alt="Зал Winchester: кирпичная стена и рабочие места мастеров" fetchpriority="high" decoding="async">
+    <picture>
+      <source media="(max-width: 860px)" srcset="assets/photos/hero-v.jpg?v=9f8c7ec6" width="720" height="1280">
+      <img src="assets/photos/hero-1200.jpg?v=9f8c7ec6" srcset="assets/photos/hero-800.jpg?v=9f8c7ec6 800w, assets/photos/hero-1200.jpg?v=9f8c7ec6 1200w, assets/photos/hero.jpg?v=9f8c7ec6 1276w" sizes="100vw" width="1276" height="718" alt="Зал Winchester: кирпичная стена и рабочие места мастеров" fetchpriority="high" decoding="async">
+    </picture>
     <video class="hero-vid" muted loop playsinline preload="none" aria-hidden="true" tabindex="-1" data-h="assets/video/hero-h.mp4?v=9f8c7ec6" data-v="assets/video/hero-v.mp4?v=9f8c7ec6"></video>
   </figure>
 </section>
@@ -677,8 +685,9 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   var calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
   if(vid&&!calm&&!cn.saveData&&!/(^|-)2g|3g/.test(cn.effectiveType||'')){
     var vgo=function(){
-      vid.src=pic.clientWidth>pic.clientHeight*1.3?vid.getAttribute('data-h'):vid.getAttribute('data-v'); // почти квадрат и выше — вертикальный (резче)
-      vid.addEventListener('playing',function(){vid.classList.add('on');},{once:true});
+      var tall=pic.clientWidth<=pic.clientHeight*1.3, vv=vid.getAttribute('data-v'); // почти квадрат и выше — вертикальный (резче)
+      vid.src=tall&&vv?vv:vid.getAttribute('data-h');
+      vid.addEventListener('playing',function(){if(tall&&!vv)pic.classList.add('band');vid.classList.add('on');},{once:true});
       vid.addEventListener('error',function(){vid.remove();});
       var run=function(){var p=vid.play();if(p&&p.catch)p.catch(function(){});};
       if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting&&!d.hidden?run():vid.pause();}).observe(pic);else run();
