@@ -240,10 +240,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
-/* Команда (ТЗ v5): общее фото после цен */
-.team{background:var(--obsidian)}
-.team-pic{margin:0;aspect-ratio:16/9;overflow:hidden;background:var(--walnut)}
-.team-pic img{width:100%;height:100%;object-fit:cover}
 /* Карусель работ (ТЗ v5): свайп, стрелки, точки по центру внизу; без библиотек — прокрутка с привязкой */
 .car{position:relative}
 .car-track{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;overscroll-behavior-x:contain;outline-offset:4px}
@@ -354,7 +350,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .master .btn{margin-top:0;padding:0 16px}
   .m-note{margin-top:28px}
   .more-pic{margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
-  .team-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .car-track{margin:0 calc(var(--gutter) * -1);padding:0 var(--gutter);scroll-padding:0 var(--gutter);gap:12px}
   .car-item{flex-basis:82%}
   .car-btn{display:none}
@@ -427,7 +422,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   <div class="wrap svc">
     <div class="svc-head">
       <h2 class="h2" id="svc-h">Услуги и цены</h2>
-      <p class="lead">У барберов и у шеф-барбера Тони цены разные. Выбери, чьи показать.</p>
+      <p class="lead">Цены у барберов и у шеф-барбера Тони отличаются.</p>
       <div class="tog" role="group" aria-label="Чьи цены показать">
         <button type="button" data-tier="b" aria-pressed="true">Барберы</button>
         <button type="button" data-tier="c" aria-pressed="false">Шеф-барбер Тони</button>
@@ -471,7 +466,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         </ul>
       </div>
       <div class="svc-cta">
-        <p class="note">Не знаешь, что выбрать? Напиши в WhatsApp — менеджер подскажет услугу и мастера.</p>
+        <p class="note">Сомневаешься с выбором? Напиши в WhatsApp, менеджер подскажет услугу и мастера.</p>
         <div class="acts">
           <a class="btn btn-dark" data-wa="Здравствуйте! Помогите выбрать услугу" href="https://wa.me/77771148659">Помочь с выбором</a>
           <a class="lnk" data-wa="Здравствуйте! Хочу перенести свою запись" href="https://wa.me/77771148659">Перенести запись</a>
@@ -480,20 +475,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     </div>
   </div>
 </section>
-<section class="sec team" id="team" aria-labelledby="t-h">
-  <div class="wrap">
-    <div class="m-head">
-      <h2 class="h2" id="t-h">Команда</h2>
-      <p class="lead">Мастера и администраторы Winchester. Те, кто встретит тебя, подстрижёт и запишет на следующий раз.</p>
-    </div>
-    <figure class="team-pic"><img src="assets/photos/team.jpg?v=20261028" width="1600" height="900" loading="lazy" decoding="async" alt="Команда Winchester в зале барбершопа"></figure>
-  </div>
-</section>
 <section class="sec prem" id="premium" aria-labelledby="prem-h">
   <div class="wrap">
     <div class="prem-l">
       <h2 id="prem-h">Premium</h2>
-      <p class="lead">Комплекс для тех, кто хочет за один визит и подстричься, и привести в порядок кожу лица.</p>
+      <p class="lead">Стрижка и уход за кожей лица за один визит.</p>
       <div class="prices">
         <p>У барбера<b>12 000 ₸</b></p>
         <p>У шеф-барбера Тони<b>13 000 ₸</b></p>
@@ -515,7 +501,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   <div class="wrap">
     <div class="m-head">
       <h2 class="h2" id="m-h">Мастера</h2>
-      <p class="lead">Выбери мастера — в онлайн-записи сразу видно его свободное время.</p>
+      <p class="lead">В онлайн-записи видно свободное время каждого мастера.</p>
     </div>
     <div class="m-list">
       <article class="master">
@@ -544,17 +530,17 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         <a class="btn btn-line" data-book="m:руслан" data-wa="Здравствуйте! Хочу записаться к Руслану" href="https://wa.me/77771148659" aria-label="Записаться к Руслану">Записаться</a>
       </article>
     </div>
-    <p class="note m-note">Всё равно к кому? В онлайн-записи выбери «Любой специалист» — покажем всё свободное время.</p>
+    <p class="note m-note">Если мастер не важен, выбери в онлайн-записи «Любой специалист»: там будет всё свободное время.</p>
   </div>
 </section>
 <section class="sec light" id="works" aria-labelledby="w-h">
   <div class="wrap">
     <div class="m-head">
-      <h2 class="h2" id="w-h">Наши работы</h2>
-      <p class="lead">Стрижки и бороды, которые мастера сделали в Winchester. Листай вправо.</p>
+      <h2 class="h2" id="w-h">Работы мастеров</h2>
+      <p class="lead">Стрижки и бороды наших клиентов.</p>
     </div>
     <div class="car" data-car>
-      <div class="car-track" tabindex="0" role="region" aria-roledescription="карусель" aria-label="Наши работы">
+      <div class="car-track" tabindex="0" role="region" aria-roledescription="карусель" aria-label="Работы мастеров">
         <figure class="car-item"><img src="assets/photos/cut.jpg?v=20261028" width="1400" height="770" loading="lazy" decoding="async" alt="Мастер стрижёт клиента, вид сзади"></figure>
         <figure class="car-item"><img src="assets/photos/beard.jpg?v=20261028" width="1400" height="788" loading="lazy" decoding="async" alt="Мастер подравнивает бороду ножницами"></figure>
         <figure class="car-item"><img src="assets/photos/shelf.jpg?v=20261028" width="1276" height="718" loading="lazy" decoding="async" alt="Полки зала Winchester со средствами для укладки"></figure>
@@ -572,12 +558,12 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     <div class="more-txt">
       <div class="blk">
         <h2 class="h2">Средства для ухода</h2>
-        <p>В барбершопе можно купить средства American Crew для волос и бороды. Напиши менеджеру, какие у тебя волосы или борода, — он подскажет средство, наличие и цену. Заказа на сайте нет.</p>
+        <p>В барбершопе продаются средства American Crew для волос и бороды. Наличие и цены уточняй у менеджера в WhatsApp, он поможет подобрать. На сайте заказа нет.</p>
         <a class="btn btn-dark" data-wa="Здравствуйте! Хочу подобрать средство American Crew для волос или бороды" href="https://wa.me/77771148659"><svg aria-hidden="true"><use href="#wa"/></svg>Подобрать средство</a>
       </div>
       <div class="blk" id="training">
         <h2 class="h2">Обучение барберов</h2>
-        <p>В Winchester обучают барберов с нуля. Условия, формат и расписание расскажет менеджер.</p>
+        <p>В Winchester учат на барбера с нуля. Условия и расписание уточняй у менеджера.</p>
         <a class="btn btn-dark" data-wa="Здравствуйте! Хочу узнать об обучении барберов" href="https://wa.me/77771148659"><svg aria-hidden="true"><use href="#wa"/></svg>Узнать об обучении</a>
       </div>
     </div>

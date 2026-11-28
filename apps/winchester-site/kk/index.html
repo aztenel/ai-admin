@@ -244,10 +244,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
-/* Команда (ТЗ v5): общее фото после цен */
-.team{background:var(--obsidian)}
-.team-pic{margin:0;aspect-ratio:16/9;overflow:hidden;background:var(--walnut)}
-.team-pic img{width:100%;height:100%;object-fit:cover}
 /* Карусель работ (ТЗ v5): свайп, стрелки, точки по центру внизу; без библиотек — прокрутка с привязкой */
 .car{position:relative}
 .car-track{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;overscroll-behavior-x:contain;outline-offset:4px}
@@ -358,7 +354,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .master .btn{margin-top:0;padding:0 16px}
   .m-note{margin-top:28px}
   .more-pic{margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
-  .team-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .car-track{margin:0 calc(var(--gutter) * -1);padding:0 var(--gutter);scroll-padding:0 var(--gutter);gap:12px}
   .car-item{flex-basis:82%}
   .car-btn{display:none}
@@ -431,7 +426,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   <div class="wrap svc">
     <div class="svc-head">
       <h2 class="h2" id="svc-h">Қызметтер мен бағалар</h2>
-      <p class="lead">Барберлер мен шеф-барбер Тонидің бағасы әртүрлі. Қажетті нұсқаны таңдаңыз.</p>
+      <p class="lead">Барберлер мен шеф-барбер Тонидің бағасы әртүрлі.</p>
       <div class="tog" role="group" aria-label="Баға нұсқасы">
         <button type="button" data-tier="b" aria-pressed="true">Барберлер</button>
         <button type="button" data-tier="c" aria-pressed="false">Шеф-барбер Тони</button>
@@ -475,7 +470,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         </ul>
       </div>
       <div class="svc-cta">
-        <p class="note">Не таңдарыңызды білмейсіз бе? WhatsApp-қа жазыңыз — менеджер қызмет пен шеберді ұсынады.</p>
+        <p class="note">Таңдау қиын ба? WhatsApp-қа жазыңыз, менеджер қызмет пен шеберді ұсынады.</p>
         <div class="acts">
           <a class="btn btn-dark" data-wa="Сәлеметсіз бе! Қызмет таңдауға көмектесіңізші" href="https://wa.me/77771148659">Таңдауға көмек</a>
           <a class="lnk" data-wa="Сәлеметсіз бе! Жазылу уақытын ауыстырғым келеді" href="https://wa.me/77771148659">Жазылуды ауыстыру</a>
@@ -484,20 +479,11 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     </div>
   </div>
 </section>
-<section class="sec team" id="team" aria-labelledby="t-h">
-  <div class="wrap">
-    <div class="m-head">
-      <h2 class="h2" id="t-h">Команда</h2>
-      <p class="lead">Winchester шеберлері мен әкімшілері. Сізді қарсы алып, шашыңызды қиып, келесі жолға жазатындар.</p>
-    </div>
-    <figure class="team-pic"><img src="../assets/photos/team.jpg?v=20261028" width="1600" height="900" loading="lazy" decoding="async" alt="Winchester командасы барбершоп залында"></figure>
-  </div>
-</section>
 <section class="sec prem" id="premium" aria-labelledby="prem-h">
   <div class="wrap">
     <div class="prem-l">
       <h2 id="prem-h">Premium</h2>
-      <p class="lead">Бір келгенде әрі шаш қидырып, әрі бет терісін күтуге арналған кешен.</p>
+      <p class="lead">Бір келгенде шаш қию және бет терісін күту.</p>
       <div class="prices">
         <p>Барберде<b>12 000 ₸</b></p>
         <p>Шеф-барбер Тониде<b>13 000 ₸</b></p>
@@ -519,7 +505,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   <div class="wrap">
     <div class="m-head">
       <h2 class="h2" id="m-h">Шеберлер</h2>
-      <p class="lead">Шеберді таңдаңыз — онлайн жазылуда оның бос уақыты бірден көрінеді.</p>
+      <p class="lead">Онлайн жазылуда әр шебердің бос уақыты көрінеді.</p>
     </div>
     <div class="m-list">
       <article class="master">
@@ -548,17 +534,17 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         <a class="btn btn-line" data-book="m:руслан" data-wa="Сәлеметсіз бе! Русланға жазылғым келеді" href="https://wa.me/77771148659" aria-label="Русланға жазылу">Жазылу</a>
       </article>
     </div>
-    <p class="note m-note">Кімге барсаңыз да бәрібір ме? Онлайн жазылуда «Любой специалист» (кез келген шебер) нұсқасын таңдаңыз — барлық бос уақыт көрінеді.</p>
+    <p class="note m-note">Шебер маңызды болмаса, онлайн жазылуда «Любой специалист» (кез келген шебер) нұсқасын таңдаңыз: барлық бос уақыт сонда көрінеді.</p>
   </div>
 </section>
 <section class="sec light" id="works" aria-labelledby="w-h">
   <div class="wrap">
     <div class="m-head">
-      <h2 class="h2" id="w-h">Біздің жұмыстар</h2>
-      <p class="lead">Winchester шеберлері жасаған шаш үлгілері мен сақалдар. Оңға қарай сырғытыңыз.</p>
+      <h2 class="h2" id="w-h">Шеберлердің жұмыстары</h2>
+      <p class="lead">Клиенттеріміздің шаш үлгілері мен сақалдары.</p>
     </div>
     <div class="car" data-car>
-      <div class="car-track" tabindex="0" role="region" aria-roledescription="карусель" aria-label="Біздің жұмыстар">
+      <div class="car-track" tabindex="0" role="region" aria-roledescription="карусель" aria-label="Шеберлердің жұмыстары">
         <figure class="car-item"><img src="../assets/photos/cut.jpg?v=20261028" width="1400" height="770" loading="lazy" decoding="async" alt="Шебер клиенттің шашын қиып жатыр, артынан көрініс"></figure>
         <figure class="car-item"><img src="../assets/photos/beard.jpg?v=20261028" width="1400" height="788" loading="lazy" decoding="async" alt="Шебер сақалды қайшымен түзетіп жатыр"></figure>
         <figure class="car-item"><img src="../assets/photos/shelf.jpg?v=20261028" width="1276" height="718" loading="lazy" decoding="async" alt="Winchester залындағы сәндеу құралдары тұрған сөрелер"></figure>
@@ -576,12 +562,12 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
     <div class="more-txt">
       <div class="blk">
         <h2 class="h2">Күтім құралдары</h2>
-        <p>Барбершоптан шаш пен сақалға арналған American Crew құралдарын сатып алуға болады. Менеджерге шашыңыз бен сақалыңыз туралы жазыңыз — ол құралды ұсынып, бар-жоғын және бағасын айтады. Сайт арқылы тапсырыс беру жоқ.</p>
+        <p>Барбершопта шаш пен сақалға арналған American Crew құралдары сатылады. Бар-жоғын және бағасын WhatsApp арқылы менеджерден біліңіз, ол таңдауға көмектеседі. Сайт арқылы тапсырыс жоқ.</p>
         <a class="btn btn-dark" data-wa="Сәлеметсіз бе! Шашқа немесе сақалға American Crew құралын таңдағым келеді" href="https://wa.me/77771148659"><svg aria-hidden="true"><use href="#wa"/></svg>Құрал таңдау</a>
       </div>
       <div class="blk" id="training">
         <h2 class="h2">Барберлерді оқыту</h2>
-        <p>Winchester-де барберлерді нөлден бастап оқытады. Шарттарын, форматын және кестесін менеджер айтып береді.</p>
+        <p>Winchester-де барберлікке нөлден оқытады. Шарттары мен кестесін менеджерден біліңіз.</p>
         <a class="btn btn-dark" data-wa="Сәлеметсіз бе! Барберлерді оқыту туралы білгім келеді" href="https://wa.me/77771148659"><svg aria-hidden="true"><use href="#wa"/></svg>Оқыту туралы білу</a>
       </div>
     </div>

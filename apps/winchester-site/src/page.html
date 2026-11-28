@@ -213,10 +213,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
 .masters{background:var(--walnut)}
 .m-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 40px;margin-bottom:clamp(36px,5vw,56px)}
 .m-head .lead{margin-top:0}
-/* Команда (ТЗ v5): общее фото после цен */
-.team{background:var(--obsidian)}
-.team-pic{margin:0;aspect-ratio:16/9;overflow:hidden;background:var(--walnut)}
-.team-pic img{width:100%;height:100%;object-fit:cover}
 /* Карусель работ (ТЗ v5): свайп, стрелки, точки по центру внизу; без библиотек — прокрутка с привязкой */
 .car{position:relative}
 .car-track{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;overscroll-behavior-x:contain;outline-offset:4px}
@@ -334,7 +330,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .master .btn{margin-top:0;padding:0 16px}
   .m-note{margin-top:28px}
   .more-pic{margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
-  .team-pic{aspect-ratio:4/3;margin-left:calc(var(--gutter) * -1);margin-right:calc(var(--gutter) * -1)}
   .car-track{margin:0 calc(var(--gutter) * -1);padding:0 var(--gutter);scroll-padding:0 var(--gutter);gap:12px}
   .car-item{flex-basis:82%}
   .car-btn{display:none}
@@ -461,17 +456,6 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
         </div>
       </div>
     </div>
-  </div>
-</section>
-
-<section class="sec team" id="team" aria-labelledby="t-h">
-  <div class="wrap">
-    <div class="m-head">
-      <h2 class="h2" id="t-h">{{t_h}}</h2>
-      <p class="lead">{{t_lead}}</p>
-    </div>
-    <!-- Общее фото команды (живые люди) — только в zip владельцу; в репозитории под этим именем лежит кадр зала без людей. -->
-    <figure class="team-pic"><img src="{{base}}assets/photos/team.jpg?v={{ph_v}}" width="1600" height="900" loading="lazy" decoding="async" alt="{{alt_team}}"></figure>
   </div>
 </section>
 
