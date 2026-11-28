@@ -320,14 +320,19 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   .nav a:not(.btn){display:flex;font:500 clamp(2rem,9vw,2.6rem)/1.1 var(--serif);color:var(--ivory);padding:14px 0;border-bottom:1px solid rgba(243,235,221,.12)}
   .nav .btn{margin-top:28px;min-height:56px;font-size:16px}
   .lng{font-size:15px}
-  .hero{display:flex;flex-direction:column;min-height:0}
-  .hero-pic{order:-1;height:clamp(210px,36svh,340px)}
-  .hero-txt{padding:32px var(--gutter) 40px}
+  /* Телефон (ТЗ v5, большая часть посетителей): вертикальное видео на весь экран, текст и кнопки внизу поверх затемнения —
+     как сторис в Instagram. До видео и без него на этом месте фото. */
+  .hero{position:relative;display:flex;flex-direction:column;justify-content:flex-end;min-height:100svh;padding-top:var(--hdr)}
+  .hero-pic{position:absolute;inset:0;height:auto}
+  .hero-pic::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(to bottom,rgba(26,12,12,.55) 0,rgba(26,12,12,0) 18%,rgba(26,12,12,0) 34%,rgba(26,12,12,.7) 58%,rgba(26,12,12,.94) 78%,var(--obsidian) 100%)}
+  .hero-pic img{object-position:50% 50%}
+  .hero-txt{position:relative;z-index:2;padding:32px var(--gutter) 28px}
+  .hero-sub{color:#e6d9c6}
   .hero h1{font-size:clamp(2.3rem,10.5vw,3.4rem);max-width:none}
   .hero-sub{margin-top:16px}
   .hero-cta{margin-top:24px;flex-direction:column}
   .hero-cta .btn{width:100%}
-  .hero-meta{margin-top:18px;flex-direction:column}
+  .hero-meta{margin-top:14px;gap:0 22px}
   .tog{display:flex}
   .svc-book{display:none}
   .tog button{flex:1;padding:0 10px}
@@ -672,7 +677,7 @@ h1,.h2{font-family:var(--serif);font-weight:600;text-transform:uppercase;letter-
   var calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
   if(vid&&!calm&&!cn.saveData&&!/(^|-)2g|3g/.test(cn.effectiveType||'')){
     var vgo=function(){
-      vid.src=pic.clientHeight>pic.clientWidth?vid.getAttribute('data-v'):vid.getAttribute('data-h');
+      vid.src=pic.clientWidth>pic.clientHeight*1.3?vid.getAttribute('data-h'):vid.getAttribute('data-v'); // почти квадрат и выше — вертикальный (резче)
       vid.addEventListener('playing',function(){vid.classList.add('on');},{once:true});
       vid.addEventListener('error',function(){vid.remove();});
       var run=function(){var p=vid.play();if(p&&p.catch)p.catch(function(){});};
